@@ -19,12 +19,19 @@ class LibraryPaths:
     scrolls_dir: Path
     library_dir: Path
     media_dir: Path
+    agents_dir: Path
     db_path: Path
     config_path: Path
 
     @property
     def subdirs(self) -> tuple[Path, ...]:
-        return (self.items_dir, self.scrolls_dir, self.library_dir, self.media_dir)
+        return (
+            self.items_dir,
+            self.scrolls_dir,
+            self.library_dir,
+            self.media_dir,
+            self.agents_dir,
+        )
 
 
 def get_paths(root: Path | None = None) -> LibraryPaths:
@@ -38,6 +45,7 @@ def get_paths(root: Path | None = None) -> LibraryPaths:
         scrolls_dir=root / "scrolls",
         library_dir=root / "library",
         media_dir=root / "media",
+        agents_dir=root / "agents",
         db_path=root / "db.sqlite",
         config_path=root / "config.toml",
     )

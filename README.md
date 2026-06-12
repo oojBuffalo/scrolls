@@ -42,6 +42,7 @@ scrolls agent install
   scrolls/        # individual Markdown files
   library/        # compiled interlinked KB
   media/          # optional thumbnails, images, transcripts, attachments
+  agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
   config.toml
 ```
 
@@ -80,6 +81,7 @@ uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls context <query> # compact context bundle, as Markdown
+uv run scrolls agent install  # write agent instruction files, as JSON
 uv run pytest                 # test suite
 ```
 
@@ -145,11 +147,19 @@ artifact agents drop into context — while errors stay JSON on stderr.
 Each excerpt carries the item id, source, and scroll path so an agent
 can follow up with `scrolls show <id>` or read the full scroll.
 
+`scrolls agent install` writes instruction files for coding agents under
+`<root>/agents/` — `claude/SKILL.md`, `codex/AGENTS.md`,
+`hermes/SKILL.md` — teaching the shell-first interface (`context` first,
+`search`/`show` for depth, `ingest` to save). It never writes into other
+tools' config trees; copy or symlink the files where your tool expects
+them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
+
 Item stages so far: `detected → fetched → rendered`; classification and
-KB compilation are stage-neutral. The IDEAS.md §6 MVP source trio
-(wikipedia, web, youtube) is complete, Pass 4 classification has its
-rules layer, and Pass 5 has the compiled library and context bundles.
-Next slices: `scrolls agent install` (the last Pass 5 piece), an LLM
-classification engine, or more adapters (github, arxiv).
+KB compilation are stage-neutral. With the IDEAS.md §6 MVP source trio
+(wikipedia, web, youtube), search, rules classification, the compiled
+library, context bundles, and agent install, all five IDEAS.md §14 MVP
+passes have a working first version. Next slices: an LLM
+classification/concept engine, more adapters (github, arxiv, x via
+Field Theory import), media capture, or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

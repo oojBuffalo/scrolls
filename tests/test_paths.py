@@ -35,6 +35,7 @@ def test_layout_matches_readme(tmp_path):
         scrolls_dir=tmp_path / "scrolls",
         library_dir=tmp_path / "library",
         media_dir=tmp_path / "media",
+        agents_dir=tmp_path / "agents",
         db_path=tmp_path / "db.sqlite",
         config_path=tmp_path / "config.toml",
     )

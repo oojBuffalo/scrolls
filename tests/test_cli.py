@@ -58,6 +58,7 @@ def test_paths_prints_layout_json(scrolls_home, capsys):
         "scrolls": str(scrolls_home / "scrolls"),
         "library": str(scrolls_home / "library"),
         "media": str(scrolls_home / "media"),
+        "agents": str(scrolls_home / "agents"),
         "db": str(scrolls_home / "db.sqlite"),
         "config": str(scrolls_home / "config.toml"),
     }
@@ -68,7 +69,7 @@ def test_init_creates_library_skeleton(scrolls_home, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"root": str(scrolls_home), "created": True}
-    for subdir in ("items", "scrolls", "library", "media"):
+    for subdir in ("items", "scrolls", "library", "media", "agents"):
         assert (scrolls_home / subdir).is_dir()
     assert (scrolls_home / "db.sqlite").is_file()
     assert (scrolls_home / "config.toml").is_file()

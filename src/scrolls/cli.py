@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 
 from scrolls import __version__
+from scrolls.agents import install_agent_docs
 from scrolls.classify import classify_item
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
@@ -50,6 +51,15 @@ def main(argv: list[str] | None = None) -> int:
         "add", help="Register a URL as a library item, unfetched (JSON output)"
     )
     add_parser.add_argument("url", help="URL to add")
+
+    agent_parser = subparsers.add_parser(
+        "agent", help="Agent integration commands"
+    )
+    agent_sub = agent_parser.add_subparsers(dest="agent_command", required=True)
+    agent_sub.add_parser(
+        "install",
+        help="Write agent instruction files under <root>/agents (JSON output)",
+    )
 
     classify_parser = subparsers.add_parser(
         "classify", help="Categorize items with the rules engine (JSON output)"
@@ -129,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "add":
         return _cmd_add(args.url)
+    if args.command == "agent":
+        return _cmd_agent_install()
     if args.command == "classify":
         return _cmd_classify(args.id)
     if args.command == "context":
@@ -407,6 +419,14 @@ def _cmd_md(item_id: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
+def _cmd_agent_install() -> int:
+    paths = get_paths()
+    _ensure_library(paths)
+    installed = install_agent_docs(paths)
+    print(json.dumps({"root": str(paths.root), "installed": installed}))
+    return 0
+
+
 def _cmd_kb() -> int:
     paths = get_paths()
     result = compile_kb(paths)
@@ -445,6 +465,7 @@ def _cmd_paths() -> int:
                 "scrolls": str(paths.scrolls_dir),
                 "library": str(paths.library_dir),
                 "media": str(paths.media_dir),
+                "agents": str(paths.agents_dir),
                 "db": str(paths.db_path),
                 "config": str(paths.config_path),
             }
