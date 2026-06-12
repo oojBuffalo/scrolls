@@ -44,7 +44,12 @@ CONFIG_TEMPLATE = """\
 """
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The full `scrolls` argument parser.
+
+    Separate from `main` so tests can introspect the command surface —
+    `tests/test_docs.py` diffs it against `README.md` and `docs/cli.md`.
+    """
     parser = argparse.ArgumentParser(
         prog="scrolls",
         description="Turn saved internet artifacts into an agent-readable knowledge library.",
@@ -165,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.command == "add":
         return _cmd_add(args.url)

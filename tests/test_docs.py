@@ -10,11 +10,13 @@ instead of silently rotting the docs.
 
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
 
 from scrolls import __version__
 from scrolls.agents import _TARGETS
+from scrolls.cli import build_parser
 from scrolls.db import SCHEMA_VERSION, init_db
 from scrolls.items import ScrollItem, insert_item
 from scrolls.kb import _GENERATED_DIRS, compile_kb
@@ -83,6 +85,41 @@ def test_ideas_section_references_exist():
         if n not in sections
     ]
     assert not bad, "references to nonexistent IDEAS.md sections: " + ", ".join(bad)
+
+
+def _cli_surface() -> set[str]:
+    """Every invocable command, with nested subcommands expanded ('agent install')."""
+    surface = set()
+    for action in build_parser()._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for name, sub in action.choices.items():
+            nested = [a for a in sub._actions
+                      if isinstance(a, argparse._SubParsersAction)]
+            if nested:
+                surface.update(f"{name} {inner}" for inner in nested[0].choices)
+            else:
+                surface.add(name)
+    return surface
+
+
+def test_cli_reference_documents_exactly_the_cli_surface():
+    """docs/cli.md has one `### scrolls <command>` heading per real command."""
+    text = (REPO_ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"^### `scrolls ([a-z]+(?: [a-z]+)?)", text, re.M))
+    surface = _cli_surface()
+    assert documented == surface, (
+        f"docs/cli.md headings out of sync with the parser — "
+        f"undocumented: {sorted(surface - documented)}, "
+        f"stale: {sorted(documented - surface)}"
+    )
+
+
+def test_readme_mentions_every_cli_command():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    missing = [cmd for cmd in sorted(_cli_surface())
+               if not re.search(rf"scrolls {cmd}\b", readme)]
+    assert not missing, "README.md never mentions: " + ", ".join(missing)
 
 
 _LIBRARY_FORMAT = REPO_ROOT / "docs" / "library-format.md"
