@@ -242,6 +242,18 @@ credentials abort the whole run with the standard error envelope, since
 every remaining item would fail identically
 (`test_classify_llm_without_credentials_aborts_with_error_envelope`).
 
+`config.toml`'s `[classify]` section (ADR 0016) sets the defaults:
+`default_engine = "llm"` routes a bare `scrolls classify` to the LLM
+engine (`test_classify_config_default_engine_llm_is_used`) and
+`llm_model` picks its model
+(`test_classify_config_llm_model_is_used`). Per-invocation overrides
+win — `--engine` beats `default_engine`
+(`test_classify_engine_flag_overrides_config`) and `$SCROLLS_LLM_MODEL`
+beats `llm_model` (`test_classify_env_model_beats_config`). A malformed
+or invalid config is an error envelope, never a silent fallback
+(`test_classify_malformed_config_is_an_error_envelope`,
+`tests/test_config.py` for the parser itself).
+
 ```console
 $ scrolls classify    # x:1111 already has a category from the import join
 {"classified": 1, "unmatched": 0, "failed": 0, "results": [{"id": "x:2222", "status": "classified", "category": "tutorial"}]}
@@ -249,6 +261,10 @@ $ scrolls classify    # x:1111 already has a category from the import join
 
 $ scrolls classify wikipedia:en:SQLite --engine llm   # no credentials set
 {"error": "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY (\"Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` headers to be explicitly omitted\")"}
+[exit 1]
+
+$ scrolls classify       # after writing broken TOML into config.toml
+{"error": "config.toml: invalid TOML: Expected ']' at the end of a table declaration (at line 1, column 10)"}
 [exit 1]
 ```
 

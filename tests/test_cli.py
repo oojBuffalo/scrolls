@@ -943,6 +943,83 @@ def test_classify_llm_without_credentials_aborts_with_error_envelope(
     assert "credentials" in json.loads(captured.err)["error"]
 
 
+def test_classify_config_default_engine_llm_is_used(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+    (scrolls_home / "config.toml").write_text('[classify]\ndefault_engine = "llm"\n')
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    assert len(fake_llm) == 1
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.provenance["classified_by"] == "llm-v1"
+
+
+def test_classify_engine_flag_overrides_config(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+    (scrolls_home / "config.toml").write_text('[classify]\ndefault_engine = "llm"\n')
+
+    exit_code = main(["classify", "--engine", "rules"])
+    assert exit_code == 0
+    assert fake_llm == []
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.provenance["classified_by"] == "rules-v1"
+
+
+def test_classify_config_llm_model_is_used(
+    scrolls_home, fake_wikipedia_api, fake_llm, monkeypatch, capsys
+):
+    monkeypatch.delenv("SCROLLS_LLM_MODEL", raising=False)
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+    (scrolls_home / "config.toml").write_text(
+        '[classify]\nllm_model = "claude-haiku-4-5"\n'
+    )
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 0
+    assert fake_llm[0]["model"] == "claude-haiku-4-5"
+
+
+def test_classify_env_model_beats_config(
+    scrolls_home, fake_wikipedia_api, fake_llm, monkeypatch, capsys
+):
+    monkeypatch.setenv("SCROLLS_LLM_MODEL", "claude-sonnet-4-6")
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+    (scrolls_home / "config.toml").write_text(
+        '[classify]\nllm_model = "claude-haiku-4-5"\n'
+    )
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 0
+    assert fake_llm[0]["model"] == "claude-sonnet-4-6"
+
+
+def test_classify_malformed_config_is_an_error_envelope(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+    (scrolls_home / "config.toml").write_text("[classify\nbroken =")
+
+    exit_code = main(["classify"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "config.toml" in json.loads(captured.err)["error"]
+
+
 @pytest.fixture
 def fake_fieldtheory_root(tmp_path):
     """A miniature ~/.fieldtheory archive with one classified bookmark."""

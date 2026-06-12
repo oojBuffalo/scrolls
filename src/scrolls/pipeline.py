@@ -20,8 +20,13 @@ from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 
 CONFIG_TEMPLATE = """\
-# Scrolls configuration (no settings are read yet; this file is reserved
-# for upcoming options such as [classify] engines).
+# Scrolls configuration. Settings read today (ADR 0016):
+#
+# [classify]
+# default_engine = "rules"        # engine for `scrolls classify` without
+#                                 # --engine: "rules" or "llm"
+# llm_model = "claude-opus-4-8"   # model for the llm engine; the
+#                                 # SCROLLS_LLM_MODEL env var overrides it
 """
 
 

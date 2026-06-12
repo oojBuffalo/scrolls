@@ -46,7 +46,7 @@ not implemented yet.
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
   items/          # reserved: raw record exports (currently unused)
   media/          # captured media files (PDFs, thumbnails, photos), per source
-  config.toml     # placeholder written by init; no settings are read yet
+  config.toml     # settings; today: [classify] default_engine + llm_model
 ```
 
 ## Design principles
@@ -204,6 +204,15 @@ default model `claude-opus-4-8` is overridable via `SCROLLS_LLM_MODEL`.
 Batch semantics are unchanged (existing categories are never
 overwritten; per-item API failures don't abort the run), and missing
 credentials abort with the standard error envelope.
+
+`config.toml`'s `[classify]` section makes both choices sticky per
+library (see `docs/adr/0016-config-toml-classify-section.md`):
+`default_engine = "llm"` routes a bare `scrolls classify` to the LLM
+engine, and `llm_model` picks its model. Per-invocation overrides
+always win — the `--engine` flag beats `default_engine`, and
+`$SCROLLS_LLM_MODEL` beats `llm_model`. `scrolls ingest` always
+classifies with rules, whatever the config says, so ingest stays
+keyless and offline.
 
 `scrolls kb` compiles the interlinked library (IDEAS.md §9, the
 deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):

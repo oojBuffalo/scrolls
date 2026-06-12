@@ -15,6 +15,7 @@ from pathlib import Path
 from scrolls import __version__
 from scrolls.agents import install_agent_docs
 from scrolls.classify import classify_item
+from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import read_schema_version
@@ -72,10 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     classify_parser.add_argument(
         "--engine",
         choices=("rules", "llm"),
-        default="rules",
+        default=None,
         help="Classification engine: deterministic rules (default), or an "
         "LLM that also fills domain and concepts (needs ANTHROPIC_API_KEY; "
-        "model overridable via SCROLLS_LLM_MODEL)",
+        "model overridable via SCROLLS_LLM_MODEL). Defaults to [classify] "
+        "default_engine in config.toml, else rules",
     )
 
     context_parser = subparsers.add_parser(
@@ -359,16 +361,26 @@ def _cmd_fetch(item_id: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_classify(item_id: str | None, engine: str = "rules") -> int:
+def _cmd_classify(item_id: str | None, engine: str | None = None) -> int:
+    paths = get_paths()
+    try:
+        config = load_config(paths.config_path)
+    except ConfigError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    # the --engine flag beats config.toml's [classify] default_engine
+    engine = engine or config.default_engine
+
     if engine == "llm":
-        # lazy: only `classify --engine llm` pays the import (ADR 0015)
+        # lazy: only the llm engine pays the import (ADR 0015)
         from scrolls.classify_llm import (
             LLMAuthError,
             LLMClassifyError,
             classify_item_llm,
         )
 
-    paths = get_paths()
+        llm_model = resolve_llm_model(config)
+
     if item_id is not None:
         item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
         if item is None:
@@ -390,7 +402,7 @@ def _cmd_classify(item_id: str | None, engine: str = "rules") -> int:
     for item in items:
         if engine == "llm":
             try:
-                classified = classify_item_llm(item)
+                classified = classify_item_llm(item, model=llm_model)
             except LLMAuthError as exc:
                 # no credentials: every remaining item would fail the same way
                 print(json.dumps({"error": str(exc)}), file=sys.stderr)

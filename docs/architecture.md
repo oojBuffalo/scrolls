@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (332 tests at the time of writing). The docs themselves
+`uv run pytest` (345 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -87,7 +87,7 @@ $SCROLLS_HOME (default ~/.scrolls)
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
   items/         # reserved (raw record exports; currently unused)
   media/         # captured media files (PDFs, thumbnails, photos), per source
-  config.toml    # placeholder written by init; no settings are read yet
+  config.toml    # settings; today: [classify] default_engine + llm_model
 ```
 
 ## The data model
@@ -184,7 +184,10 @@ choice (ADRs 0004, 0005).
   merged after the platform-curated ones. The completer is injectable,
   so tests stay offline (`tests/test_classify_llm.py`); the SDK is
   imported lazily, and missing credentials abort the batch
-  (`LLMAuthError`) while per-item API failures don't.
+  (`LLMAuthError`) while per-item API failures don't. `config.toml`'s
+  `[classify]` section (`config.py`, ADR 0016) makes the engine and
+  model sticky per library; the `--engine` flag and `$SCROLLS_LLM_MODEL`
+  always win (`tests/test_config.py`).
 - **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
   over body. Query tokens are quoted and AND-ed, so arbitrary agent
   input never hits FTS5 syntax errors (`tests/test_search.py`).
@@ -231,7 +234,8 @@ recurring rules:
   bundle is the artifact) and the scroll/KB files themselves.
 - **CLI is one module** (`cli.py`): argparse subcommands, each a thin
   `cmd_*` function over the library modules. The CLI owns process
-  concerns (JSON encoding, exit codes); engines stay importable and
+  concerns (JSON encoding, exit codes, loading `config.toml` — ADR
+  0016); engines stay importable and
   testable without it (`tests/test_cli.py` covers the seams). The
   add/ingest chain lives in `src/scrolls/pipeline.py` so the CLI and
   the MCP server share one implementation (ADR 0014).
@@ -255,10 +259,8 @@ Next steps already identified in decision records, in no required order:
 
 - **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
   import/sync/add distinction); only `import` and `add` exist today.
-- **Config reading** — `config.toml` is still a placeholder; the
-  reserved `[classify]` section should absorb the LLM engine/model
-  knobs (ADRs 0004, 0015), and a `scrolls set`-style user override
-  command remains open (ADR 0004).
+- **A `scrolls set`-style user override command** — categories can be
+  configured but not set by hand from the CLI yet (ADR 0004).
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).
