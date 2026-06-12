@@ -9,9 +9,10 @@ same KB concept pages (ADR 0005).
 
 The model call is injectable (`complete`) so tests never touch the
 network, mirroring the adapters' injectable fetcher. The real completer
-uses the official Anthropic SDK with structured outputs, so the response
-is schema-valid JSON by construction; it is imported lazily so only
-`scrolls classify --engine llm` pays for it.
+binds this engine's schema onto the LLM tier's shared transport
+(`scrolls.llm`), so the response is schema-valid JSON by construction;
+the SDK import stays lazy so only `scrolls classify --engine llm` pays
+for it.
 
 `classify_items_llm_batch` is the same engine over the Message Batches
 API (ADR 0022): one submission for the whole run at half the per-token
@@ -29,9 +30,19 @@ from typing import Callable
 
 from scrolls.items import ScrollItem
 
+# DEFAULT_MODEL, MODEL_ENV, and LLMAuthError are deliberate re-exports:
+# they predate the shared transport and remain part of this engine's
+# import surface.
+from scrolls.llm import (
+    DEFAULT_MODEL,
+    MODEL_ENV,
+    Completer,
+    LLMAuthError,
+    LLMError,
+    anthropic_complete,
+)
+
 ENGINE = "llm-v1"
-DEFAULT_MODEL = "claude-opus-4-8"
-MODEL_ENV = "SCROLLS_LLM_MODEL"
 
 # The full IDEAS.md §8 extended vocabulary. The rules engine restricts
 # itself to the subset it can infer without a model; with the content in
@@ -95,10 +106,6 @@ RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# A completer takes (system_prompt, user_prompt, model) and returns the
-# model's JSON text.
-Completer = Callable[[str, str, str], str]
-
 # A batch completer takes (system_prompt, [(custom_id, user_prompt)...],
 # model) and returns each answered request's raw JSON text keyed by
 # custom_id; a request that failed individually maps to its
@@ -111,12 +118,8 @@ _POLL_INITIAL_SECONDS = 5.0
 _POLL_MAX_SECONDS = 60.0
 
 
-class LLMClassifyError(Exception):
+class LLMClassifyError(LLMError):
     """The model call or its response could not produce a classification."""
-
-
-class LLMAuthError(LLMClassifyError):
-    """No usable Anthropic credentials; retrying other items is pointless."""
 
 
 def item_card(item: ScrollItem) -> str:
@@ -246,41 +249,10 @@ def _classified(item: ScrollItem, raw: str, model: str) -> ScrollItem:
 
 
 def _anthropic_complete(system: str, user: str, model: str) -> str:
-    """The real completer: one Messages API call with structured outputs."""
-    import anthropic  # lazy: only `classify --engine llm` pays the import
-
-    try:
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=model,
-            max_tokens=_MAX_TOKENS,
-            system=system,
-            output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
-            messages=[{"role": "user", "content": user}],
-        )
-    except TypeError as exc:
-        # The SDK raises TypeError when no credentials resolve — at client
-        # construction in some versions, while building the request in
-        # others. Any other TypeError is a real bug and must surface.
-        if "authentication" not in str(exc).lower():
-            raise
-        raise LLMAuthError(
-            "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY "
-            f"({exc})"
-        ) from exc
-    except anthropic.AuthenticationError as exc:
-        raise LLMAuthError(f"Anthropic rejected the credentials: {exc}") from exc
-    except anthropic.APIError as exc:
-        raise LLMClassifyError(f"Anthropic API error: {exc}") from exc
-
-    if response.stop_reason == "refusal":
-        raise LLMClassifyError("model declined to classify this item")
-    text = next((b.text for b in response.content if b.type == "text"), "")
-    if not text:
-        raise LLMClassifyError(
-            f"model returned no text (stop_reason: {response.stop_reason})"
-        )
-    return text
+    """The real completer: this engine's schema on the shared transport."""
+    return anthropic_complete(
+        system, user, model, schema=RESPONSE_SCHEMA, max_tokens=_MAX_TOKENS
+    )
 
 
 _sleep = time.sleep  # module-level so tests can observe the poll loop

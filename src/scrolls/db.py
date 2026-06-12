@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -91,12 +91,30 @@ _SUBSCRIPTION_VALIDATORS = (
     "ALTER TABLE subscriptions ADD COLUMN last_modified TEXT",
 )
 
+# Synthesized concept-page summaries (ADR 0025). The LLM concept engine
+# writes them; the deterministic KB compiler only reads them, so a plain
+# `scrolls kb` stays keyless and offline. `members_hash` fingerprints the
+# member scrolls the summary was written from, making regeneration
+# incremental: an unchanged concept costs nothing on the next run.
+_CONCEPT_SUMMARIES_TABLE = """\
+CREATE TABLE concept_summaries (
+    slug TEXT PRIMARY KEY,
+    display TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    members_hash TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    model TEXT NOT NULL,
+    generated_at TEXT NOT NULL
+)
+"""
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
     3: _ITEMS_FTS,
     4: (_SUBSCRIPTIONS_TABLE,),
     5: _SUBSCRIPTION_VALIDATORS,
+    6: (_CONCEPT_SUMMARIES_TABLE,),
 }
 
 

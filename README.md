@@ -43,7 +43,7 @@ releases feed) and sync registers its new entries.
 
 ```text
 ~/.scrolls/        # or $SCROLLS_HOME
-  db.sqlite       # canonical index: items + subscriptions tables, FTS5 search, schema meta
+  db.sqlite       # canonical index: items + subscriptions + concept_summaries tables, FTS5 search, schema meta
   scrolls/        # individual Markdown files, one per item, per source
   library/        # compiled interlinked KB (index, sources, categories, concepts)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
@@ -104,6 +104,7 @@ uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
+uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls mcp            # serve the library to MCP clients over stdio
@@ -273,8 +274,21 @@ that link back to rendered scrolls with relative Markdown links. The
 generated pages are rebuilt from scratch each run so stale groups can't
 linger; other files under `library/` are left alone. Concept pages merge
 spellings by slug; github repo topics, wikipedia page categories, and
-arXiv taxonomy names populate them today, and an LLM concept engine can
-join later.
+arXiv taxonomy names populate them today.
+
+`scrolls kb --engine llm` is the fancy version of IDEAS.md §9 that
+ADR 0005 left room for (see `docs/adr/0025-llm-concept-summaries.md`):
+a model writes the prose no rollup can — a short synthesis of how each
+concept shows up across the 2+ scrolls that share it — and every
+concept page with one leads with it. Summaries are stored data
+(schema v6), not compile output: a plain keyless `scrolls kb` keeps
+including them, and generation is incremental — each summary records a
+fingerprint of its member scrolls, an unchanged concept costs nothing
+to re-run, and summaries whose concept dissolved are pruned. Model and
+credentials follow the LLM classification engine (`ANTHROPIC_API_KEY`,
+`[classify] llm_model`, `$SCROLLS_LLM_MODEL`); per-concept API failures
+still compile the library, and a credentials abort keeps everything
+already saved.
 
 `scrolls context <query>` answers "what does my library know about X?"
 with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped
@@ -313,10 +327,13 @@ have a working first version plus the full §8 classification stack
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
 (ADR 0019), on both the shell and MCP interfaces (ADR 0020), with the
 Batches API halving bulk classification cost (ADR 0022), item
-identity robust to tracking-param junk (ADR 0023), and `published_at`
-one uniform UTC ISO 8601 vocabulary from every writer (ADR 0024).
-Next candidate: an LLM concept engine for KB pages — the "fancy
-version" of IDEAS.md §9 that ADR 0005's deterministic compiler
-deliberately left room for.
+identity robust to tracking-param junk (ADR 0023), `published_at`
+one uniform UTC ISO 8601 vocabulary from every writer (ADR 0024), and
+both halves of IDEAS.md §9 — the deterministic KB compiler and the
+LLM concept engine behind `kb --engine llm` (ADR 0025). Next
+candidates: a doctor-style dedupe/repair command if pre-normalization
+libraries surface duplicate items (ADR 0023), or a Batches transport
+for concept summaries if libraries outgrow per-call generation
+(ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

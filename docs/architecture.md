@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (398 tests at the time of writing). The docs themselves
+`uv run pytest` (501 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -54,9 +54,9 @@ each command moves items between stages or derives artifacts from them.
   the same detection/dedupe as `add` — sync discovers URLs, adapters
   still fetch (`src/scrolls/feeds.py`, ADR 0017).
 
-Per-item failures never abort a batch: `fetch`, `md`, `media`, and
-`sync` (per subscription) report each failure in their JSON output and
-continue (`tests/test_cli.py`).
+Per-item failures never abort a batch: `fetch`, `md`, `media`,
+`sync` (per subscription), and `kb --engine llm` (per concept) report
+each failure in their JSON output and continue (`tests/test_cli.py`).
 
 ## Storage: SQLite is the index, Markdown is the artifact
 
@@ -71,7 +71,10 @@ Two stores, by design (IDEAS.md §3):
   it. A `subscriptions` table holds followed feeds and their sync
   state, including each feed's HTTP cache validators (ADR 0017,
   ADR 0019) — sync state belongs to the index, not config (IDEAS.md
-  §3). `meta` carries the schema version (`SCHEMA_VERSION = 5`);
+  §3). A `concept_summaries` table holds the LLM concept engine's
+  synthesized concept-page summaries with the members fingerprint that
+  makes regeneration incremental (ADR 0025). `meta` carries the schema
+  version (`SCHEMA_VERSION = 6`);
   `MIGRATIONS[n]` walks any version gap in one transaction, and opening a
   newer-versioned library raises instead of corrupting it
   (`tests/test_db.py`).
@@ -91,7 +94,7 @@ the whole tree (`src/scrolls/paths.py`):
 
 ```text
 $SCROLLS_HOME (default ~/.scrolls)
-  db.sqlite      # items + subscriptions tables + FTS5 index + schema meta
+  db.sqlite      # items + subscriptions + concept_summaries tables + FTS5 index + schema meta
   scrolls/       # one Markdown scroll per rendered item, per source
   library/       # compiled KB: index.md, sources/, categories/, concepts/
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
@@ -229,7 +232,23 @@ choice (ADRs 0004, 0005).
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md` plus
   per-source, per-category, and per-concept pages from scratch each run
   so stale groups can't linger; other files under `library/` are left
-  alone. Concept pages merge spellings by slug (`tests/test_kb.py`).
+  alone. Concept pages merge spellings by slug, and lead with a stored
+  synthesized summary when the LLM concept engine has written one — the
+  store (`concept_summaries`) lives on the compiler's side so a plain
+  `scrolls kb` includes summaries with no model, key, or network
+  (`tests/test_kb.py`).
+- **LLM concept engine** (`kb_llm.py`, ADR 0025) — IDEAS.md §9's fancy
+  version, run via `kb --engine llm`: a model synthesizes how each
+  concept with 2+ member scrolls shows up across them, writing the
+  store the compiler reads. Incremental by members fingerprint —
+  unchanged concepts cost nothing on re-run, summaries for dissolved
+  concepts are pruned. Failure semantics mirror classification:
+  per-concept failures still compile, missing credentials abort but
+  keep what's saved (`tests/test_kb_llm.py`). Both LLM engines share
+  one transport (`llm.py`): the structured-output call, credential
+  handling, the `LLMError`/`LLMAuthError` hierarchy, and the tier's
+  model choice (`$SCROLLS_LLM_MODEL` > `[classify] llm_model` >
+  default).
 - **Feed sync** (`feeds.py`, ADR 0017) — `follow` validates an RSS
   2.0/Atom feed by fetching it once (stdlib ElementTree, no feedparser)
   and stores the subscription; `sync` polls each feed and registers new
@@ -290,8 +309,9 @@ recurring rules:
   must buy its feature something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
   (arxiv and pdf), `mcp` (the protocol server, imported only by
-  `scrolls mcp`), `anthropic` (LLM classification, imported only by
-  `scrolls classify --engine llm`) — see `pyproject.toml`.
+  `scrolls mcp`), `anthropic` (the LLM tier, imported only by
+  `scrolls classify --engine llm` and `scrolls kb --engine llm`) — see
+  `pyproject.toml`.
 - **No network in tests**: every adapter takes an injectable fetcher;
   fixtures are recorded payloads. The suite runs in under a second.
 
@@ -304,10 +324,9 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **LLM concept engine for KB pages** — the deterministic compiler
-  (ADR 0005) groups scrolls by frontmatter concepts; the "fancy
-  version" of IDEAS.md §9 synthesizes concept-page summaries with an
-  LLM, joining the opt-in LLM tier alongside `classify --engine llm`.
 - **Doctor-style dedupe** — pre-normalization libraries can hold a
   junk-URL item that a clean re-add would duplicate; a repair command
   is the remedy if real libraries ever surface this (ADR 0023).
+- **Batched concept summaries** — the concept engine (ADR 0025)
+  generates per-call; if libraries outgrow that, the Message Batches
+  transport (ADR 0022) has an obvious home in the shared `llm.py`.

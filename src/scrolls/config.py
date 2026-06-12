@@ -17,7 +17,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.classify_llm import DEFAULT_MODEL, MODEL_ENV
+from scrolls.llm import DEFAULT_MODEL, MODEL_ENV
 
 ENGINES = ("rules", "llm")
 

@@ -155,8 +155,18 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("url", help="URL to ingest")
 
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
-    subparsers.add_parser(
+    kb_parser = subparsers.add_parser(
         "kb", help="Compile the interlinked library pages (JSON output)"
+    )
+    kb_parser.add_argument(
+        "--engine",
+        choices=("deterministic", "llm"),
+        default="deterministic",
+        help="deterministic (default): compile pages from stored data only. "
+        "llm: first synthesize lead summaries for concept pages with 2+ "
+        "scrolls — incremental, unchanged concepts cost nothing — then "
+        "compile (needs ANTHROPIC_API_KEY; model overridable via "
+        "SCROLLS_LLM_MODEL)",
     )
     subparsers.add_parser("list", help="List library items (JSON output)")
 
@@ -268,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init()
     if args.command == "kb":
-        return _cmd_kb()
+        return _cmd_kb(args.engine)
     if args.command == "list":
         return _cmd_list()
     if args.command == "mcp":
@@ -515,11 +525,10 @@ def _cmd_classify(
     if engine == "llm":
         # lazy: only the llm engine pays the import (ADR 0015)
         from scrolls.classify_llm import (
-            LLMAuthError,
-            LLMClassifyError,
             classify_item_llm,
             classify_items_llm_batch,
         )
+        from scrolls.llm import LLMAuthError, LLMError
 
         llm_model = resolve_llm_model(config)
 
@@ -544,7 +553,7 @@ def _cmd_classify(
         # failure (no credentials, rejected submission) aborts like auth does
         try:
             pairs = classify_items_llm_batch(items, model=llm_model)
-        except LLMClassifyError as exc:
+        except LLMError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     else:
@@ -554,7 +563,7 @@ def _cmd_classify(
     counts = {"classified": 0, "unmatched": 0, "failed": 0}
     for item, outcome in pairs:
         if engine == "llm":
-            if isinstance(outcome, LLMClassifyError):
+            if isinstance(outcome, LLMError):
                 counts["failed"] += 1
                 results.append(
                     {"id": item.id, "status": "failed", "error": str(outcome)}
@@ -569,7 +578,7 @@ def _cmd_classify(
                     # no credentials: every remaining item would fail the same way
                     print(json.dumps({"error": str(exc)}), file=sys.stderr)
                     return 1
-                except LLMClassifyError as exc:
+                except LLMError as exc:
                     counts["failed"] += 1
                     results.append(
                         {"id": item.id, "status": "failed", "error": str(exc)}
@@ -701,11 +710,35 @@ def _cmd_agent_install() -> int:
     return 0
 
 
-def _cmd_kb() -> int:
+def _cmd_kb(engine: str = "deterministic") -> int:
     paths = get_paths()
+    generation = {}
+    if engine == "llm":
+        # lazy: only the llm engine pays the import (ADR 0025)
+        from scrolls.kb_llm import generate_concept_summaries
+        from scrolls.llm import LLMAuthError
+
+        try:
+            config = load_config(paths.config_path)
+        except ConfigError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+        counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
+        results: list[dict] = []
+        if paths.db_path.exists():  # kb never creates a library
+            try:
+                counts, results = generate_concept_summaries(
+                    paths.db_path, model=resolve_llm_model(config)
+                )
+            except LLMAuthError as exc:
+                # summaries saved before the abort stay saved; the next
+                # run picks up where this one stopped
+                print(json.dumps({"error": str(exc)}), file=sys.stderr)
+                return 1
+        generation = {**counts, "results": results}
     result = compile_kb(paths)
-    print(json.dumps(dataclasses.asdict(result)))
-    return 0
+    print(json.dumps({**generation, **dataclasses.asdict(result)}))
+    return 1 if generation.get("failed") else 0
 
 
 def _cmd_list() -> int:

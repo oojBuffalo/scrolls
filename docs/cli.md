@@ -6,7 +6,7 @@ consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
 Every example below is real output captured from `scrolls 0.1.0`
-(schema version 5) on this branch — see
+(schema version 6) on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
 `tests/test_cli.py`.
@@ -20,8 +20,9 @@ claim cites the test that locks it; unless noted, tests live in
   Nothing is printed to stdout in that case
   (`test_detect_rejects_non_http_url`, `test_show_unknown_id_is_an_error`).
 - **Batch commands report per-item results.** `fetch`, `classify`, `md`,
-  `media`, `sync`, and `import fieldtheory` process every item (for
-  `sync`, every subscription), never abort mid-batch, and exit 1 if
+  `media`, `sync`, `import fieldtheory`, and `kb --engine llm` process
+  every item (for `sync`, every subscription; for `kb --engine llm`,
+  every qualifying concept), never abort mid-batch, and exit 1 if
   **any** item *failed* — skipped items do not
   fail the run (`test_fetch_continues_past_failures_and_exits_nonzero`,
   `test_fetch_all_skips_sources_without_adapter`,
@@ -607,22 +608,53 @@ SQLite FTS5 is criminally underrated for local search.
 
 ## Derived artifacts
 
-### `scrolls kb`
+### `scrolls kb [--engine ...]`
 
 Rebuild the interlinked library pages under `library/` from scratch
 (stale groups can't linger; other files there are untouched — ADR 0005,
-`tests/test_kb.py`). Output is the compile summary.
+`tests/test_kb.py`). Output is the compile summary. Concept pages lead
+with a stored synthesized summary when the LLM concept engine has
+written one — the default compile includes them without any model call
+(`test_kb_concept_page_leads_with_stored_summary`,
+`test_kb_llm_engine_synthesizes_then_compiles`).
 
 | Key | Meaning |
 | --- | --- |
 | `items` | rendered scrolls included |
 | `sources` / `categories` / `concepts` | group pages written per kind |
+| `summaries` | concept pages that carried a stored synthesized summary |
 | `pages` | total files written, including `index.md` |
+
+`--engine llm` (engine `kb-llm-v1`, ADR 0025) first brings the summary
+store up to date via the Anthropic API (network; needs
+`ANTHROPIC_API_KEY`; model from `[classify] llm_model`, overridable via
+`SCROLLS_LLM_MODEL` — `test_kb_llm_engine_uses_config_llm_model`), then
+compiles. Only concepts with 2+ scrolls qualify, and generation is
+incremental: a concept whose members haven't changed reports `current`
+without a model call, so re-running on an unchanged library costs
+nothing (`test_kb_llm_engine_rerun_is_free_when_nothing_changed`);
+summaries whose concept no longer qualifies are `pruned`
+(`test_generate_prunes_summaries_for_disqualified_concepts` in
+`tests/test_kb_llm.py`). The payload adds `generated` / `current` /
+`failed` / `pruned` and per-concept `results` ahead of the compile
+summary. Per-concept API failures are reported and the compile still
+runs, exit 1 (`test_kb_llm_engine_reports_failures_but_still_compiles`);
+missing credentials abort before compiling with the standard error
+envelope, keeping any summaries already saved
+(`test_kb_llm_engine_without_credentials_aborts_before_compiling`).
 
 ```console
 $ scrolls kb
-{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "pages": 4}
+{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "pages": 4}
 [exit 0]
+
+$ scrolls kb --engine llm     # no 2-scroll concepts yet: a zero run, no key needed
+{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "pages": 4}
+[exit 0]
+
+$ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set
+{"error": "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY (\"Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` headers to be explicitly omitted\")"}
+[exit 1]
 ```
 
 ### `scrolls agent install`
@@ -743,6 +775,7 @@ scrolls search "sqlite fts5"
 scrolls show x:1111
 scrolls related x:2222
 scrolls kb
+scrolls kb --engine llm                            # no 2-scroll concepts yet: zero run
 scrolls context "local search"
 scrolls agent install
 scrolls follow http://localhost:8943/feed.xml     # local server only
@@ -756,6 +789,8 @@ scrolls unfollow http://localhost:8943/feed.xml
 scrolls unfollow ea77c1d5239e                     # already gone: exit 1
 scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
 scrolls set x:1111 usefulness=high                # unknown field: exit 1
+scrolls set x:2222 "concepts=full-text search"    # a 2-scroll concept now exists
+scrolls kb --engine llm                           # without a key: exit 1
 ```
 
 (Stop the feed server with `kill %1` when done.)

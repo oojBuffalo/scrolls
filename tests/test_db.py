@@ -2,7 +2,8 @@
 
 v1 pinned the `meta` table with a schema version; v2 adds the `items`
 table (Pass 2 storage); v3 the FTS index; v4 the `subscriptions` table
-(feed sync, ADR 0017); v5 its HTTP cache validator columns (ADR 0019).
+(feed sync, ADR 0017); v5 its HTTP cache validator columns (ADR 0019);
+v6 the `concept_summaries` table (LLM concept engine, ADR 0025).
 `init_db` must bring both fresh and older databases to SCHEMA_VERSION.
 """
 
@@ -55,6 +56,38 @@ def test_init_db_creates_subscriptions_table(tmp_path):
         "etag",
         "last_modified",
     } <= _table_columns(db_path, "subscriptions")
+
+
+def test_init_db_creates_concept_summaries_table(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    assert {
+        "slug",
+        "display",
+        "summary",
+        "members_hash",
+        "engine",
+        "model",
+        "generated_at",
+    } <= _table_columns(db_path, "concept_summaries")
+
+
+def test_init_db_migrates_v5_database(tmp_path):
+    """A pre-summaries library gains the concept_summaries table (ADR 0025)."""
+    db_path = tmp_path / "db.sqlite"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        for version in (1, 2, 3, 4, 5):
+            for statement in MIGRATIONS[version]:
+                conn.execute(statement)
+        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '5')")
+    conn.close()
+
+    init_db(db_path)
+    assert read_schema_version(db_path) == SCHEMA_VERSION
+    assert "members_hash" in _table_columns(db_path, "concept_summaries")
+    assert "id" in _table_columns(db_path, "items")
 
 
 def test_init_db_migrates_v4_database(tmp_path):

@@ -184,6 +184,13 @@ one shape (`test_kb_compiles_index_source_and_category_pages`):
 - Concept pages merge spellings that slugify identically (`RAG` and
   `rag` are one page) and display the lexically smallest spelling
   (`test_kb_groups_concepts_across_spellings`).
+- A concept page *may* lead with a synthesized summary paragraph
+  between the H1 and the count line, when the LLM concept engine
+  (ADR [0025](adr/0025-llm-concept-summaries.md)) has stored one for
+  that slug (`test_kb_concept_page_leads_with_stored_summary`).
+  Consumers must treat the paragraph as optional: it appears only for
+  concepts with 2+ scrolls whose owner has run `scrolls kb --engine
+  llm`, and a plain recompile preserves it.
 
 ### The index
 

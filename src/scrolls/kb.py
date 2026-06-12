@@ -1,10 +1,13 @@
-"""Compiled library pages (IDEAS.md §9, §14 Pass 5; ADR 0005).
+"""Compiled library pages (IDEAS.md §9, §14 Pass 5; ADR 0005, ADR 0025).
 
 The KB compiler is deterministic: it rolls rendered scrolls up into an
 index plus per-source, per-category, and per-concept pages under
 `library/`, linking back to scroll files with relative Markdown links.
-Pages are honest rollups of frontmatter the pipeline already produced —
-no LLM synthesis (that is a future engine, like LLM classification).
+Pages are honest rollups of data the pipeline already produced — the
+compiler itself never calls a model. Concept pages additionally lead
+with a stored synthesized summary when the LLM concept engine
+(`kb_llm.py`, ADR 0025) has written one; the store lives here so the
+compiler reads it without importing the engine.
 
 The generated tree (`index.md`, `sources/`, `categories/`, `concepts/`)
 is rebuilt from scratch on every run so stale pages can't linger;
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +38,40 @@ class KbResult:
     sources: int
     categories: int
     concepts: int
+    summaries: int
     pages: int
+
+
+@dataclass(frozen=True)
+class ConceptSummary:
+    """One stored synthesized concept-page summary (ADR 0025)."""
+
+    slug: str
+    display: str
+    summary: str
+    members_hash: str
+    engine: str
+    model: str
+    generated_at: str
+
+
+def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
+    """Concept slug → {"display", "items"} over the given rendered items.
+
+    Spellings merge by slug; the smallest spelling is the display form.
+    Shared by the compiler and the LLM concept engine so both see the
+    same groups.
+    """
+    by_concept: dict[str, dict] = {}
+    for item in items:
+        for concept in dict.fromkeys(item.concepts):
+            slug = slugify(concept)
+            if not slug:
+                continue
+            entry = by_concept.setdefault(slug, {"display": concept, "items": []})
+            entry["display"] = min(entry["display"], concept)
+            entry["items"].append(item)
+    return by_concept
 
 
 def compile_kb(paths: LibraryPaths) -> KbResult:
@@ -45,24 +82,17 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     database means an uninitialized library: nothing is written.
     """
     if not paths.db_path.exists():
-        return KbResult(0, 0, 0, 0, 0)
+        return KbResult(0, 0, 0, 0, 0, 0)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
 
     by_source: dict[str, list[ScrollItem]] = {}
     by_category: dict[str, list[ScrollItem]] = {}
-    # concept spellings merge by slug; the smallest spelling is the display form
-    by_concept: dict[str, dict] = {}
     for item in items:
         by_source.setdefault(item.source, []).append(item)
         if item.category:
             by_category.setdefault(item.category, []).append(item)
-        for concept in dict.fromkeys(item.concepts):
-            slug = slugify(concept)
-            if not slug:
-                continue
-            entry = by_concept.setdefault(slug, {"display": concept, "items": []})
-            entry["display"] = min(entry["display"], concept)
-            entry["items"].append(item)
+    by_concept = group_concepts(items)
+    summaries = load_concept_summaries(paths.db_path)
 
     _clear_generated(paths.library_dir)
     paths.library_dir.mkdir(parents=True, exist_ok=True)
@@ -80,10 +110,14 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             f"Category: {category}", members, note=lambda i: i.source,
         )
         pages += 1
+    summarized = 0
     for slug, entry in by_concept.items():
+        stored = summaries.get(slug)
+        summarized += 1 if stored else 0
         _write_page(
             paths, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
+            lead=stored.summary if stored else None,
         )
         pages += 1
     _write_index(paths, items, by_source, by_category, by_concept)
@@ -93,6 +127,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         sources=len(by_source),
         categories=len(by_category),
         concepts=len(by_concept),
+        summaries=summarized,
         pages=pages,
     )
 
@@ -137,10 +172,13 @@ def _write_index(paths, items, by_source, by_category, by_concept) -> None:
 
 
 def _write_page(paths: LibraryPaths, relpath: str, title: str,
-                members: list[ScrollItem], note) -> None:
+                members: list[ScrollItem], note, lead: str | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
     ordered = sorted(members, key=lambda i: ((i.title or i.id).casefold(), i.id))
-    lines = [f"# {title}", "", f"{_count(len(members))}.", ""]
+    lines = [f"# {title}", ""]
+    if lead:  # synthesized concept summary (ADR 0025) leads the page
+        lines += [lead, ""]
+    lines += [f"{_count(len(members))}.", ""]
     lines += [_item_line(item, page_dir, note(item)) for item in ordered]
     target = paths.library_dir / relpath
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -163,3 +201,59 @@ def _clear_generated(library_dir: Path) -> None:
         index.unlink()
     for name in _GENERATED_DIRS:
         shutil.rmtree(library_dir / name, ignore_errors=True)
+
+
+# --- The concept-summary store (ADR 0025) ---------------------------------
+#
+# The LLM concept engine (kb_llm.py) writes rows; the compiler above only
+# reads them. Keeping the store on the compiler's side of the boundary
+# means kb_llm imports kb, never the reverse, and a plain `scrolls kb`
+# needs no model, key, or network.
+
+_SUMMARY_FIELDS = (
+    "slug", "display", "summary", "members_hash", "engine", "model", "generated_at"
+)
+
+
+def load_concept_summaries(db_path: Path) -> dict[str, ConceptSummary]:
+    """All stored summaries by slug; {} when none (or the db predates them)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_SUMMARY_FIELDS)} FROM concept_summaries"
+        ).fetchall()
+    except sqlite3.OperationalError:  # pre-v6 database opened read-only by kb
+        return {}
+    finally:
+        conn.close()
+    summaries = (ConceptSummary(*row) for row in rows)
+    return {summary.slug: summary for summary in summaries}
+
+
+def save_concept_summary(db_path: Path, summary: ConceptSummary) -> None:
+    """Insert or replace one stored summary."""
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute(
+                f"INSERT OR REPLACE INTO concept_summaries "
+                f"({', '.join(_SUMMARY_FIELDS)}) VALUES ({', '.join('?' * len(_SUMMARY_FIELDS))})",
+                tuple(getattr(summary, field) for field in _SUMMARY_FIELDS),
+            )
+    finally:
+        conn.close()
+
+
+def delete_concept_summaries(db_path: Path, slugs: list[str]) -> None:
+    """Drop stored summaries for concepts that no longer qualify."""
+    if not slugs:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                "DELETE FROM concept_summaries WHERE slug = ?",
+                [(slug,) for slug in slugs],
+            )
+    finally:
+        conn.close()

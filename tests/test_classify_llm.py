@@ -127,9 +127,15 @@ def test_unparseable_response_is_an_error():
         classify_item_llm(make_item(), complete=complete)
 
 
-def test_auth_error_is_a_classify_error_subclass():
-    # the CLI distinguishes them; one must imply the other
-    assert issubclass(LLMAuthError, LLMClassifyError)
+def test_llm_errors_share_one_base():
+    # The CLI aborts on LLMAuthError and reports other LLMErrors per item;
+    # every error an engine can raise must sit under the shared base so
+    # one `except LLMError` clause is always enough (scrolls/llm.py).
+    from scrolls.llm import LLMError
+
+    assert issubclass(LLMAuthError, LLMError)
+    assert issubclass(LLMClassifyError, LLMError)
+    assert not issubclass(LLMAuthError, LLMClassifyError)  # siblings since ADR 0025
 
 
 def test_real_completer_maps_missing_credentials_to_auth_error(monkeypatch):
