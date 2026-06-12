@@ -124,8 +124,9 @@ tweet URL dedupe against each other; re-imports skip existing items.
 `scrolls md` renders each fetched item to a durable Markdown scroll at
 `scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
 which YAML accepts) plus summary, extracted content, and links — and moves
-the item to stage `rendered`. The item's `markdown_path` is recorded so
-re-renders keep a stable path.
+the item to stage `rendered`. Media references (tweet photos, arXiv PDFs)
+land in frontmatter, and an item's extracted links join the Links section.
+The item's `markdown_path` is recorded so re-renders keep a stable path.
 
 `scrolls search` runs SQLite FTS5 over title, summary, and extracted text
 (BM25-ranked, title weighted highest) and returns hits with snippets; the

@@ -33,6 +33,7 @@ _FRONTMATTER_FIELDS = (
     "domain",
     "tags",
     "concepts",
+    "media",
     "content_hash",
     "provenance",
 )
@@ -60,6 +61,7 @@ def render_markdown(item: ScrollItem) -> str:
     links = [f"- Source: {item.url}"]
     if item.canonical_url and item.canonical_url != item.url:
         links.append(f"- Canonical: {item.canonical_url}")
+    links += [f"- {link}" for link in item.links]
     sections += ["## Links", "\n".join(links)]
 
     return "\n".join(lines) + "\n\n" + "\n\n".join(sections) + "\n"

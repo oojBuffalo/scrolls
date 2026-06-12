@@ -85,6 +85,30 @@ def test_render_markdown_shows_canonical_link_only_when_different():
     assert "- Canonical: https://en.wikipedia.org/wiki/SQLite" in different
 
 
+def test_render_markdown_lists_item_links_in_links_section():
+    markdown = render_markdown(
+        make_item(links=("https://sqlite.org/fts5.html", "https://example.com/post"))
+    )
+    body = markdown.split("---\n")[2]
+    links_section = body.split("## Links")[1]
+    assert "- Source: https://en.wikipedia.org/wiki/SQLite" in links_section
+    assert "- https://sqlite.org/fts5.html" in links_section
+    assert "- https://example.com/post" in links_section
+
+
+def test_render_markdown_media_round_trips_in_frontmatter():
+    media = ({"type": "photo", "url": "https://pbs.twimg.com/media/abc.png"},)
+    fields = parse_frontmatter(render_markdown(make_item(media=media)))
+    assert fields["media"] == [{"type": "photo", "url": "https://pbs.twimg.com/media/abc.png"}]
+
+
+def test_render_markdown_omits_empty_links_and_media():
+    markdown = render_markdown(make_item(links=(), media=()))
+    assert "media" not in parse_frontmatter(markdown)
+    links_section = markdown.split("## Links")[1]
+    assert links_section.strip().splitlines() == ["- Source: https://en.wikipedia.org/wiki/SQLite"]
+
+
 @pytest.fixture
 def library(monkeypatch, tmp_path):
     root = tmp_path / "scrolls-home"
