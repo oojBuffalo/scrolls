@@ -23,6 +23,7 @@ from typing import Callable
 from urllib.parse import urlencode
 from xml.etree import ElementTree
 
+from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import http
@@ -93,7 +94,7 @@ def fetch_item(
         item,
         title=_text(entry, "title") or item.title,
         author=", ".join(authors) or None,
-        published_at=_text(entry, "published") or item.published_at,
+        published_at=to_utc_iso(_text(entry, "published")) or item.published_at,
         canonical_url=_link_href(entry, rel="alternate") or entry_id or None,
         raw_text=feed_text,
         extracted_text=full_text,

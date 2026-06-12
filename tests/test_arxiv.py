@@ -85,7 +85,7 @@ def test_fetch_item_normalizes_entry_onto_item():
 
     assert fetched.title == "Mistral 7B"  # whitespace collapsed
     assert fetched.author == "Albert Q. Jiang, Alexandre Sablayrolles"
-    assert fetched.published_at == "2023-10-10T17:54:02Z"
+    assert fetched.published_at == "2023-10-10T17:54:02+00:00"  # Atom Z-date, normalized
     assert fetched.canonical_url == "http://arxiv.org/abs/2310.06825v1"
     assert fetched.summary == (
         "We introduce Mistral 7B, a 7-billion-parameter language model. "

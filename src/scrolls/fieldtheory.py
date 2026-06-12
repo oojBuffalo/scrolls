@@ -21,6 +21,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, make_item_id
 
 DEFAULT_ROOT = Path.home() / ".fieldtheory"
@@ -85,7 +86,7 @@ def _to_item(
         source="x",
         source_id=tweet_id,
         url=url,
-        saved_at=_iso(record.get("bookmarkedAt") or record.get("syncedAt")) or imported_at,
+        saved_at=to_utc_iso(record.get("bookmarkedAt") or record.get("syncedAt")) or imported_at,
         title=_make_title(handle, text, tweet_id),
         author=f"{name} (@{handle})" if name and handle else (name or handle or None),
         published_at=_parse_posted_at(record.get("postedAt")),
@@ -132,19 +133,6 @@ def _parse_posted_at(value: str | None) -> str | None:
         parsed = datetime.strptime(value, _POSTED_AT_FORMAT)
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
-
-
-def _iso(value: str | None) -> str | None:
-    """Normalize Field Theory's Z-suffixed timestamps to the library's ISO form."""
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 

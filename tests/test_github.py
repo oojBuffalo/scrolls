@@ -66,7 +66,7 @@ def test_fetch_item_with_readme():
 
     assert fetched.title == "oojBuffalo/scrolls"
     assert fetched.author == "oojBuffalo"
-    assert fetched.published_at == "2026-05-01T12:00:00Z"
+    assert fetched.published_at == "2026-05-01T12:00:00+00:00"  # REST Z-date, normalized
     assert fetched.canonical_url == "https://github.com/oojBuffalo/scrolls"
     assert fetched.summary == REPO["description"]
     assert fetched.extracted_text == README_TEXT

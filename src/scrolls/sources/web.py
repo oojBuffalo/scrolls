@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable
 
+from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import http
@@ -51,7 +52,7 @@ def fetch_item(item: ScrollItem, *, get_html: GetHtml | None = None) -> ScrollIt
         item,
         title=data.get("title") or item.title,
         author=data.get("author") or None,
-        published_at=data.get("date") or item.published_at,
+        published_at=to_utc_iso(data.get("date")) or item.published_at,
         canonical_url=data.get("source") or item.url,
         raw_text=extracted,
         extracted_text=text,

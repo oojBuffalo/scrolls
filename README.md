@@ -312,8 +312,11 @@ have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
 (ADR 0019), on both the shell and MCP interfaces (ADR 0020), with the
-Batches API halving bulk classification cost (ADR 0022) and item
-identity robust to tracking-param junk (ADR 0023). Next candidate:
-uniform UTC ISO 8601 `published_at` across adapters (ADR 0021).
+Batches API halving bulk classification cost (ADR 0022), item
+identity robust to tracking-param junk (ADR 0023), and `published_at`
+one uniform UTC ISO 8601 vocabulary from every writer (ADR 0024).
+Next candidate: an LLM concept engine for KB pages — the "fancy
+version" of IDEAS.md §9 that ADR 0005's deterministic compiler
+deliberately left room for.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

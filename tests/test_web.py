@@ -48,7 +48,7 @@ def test_fetch_item_extracts_article_onto_item():
 
     assert fetched.title == "How SQLite FTS Works"
     assert fetched.author == "Jane Dev"
-    assert fetched.published_at == "2025-03-01"
+    assert fetched.published_at == "2025-03-01T00:00:00+00:00"  # trafilatura date, normalized
     assert fetched.canonical_url == "https://blog.example.com/sqlite-fts"
     assert "inverted index" in fetched.extracted_text
     assert fetched.summary == "A walkthrough of FTS5 internals."
@@ -82,7 +82,7 @@ def test_fetch_item_keeps_seeded_published_at_when_page_has_none():
 def test_fetch_item_page_date_beats_seeded_published_at():
     item = make_item(published_at="2025-02-28T00:00:00+00:00")
     fetched = fetch_item(item, get_html=lambda url: ARTICLE_HTML)
-    assert fetched.published_at == "2025-03-01"
+    assert fetched.published_at == "2025-03-01T00:00:00+00:00"
 
 
 def test_fetch_item_requests_the_item_url():

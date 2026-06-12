@@ -68,11 +68,11 @@ represent an item without them.
 | `id` | always | string | stable item id: `source:source_id`, else `source:` + 12-hex URL hash |
 | `source` | always | string | adapter name: `wikipedia`, `web`, `youtube`, `github`, `arxiv`, `x`, `pdf` |
 | `source_id` | when the source has local ids | string | platform-local identifier, e.g. `en:SQLite`, a tweet id |
-| `url` | always | string | the URL the item was saved as |
+| `url` | always | string | the URL the item was saved as, normalized at registration (ADR 0023) |
 | `canonical_url` | when an adapter resolved one | string | platform-canonical form of the URL |
 | `title` | once fetched | string | item title from the platform |
 | `author` | when the platform exposes one | string | author or channel display name |
-| `published_at` | when known | string | ISO 8601 publication time |
+| `published_at` | when known | string | UTC ISO 8601 publication time, one shape from every writer (ADR 0024) |
 | `saved_at` | always | string | ISO 8601 time the item entered the library |
 | `category` | once classified | string | classification from the rules engine or an import join |
 | `domain` | once assigned | string | finer topic area; today only the Field Theory import sets it |

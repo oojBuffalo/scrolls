@@ -304,7 +304,10 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **Uniform adapter `published_at`** — sync-seeded dates are UTC ISO
-  8601, but adapter-written values still vary with what each source
-  emits (trafilatura's `YYYY-MM-DD`, GitHub's `Z` suffix); normalizing
-  them is a separate decision if sorting ever needs it (ADR 0021).
+- **LLM concept engine for KB pages** — the deterministic compiler
+  (ADR 0005) groups scrolls by frontmatter concepts; the "fancy
+  version" of IDEAS.md §9 synthesizes concept-page summaries with an
+  LLM, joining the opt-in LLM tier alongside `classify --engine llm`.
+- **Doctor-style dedupe** — pre-normalization libraries can hold a
+  junk-URL item that a clean re-add would duplicate; a repair command
+  is the remedy if real libraries ever surface this (ADR 0023).

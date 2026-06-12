@@ -24,12 +24,12 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree
 
+from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, insert_item, make_item_id
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.pipeline import ensure_library
@@ -63,7 +63,7 @@ class Subscription:
 class FeedEntry:
     url: str
     title: str | None = None
-    published: str | None = None  # UTC ISO 8601, normalized by _parse_date
+    published: str | None = None  # UTC ISO 8601, normalized by dates.to_utc_iso
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ def parse_feed(text: str) -> Feed:
                     title=_clean(entry.findtext(f"{_ATOM}title")),
                     # Atom requires <updated>; <published> is optional but
                     # is the actual publication time when present
-                    published=_parse_date(
+                    published=to_utc_iso(
                         entry.findtext(f"{_ATOM}published")
                         or entry.findtext(f"{_ATOM}updated")
                     ),
@@ -145,7 +145,7 @@ def parse_feed(text: str) -> Feed:
                 FeedEntry(
                     url=link.strip(),
                     title=_clean(item.findtext("title")),
-                    published=_parse_date(item.findtext("pubDate")),
+                    published=to_utc_iso(item.findtext("pubDate")),
                 )
                 for item in channel.findall("item")
                 if (link := item.findtext("link")) and link.strip()
@@ -405,28 +405,6 @@ def _clean(text: str | None) -> str | None:
     """Whitespace-collapsed text, or None when empty/absent."""
     collapsed = " ".join((text or "").split())
     return collapsed or None
-
-
-def _parse_date(text: str | None) -> str | None:
-    """A feed date normalized to UTC ISO 8601, or None when absent/unparseable.
-
-    Accepts Atom's RFC 3339 dates (fromisoformat) and RSS 2.0's RFC 822
-    pubDates (parsedate_to_datetime); naive datetimes are assumed UTC.
-    One feed format must not leak its date syntax into `published_at`,
-    and an honest None beats storing a feed's garbage.
-    """
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return None
-    for parse in (datetime.fromisoformat, parsedate_to_datetime):
-        try:
-            parsed = parse(cleaned)
-        except (ValueError, TypeError):
-            continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
-    return None
 
 
 _get_text = http.get_text
