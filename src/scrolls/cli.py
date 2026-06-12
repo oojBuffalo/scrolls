@@ -30,6 +30,7 @@ from scrolls.items import (
     update_item,
 )
 from scrolls.kb import compile_kb
+from scrolls.media import capture_media, has_pending_media
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
@@ -142,6 +143,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Render one item by id, re-rendering even if already rendered; "
         "default is every item at stage 'fetched'",
     )
+    media_parser = subparsers.add_parser(
+        "media",
+        help="Download items' media references into media/ (JSON output)",
+    )
+    media_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Capture one item's media by id, re-downloading even if captured; "
+        "default is every item with uncaptured media references",
+    )
+
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
 
     related_parser = subparsers.add_parser(
@@ -200,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list()
     if args.command == "md":
         return _cmd_md(args.id)
+    if args.command == "media":
+        return _cmd_media(args.id)
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "related":
@@ -482,6 +496,54 @@ def _cmd_md(item_id: str | None) -> int:
         results.append(
             {"id": rendered.id, "status": "rendered", "path": rendered.markdown_path}
         )
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
+
+
+def _cmd_media(item_id: str | None) -> int:
+    paths = get_paths()
+    if item_id is not None:
+        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        if item is None:
+            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            return 1
+        # By id: explicit re-capture, like `fetch <id>` refetches.
+        items, force = [item], True
+    else:
+        everything = list_items(paths.db_path) if paths.db_path.exists() else []
+        items = [item for item in everything if has_pending_media(paths, item)]
+        force = False
+
+    results = []
+    counts = {"captured": 0, "skipped": 0, "failed": 0}
+    for item in items:
+        updated, ref_results = capture_media(paths, item, force=force)
+        files = [r["path"] for r in ref_results if r["status"] == "captured"]
+        errors = [r["error"] for r in ref_results if r["status"] == "failed"]
+        if updated is not item:
+            update_item(paths.db_path, updated)
+            if updated.markdown_path:
+                # keep the rendered scroll's frontmatter in sync with the DB
+                rendered = write_scroll(paths, updated)
+                update_item(paths.db_path, rendered)
+        if errors:
+            counts["failed"] += 1
+            results.append(
+                {"id": item.id, "status": "failed", "error": errors[0], "files": files}
+            )
+        elif files:
+            counts["captured"] += 1
+            results.append({"id": item.id, "status": "captured", "files": files})
+        else:
+            counts["skipped"] += 1
+            results.append(
+                {
+                    "id": item.id,
+                    "status": "skipped",
+                    "reason": "no media references to capture",
+                }
+            )
 
     print(json.dumps({**counts, "results": results}))
     return 1 if counts["failed"] else 0

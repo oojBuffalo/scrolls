@@ -17,3 +17,4 @@ they add up to.
 | [0008](0008-arxiv-adapter-atom-abstracts.md) | arXiv via the Atom export API; abstract becomes the summary | taxonomy codes go to `tags`; name mapping deferred |
 | [0009](0009-fieldtheory-import.md) | X bookmarks arrive via Field Theory import, not native sync | `import fieldtheory`; JSONL lines preserved in `raw_text`; ids dedupe against `scrolls add` |
 | [0010](0010-arxiv-pdf-full-text-pypdf.md) | arXiv PDF full text extracted inline with pypdf | PDF failure degrades to the abstract-only scroll |
+| [0011](0011-media-capture-command.md) | Media capture is an explicit `scrolls media` command, not part of fetch | media refs gain a root-relative `path`; `media/` tree is cache, not canon |

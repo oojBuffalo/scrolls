@@ -145,7 +145,13 @@ _EXAMPLE_ITEM = ScrollItem(
     category="paper",
     tags=("cs.CL", "cs.LG"),
     links=("https://arxiv.org/pdf/1706.03762",),
-    media=("https://arxiv.org/pdf/1706.03762",),
+    media=(
+        {
+            "type": "pdf",
+            "url": "https://arxiv.org/pdf/1706.03762",
+            "path": "media/arxiv/1706-03762-1.pdf",
+        },
+    ),
     content_hash="sha256:6d2e1066c2f3aae40f4ea846cebee5ee5cdc77a2f9bb582a0f5a526f70b48aaa",
     markdown_path="scrolls/arxiv/attention-is-all-you-need.md",
     provenance={

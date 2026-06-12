@@ -24,6 +24,8 @@ A library holds three kinds of generated artifact, all under the root
   navigation layer (written by `src/scrolls/kb.py`).
 - **Agent instruction files** — `agents/<tool>/…`: ready-made usage
   docs for coding agents (written by `src/scrolls/agents.py`).
+- **Captured media files** — `media/<source>/…`: downloaded copies of
+  items' media references (written by `src/scrolls/media.py`).
 
 The SQLite database stays the canonical index (IDEAS.md §3): every file
 here can be rebuilt from it, and nothing should be inferred from a
@@ -76,7 +78,7 @@ represent an item without them.
 | `domain` | once assigned | string | finer topic area; today only the Field Theory import sets it |
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
 | `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories |
-| `media` | when non-empty | array of strings | media and attachment URLs, e.g. an arXiv PDF |
+| `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file |
 | `content_hash` | once fetched | string | `sha256:<hex>` over the fetched content |
 | `provenance` | once fetched | object | `adapter`, `fetched_at`, `extraction_method` |
 
@@ -123,7 +125,7 @@ published_at: "2017-06-12T17:57:34+00:00"
 saved_at: "2026-06-12T08:00:00+00:00"
 category: "paper"
 tags: ["cs.CL", "cs.LG"]
-media: ["https://arxiv.org/pdf/1706.03762"]
+media: [{"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": "media/arxiv/1706-03762-1.pdf"}]
 content_hash: "sha256:6d2e1066c2f3aae40f4ea846cebee5ee5cdc77a2f9bb582a0f5a526f70b48aaa"
 provenance: {"adapter": "arxiv", "fetched_at": "2026-06-12T08:00:05+00:00", "extraction_method": "arxiv-atom+pypdf"}
 ---
@@ -224,6 +226,20 @@ the second fixture in `tests/test_docs.py`,
 - [SQLite](../scrolls/wikipedia/sqlite.md)
 - [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md)
 ```
+
+## Captured media files: `media/`
+
+`scrolls media` (ADR [0011](adr/0011-media-capture-command.md))
+downloads items' media references — arXiv PDFs, youtube thumbnails, x
+photos — to `media/<source>/<id-slug>-<n><ext>`, where `<n>` is the
+ref's 1-based position in the item's `media` array and the extension
+comes from the URL path, else from the ref's `type`
+(`tests/test_media.py`). The file's root-relative location is recorded
+back onto the ref as `path` (the frontmatter example above shows the
+result), and a recorded `path` is reused on re-capture, so locations are
+as stable as scroll paths. Files are plain downloads — no
+transformation — and can always be re-fetched from the recorded `url`,
+so the media tree is cache, not canon.
 
 ## Agent instruction files: `agents/`
 

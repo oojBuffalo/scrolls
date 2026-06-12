@@ -20,10 +20,11 @@ claim cites the test that locks it; unless noted, tests live in
   Nothing is printed to stdout in that case
   (`test_detect_rejects_non_http_url`, `test_show_unknown_id_is_an_error`).
 - **Batch commands report per-item results.** `fetch`, `classify`, `md`,
-  and `import fieldtheory` process every item, never abort mid-batch, and
-  exit 1 if **any** item *failed* — skipped items do not fail the run
-  (`test_fetch_continues_past_failures_and_exits_nonzero`,
-  `test_fetch_all_skips_sources_without_adapter`).
+  `media`, and `import fieldtheory` process every item, never abort
+  mid-batch, and exit 1 if **any** item *failed* — skipped items do not
+  fail the run (`test_fetch_continues_past_failures_and_exits_nonzero`,
+  `test_fetch_all_skips_sources_without_adapter`,
+  `test_media_continues_past_failures_and_exits_nonzero`).
 - **`ingest` is the asymmetry to know about:** its failure payload goes to
   *stdout* (with an `error` key merged into the normal payload) plus
   exit 1, because the item was still registered
@@ -38,7 +39,7 @@ claim cites the test that locks it; unless noted, tests live in
   `arxiv:1706.03762`, `x:1111`), else `source:` + a 12-hex-char SHA-256
   of the URL (`tests/test_items.py`).
 - **Stages**: `detected → fetched → rendered`, advanced by
-  `fetch` and `md`; `classify` and `kb` are stage-neutral.
+  `fetch` and `md`; `classify`, `media`, and `kb` are stage-neutral.
 
 ## Library lifecycle
 
@@ -77,8 +78,9 @@ $ scrolls status        # after init
 
 ### `scrolls paths`
 
-Print every library path (`test_paths_prints_layout_json`). `items` and
-`media` are reserved directories, currently unused.
+Print every library path (`test_paths_prints_layout_json`). `items` is a
+reserved directory, currently unused; `media` holds files downloaded by
+`scrolls media`.
 
 ```console
 $ scrolls paths
@@ -245,6 +247,41 @@ $ scrolls md
 [exit 0]
 ```
 
+### `scrolls media [id]`
+
+No argument: download every uncaptured media reference — arXiv PDFs,
+youtube thumbnails, x photos — to `media/<source>/<id-slug>-<n><ext>`
+(network), recording each file's root-relative path on the item's media
+ref and re-rendering its scroll so frontmatter points at the local file
+(`test_media_batch_captures_pending_refs_and_rerenders`). Captured refs
+are never re-downloaded by a batch run, and a deleted file is healed on
+the next one (`test_media_batch_is_idempotent`,
+`tests/test_media.py`). With an id: explicit re-capture, overwriting the
+recorded paths (`test_media_by_id_recaptures_explicitly`); an item with
+nothing to capture is a *skip*, not a failure
+(`test_media_by_id_without_refs_reports_skip`). One failed download
+fails its item but never the batch, and refs captured before the failure
+keep their files (`test_media_continues_past_failures_and_exits_nonzero`).
+
+| Key | Meaning |
+| --- | --- |
+| `captured` / `skipped` / `failed` | batch counts (per item) |
+| `results[]` | per-item `{id, status, ...}`; `files` lists captured root-relative paths, `error` is the first failed ref's message, `reason` explains a skip |
+
+```console
+$ scrolls media                       # one fetched arXiv item is pending
+{"captured": 1, "skipped": 0, "failed": 0, "results": [{"id": "arxiv:1706.03762", "status": "captured", "files": ["media/arxiv/1706-03762-1.pdf"]}]}
+[exit 0]
+
+$ scrolls media                       # idempotent: nothing pending now
+{"captured": 0, "skipped": 0, "failed": 0, "results": []}
+[exit 0]
+
+$ scrolls media x:1111                # this bookmark has no media refs
+{"captured": 0, "skipped": 1, "failed": 0, "results": [{"id": "x:1111", "status": "skipped", "reason": "no media references to capture"}]}
+[exit 0]
+```
+
 ## Reading the library
 
 ### `scrolls list`
@@ -389,9 +426,9 @@ $ scrolls agent install
 
 ## Reproducing these examples
 
-Everything above except the two marked network calls (`ingest` of a
-Wikipedia page, `fetch arxiv:1706.03762`) runs fully offline. Scratch
-setup:
+Everything above except the three marked network calls (`ingest` of a
+Wikipedia page, `fetch arxiv:1706.03762`, and the `scrolls media` run
+that downloads its PDF) runs fully offline. Scratch setup:
 
 ```bash
 DEMO=$(mktemp -d)
@@ -427,6 +464,10 @@ scrolls add https://arxiv.org/abs/1706.03762
 scrolls list
 scrolls classify
 scrolls md
+scrolls fetch arxiv:1706.03762                     # network
+scrolls media                                      # network: downloads the PDF
+scrolls media                                      # idempotent, offline
+scrolls media x:1111                               # skip: no media refs
 scrolls search "sqlite fts5"
 scrolls show x:1111
 scrolls related x:2222

@@ -9,7 +9,7 @@ import scrolls.sources.youtube as youtube
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
 from scrolls.paths import get_paths
-from scrolls.items import get_item, update_item
+from scrolls.items import ScrollItem, get_item, insert_item, update_item
 
 
 @pytest.fixture
@@ -868,3 +868,160 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     for entry in payload:
         assert entry["stage"] == "detected"
         assert set(entry) == {"id", "source", "url", "title", "stage", "saved_at"}
+
+
+# --- scrolls media (ADR 0011) ---
+
+
+def _seed_fetched_item_with_media(item_id="arxiv:1706.03762", **overrides):
+    """Insert a fetched item carrying one media ref; library must exist."""
+    base = dict(
+        id=item_id,
+        source=item_id.split(":", 1)[0],
+        source_id=item_id.split(":", 1)[1],
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T08:00:00+00:00",
+        title="Attention Is All You Need",
+        summary="We propose the Transformer.",
+        media=({"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762"},),
+        stage="fetched",
+    )
+    base.update(overrides)
+    item = ScrollItem(**base)
+    insert_item(get_paths().db_path, item)
+    return item
+
+
+def test_media_batch_captures_pending_refs_and_rerenders(scrolls_home, monkeypatch, capsys):
+    import scrolls.media as media
+
+    main(["init"])
+    _seed_fetched_item_with_media()
+    main(["md"])
+    capsys.readouterr()
+    monkeypatch.setattr(media, "_get_bytes", lambda url: b"%PDF-1.4 fake")
+
+    exit_code = main(["media"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "captured": 1,
+        "skipped": 0,
+        "failed": 0,
+        "results": [
+            {
+                "id": "arxiv:1706.03762",
+                "status": "captured",
+                "files": ["media/arxiv/1706-03762-1.pdf"],
+            }
+        ],
+    }
+    assert (
+        scrolls_home / "media" / "arxiv" / "1706-03762-1.pdf"
+    ).read_bytes() == b"%PDF-1.4 fake"
+    stored = get_item(get_paths().db_path, "arxiv:1706.03762")
+    assert stored.media[0]["path"] == "media/arxiv/1706-03762-1.pdf"
+    # the rendered scroll's frontmatter now points at the local file
+    scroll = (scrolls_home / "scrolls" / "arxiv" / "attention-is-all-you-need.md").read_text()
+    assert '"path": "media/arxiv/1706-03762-1.pdf"' in scroll
+
+
+def test_media_batch_is_idempotent(scrolls_home, monkeypatch, capsys):
+    import scrolls.media as media
+
+    main(["init"])
+    _seed_fetched_item_with_media()
+    monkeypatch.setattr(media, "_get_bytes", lambda url: b"%PDF-1.4 fake")
+    main(["media"])
+    capsys.readouterr()
+
+    def boom(url):
+        raise AssertionError("captured refs must not be re-downloaded")
+
+    monkeypatch.setattr(media, "_get_bytes", boom)
+    exit_code = main(["media"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"captured": 0, "skipped": 0, "failed": 0, "results": []}
+
+
+def test_media_by_id_recaptures_explicitly(scrolls_home, monkeypatch, capsys):
+    import scrolls.media as media
+
+    main(["init"])
+    _seed_fetched_item_with_media()
+    monkeypatch.setattr(media, "_get_bytes", lambda url: b"version 1")
+    main(["media"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(media, "_get_bytes", lambda url: b"version 2")
+    exit_code = main(["media", "arxiv:1706.03762"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["captured"] == 1
+    assert (
+        scrolls_home / "media" / "arxiv" / "1706-03762-1.pdf"
+    ).read_bytes() == b"version 2"
+
+
+def test_media_by_id_unknown_item_is_an_error(scrolls_home, capsys):
+    exit_code = main(["media", "arxiv:nope"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+def test_media_by_id_without_refs_reports_skip(scrolls_home, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["media", "wikipedia:en:SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "captured": 0,
+        "skipped": 1,
+        "failed": 0,
+        "results": [
+            {
+                "id": "wikipedia:en:SQLite",
+                "status": "skipped",
+                "reason": "no media references to capture",
+            }
+        ],
+    }
+
+
+def test_media_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypatch, capsys):
+    import scrolls.media as media
+
+    main(["init"])
+    _seed_fetched_item_with_media()
+    _seed_fetched_item_with_media(
+        item_id="x:1111",
+        url="https://x.com/karpathy/status/1111",
+        title="SQLite FTS5 is criminally underrated.",
+        summary=None,
+        media=({"type": "photo", "url": "https://pbs.twimg.com/bad"},),
+    )
+    capsys.readouterr()
+
+    def get_bytes(url):
+        if "bad" in url:
+            raise OSError("connection refused")
+        return b"good bytes"
+
+    monkeypatch.setattr(media, "_get_bytes", get_bytes)
+    exit_code = main(["media"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["captured"] == 1
+    assert payload["failed"] == 1
+    by_id = {entry["id"]: entry for entry in payload["results"]}
+    assert by_id["arxiv:1706.03762"]["status"] == "captured"
+    assert by_id["x:1111"]["status"] == "failed"
+    assert "connection refused" in by_id["x:1111"]["error"]
+    # the failed ref stays pending: no path recorded, nothing on disk
+    stored = get_item(get_paths().db_path, "x:1111")
+    assert "path" not in stored.media[0]

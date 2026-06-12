@@ -45,7 +45,7 @@ not implemented yet.
   library/        # compiled interlinked KB (index, sources, categories, concepts)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
   items/          # reserved: raw record exports (currently unused)
-  media/          # reserved: thumbnails, transcripts, attachments (currently unused)
+  media/          # captured media files (PDFs, thumbnails, photos), per source
   config.toml     # placeholder written by init; no settings are read yet
 ```
 
@@ -84,6 +84,8 @@ uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
 uv run scrolls md <id>        # (re)render one item by id, as JSON
+uv run scrolls media          # download uncaptured media refs into media/, as JSON
+uv run scrolls media <id>     # (re)capture one item's media by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
@@ -141,6 +143,16 @@ the item to stage `rendered`. Media references (tweet photos, arXiv PDFs)
 land in frontmatter, and an item's extracted links join the Links section.
 The item's `markdown_path` is recorded so re-renders keep a stable path.
 
+`scrolls media` downloads items' media references — arXiv PDFs, youtube
+thumbnails, tweet photos — to `media/<source>/`, records each file's
+root-relative path back on the item's media ref, and re-renders the
+item's scroll so frontmatter points at the local file. Batch runs only
+capture refs without a file on disk (re-downloading anything deleted);
+`scrolls media <id>` explicitly re-captures one item. Failed downloads
+fail the run but never abort the batch, and the recorded URL always
+allows re-capture — the media tree is cache, not canon (see
+`docs/adr/0011-media-capture-command.md`).
+
 `scrolls search` runs SQLite FTS5 over title, summary, and extracted text
 (BM25-ranked, title weighted highest) and returns hits with snippets; the
 index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
@@ -195,12 +207,12 @@ can follow up with `scrolls show <id>` or read the full scroll.
 tools' config trees; copy or symlink the files where your tool expects
 them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
-Item stages so far: `detected → fetched → rendered`; classification and
-KB compilation are stage-neutral. With the IDEAS.md §6 MVP source trio
-(wikipedia, web, youtube) plus github, arxiv, and x (via Field Theory
-import), search, rules classification, the compiled library, context
-bundles, and agent install, all five IDEAS.md §14 MVP passes have a
-working first version. Next slices: an LLM classification/concept
-engine, media capture, or an MCP server.
+Item stages so far: `detected → fetched → rendered`; classification,
+media capture, and KB compilation are stage-neutral. With the IDEAS.md
+§6 MVP source trio (wikipedia, web, youtube) plus github, arxiv, and x
+(via Field Theory import), search, rules classification, media capture,
+the compiled library, context bundles, and agent install, all five
+IDEAS.md §14 MVP passes have a working first version. Next slices: an
+LLM classification/concept engine or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

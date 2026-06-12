@@ -23,6 +23,7 @@ each command moves items between stages or derives artifacts from them.
                   │   import fieldtheory┘                  │
                   │                                        ▼
                   │            classify (stage-neutral, sets category)
+                  │            media    (stage-neutral, downloads media refs)
                   │            kb       (stage-neutral, compiles library/)
                   │
                   └─ sources without a fetch adapter stay 'detected'
@@ -36,17 +37,19 @@ each command moves items between stages or derives artifacts from them.
 - `scrolls md [id]` renders each fetched item to a Markdown scroll at
   `scrolls/<source>/<slug>.md` and moves it to `rendered`
   (`src/scrolls/render.py`).
-- `scrolls classify [id]` and `scrolls kb` are stage-neutral engines:
-  classification assigns `category` without advancing the stage, and the
-  KB compiler rebuilds `library/` from whatever is rendered
-  (`src/scrolls/classify.py`, `src/scrolls/kb.py`).
+- `scrolls classify [id]`, `scrolls media [id]`, and `scrolls kb` are
+  stage-neutral engines: classification assigns `category` without
+  advancing the stage, media capture downloads items' media refs into
+  `media/<source>/`, and the KB compiler rebuilds `library/` from
+  whatever is rendered (`src/scrolls/classify.py`,
+  `src/scrolls/media.py`, `src/scrolls/kb.py`).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
   (`src/scrolls/fieldtheory.py`, ADR 0009).
 
-Per-item failures never abort a batch: `fetch` and `md` report each
-failure in their JSON output and continue (`tests/test_cli.py`).
+Per-item failures never abort a batch: `fetch`, `md`, and `media` report
+each failure in their JSON output and continue (`tests/test_cli.py`).
 
 ## Storage: SQLite is the index, Markdown is the artifact
 
@@ -83,7 +86,7 @@ $SCROLLS_HOME (default ~/.scrolls)
   library/       # compiled KB: index.md, sources/, categories/, concepts/
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
   items/         # reserved (raw record exports; currently unused)
-  media/         # reserved (thumbnails, attachments; currently unused)
+  media/         # captured media files (PDFs, thumbnails, photos), per source
   config.toml    # placeholder written by init; no settings are read yet
 ```
 
@@ -186,6 +189,12 @@ choice (ADRs 0004, 0005).
   per-source, per-category, and per-concept pages from scratch each run
   so stale groups can't linger; other files under `library/` are left
   alone. Concept pages merge spellings by slug (`tests/test_kb.py`).
+- **Media capture** (`media.py`, ADR 0011) — downloads items' media
+  refs to `media/<source>/<id-slug>-<n><ext>`, records each file's
+  root-relative `path` on the ref (reused on re-capture, so locations
+  are stable), and re-renders the scroll so frontmatter points at local
+  files. Batch runs capture only refs missing from disk; `media <id>`
+  re-captures explicitly (`tests/test_media.py`).
 - **Context bundles** (`context.py`, IDEAS.md §11) — `scrolls context`
   emits Markdown (the bundle *is* the artifact agents drop into
   context), unlike the data commands; errors stay JSON on stderr. Each
@@ -230,8 +239,6 @@ Next steps already identified in decision records, in no required order:
 - **arXiv taxonomy names** — taxonomy codes (`cs.CL`) land in `tags`;
   mapping them to human-readable concept names via a bundled taxonomy
   table was explicitly deferred (ADR 0008).
-- **Media capture** — `media/` exists and arXiv records PDF refs in
-  `media`, but nothing downloads artifacts yet.
 - **MCP server** — IDEAS.md §10 sequences it after the shell interface,
   which is now in place.
 - **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
