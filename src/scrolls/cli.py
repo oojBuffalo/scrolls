@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 
 from scrolls import __version__
 from scrolls.db import init_db, read_schema_version
-from scrolls.paths import get_paths
+from scrolls.items import ScrollItem, get_item, insert_item, list_items, make_item_id
+from scrolls.paths import LibraryPaths, get_paths
 from scrolls.sources.detect import detect_source
 
 CONFIG_TEMPLATE = """\
@@ -29,21 +31,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"scrolls {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    add_parser = subparsers.add_parser(
+        "add", help="Register a URL as a library item, unfetched (JSON output)"
+    )
+    add_parser.add_argument("url", help="URL to add")
+
     detect_parser = subparsers.add_parser(
         "detect", help="Detect which source adapter handles a URL (JSON output)"
     )
     detect_parser.add_argument("url", help="URL to inspect")
 
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
+    subparsers.add_parser("list", help="List library items (JSON output)")
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
     args = parser.parse_args(argv)
 
+    if args.command == "add":
+        return _cmd_add(args.url)
     if args.command == "detect":
         return _cmd_detect(args.url)
     if args.command == "init":
         return _cmd_init()
+    if args.command == "list":
+        return _cmd_list()
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "status":
@@ -51,8 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
-def _cmd_init() -> int:
-    paths = get_paths()
+def _ensure_library(paths: LibraryPaths) -> bool:
+    """Create the library skeleton if missing; return True if it already existed."""
     existed_before = paths.db_path.exists() and paths.config_path.exists() and all(
         d.is_dir() for d in paths.subdirs
     )
@@ -62,7 +74,68 @@ def _cmd_init() -> int:
     init_db(paths.db_path)
     if not paths.config_path.exists():
         paths.config_path.write_text(CONFIG_TEMPLATE)
+    return existed_before
+
+
+def _cmd_init() -> int:
+    paths = get_paths()
+    existed_before = _ensure_library(paths)
     print(json.dumps({"root": str(paths.root), "created": not existed_before}))
+    return 0
+
+
+def _cmd_add(url: str) -> int:
+    try:
+        detected = detect_source(url)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    paths = get_paths()
+    _ensure_library(paths)
+    cleaned = url.strip()
+    item = ScrollItem(
+        id=make_item_id(detected.source, detected.source_id, cleaned),
+        source=detected.source,
+        source_id=detected.source_id,
+        url=cleaned,
+        saved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    created = insert_item(paths.db_path, item)
+    if not created:
+        item = get_item(paths.db_path, item.id) or item
+    print(
+        json.dumps(
+            {
+                "id": item.id,
+                "source": item.source,
+                "source_id": item.source_id,
+                "url": item.url,
+                "stage": item.stage,
+                "created": created,
+            }
+        )
+    )
+    return 0
+
+
+def _cmd_list() -> int:
+    paths = get_paths()
+    items = list_items(paths.db_path) if paths.db_path.exists() else []
+    print(
+        json.dumps(
+            [
+                {
+                    "id": item.id,
+                    "source": item.source,
+                    "url": item.url,
+                    "title": item.title,
+                    "stage": item.stage,
+                    "saved_at": item.saved_at,
+                }
+                for item in items
+            ]
+        )
+    )
     return 0
 
 

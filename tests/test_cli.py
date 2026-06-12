@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scrolls.cli import main
+from scrolls.db import SCHEMA_VERSION
 
 
 @pytest.fixture
@@ -103,5 +104,63 @@ def test_status_after_init(scrolls_home, capsys):
     assert payload == {
         "initialized": True,
         "root": str(scrolls_home),
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
     }
+
+
+def test_add_persists_detected_item(scrolls_home, capsys):
+    exit_code = main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "youtube:dQw4w9WgXcQ",
+        "source": "youtube",
+        "source_id": "dQw4w9WgXcQ",
+        "url": "https://youtu.be/dQw4w9WgXcQ",
+        "stage": "detected",
+        "created": True,
+    }
+    # add auto-initializes the library skeleton
+    assert (scrolls_home / "db.sqlite").is_file()
+    assert (scrolls_home / "config.toml").is_file()
+
+
+def test_add_same_video_via_other_url_form_is_deduped(scrolls_home, capsys):
+    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    capsys.readouterr()
+
+    exit_code = main(["add", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] is False
+    assert payload["id"] == "youtube:dQw4w9WgXcQ"
+    assert payload["url"] == "https://youtu.be/dQw4w9WgXcQ"  # first record wins
+
+
+def test_add_rejects_non_http_url(scrolls_home, capsys):
+    exit_code = main(["add", "not-a-url"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+    assert not scrolls_home.exists()  # no library created on failure
+
+
+def test_list_before_init_prints_empty_array(scrolls_home, capsys):
+    exit_code = main(["list"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_after_adds_prints_summaries(scrolls_home, capsys):
+    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["list"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {entry["id"] for entry in payload} == {"youtube:dQw4w9WgXcQ", "wikipedia:en:SQLite"}
+    for entry in payload:
+        assert entry["stage"] == "detected"
+        assert set(entry) == {"id", "source", "url", "title", "stage", "saved_at"}

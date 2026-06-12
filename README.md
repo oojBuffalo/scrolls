@@ -67,7 +67,14 @@ uv run scrolls init           # create the library skeleton (idempotent)
 uv run scrolls status         # initialized? schema version? as JSON
 uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
+uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
+uv run scrolls list           # list items, as JSON
 uv run pytest                 # test suite
 ```
+
+`scrolls add` auto-initializes the library, dedupes by stable item ID
+(`source:source_id`, or a URL hash when the source has no local ID), and
+stores the item at stage `detected` — registered but not yet fetched.
+Fetching/enrichment is the next slice (adapters).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
