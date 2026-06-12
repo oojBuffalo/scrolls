@@ -293,6 +293,29 @@ def test_sync_second_run_reports_known(db_path):
     assert result["new_items"] == []
 
 
+def test_sync_normalizes_tracking_params_out_of_entry_links(db_path):
+    """Feeds often decorate entry links with utm params; without
+    normalization each rotation of that junk would re-register the same
+    post under a fresh URL-hash id (ADR 0017's identity quirk)."""
+    feed = """\
+<rss version="2.0"><channel><title>T</title>
+<item><title>Post</title>
+<link>https://blog.example.com/post?utm_source=rss&amp;utm_medium=feed</link></item>
+</channel></rss>
+"""
+    sub = _sub("https://blog.example.com/feed.xml")
+    insert_subscription(db_path, sub)
+
+    result = sync_subscription(db_path, sub, fetch=_fetch_ok(feed))
+
+    [item_id] = result["new_items"]
+    assert get_item(db_path, item_id).url == "https://blog.example.com/post"
+
+    rotated = feed.replace("utm_source=rss", "utm_source=spring-promo")
+    again = sync_subscription(db_path, sub, fetch=_fetch_ok(rotated))
+    assert again["new"] == 0 and again["known"] == 1
+
+
 def test_sync_skips_entries_without_http_links(db_path):
     feed = """\
 <rss version="2.0"><channel><title>T</title>

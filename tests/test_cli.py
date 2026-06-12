@@ -142,6 +142,27 @@ def test_add_same_video_via_other_url_form_is_deduped(scrolls_home, capsys):
     assert payload["url"] == "https://youtu.be/dQw4w9WgXcQ"  # first record wins
 
 
+def test_add_strips_tracking_params_before_identity(scrolls_home, capsys):
+    main(["add", "https://blog.example.com/post"])
+    first = json.loads(capsys.readouterr().out)
+
+    exit_code = main(
+        ["add", "https://blog.example.com/post?utm_source=newsletter&fbclid=IwAR0"]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] is False
+    assert payload["id"] == first["id"]
+
+
+def test_add_stores_the_normalized_url(scrolls_home, capsys):
+    exit_code = main(["add", "https://blog.example.com/post?utm_campaign=launch#hero"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] is True
+    assert payload["url"] == "https://blog.example.com/post"
+
+
 def test_add_rejects_non_http_url(scrolls_home, capsys):
     exit_code = main(["add", "not-a-url"])
     assert exit_code == 1

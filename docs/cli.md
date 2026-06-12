@@ -114,17 +114,28 @@ $ scrolls detect notaurl
 Register a URL as an item at stage `detected` — no network. Re-adding
 (or adding another URL form of the same item) returns the existing row
 with `"created": false` (`test_add_persists_detected_item`,
-`test_add_same_video_via_other_url_form_is_deduped`).
+`test_add_same_video_via_other_url_form_is_deduped`). The URL is
+normalized first (ADR 0023): tracking params (`utm_*`, `fbclid`, …),
+fragments, host casing, and default ports are stripped before hashing
+and storing, so differently decorated links to the same page dedupe to
+one item with a clean `url`
+(`test_add_strips_tracking_params_before_identity`,
+`test_add_stores_the_normalized_url`; `tests/test_urls.py` pins what
+normalization may and may not touch).
 
 | Key | Meaning |
 | --- | --- |
-| `id`, `source`, `source_id`, `url` | identity as detected |
+| `id`, `source`, `source_id`, `url` | identity as detected, URL normalized |
 | `stage` | always `detected` for a new row |
 | `created` | `false` when the item already existed |
 
 ```console
 $ scrolls add https://x.com/karpathy/status/3333
 {"id": "x:3333", "source": "x", "source_id": "3333", "url": "https://x.com/karpathy/status/3333", "stage": "detected", "created": true}
+[exit 0]
+
+$ scrolls add 'https://blog.example.com/post?utm_source=newsletter&fbclid=IwAR0'
+{"id": "web:dc65501e6b9a", "source": "web", "source_id": null, "url": "https://blog.example.com/post", "stage": "detected", "created": true}
 [exit 0]
 ```
 
@@ -247,7 +258,11 @@ that the entry's feed title names the item until fetch replaces it
 only discovers URLs; run `scrolls fetch` (then `classify`/`md`) to
 bring the new items in. Entries already in the library count as
 `known`, so re-syncs are cheap (`test_sync_is_idempotent`); entries
-whose link is not http(s) are skipped. With an id: sync only that
+whose link is not http(s) are skipped. Entry links are normalized like
+`scrolls add` URLs (ADR 0023), so a feed that rotates tracking params
+on its links never re-registers the same post
+(`test_sync_normalizes_tracking_params_out_of_entry_links`). With an
+id: sync only that
 subscription (`test_sync_by_id_syncs_one_subscription`); unknown ids
 are an error envelope (`test_sync_unknown_id_is_an_error`). One dead
 feed fails its subscription but never the batch.

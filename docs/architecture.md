@@ -117,6 +117,16 @@ carries a source-local id (`wikipedia:en:SQLite`, `arxiv:1706.03762`,
 of the same tweet therefore collide on purpose — `INSERT OR IGNORE`
 keeps the existing row (`tests/test_items.py`, `tests/test_fieldtheory.py`).
 
+Because the URL string itself is the identity of `web`/`pdf` items,
+registration normalizes it first (`normalize_url` in
+`src/scrolls/sources/urls.py`, ADR 0023): tracking params (`utm_*`,
+`fbclid`, …), fragments, host casing, and default ports are dropped
+before hashing and the normalized form is what gets stored, so the
+same article saved via differently decorated links stays one item
+(`tests/test_urls.py`). Everything else — param order, percent
+encoding, ambiguous names like `ref` — survives byte-identical, and
+feed subscription URLs are never rewritten.
+
 ## The source adapter model
 
 Two small contracts make every platform the same kind of scroll
@@ -294,9 +304,6 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **Web URL normalization** — `web` feed entries whose links carry
-  volatile tracking params hash to different item ids and re-register
-  on every sync (ADR 0017's known identity quirk).
 - **Uniform adapter `published_at`** — sync-seeded dates are UTC ISO
   8601, but adapter-written values still vary with what each source
   emits (trafilatura's `YYYY-MM-DD`, GitHub's `Z` suffix); normalizing

@@ -35,6 +35,7 @@ from scrolls.paths import LibraryPaths, get_paths
 from scrolls.pipeline import ensure_library
 from scrolls.sources import http
 from scrolls.sources.detect import YOUTUBE_HOSTS, detect_source
+from scrolls.sources.urls import normalize_url
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
@@ -223,16 +224,19 @@ def sync_subscription(
     new_items: list[str] = []
     known = skipped = 0
     for entry in feed.entries:
+        # normalize before detect/hash (ADR 0023): feeds decorate entry
+        # links with tracking junk that would mint fresh URL-hash ids
+        entry_url = normalize_url(entry.url)
         try:
-            detected = detect_source(entry.url)
+            detected = detect_source(entry_url)
         except ValueError:
             skipped += 1
             continue
         item = ScrollItem(
-            id=make_item_id(detected.source, detected.source_id, entry.url),
+            id=make_item_id(detected.source, detected.source_id, entry_url),
             source=detected.source,
             source_id=detected.source_id,
-            url=entry.url,
+            url=entry_url,
             # the entry's feed title and date seed the item; fetch replaces
             # them only with the source's own values, and INSERT OR IGNORE
             # keeps known items untouched

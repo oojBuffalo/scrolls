@@ -27,6 +27,7 @@ from pathlib import Path
 from scrolls.items import ScrollItem, get_item, list_items, make_item_id
 from scrolls.render import slugify
 from scrolls.sources.detect import detect_source
+from scrolls.sources.urls import normalize_url
 
 DEFAULT_LIMIT = 10
 
@@ -122,18 +123,28 @@ def find_related(
 
 
 def _link_targets(item: ScrollItem) -> set[str]:
-    """Everything an item's extracted links could identify: URLs and item ids."""
+    """Everything an item's extracted links could identify: URLs and item ids.
+
+    Links are matched both raw and normalized (ADR 0023): stored URLs
+    are normalized at registration, while links inside saved content
+    carry whatever decorations the author pasted.
+    """
     targets: set[str] = set()
     for link in item.links:
-        targets.add(link)
+        normalized = normalize_url(link)
+        targets.update((link, normalized))
         try:
-            detected = detect_source(link)
+            detected = detect_source(normalized)
         except ValueError:
             continue
         if detected.source_id:
-            targets.add(make_item_id(detected.source, detected.source_id, link))
+            targets.add(make_item_id(detected.source, detected.source_id, normalized))
     return targets
 
 
 def _own_urls(item: ScrollItem) -> set[str]:
-    return {url for url in (item.url, item.canonical_url) if url}
+    urls: set[str] = set()
+    for url in (item.url, item.canonical_url):
+        if url:
+            urls.update((url, normalize_url(url)))
+    return urls

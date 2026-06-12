@@ -113,6 +113,12 @@ uv run pytest                 # test suite
 `scrolls add` auto-initializes the library, dedupes by stable item ID
 (`source:source_id`, or a URL hash when the source has no local ID), and
 stores the item at stage `detected` — registered but not yet fetched.
+URLs are normalized first (ADR 0023): tracking params (`utm_*`,
+`fbclid`, …), fragments, host casing, and default ports are stripped
+before hashing and storing, so the same article saved via differently
+decorated links — a newsletter link, a feed entry, a plain paste —
+stays one item with a clean URL. Meaningful params survive untouched,
+and feed subscription URLs are never rewritten.
 
 `scrolls fetch` runs the source adapter for each detected item, filling in
 title, extracted text, summary, canonical URL, content hash, and
@@ -306,9 +312,8 @@ have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
 (ADR 0019), on both the shell and MCP interfaces (ADR 0020), with the
-Batches API halving bulk classification cost (ADR 0022). Next
-candidates: normalizing volatile tracking params out of web item URLs
-(ADR 0017's known identity quirk) and uniform UTC ISO 8601
-`published_at` across adapters (ADR 0021).
+Batches API halving bulk classification cost (ADR 0022) and item
+identity robust to tracking-param junk (ADR 0023). Next candidate:
+uniform UTC ISO 8601 `published_at` across adapters (ADR 0021).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

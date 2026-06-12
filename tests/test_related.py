@@ -70,6 +70,21 @@ def test_exact_url_match_relates_web_items(db):
     assert [hit.id for hit in hits] == ["web:abc123"]
 
 
+def test_link_with_tracking_params_matches_the_clean_stored_url(db):
+    """Links inside saved content carry whatever junk the author pasted;
+    registration stores the normalized URL, so matching must normalize
+    the link side too or the connection is silently lost."""
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://blog.example.com/post?utm_source=tweet#intro",),
+    ))
+    insert_item(db, make_item("web:abc123", url="https://blog.example.com/post"))
+
+    hits = find_related(db, "x:1111")
+    assert [hit.id for hit in hits] == ["web:abc123"]
+
+
 def test_shared_concepts_outrank_same_category_only(db):
     insert_item(db, make_item(
         "github:a/repo", concepts=("full-text search", "BM25"), category="project",

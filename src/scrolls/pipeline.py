@@ -18,6 +18,7 @@ from scrolls.paths import LibraryPaths, get_paths
 from scrolls.render import write_scroll
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
+from scrolls.sources.urls import normalize_url
 
 CONFIG_TEMPLATE = """\
 # Scrolls configuration. Settings read today (ADR 0016):
@@ -48,12 +49,14 @@ def register_url(url: str) -> tuple[LibraryPaths, ScrollItem, bool]:
     """Detect, ensure the library exists, and register the URL as an item.
 
     Returns the (existing) item and whether it was newly created; raises
-    ValueError for URLs no adapter can handle.
+    ValueError for URLs no adapter can handle. The URL is normalized
+    first (ADR 0023) — tracking params, fragments, host casing — so one
+    resource saved via different decorated links stays one item.
     """
-    detected = detect_source(url)
+    cleaned = normalize_url(url)
+    detected = detect_source(cleaned)
     paths = get_paths()
     ensure_library(paths)
-    cleaned = url.strip()
     item = ScrollItem(
         id=make_item_id(detected.source, detected.source_id, cleaned),
         source=detected.source,
