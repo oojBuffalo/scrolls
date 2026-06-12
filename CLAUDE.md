@@ -81,7 +81,7 @@ Prefer small vertical slices over broad rewrites, but each autonomous run should
 
 The goal is not to check a box once the hourly automation fires. A run should complete an isolated feature, vertical slice, schema/module, CLI path, adapter, test-backed behavior, or decision-grade architecture step that future runs can build on without first finishing half-done work.
 
-If a meaningful slice takes longer than an hour, keep going. The automation lock makes later cron ticks skip rather than overlap. Stop when the slice is finished, verified, committed, pushed, and clean — not when an arbitrary time threshold is hit.
+If a meaningful slice takes longer than an hour, keep going. The automation lock makes later cron ticks skip rather than overlap. Stop when the slice is finished, verified, committed, pushed, and clean — not when an arbitrary time threshold is hit. Conversely, if a first slice finishes very quickly and there is obvious adjacent work, continue to another adjacent slice or deepen tests, verification, and integration instead of ending the run early.
 
 Avoid trivial progress: typo-only edits, README reshuffling, formatting-only churn, isolated TODO lists, vague "future work" docs, or issues with no implementation path. If a run cannot make meaningful progress, report the blocker rather than manufacturing a trivial commit.
 
