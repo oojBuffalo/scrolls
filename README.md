@@ -68,6 +68,7 @@ uv run scrolls status         # initialized? schema version? as JSON
 uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
+uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
@@ -102,6 +103,10 @@ re-renders keep a stable path.
 index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
 so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
 prints the full stored item.
+
+`scrolls ingest <url>` chains add → fetch → md for one URL; re-ingesting
+an existing URL refreshes its content. A URL whose source has no adapter
+yet is still registered, but ingest reports the failure and exits 1.
 
 Item stages so far: `detected → fetched → rendered`. Next slices: YouTube
 adapter, classification, then the compiled library/KB.

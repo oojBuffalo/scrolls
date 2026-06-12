@@ -414,6 +414,66 @@ def test_show_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_api, capsys):
+    exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "wikipedia:en:SQLite",
+        "source": "wikipedia",
+        "url": "https://en.wikipedia.org/wiki/SQLite",
+        "created": True,
+        "title": "SQLite",
+        "stage": "rendered",
+        "markdown_path": "scrolls/wikipedia/sqlite.md",
+    }
+    assert (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").is_file()
+
+
+def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, capsys):
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["created"] is False
+    assert payload["stage"] == "rendered"
+    assert payload["markdown_path"] == "scrolls/wikipedia/sqlite.md"  # stable path
+
+
+def test_ingest_without_adapter_registers_but_reports_failure(scrolls_home, capsys):
+    exit_code = main(["ingest", "https://youtu.be/dQw4w9WgXcQ"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == "youtube:dQw4w9WgXcQ"
+    assert payload["stage"] == "detected"
+    assert "youtube" in payload["error"]
+    # the item is still durably registered for a future adapter
+    assert get_item(get_paths().db_path, "youtube:dQw4w9WgXcQ").stage == "detected"
+
+
+def test_ingest_fetch_failure_leaves_item_detected(scrolls_home, monkeypatch, capsys):
+    def boom(url):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(wikipedia, "_get_json", boom)
+    exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stage"] == "detected"
+    assert "connection refused" in payload["error"]
+
+
+def test_ingest_rejects_non_http_url(scrolls_home, capsys):
+    exit_code = main(["ingest", "not-a-url"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+    assert not scrolls_home.exists()
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

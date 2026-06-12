@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
         "default is every item at stage 'detected'",
     )
 
+    ingest_parser = subparsers.add_parser(
+        "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
+    )
+    ingest_parser.add_argument("url", help="URL to ingest")
+
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
     subparsers.add_parser("list", help="List library items (JSON output)")
 
@@ -99,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_detect(args.url)
     if args.command == "fetch":
         return _cmd_fetch(args.id)
+    if args.command == "ingest":
+        return _cmd_ingest(args.url)
     if args.command == "init":
         return _cmd_init()
     if args.command == "list":
@@ -137,12 +144,13 @@ def _cmd_init() -> int:
     return 0
 
 
-def _cmd_add(url: str) -> int:
-    try:
-        detected = detect_source(url)
-    except ValueError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
+def _register_url(url: str) -> tuple[LibraryPaths, ScrollItem, bool]:
+    """Detect, ensure the library exists, and register the URL as an item.
+
+    Returns the (existing) item and whether it was newly created; raises
+    ValueError for URLs no adapter can handle.
+    """
+    detected = detect_source(url)
     paths = get_paths()
     _ensure_library(paths)
     cleaned = url.strip()
@@ -156,6 +164,15 @@ def _cmd_add(url: str) -> int:
     created = insert_item(paths.db_path, item)
     if not created:
         item = get_item(paths.db_path, item.id) or item
+    return paths, item, created
+
+
+def _cmd_add(url: str) -> int:
+    try:
+        _, item, created = _register_url(url)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     print(
         json.dumps(
             {
@@ -168,6 +185,42 @@ def _cmd_add(url: str) -> int:
             }
         )
     )
+    return 0
+
+
+def _cmd_ingest(url: str) -> int:
+    try:
+        paths, item, created = _register_url(url)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    payload = {"id": item.id, "source": item.source, "url": item.url, "created": created}
+
+    adapter = FETCH_ADAPTERS.get(item.source)
+    if adapter is None:
+        payload.update(
+            {"stage": item.stage, "error": f"no fetch adapter for source '{item.source}'"}
+        )
+        print(json.dumps(payload))
+        return 1
+    try:
+        fetched = adapter(item)
+    except FetchError as exc:
+        payload.update({"stage": item.stage, "error": str(exc)})
+        print(json.dumps(payload))
+        return 1
+    update_item(paths.db_path, fetched)
+
+    rendered = write_scroll(paths, fetched)
+    update_item(paths.db_path, rendered)
+    payload.update(
+        {
+            "title": rendered.title,
+            "stage": rendered.stage,
+            "markdown_path": rendered.markdown_path,
+        }
+    )
+    print(json.dumps(payload))
     return 0
 
 
