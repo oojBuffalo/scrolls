@@ -88,6 +88,7 @@ uv run scrolls media          # download uncaptured media refs into media/, as J
 uv run scrolls media <id>     # (re)capture one item's media by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
+uv run scrolls classify --engine llm  # LLM pass: category + domain + concepts (needs ANTHROPIC_API_KEY)
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
@@ -188,9 +189,21 @@ second → user overrides always win" — see
 (wikipedia → reference, arxiv → paper, github → project), then title
 patterns (tutorial, opinion), then URL shape (docs sites →
 documentation), then youtube → media. Unmatched items honestly stay
-unclassified for a future LLM engine. Batch runs never overwrite an
+unclassified. Batch runs never overwrite an
 existing category; `scrolls classify <id>` explicitly reclassifies.
 Already-rendered scrolls are re-rendered so frontmatter stays in sync.
+
+`scrolls classify --engine llm` is layer two (`llm-v1` — see
+`docs/adr/0015-llm-classification-engine.md`): a model reads each item's
+actual content via the Anthropic API and assigns a category from the
+full IDEAS.md §8 vocabulary, plus the fields no rule can honestly
+invent — `domain`, and `concepts` merged after the platform-curated
+ones (feeding the same KB concept pages). Structured outputs pin the
+response to the category vocabulary. Needs `ANTHROPIC_API_KEY`; the
+default model `claude-opus-4-8` is overridable via `SCROLLS_LLM_MODEL`.
+Batch semantics are unchanged (existing categories are never
+overwritten; per-item API failures don't abort the run), and missing
+credentials abort with the standard error envelope.
 
 `scrolls kb` compiles the interlinked library (IDEAS.md §9, the
 deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
@@ -228,9 +241,10 @@ config; the shell interface remains primary.
 Item stages so far: `detected → fetched → rendered`; classification,
 media capture, and KB compilation are stage-neutral. With the IDEAS.md
 §6 MVP source trio (wikipedia, web, youtube) plus github, arxiv, pdf,
-and x (via Field Theory import), search, rules classification, media
-capture, the compiled library, context bundles, agent install, and the
-MCP server, all five IDEAS.md §14 MVP passes have a working first
-version. Next slice: an LLM classification/concept engine.
+and x (via Field Theory import), search, two-layer classification
+(rules + LLM), media capture, the compiled library, context bundles,
+agent install, and the MCP server, all five IDEAS.md §14 MVP passes
+have a working first version plus the §8 LLM layer. Next slice:
+`scrolls sync <source>` for live platform deltas (IDEAS.md §13).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

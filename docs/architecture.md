@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (311 tests at the time of writing). The docs themselves
+`uv run pytest` (332 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -177,6 +177,14 @@ choice (ADRs 0004, 0005).
   items honestly stay unclassified. Batch runs never overwrite an
   existing category; `classify <id>` explicitly reclassifies
   (`tests/test_classify.py`).
+- **LLM classification** (`classify_llm.py`, ADR 0015) — layer two
+  (`llm-v1`), run explicitly via `classify --engine llm`: one Anthropic
+  Messages call per item with structured outputs pinning `category` to
+  the full IDEAS.md §8 vocabulary, plus `domain` and model `concepts`
+  merged after the platform-curated ones. The completer is injectable,
+  so tests stay offline (`tests/test_classify_llm.py`); the SDK is
+  imported lazily, and missing credentials abort the batch
+  (`LLMAuthError`) while per-item API failures don't.
 - **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
   over body. Query tokens are quoted and AND-ed, so arbitrary agent
   input never hits FTS5 syntax errors (`tests/test_search.py`).
@@ -231,7 +239,8 @@ recurring rules:
   must buy its feature something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
   (arxiv and pdf), `mcp` (the protocol server, imported only by
-  `scrolls mcp`) — see `pyproject.toml`.
+  `scrolls mcp`), `anthropic` (LLM classification, imported only by
+  `scrolls classify --engine llm`) — see `pyproject.toml`.
 - **No network in tests**: every adapter takes an injectable fetcher;
   fixtures are recorded payloads. The suite runs in under a second.
 
@@ -239,13 +248,17 @@ recurring rules:
 
 All five IDEAS.md §14 MVP passes have a working first version: library
 skeleton, URL → Markdown for the §6 trio plus github/arxiv/x-via-import,
-FTS5 search, rules classification, and the compiled KB with context
-bundles and agent install.
+FTS5 search, two-layer classification (rules + LLM, ADRs 0004/0015), and
+the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **LLM classification/concept engine** — the rules engine deliberately
-  leaves items unclassified for it (ADR 0004), and KB concept pages are
-  designed for an LLM producer to join (ADR 0005).
 - **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
   import/sync/add distinction); only `import` and `add` exist today.
+- **Config reading** — `config.toml` is still a placeholder; the
+  reserved `[classify]` section should absorb the LLM engine/model
+  knobs (ADRs 0004, 0015), and a `scrolls set`-style user override
+  command remains open (ADR 0004).
+- **Batched LLM classification** — `classify --engine llm` makes one
+  API call per item; the Batches API halves the cost when libraries
+  outgrow that (ADR 0015).

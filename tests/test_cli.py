@@ -808,6 +808,142 @@ def test_classify_unknown_id_is_an_error(scrolls_home, capsys):
 
 
 @pytest.fixture
+def fake_llm(monkeypatch):
+    """Replace the Anthropic completer with a canned classification."""
+    import scrolls.classify_llm as classify_llm
+
+    calls = []
+
+    def complete(system, user, model):
+        calls.append({"system": system, "user": user, "model": model})
+        return json.dumps(
+            {
+                "category": "reference",
+                "domain": "databases",
+                "concepts": ["SQLite", "embedded databases"],
+            }
+        )
+
+    monkeypatch.setattr(classify_llm, "_anthropic_complete", complete)
+    return calls
+
+
+def test_classify_llm_engine_classifies_and_rerenders(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 1
+    assert payload["results"][0]["category"] == "reference"
+    assert payload["results"][0]["domain"] == "databases"
+    assert "SQLite" in payload["results"][0]["concepts"]
+    assert len(fake_llm) == 1
+
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.category == "reference"
+    assert stored.domain == "databases"
+    # platform-curated concepts kept first, model concepts appended
+    assert stored.concepts[0] == "Database management systems"
+    assert "embedded databases" in stored.concepts
+    assert stored.provenance["classified_by"] == "llm-v1"
+    # the already-rendered scroll was re-rendered with the new frontmatter
+    scroll = (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").read_text()
+    assert '\ndomain: "databases"\n' in scroll
+
+
+def test_classify_default_engine_never_calls_the_llm(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    assert fake_llm == []
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.provenance["classified_by"] == "rules-v1"
+
+
+def test_classify_llm_batch_never_overwrites_an_existing_category(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["classify"])  # rules assign 'reference'
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"classified": 0, "unmatched": 0, "failed": 0, "results": []}
+    assert fake_llm == []
+
+
+def test_classify_llm_by_id_reclassifies_explicitly(
+    scrolls_home, fake_wikipedia_api, fake_llm, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["classify"])  # rules assign 'reference', no domain
+    capsys.readouterr()
+
+    exit_code = main(["classify", "wikipedia:en:SQLite", "--engine", "llm"])
+    assert exit_code == 0
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.domain == "databases"
+    assert stored.provenance["classified_by"] == "llm-v1"
+
+
+def test_classify_llm_failure_is_reported_not_raised(
+    scrolls_home, fake_wikipedia_api, monkeypatch, capsys
+):
+    import scrolls.classify_llm as classify_llm
+
+    def broken(system, user, model):
+        raise classify_llm.LLMClassifyError("Anthropic API error: overloaded")
+
+    monkeypatch.setattr(classify_llm, "_anthropic_complete", broken)
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert "overloaded" in payload["results"][0]["error"]
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").category is None
+
+
+def test_classify_llm_without_credentials_aborts_with_error_envelope(
+    scrolls_home, fake_wikipedia_api, monkeypatch, capsys
+):
+    import scrolls.classify_llm as classify_llm
+
+    def no_auth(system, user, model):
+        raise classify_llm.LLMAuthError("llm engine needs Anthropic credentials")
+
+    monkeypatch.setattr(classify_llm, "_anthropic_complete", no_auth)
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""  # no partial batch payload
+    assert "credentials" in json.loads(captured.err)["error"]
+
+
+@pytest.fixture
 def fake_fieldtheory_root(tmp_path):
     """A miniature ~/.fieldtheory archive with one classified bookmark."""
     record = {

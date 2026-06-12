@@ -69,6 +69,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Classify one item by id, replacing any existing category; "
         "default is every fetched/rendered item without one",
     )
+    classify_parser.add_argument(
+        "--engine",
+        choices=("rules", "llm"),
+        default="rules",
+        help="Classification engine: deterministic rules (default), or an "
+        "LLM that also fills domain and concepts (needs ANTHROPIC_API_KEY; "
+        "model overridable via SCROLLS_LLM_MODEL)",
+    )
 
     context_parser = subparsers.add_parser(
         "context",
@@ -186,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "agent":
         return _cmd_agent_install()
     if args.command == "classify":
-        return _cmd_classify(args.id)
+        return _cmd_classify(args.id, args.engine)
     if args.command == "context":
         return _cmd_context(args.query, args.limit)
     if args.command == "detect":
@@ -351,7 +359,15 @@ def _cmd_fetch(item_id: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_classify(item_id: str | None) -> int:
+def _cmd_classify(item_id: str | None, engine: str = "rules") -> int:
+    if engine == "llm":
+        # lazy: only `classify --engine llm` pays the import (ADR 0015)
+        from scrolls.classify_llm import (
+            LLMAuthError,
+            LLMClassifyError,
+            classify_item_llm,
+        )
+
     paths = get_paths()
     if item_id is not None:
         item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
@@ -372,7 +388,19 @@ def _cmd_classify(item_id: str | None) -> int:
     results = []
     counts = {"classified": 0, "unmatched": 0, "failed": 0}
     for item in items:
-        classified = classify_item(item)
+        if engine == "llm":
+            try:
+                classified = classify_item_llm(item)
+            except LLMAuthError as exc:
+                # no credentials: every remaining item would fail the same way
+                print(json.dumps({"error": str(exc)}), file=sys.stderr)
+                return 1
+            except LLMClassifyError as exc:
+                counts["failed"] += 1
+                results.append({"id": item.id, "status": "failed", "error": str(exc)})
+                continue
+        else:
+            classified = classify_item(item)
         if classified.category is None:
             counts["unmatched"] += 1
             results.append({"id": item.id, "status": "unmatched"})
@@ -387,9 +415,15 @@ def _cmd_classify(item_id: str | None) -> int:
                 continue
         update_item(paths.db_path, classified)
         counts["classified"] += 1
-        results.append(
-            {"id": classified.id, "status": "classified", "category": classified.category}
-        )
+        result = {
+            "id": classified.id,
+            "status": "classified",
+            "category": classified.category,
+        }
+        if engine == "llm":
+            result["domain"] = classified.domain
+            result["concepts"] = list(classified.concepts)
+        results.append(result)
 
     print(json.dumps({**counts, "results": results}))
     return 1 if counts["failed"] else 0

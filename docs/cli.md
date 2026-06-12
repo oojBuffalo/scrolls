@@ -218,7 +218,8 @@ $ scrolls fetch arxiv:1706.03762      # by id, with network
 No argument: assign a `category` (rules engine `rules-v1`, ADR 0004) to
 every fetched/rendered item that has none — an existing category, user-set
 or imported, is never overwritten
-(`test_classify_batch_never_overwrites_an_existing_category`). Unmatched
+(`test_classify_batch_never_overwrites_an_existing_category`,
+`test_classify_llm_batch_never_overwrites_an_existing_category`). Unmatched
 items honestly report `"status": "unmatched"` and stay unclassified
 (`test_classify_batch_reports_unmatched_items`). With an id: explicit
 reclassify, replacing any existing category
@@ -226,10 +227,29 @@ reclassify, replacing any existing category
 are re-rendered so frontmatter stays in sync
 (`test_classify_batch_categorizes_and_rerenders`).
 
+`--engine llm` (engine `llm-v1`, ADR 0015) classifies with a model via the
+Anthropic API instead (network; needs `ANTHROPIC_API_KEY`; default model
+`claude-opus-4-8`, overridable via `SCROLLS_LLM_MODEL`). It uses the full
+IDEAS.md §8 category vocabulary and additionally fills `domain` and merges
+model `concepts` after the platform-curated ones; classified results carry
+`domain` and `concepts` keys
+(`test_classify_llm_engine_classifies_and_rerenders`, in
+`tests/test_classify_llm.py` for the engine itself). Batch semantics are
+unchanged — never overwrites an existing category, per-item API failures
+don't abort the batch
+(`test_classify_llm_failure_is_reported_not_raised`) — except that missing
+credentials abort the whole run with the standard error envelope, since
+every remaining item would fail identically
+(`test_classify_llm_without_credentials_aborts_with_error_envelope`).
+
 ```console
 $ scrolls classify    # x:1111 already has a category from the import join
 {"classified": 1, "unmatched": 0, "failed": 0, "results": [{"id": "x:2222", "status": "classified", "category": "tutorial"}]}
 [exit 0]
+
+$ scrolls classify wikipedia:en:SQLite --engine llm   # no credentials set
+{"error": "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY (\"Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` headers to be explicitly omitted\")"}
+[exit 1]
 ```
 
 ### `scrolls md [id]`
@@ -492,7 +512,9 @@ scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
 scrolls add https://arxiv.org/abs/1706.03762
 scrolls list
+scrolls ingest https://en.wikipedia.org/wiki/SQLite  # network
 scrolls classify
+scrolls classify wikipedia:en:SQLite --engine llm  # without a key: exit 1
 scrolls md
 scrolls fetch arxiv:1706.03762                     # network
 scrolls media                                      # network: downloads the PDF

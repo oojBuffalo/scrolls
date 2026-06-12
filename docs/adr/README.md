@@ -21,3 +21,4 @@ they add up to.
 | [0012](0012-arxiv-taxonomy-names-as-concepts.md) | arXiv taxonomy display names become concepts via a bundled table | papers join the KB concept graph; codes stay in `tags`; supersedes 0008's deferral |
 | [0013](0013-generic-pdf-adapter.md) | Generic PDF URLs get a fetch adapter via pypdf | every detected source except `x` now fetches; the binary is the raw record (media ref + content hash), not `raw_text` |
 | [0014](0014-mcp-server.md) | `scrolls mcp` serves the library over stdio via the official MCP SDK | tools wrap the same engines as the CLI; ingest chain extracted to `src/scrolls/pipeline.py`; SDK imported lazily |
+| [0015](0015-llm-classification-engine.md) | LLM classification is an explicit opt-in: `classify --engine llm` via the Anthropic SDK | fills `domain` + merges `concepts`; structured outputs pin the category vocabulary; missing credentials abort the batch |
