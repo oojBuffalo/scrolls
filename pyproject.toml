@@ -5,7 +5,9 @@ description = "Local-first CLI for turning saved internet artifacts into an agen
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = []
+dependencies = [
+    "trafilatura>=2.1.0",
+]
 
 [project.scripts]
 scrolls = "scrolls.cli:main"

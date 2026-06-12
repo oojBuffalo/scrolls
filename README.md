@@ -84,10 +84,12 @@ stores the item at stage `detected` — registered but not yet fetched.
 
 `scrolls fetch` runs the source adapter for each detected item, filling in
 title, extracted text, summary, canonical URL, content hash, and
-provenance, and moving the item to stage `fetched`. Wikipedia is the first
-adapter (see `docs/adr/0002-first-fetch-adapter-wikipedia.md`); items from
-sources without an adapter yet are skipped, and per-item failures don't
-abort the batch.
+provenance, and moving the item to stage `fetched`. Adapters so far:
+**wikipedia** (MediaWiki action API, no dependencies — see
+`docs/adr/0002-first-fetch-adapter-wikipedia.md`) and **web** (readable
+article extraction via `trafilatura`, the project's first per-adapter
+dependency per ADR 0001). Items from sources without an adapter yet are
+skipped, and per-item failures don't abort the batch.
 
 `scrolls md` renders each fetched item to a durable Markdown scroll at
 `scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
@@ -101,7 +103,7 @@ index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
 so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
 prints the full stored item.
 
-Item stages so far: `detected → fetched → rendered`. Next slices: more
-adapters (web, YouTube), classification, then the compiled library/KB.
+Item stages so far: `detected → fetched → rendered`. Next slices: YouTube
+adapter, classification, then the compiled library/KB.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

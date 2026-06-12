@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import urllib.request
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlencode
 
-from scrolls import __version__
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import http
 
 _API_PARAMS = {
     "action": "query",
@@ -29,9 +28,6 @@ _API_PARAMS = {
     "explaintext": "1",
     "inprop": "url",
 }
-
-# Wikipedia API etiquette asks for a descriptive User-Agent with a contact URL.
-_USER_AGENT = f"scrolls/{__version__} (+https://github.com/oojBuffalo/scrolls)"
 
 GetJson = Callable[[str], dict[str, Any]]
 
@@ -92,7 +88,4 @@ def _lead_section(extract: str) -> str:
     return extract.split("\n==", 1)[0].strip()
 
 
-def _get_json(url: str) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+_get_json = http.get_json
