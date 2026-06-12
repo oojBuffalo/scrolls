@@ -359,6 +359,21 @@ credentials abort the whole run with the standard error envelope, since
 every remaining item would fail identically
 (`test_classify_llm_without_credentials_aborts_with_error_envelope`).
 
+`--batch` (ADR 0022) submits the whole `--engine llm` run as one Message
+Batches API request at half the per-token price, polling until the batch
+ends — typically minutes — instead of one API call per item
+(`test_classify_llm_batch_flag_submits_one_batch`;
+`test_batch_classifies_every_item_in_order` and
+`test_real_batch_submits_polls_and_collects_results` in
+`tests/test_classify_llm.py` for the engine and transport). Per-request
+failures — errored, expired, refused — fail their item without aborting
+the batch (`test_batch_per_item_errors_pass_through`), and missing
+credentials still abort the run
+(`test_classify_llm_batch_without_credentials_aborts_with_error_envelope`).
+The flag needs the llm engine and a whole-run invocation
+(`test_classify_batch_flag_requires_the_llm_engine`,
+`test_classify_batch_flag_rejects_an_item_id`).
+
 `config.toml`'s `[classify]` section (ADR 0016) sets the defaults:
 `default_engine = "llm"` routes a bare `scrolls classify` to the LLM
 engine (`test_classify_config_default_engine_llm_is_used`) and
@@ -382,6 +397,10 @@ $ scrolls classify wikipedia:en:SQLite --engine llm   # no credentials set
 
 $ scrolls classify       # after writing broken TOML into config.toml
 {"error": "config.toml: invalid TOML: Expected ']' at the end of a table declaration (at line 1, column 10)"}
+[exit 1]
+
+$ scrolls classify --batch     # the rules engine has nothing to batch
+{"error": "--batch requires the llm engine (--engine llm)"}
 [exit 1]
 ```
 

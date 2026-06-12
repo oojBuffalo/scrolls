@@ -12,12 +12,18 @@ network, mirroring the adapters' injectable fetcher. The real completer
 uses the official Anthropic SDK with structured outputs, so the response
 is schema-valid JSON by construction; it is imported lazily so only
 `scrolls classify --engine llm` pays for it.
+
+`classify_items_llm_batch` is the same engine over the Message Batches
+API (ADR 0022): one submission for the whole run at half the per-token
+price, polled until it ends. Identical prompts, schema, and validation —
+only the transport differs.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import replace
 from typing import Callable
 
@@ -93,6 +99,17 @@ RESPONSE_SCHEMA = {
 # model's JSON text.
 Completer = Callable[[str, str, str], str]
 
+# A batch completer takes (system_prompt, [(custom_id, user_prompt)...],
+# model) and returns each answered request's raw JSON text keyed by
+# custom_id; a request that failed individually maps to its
+# LLMClassifyError instead of text.
+BatchCompleter = Callable[
+    [str, "list[tuple[str, str]]", str], "dict[str, str | LLMClassifyError]"
+]
+
+_POLL_INITIAL_SECONDS = 5.0
+_POLL_MAX_SECONDS = 60.0
+
 
 class LLMClassifyError(Exception):
     """The model call or its response could not produce a classification."""
@@ -146,6 +163,56 @@ def classify_item_llm(
         complete = _anthropic_complete
 
     raw = complete(SYSTEM_PROMPT, item_card(item), model)
+    return _classified(item, raw, model)
+
+
+def classify_items_llm_batch(
+    items: list[ScrollItem],
+    *,
+    complete_batch: BatchCompleter | None = None,
+    model: str | None = None,
+) -> list[tuple[ScrollItem, ScrollItem | LLMClassifyError]]:
+    """Classify many items with one Message Batches submission (ADR 0022).
+
+    Returns one (item, outcome) pair per input item in input order, where
+    the outcome is the classified item or the LLMClassifyError that item
+    hit — per-item failures never abort the batch. Raises LLMAuthError or
+    LLMClassifyError only for whole-batch failures (no credentials, the
+    submission itself rejected). Items with no classifiable content fail
+    locally without being submitted.
+    """
+    model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
+    if complete_batch is None:
+        complete_batch = _anthropic_complete_batch
+
+    # custom_ids must match [A-Za-z0-9_-]{1,64}, so item ids like
+    # 'wikipedia:en:SQLite' can't key the requests — positions do.
+    outcomes: list[ScrollItem | LLMClassifyError | None] = [None] * len(items)
+    requests: list[tuple[str, str]] = []
+    for index, item in enumerate(items):
+        if item.title or item.summary or item.extracted_text:
+            requests.append((f"item-{index}", item_card(item)))
+        else:
+            outcomes[index] = LLMClassifyError("item has no content to classify")
+
+    raw_by_id = complete_batch(SYSTEM_PROMPT, requests, model) if requests else {}
+    for custom_id, _ in requests:
+        index = int(custom_id.split("-", 1)[1])
+        raw = raw_by_id.get(custom_id)
+        if raw is None:
+            outcomes[index] = LLMClassifyError("batch returned no result for this item")
+        elif isinstance(raw, LLMClassifyError):
+            outcomes[index] = raw
+        else:
+            try:
+                outcomes[index] = _classified(items[index], raw, model)
+            except LLMClassifyError as exc:
+                outcomes[index] = exc
+    return list(zip(items, outcomes))
+
+
+def _classified(item: ScrollItem, raw: str, model: str) -> ScrollItem:
+    """Validate one raw model response and apply it to the item."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -214,3 +281,82 @@ def _anthropic_complete(system: str, user: str, model: str) -> str:
             f"model returned no text (stop_reason: {response.stop_reason})"
         )
     return text
+
+
+_sleep = time.sleep  # module-level so tests can observe the poll loop
+
+
+def _anthropic_complete_batch(
+    system: str, requests: list[tuple[str, str]], model: str
+) -> dict[str, str | LLMClassifyError]:
+    """The real batch completer: one Message Batches submission, polled.
+
+    Each request carries exactly the params of `_anthropic_complete`'s
+    call, so the model sees identical prompts and the same structured
+    output schema — the Batches API just halves the per-token price.
+    Polling blocks until the batch ends (typically minutes, bounded by
+    the API at 24h); Ctrl-C loses only the mapping, and re-running
+    resubmits. Per-request failures map to LLMClassifyError values;
+    whole-batch failures raise, with the same auth handling as the
+    per-item completer.
+    """
+    import anthropic  # lazy: only `classify --engine llm --batch` pays the import
+
+    try:
+        client = anthropic.Anthropic()
+        batch = client.messages.batches.create(
+            requests=[
+                {
+                    "custom_id": custom_id,
+                    "params": {
+                        "model": model,
+                        "max_tokens": _MAX_TOKENS,
+                        "system": system,
+                        "output_config": {
+                            "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}
+                        },
+                        "messages": [{"role": "user", "content": user}],
+                    },
+                }
+                for custom_id, user in requests
+            ]
+        )
+        delay = _POLL_INITIAL_SECONDS
+        while batch.processing_status != "ended":
+            _sleep(delay)
+            delay = min(delay * 2, _POLL_MAX_SECONDS)
+            batch = client.messages.batches.retrieve(batch.id)
+        return {
+            entry.custom_id: _batch_entry_outcome(entry)
+            for entry in client.messages.batches.results(batch.id)
+        }
+    except TypeError as exc:
+        # see _anthropic_complete: the SDK's no-credentials TypeError
+        if "authentication" not in str(exc).lower():
+            raise
+        raise LLMAuthError(
+            "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY "
+            f"({exc})"
+        ) from exc
+    except anthropic.AuthenticationError as exc:
+        raise LLMAuthError(f"Anthropic rejected the credentials: {exc}") from exc
+    except anthropic.APIError as exc:
+        raise LLMClassifyError(f"Anthropic API error: {exc}") from exc
+
+
+def _batch_entry_outcome(entry) -> str | LLMClassifyError:
+    """One batch result entry's raw text, or its per-request error."""
+    result = entry.result
+    if result.type == "succeeded":
+        message = result.message
+        if message.stop_reason == "refusal":
+            return LLMClassifyError("model declined to classify this item")
+        text = next((b.text for b in message.content if b.type == "text"), "")
+        if not text:
+            return LLMClassifyError(
+                f"model returned no text (stop_reason: {message.stop_reason})"
+            )
+        return text
+    if result.type == "errored":
+        return LLMClassifyError(f"batch request errored: {result.error}")
+    return LLMClassifyError(f"batch request {result.type}")  # canceled / expired

@@ -97,6 +97,7 @@ uv run scrolls media <id>     # (re)capture one item's media by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls classify --engine llm  # LLM pass: category + domain + concepts (needs ANTHROPIC_API_KEY)
+uv run scrolls classify --engine llm --batch  # same LLM pass via the Batches API at half price
 uv run scrolls set <id> category=tool tags=a,b  # set classification fields by hand; empty value clears
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
@@ -235,7 +236,11 @@ response to the category vocabulary. Needs `ANTHROPIC_API_KEY`; the
 default model `claude-opus-4-8` is overridable via `SCROLLS_LLM_MODEL`.
 Batch semantics are unchanged (existing categories are never
 overwritten; per-item API failures don't abort the run), and missing
-credentials abort with the standard error envelope.
+credentials abort with the standard error envelope. Adding `--batch`
+(ADR 0022) submits the whole run as one Message Batches API request at
+half the per-token price — same prompts, schema, and validation, polled
+until the batch ends (typically minutes); per-request failures fail
+their item, never the batch.
 
 `scrolls set <id> field=value...` is layer three — user overrides
 always win (see `docs/adr/0018-user-overrides-scrolls-set.md`). It sets
@@ -300,7 +305,10 @@ agent install, and the MCP server, all five IDEAS.md §14 MVP passes
 have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
-(ADR 0019), on both the shell and MCP interfaces (ADR 0020). Next
-candidate: batched LLM classification (ADR 0015).
+(ADR 0019), on both the shell and MCP interfaces (ADR 0020), with the
+Batches API halving bulk classification cost (ADR 0022). Next
+candidates: normalizing volatile tracking params out of web item URLs
+(ADR 0017's known identity quirk) and uniform UTC ISO 8601
+`published_at` across adapters (ADR 0021).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

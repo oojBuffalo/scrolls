@@ -901,6 +901,95 @@ def test_classify_llm_by_id_reclassifies_explicitly(
     assert stored.provenance["classified_by"] == "llm-v1"
 
 
+@pytest.fixture
+def fake_llm_batch(monkeypatch):
+    """Replace the Batches transport with one canned answer per request."""
+    import scrolls.classify_llm as classify_llm
+
+    calls = []
+
+    def complete_batch(system, requests, model):
+        calls.append({"system": system, "requests": list(requests), "model": model})
+        raw = json.dumps(
+            {
+                "category": "reference",
+                "domain": "databases",
+                "concepts": ["SQLite", "embedded databases"],
+            }
+        )
+        return {cid: raw for cid, _ in requests}
+
+    monkeypatch.setattr(classify_llm, "_anthropic_complete_batch", complete_batch)
+    return calls
+
+
+def test_classify_llm_batch_flag_submits_one_batch(
+    scrolls_home, fake_wikipedia_api, fake_llm, fake_llm_batch, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm", "--batch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 1
+    assert payload["results"][0]["category"] == "reference"
+    assert payload["results"][0]["domain"] == "databases"
+    assert len(fake_llm_batch) == 1  # one Batches submission...
+    assert fake_llm == []  # ...and no per-item calls
+
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.provenance["classified_by"] == "llm-v1"
+    # the already-rendered scroll was re-rendered with the new frontmatter
+    scroll = (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").read_text()
+    assert '\ndomain: "databases"\n' in scroll
+
+
+def test_classify_batch_flag_requires_the_llm_engine(scrolls_home, capsys):
+    exit_code = main(["classify", "--batch"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "llm" in json.loads(captured.err)["error"]
+
+
+def test_classify_batch_flag_rejects_an_item_id(
+    scrolls_home, fake_wikipedia_api, fake_llm_batch, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(
+        ["classify", "wikipedia:en:SQLite", "--engine", "llm", "--batch"]
+    )
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+    assert fake_llm_batch == []
+
+
+def test_classify_llm_batch_without_credentials_aborts_with_error_envelope(
+    scrolls_home, fake_wikipedia_api, monkeypatch, capsys
+):
+    import scrolls.classify_llm as classify_llm
+
+    def no_auth(system, requests, model):
+        raise classify_llm.LLMAuthError("llm engine needs Anthropic credentials")
+
+    monkeypatch.setattr(classify_llm, "_anthropic_complete_batch", no_auth)
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--engine", "llm", "--batch"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "credentials" in json.loads(captured.err)["error"]
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").category is None
+
+
 def test_classify_llm_failure_is_reported_not_raised(
     scrolls_home, fake_wikipedia_api, monkeypatch, capsys
 ):

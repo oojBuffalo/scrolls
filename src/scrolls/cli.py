@@ -90,6 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
         "model overridable via SCROLLS_LLM_MODEL). Defaults to [classify] "
         "default_engine in config.toml, else rules",
     )
+    classify_parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Submit the whole run as one Message Batches API request "
+        "(llm engine only): half the per-token price, but the command "
+        "waits for the batch to finish — typically minutes",
+    )
 
     context_parser = subparsers.add_parser(
         "context",
@@ -245,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "agent":
         return _cmd_agent_install()
     if args.command == "classify":
-        return _cmd_classify(args.id, args.engine)
+        return _cmd_classify(args.id, args.engine, args.batch)
     if args.command == "context":
         return _cmd_context(args.query, args.limit)
     if args.command == "detect":
@@ -478,7 +485,9 @@ def _cmd_fetch(item_id: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_classify(item_id: str | None, engine: str | None = None) -> int:
+def _cmd_classify(
+    item_id: str | None, engine: str | None = None, batch: bool = False
+) -> int:
     paths = get_paths()
     try:
         config = load_config(paths.config_path)
@@ -488,12 +497,28 @@ def _cmd_classify(item_id: str | None, engine: str | None = None) -> int:
     # the --engine flag beats config.toml's [classify] default_engine
     engine = engine or config.default_engine
 
+    if batch and engine != "llm":
+        print(
+            json.dumps({"error": "--batch requires the llm engine (--engine llm)"}),
+            file=sys.stderr,
+        )
+        return 1
+    if batch and item_id is not None:
+        print(
+            json.dumps(
+                {"error": "--batch classifies the whole run; it cannot target one item"}
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
     if engine == "llm":
         # lazy: only the llm engine pays the import (ADR 0015)
         from scrolls.classify_llm import (
             LLMAuthError,
             LLMClassifyError,
             classify_item_llm,
+            classify_items_llm_batch,
         )
 
         llm_model = resolve_llm_model(config)
@@ -514,20 +539,42 @@ def _cmd_classify(item_id: str | None, engine: str | None = None) -> int:
             if item.category is None and item.stage in ("fetched", "rendered")
         ]
 
+    if engine == "llm" and batch:
+        # one Batches submission for the whole run (ADR 0022); a whole-batch
+        # failure (no credentials, rejected submission) aborts like auth does
+        try:
+            pairs = classify_items_llm_batch(items, model=llm_model)
+        except LLMClassifyError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+    else:
+        pairs = [(item, None) for item in items]
+
     results = []
     counts = {"classified": 0, "unmatched": 0, "failed": 0}
-    for item in items:
+    for item, outcome in pairs:
         if engine == "llm":
-            try:
-                classified = classify_item_llm(item, model=llm_model)
-            except LLMAuthError as exc:
-                # no credentials: every remaining item would fail the same way
-                print(json.dumps({"error": str(exc)}), file=sys.stderr)
-                return 1
-            except LLMClassifyError as exc:
+            if isinstance(outcome, LLMClassifyError):
                 counts["failed"] += 1
-                results.append({"id": item.id, "status": "failed", "error": str(exc)})
+                results.append(
+                    {"id": item.id, "status": "failed", "error": str(outcome)}
+                )
                 continue
+            if outcome is not None:
+                classified = outcome
+            else:
+                try:
+                    classified = classify_item_llm(item, model=llm_model)
+                except LLMAuthError as exc:
+                    # no credentials: every remaining item would fail the same way
+                    print(json.dumps({"error": str(exc)}), file=sys.stderr)
+                    return 1
+                except LLMClassifyError as exc:
+                    counts["failed"] += 1
+                    results.append(
+                        {"id": item.id, "status": "failed", "error": str(exc)}
+                    )
+                    continue
         else:
             classified = classify_item(item)
         if classified.category is None:

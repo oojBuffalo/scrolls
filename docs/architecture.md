@@ -191,7 +191,10 @@ choice (ADRs 0004, 0005).
   (`llm-v1`), run explicitly via `classify --engine llm`: one Anthropic
   Messages call per item with structured outputs pinning `category` to
   the full IDEAS.md §8 vocabulary, plus `domain` and model `concepts`
-  merged after the platform-curated ones. The completer is injectable,
+  merged after the platform-curated ones. `--batch` (ADR 0022) sends
+  the same requests as one Message Batches submission at half the
+  per-token price, polled until it ends; both transports share one
+  validation path. The completers are injectable,
   so tests stay offline (`tests/test_classify_llm.py`); the SDK is
   imported lazily, and missing credentials abort the batch
   (`LLMAuthError`) while per-item API failures don't. `config.toml`'s
@@ -291,6 +294,10 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **Batched LLM classification** — `classify --engine llm` makes one
-  API call per item; the Batches API halves the cost when libraries
-  outgrow that (ADR 0015).
+- **Web URL normalization** — `web` feed entries whose links carry
+  volatile tracking params hash to different item ids and re-register
+  on every sync (ADR 0017's known identity quirk).
+- **Uniform adapter `published_at`** — sync-seeded dates are UTC ISO
+  8601, but adapter-written values still vary with what each source
+  emits (trafilatura's `YYYY-MM-DD`, GitHub's `Z` suffix); normalizing
+  them is a separate decision if sorting ever needs it (ADR 0021).
