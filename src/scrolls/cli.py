@@ -31,6 +31,8 @@ from scrolls.items import (
 )
 from scrolls.kb import compile_kb
 from scrolls.paths import LibraryPaths, get_paths
+from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
+from scrolls.related import find_related
 from scrolls.render import write_scroll
 from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
@@ -137,6 +139,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
 
+    related_parser = subparsers.add_parser(
+        "related", help="Find items related to one item (JSON output)"
+    )
+    related_parser.add_argument("id", help="Item id, e.g. x:1111")
+    related_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_RELATED_LIMIT,
+        help=f"Maximum hits to return (default {DEFAULT_RELATED_LIMIT})",
+    )
+
     search_parser = subparsers.add_parser(
         "search", help="Full-text search over items (JSON output)"
     )
@@ -180,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_md(args.id)
     if args.command == "paths":
         return _cmd_paths()
+    if args.command == "related":
+        return _cmd_related(args.id, args.limit)
     if args.command == "search":
         return _cmd_search(args.query, args.limit)
     if args.command == "show":
@@ -526,6 +541,20 @@ def _cmd_context(query: str, limit: int) -> int:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
     print(bundle, end="")
+    return 0
+
+
+def _cmd_related(item_id: str, limit: int) -> int:
+    paths = get_paths()
+    try:
+        hits = find_related(paths.db_path, item_id, limit=limit)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    payload = [dataclasses.asdict(hit) for hit in hits]
+    for hit in payload:
+        hit["reasons"] = list(hit["reasons"])
+    print(json.dumps(payload))
     return 0
 
 

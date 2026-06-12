@@ -79,6 +79,7 @@ uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls search <query> # BM25-ranked full-text search, as JSON
 uv run scrolls show <id>      # print one item in full, as JSON
+uv run scrolls related <id>   # items connected to one item, with reasons, as JSON
 uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls context <query> # compact context bundle, as Markdown
@@ -133,6 +134,14 @@ The item's `markdown_path` is recorded so re-renders keep a stable path.
 index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
 so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
 prints the full stored item.
+
+`scrolls related <id>` finds the items connected to one item with
+deterministic, explainable signals (IDEAS.md §10): link connections in
+either direction (a bookmarked tweet pointing at a saved arXiv paper —
+links resolve through source detection, so `arxiv.org/pdf/X` finds item
+`arxiv:X`), shared concepts (merged by slug like KB pages), shared tags,
+and same category/domain as weak corroboration. Every hit carries its
+`reasons`, and the scoring needs no LLM.
 
 `scrolls ingest <url>` chains add → fetch → classify → md for one URL, so
 the first render already carries the category; re-ingesting an existing

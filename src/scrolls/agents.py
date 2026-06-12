@@ -46,6 +46,9 @@ All commands are agent-friendly: data commands emit JSON, and
   snippets, as JSON.
 - `scrolls show <id>` — one item in full (extracted text, provenance,
   classification), as JSON.
+- `scrolls related <id>` — other saved items connected to one item
+  (links between them, shared concepts/tags, same category), with
+  the reasons, as JSON.
 - `scrolls list` — every saved item with id, stage, and title, as JSON.
 - `scrolls paths` — library layout, as JSON. Scroll files live under
   `scrolls/<source>/`, compiled index pages under `library/`.

@@ -1,0 +1,143 @@
+"""Tests for deterministic related-scroll discovery (IDEAS.md §10)."""
+
+import json
+
+import pytest
+
+from scrolls.cli import main
+from scrolls.items import ScrollItem, insert_item
+from scrolls.paths import get_paths
+from scrolls.related import find_related
+
+
+@pytest.fixture
+def scrolls_home(monkeypatch, tmp_path):
+    """Point the library root at a temp dir so tests never touch ~/.scrolls."""
+    root = tmp_path / "scrolls-home"
+    monkeypatch.setenv("SCROLLS_HOME", str(root))
+    return root
+
+
+@pytest.fixture
+def db(scrolls_home):
+    main(["init"])
+    return get_paths().db_path
+
+
+def make_item(item_id, **overrides):
+    base = dict(
+        id=item_id,
+        source=item_id.split(":")[0],
+        url=f"https://example.org/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title=item_id,
+        stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def test_link_to_another_items_url_relates_them_both_ways(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/pdf/2605.27848",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:2605.27848",
+        url="https://arxiv.org/abs/2605.27848",
+    ))
+    insert_item(db, make_item("x:9999", url="https://x.com/b/status/9999"))
+
+    forward = find_related(db, "x:1111")
+    assert [hit.id for hit in forward] == ["arxiv:2605.27848"]
+    assert any("links to it" in reason for reason in forward[0].reasons)
+
+    backward = find_related(db, "arxiv:2605.27848")
+    assert [hit.id for hit in backward] == ["x:1111"]
+    assert any("linked from it" in reason for reason in backward[0].reasons)
+
+
+def test_exact_url_match_relates_web_items(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://blog.example.com/post",),
+    ))
+    insert_item(db, make_item("web:abc123", url="https://blog.example.com/post"))
+
+    hits = find_related(db, "x:1111")
+    assert [hit.id for hit in hits] == ["web:abc123"]
+
+
+def test_shared_concepts_outrank_same_category_only(db):
+    insert_item(db, make_item(
+        "github:a/repo", concepts=("full-text search", "BM25"), category="project",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:FTS",
+        concepts=("Full-text search",),  # different spelling, same slug
+        category="reference",
+    ))
+    insert_item(db, make_item("github:b/repo", category="project"))
+
+    hits = find_related(db, "github:a/repo")
+    assert [hit.id for hit in hits] == ["wikipedia:en:FTS", "github:b/repo"]
+    assert any("full-text search" in reason for reason in hits[0].reasons)
+    assert any("same category" in reason for reason in hits[1].reasons)
+
+
+def test_shared_tags_match_case_insensitively(db):
+    insert_item(db, make_item("arxiv:1", tags=("cs.CL", "nlp")))
+    insert_item(db, make_item("arxiv:2", tags=("CS.cl",)))
+    insert_item(db, make_item("arxiv:3", tags=("cs.CV",)))
+
+    hits = find_related(db, "arxiv:1")
+    assert [hit.id for hit in hits] == ["arxiv:2"]
+
+
+def test_unrelated_items_yield_nothing(db):
+    insert_item(db, make_item("x:1", url="https://x.com/a/status/1"))
+    insert_item(db, make_item("wikipedia:en:Pelican"))
+    assert find_related(db, "x:1") == []
+
+
+def test_limit_caps_results(db):
+    insert_item(db, make_item("github:a/repo", concepts=("agents",)))
+    for index in range(5):
+        insert_item(db, make_item(f"github:other/repo{index}", concepts=("agents",)))
+    assert len(find_related(db, "github:a/repo", limit=2)) == 2
+
+
+def test_unknown_id_raises(db):
+    with pytest.raises(ValueError):
+        find_related(db, "x:missing")
+
+
+def test_cli_related_prints_hits_json(db, capsys):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        title="@a: paper thread",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))
+    insert_item(db, make_item("arxiv:2605.27848", title="A Paper"))
+    capsys.readouterr()
+
+    exit_code = main(["related", "x:1111"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    hit = payload[0]
+    assert hit["id"] == "arxiv:2605.27848"
+    assert hit["title"] == "A Paper"
+    assert hit["score"] > 0
+    assert hit["reasons"]
+
+
+def test_cli_related_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["related", "x:missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
