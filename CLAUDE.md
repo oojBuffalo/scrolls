@@ -77,7 +77,17 @@ The user has authorized autonomous, practical decisions on architecture, design,
 3. documented when consequential,
 4. verified with tests or concrete command output when possible.
 
-Prefer small vertical slices over broad rewrites.
+Prefer small vertical slices over broad rewrites, but each autonomous run should produce meaningful progress, not activity for its own sake.
+
+Meaningful progress means at least one of:
+
+- a working user-visible capability with tests or a smoke test,
+- a foundational module/schema/CLI path that the next capability directly depends on,
+- a failing-to-passing regression or feature test,
+- an ADR/design doc that resolves a blocking architectural choice and names the next implementation step,
+- a bug fix or automation fix that unblocks future development.
+
+Avoid trivial progress: typo-only edits, README reshuffling, formatting-only churn, isolated TODO lists, vague "future work" docs, or issues with no implementation path. If a run cannot make meaningful progress, report the blocker rather than manufacturing a trivial commit.
 
 ## Safety
 
