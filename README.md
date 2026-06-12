@@ -63,6 +63,11 @@ Early implementation. Stack: Python ≥3.11 managed with uv (see
 Working today:
 
 ```bash
+uv run scrolls init           # create the library skeleton (idempotent)
+uv run scrolls status         # initialized? schema version? as JSON
+uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run pytest                 # test suite
 ```
+
+The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
