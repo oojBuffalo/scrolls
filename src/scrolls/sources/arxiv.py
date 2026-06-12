@@ -7,9 +7,11 @@ search. The feed's PDF link is kept as a `media` entry, and the PDF is
 downloaded and its full text extracted with pypdf into `extracted_text`
 (ADR 0010); any PDF failure degrades to the abstract-only scroll rather
 than failing the fetch, the same contract as caption-less youtube
-videos. Taxonomy category codes (`cs.CL`) go to `tags`, not `concepts` —
-they are curated but not readable concept names. The raw feed is kept in
-`raw_text` so scrolls and indexes can be rebuilt without refetching.
+videos. Taxonomy category codes (`cs.CL`) go to `tags`; their display
+names from the bundled taxonomy table ("Computation and Language")
+become `concepts`, joining github topics and wikipedia categories in the
+KB's concept graph (ADR 0012). The raw feed is kept in `raw_text` so
+scrolls and indexes can be rebuilt without refetching.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from xml.etree import ElementTree
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import http
+from scrolls.sources.arxiv_taxonomy import CATEGORY_NAMES
 
 API_ROOT = "https://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -78,6 +81,13 @@ def fetch_item(
 
         extraction_method = f"arxiv-api:atom+pypdf-{pypdf.__version__}"
 
+    codes = tuple(
+        dict.fromkeys(
+            category.get("term")
+            for category in entry.findall(f"{_ATOM}category")
+            if category.get("term")
+        )
+    )
     hashed = full_text or abstract or feed_text
     return replace(
         item,
@@ -88,11 +98,12 @@ def fetch_item(
         raw_text=feed_text,
         extracted_text=full_text,
         summary=abstract,
-        tags=tuple(dict.fromkeys(
-            category.get("term")
-            for category in entry.findall(f"{_ATOM}category")
-            if category.get("term")
-        )),
+        tags=codes,
+        concepts=tuple(
+            dict.fromkeys(
+                CATEGORY_NAMES[code] for code in codes if code in CATEGORY_NAMES
+            )
+        ),
         media=({"type": "pdf", "url": pdf_url},) if pdf_url else (),
         content_hash="sha256:" + hashlib.sha256(hashed.encode("utf-8")).hexdigest(),
         provenance={

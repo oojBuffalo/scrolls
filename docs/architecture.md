@@ -133,7 +133,7 @@ Implemented fetch adapters, all keyless:
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
-| arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, PDF → `media`; degrades to abstract-only | 0008, 0010 |
+| arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`; degrades to abstract-only | 0008, 0010, 0012 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -236,9 +236,6 @@ Next steps already identified in decision records, in no required order:
 - **LLM classification/concept engine** — the rules engine deliberately
   leaves items unclassified for it (ADR 0004), and KB concept pages are
   designed for an LLM producer to join (ADR 0005).
-- **arXiv taxonomy names** — taxonomy codes (`cs.CL`) land in `tags`;
-  mapping them to human-readable concept names via a bundled taxonomy
-  table was explicitly deferred (ADR 0008).
 - **MCP server** — IDEAS.md §10 sequences it after the shell interface,
   which is now in place.
 - **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's

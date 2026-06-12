@@ -77,7 +77,7 @@ represent an item without them.
 | `category` | once classified | string | classification from the rules engine or an import join |
 | `domain` | once assigned | string | finer topic area; today only the Field Theory import sets it |
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
-| `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories |
+| `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories, arXiv taxonomy names |
 | `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file |
 | `content_hash` | once fetched | string | `sha256:<hex>` over the fetched content |
 | `provenance` | once fetched | object | `adapter`, `fetched_at`, `extraction_method` |

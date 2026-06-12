@@ -118,12 +118,15 @@ repo topics become `concepts`, the first producer for the KB's concept
 pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
 `docs/adr/0007-github-adapter-topics-as-concepts.md`), and **arxiv**
 (keyless Atom export API, stdlib XML: the abstract becomes the
-searchable summary, taxonomy codes become `tags`, the PDF link is
+searchable summary, taxonomy codes become `tags` and their display
+names — "Computation and Language" for `cs.CL`, via a bundled taxonomy
+table — become `concepts`, the PDF link is
 recorded as `media`, and the paper's full text is extracted from the
 PDF with `pypdf` into searchable extracted text — any PDF failure
 degrades to the abstract-only scroll — see
-`docs/adr/0008-arxiv-adapter-atom-abstracts.md` and
-`docs/adr/0010-arxiv-pdf-full-text-pypdf.md`). Items from sources
+`docs/adr/0008-arxiv-adapter-atom-abstracts.md`,
+`docs/adr/0010-arxiv-pdf-full-text-pypdf.md`, and
+`docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`). Items from sources
 without an adapter yet are skipped, and per-item failures don't abort the
 batch.
 
@@ -189,8 +192,9 @@ deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
 that link back to rendered scrolls with relative Markdown links. The
 generated pages are rebuilt from scratch each run so stale groups can't
 linger; other files under `library/` are left alone. Concept pages merge
-spellings by slug; github repo topics and wikipedia page categories
-populate them today, and an LLM concept engine can join later.
+spellings by slug; github repo topics, wikipedia page categories, and
+arXiv taxonomy names populate them today, and an LLM concept engine can
+join later.
 
 `scrolls context <query>` answers "what does my library know about X?"
 with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped

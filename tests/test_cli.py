@@ -558,6 +558,8 @@ def test_ingest_arxiv_paper_end_to_end(scrolls_home, fake_arxiv_api, capsys):
     }
     scroll = (scrolls_home / "scrolls" / "arxiv" / "mistral-7b.md").read_text()
     assert '\ntags: ["cs.CL"]\n' in scroll
+    # taxonomy display names join the concept graph (ADR 0012)
+    assert '\nconcepts: ["Computation and Language"]\n' in scroll
     assert "We introduce Mistral 7B" in scroll
     # PDF full text lands in the scroll's extracted content (ADR 0010)
     assert "Grouped-query attention accelerates decoding throughput." in scroll

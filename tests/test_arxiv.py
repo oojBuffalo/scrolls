@@ -119,7 +119,8 @@ def test_fetch_item_normalizes_entry_onto_item():
     )
     assert PDF_TEXT in fetched.extracted_text  # full text from the PDF (ADR 0010)
     assert fetched.tags == ("cs.CL", "cs.AI")  # taxonomy codes, deduped
-    assert fetched.concepts == ()  # codes are not readable concept names
+    # taxonomy display names join the concept graph (ADR 0012)
+    assert fetched.concepts == ("Computation and Language", "Artificial Intelligence")
     assert fetched.media == (
         {"type": "pdf", "url": "http://arxiv.org/pdf/2310.06825v1"},
     )
@@ -127,6 +128,27 @@ def test_fetch_item_normalizes_entry_onto_item():
     assert fetched.provenance["adapter"] == "arxiv"
     assert fetched.provenance["extraction_method"].startswith("arxiv-api:atom+pypdf-")
     assert fetched.stage == "fetched"
+
+
+def test_fetch_item_keeps_unknown_category_codes_out_of_concepts():
+    # pre-2007 archive names like cmp-lg are valid tags but have no
+    # taxonomy entry; they must not crash or pollute the concept graph
+    feed = FEED.replace('term="cs.AI"', 'term="cmp-lg"')
+    fetched = fetch(feed=feed)
+
+    assert fetched.tags == ("cs.CL", "cmp-lg")
+    assert fetched.concepts == ("Computation and Language",)
+
+
+def test_fetch_item_merges_concept_names_shared_across_codes():
+    # cs.LG and stat.ML both display as "Machine Learning" — one concept
+    feed = FEED.replace('term="cs.CL"', 'term="cs.LG"').replace(
+        'term="cs.AI"', 'term="stat.ML"'
+    )
+    fetched = fetch(feed=feed)
+
+    assert fetched.tags == ("cs.LG", "stat.ML")
+    assert fetched.concepts == ("Machine Learning",)
 
 
 def test_fetch_item_downloads_the_pdf_link_over_https():
