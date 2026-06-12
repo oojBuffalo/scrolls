@@ -4,8 +4,11 @@ import json
 
 import pytest
 
+import scrolls.sources.wikipedia as wikipedia
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
+from scrolls.paths import get_paths
+from scrolls.items import get_item
 
 
 @pytest.fixture
@@ -150,6 +153,119 @@ def test_list_before_init_prints_empty_array(scrolls_home, capsys):
     exit_code = main(["list"])
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+@pytest.fixture
+def fake_wikipedia_api(monkeypatch):
+    """Serve a canned MediaWiki extracts payload instead of the network."""
+    payload = {
+        "query": {
+            "pages": [
+                {
+                    "pageid": 25387,
+                    "title": "SQLite",
+                    "fullurl": "https://en.wikipedia.org/wiki/SQLite",
+                    "canonicalurl": "https://en.wikipedia.org/wiki/SQLite",
+                    "extract": "SQLite is a database engine.\n\n\n== History ==\nEarly days.",
+                }
+            ]
+        }
+    }
+    monkeypatch.setattr(wikipedia, "_get_json", lambda url: payload)
+    return payload
+
+
+def test_fetch_all_fetches_detected_wikipedia_item(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["fetch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fetched"] == 1
+    assert payload["failed"] == 0
+    assert payload["results"] == [
+        {"id": "wikipedia:en:SQLite", "status": "fetched", "title": "SQLite", "stage": "fetched"}
+    ]
+
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.stage == "fetched"
+    assert stored.title == "SQLite"
+    assert stored.extracted_text.startswith("SQLite is a database engine.")
+
+
+def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["fetch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fetched"] == 1
+    assert payload["skipped"] == 1
+    by_id = {entry["id"]: entry for entry in payload["results"]}
+    assert by_id["youtube:dQw4w9WgXcQ"]["status"] == "skipped"
+    assert "youtube" in by_id["youtube:dQw4w9WgXcQ"]["reason"]
+    # the skipped item is untouched and will be picked up once an adapter lands
+    assert get_item(get_paths().db_path, "youtube:dQw4w9WgXcQ").stage == "detected"
+
+
+def test_fetch_all_with_nothing_detected(scrolls_home, capsys):
+    exit_code = main(["fetch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"fetched": 0, "skipped": 0, "failed": 0, "results": []}
+
+
+def test_fetch_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypatch, capsys):
+    def boom(url):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(wikipedia, "_get_json", boom)
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["fetch"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert "connection refused" in payload["results"][0]["error"]
+    # the item stays detected so a later fetch can retry it
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").stage == "detected"
+
+
+def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["fetch", "wikipedia:en:SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fetched"] == 1
+    assert payload["results"][0]["id"] == "wikipedia:en:SQLite"
+
+
+def test_fetch_by_id_without_adapter_fails(scrolls_home, capsys):
+    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    capsys.readouterr()
+
+    exit_code = main(["fetch", "youtube:dQw4w9WgXcQ"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert "youtube" in payload["results"][0]["error"]
+
+
+def test_fetch_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["fetch", "wikipedia:en:Missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
 
 
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):

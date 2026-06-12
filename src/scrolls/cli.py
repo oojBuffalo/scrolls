@@ -13,8 +13,16 @@ from datetime import datetime, timezone
 
 from scrolls import __version__
 from scrolls.db import init_db, read_schema_version
-from scrolls.items import ScrollItem, get_item, insert_item, list_items, make_item_id
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    insert_item,
+    list_items,
+    make_item_id,
+    update_item,
+)
 from scrolls.paths import LibraryPaths, get_paths
+from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 
 CONFIG_TEMPLATE = """\
@@ -41,6 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     detect_parser.add_argument("url", help="URL to inspect")
 
+    fetch_parser = subparsers.add_parser(
+        "fetch", help="Fetch content for detected items (JSON output)"
+    )
+    fetch_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Fetch one item by id, refetching even if already fetched; "
+        "default is every item at stage 'detected'",
+    )
+
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
     subparsers.add_parser("list", help="List library items (JSON output)")
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
@@ -52,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(args.url)
     if args.command == "detect":
         return _cmd_detect(args.url)
+    if args.command == "fetch":
+        return _cmd_fetch(args.id)
     if args.command == "init":
         return _cmd_init()
     if args.command == "list":
@@ -116,6 +136,64 @@ def _cmd_add(url: str) -> int:
         )
     )
     return 0
+
+
+def _cmd_fetch(item_id: str | None) -> int:
+    paths = get_paths()
+    if item_id is not None:
+        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        if item is None:
+            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            return 1
+        items = [item]
+    else:
+        items = list_items(paths.db_path, stage="detected") if paths.db_path.exists() else []
+
+    results = []
+    counts = {"fetched": 0, "skipped": 0, "failed": 0}
+    for item in items:
+        adapter = FETCH_ADAPTERS.get(item.source)
+        if adapter is None:
+            # Bulk runs leave adapterless items for a future scrolls; asking
+            # for one by id deserves an honest failure.
+            if item_id is None:
+                counts["skipped"] += 1
+                results.append(
+                    {
+                        "id": item.id,
+                        "status": "skipped",
+                        "reason": f"no fetch adapter for source '{item.source}'",
+                    }
+                )
+                continue
+            counts["failed"] += 1
+            results.append(
+                {
+                    "id": item.id,
+                    "status": "failed",
+                    "error": f"no fetch adapter for source '{item.source}'",
+                }
+            )
+            continue
+        try:
+            fetched = adapter(item)
+        except FetchError as exc:
+            counts["failed"] += 1
+            results.append({"id": item.id, "status": "failed", "error": str(exc)})
+            continue
+        update_item(paths.db_path, fetched)
+        counts["fetched"] += 1
+        results.append(
+            {
+                "id": fetched.id,
+                "status": "fetched",
+                "title": fetched.title,
+                "stage": fetched.stage,
+            }
+        )
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
 
 
 def _cmd_list() -> int:

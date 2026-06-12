@@ -1,9 +1,18 @@
 """Tests for the ScrollItem model and SQLite persistence (IDEAS.md §12, §14 Pass 2)."""
 
+import dataclasses
+
 import pytest
 
 from scrolls.db import init_db
-from scrolls.items import ScrollItem, get_item, insert_item, list_items, make_item_id
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    insert_item,
+    list_items,
+    make_item_id,
+    update_item,
+)
 
 
 @pytest.fixture
@@ -85,6 +94,37 @@ def test_insert_duplicate_id_keeps_first_and_returns_false(db_path):
 
 def test_get_missing_item_returns_none(db_path):
     assert get_item(db_path, "web:missing") is None
+
+
+def test_update_item_replaces_stored_row(db_path):
+    insert_item(db_path, make_item())
+    fetched = dataclasses.replace(
+        make_item(),
+        title="A video",
+        extracted_text="transcript text",
+        content_hash="sha256:abc",
+        provenance={"adapter": "youtube", "fetched_at": "2026-06-12T00:00:00+00:00"},
+        stage="fetched",
+    )
+    assert update_item(db_path, fetched) is True
+    assert get_item(db_path, fetched.id) == fetched
+
+
+def test_update_item_returns_false_for_missing_id(db_path):
+    assert update_item(db_path, make_item()) is False
+    assert get_item(db_path, make_item().id) is None  # no upsert
+
+
+def test_list_items_filters_by_stage(db_path):
+    insert_item(db_path, make_item())
+    insert_item(
+        db_path,
+        make_item(id="web:a", source="web", source_id=None,
+                  url="https://a.example", stage="fetched"),
+    )
+    assert [item.id for item in list_items(db_path, stage="detected")] == ["youtube:abc123"]
+    assert [item.id for item in list_items(db_path, stage="fetched")] == ["web:a"]
+    assert len(list_items(db_path)) == 2
 
 
 def test_list_items_orders_by_saved_at(db_path):

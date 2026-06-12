@@ -68,6 +68,8 @@ uv run scrolls status         # initialized? schema version? as JSON
 uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
+uv run scrolls fetch          # fetch content for detected items, as JSON
+uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls list           # list items, as JSON
 uv run pytest                 # test suite
 ```
@@ -75,6 +77,13 @@ uv run pytest                 # test suite
 `scrolls add` auto-initializes the library, dedupes by stable item ID
 (`source:source_id`, or a URL hash when the source has no local ID), and
 stores the item at stage `detected` — registered but not yet fetched.
-Fetching/enrichment is the next slice (adapters).
+
+`scrolls fetch` runs the source adapter for each detected item, filling in
+title, extracted text, summary, canonical URL, content hash, and
+provenance, and moving the item to stage `fetched`. Wikipedia is the first
+adapter (see `docs/adr/0002-first-fetch-adapter-wikipedia.md`); items from
+sources without an adapter yet are skipped, and per-item failures don't
+abort the batch. Next slices: more adapters (web, YouTube), then Markdown
+scroll rendering.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

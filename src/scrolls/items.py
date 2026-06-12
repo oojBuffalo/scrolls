@@ -2,8 +2,9 @@
 
 `ScrollItem` mirrors the IDEAS.md §12 record one-to-one with the `items`
 table; columns share field names so rows map by name. Items enter at stage
-'detected' — registered from a URL but not yet fetched — the step before
-'synced' in the pipeline states of IDEAS.md §4. List-valued fields and
+'detected' — registered from a URL but not yet fetched — and move to
+'fetched' once a source adapter fills in content (ADR 0002 revises the
+IDEAS.md §4 stage names for the add-one-URL path). List-valued fields and
 provenance round-trip through JSON text columns.
 """
 
@@ -74,6 +75,23 @@ def insert_item(db_path: Path, item: ScrollItem) -> bool:
         conn.close()
 
 
+def update_item(db_path: Path, item: ScrollItem) -> bool:
+    """Replace the stored row for `item.id`; return False if no such row (no upsert)."""
+    row = _to_row(item)
+    value_names = tuple(name for name in _FIELD_NAMES if name != "id")
+    assignments = ", ".join(f"{name} = ?" for name in value_names)
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            cursor = conn.execute(
+                f"UPDATE items SET {assignments} WHERE id = ?",
+                tuple(row[name] for name in value_names) + (item.id,),
+            )
+        return cursor.rowcount == 1
+    finally:
+        conn.close()
+
+
 def get_item(db_path: Path, item_id: str) -> ScrollItem | None:
     """Fetch one item by id, or None if absent."""
     conn = sqlite3.connect(db_path)
@@ -85,12 +103,17 @@ def get_item(db_path: Path, item_id: str) -> ScrollItem | None:
     return _from_row(row) if row else None
 
 
-def list_items(db_path: Path) -> list[ScrollItem]:
-    """All items, oldest saved first."""
+def list_items(db_path: Path, stage: str | None = None) -> list[ScrollItem]:
+    """All items (optionally only one pipeline stage), oldest saved first."""
+    query = "SELECT * FROM items"
+    params: tuple = ()
+    if stage is not None:
+        query += " WHERE stage = ?"
+        params = (stage,)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute("SELECT * FROM items ORDER BY saved_at, id").fetchall()
+        rows = conn.execute(query + " ORDER BY saved_at, id", params).fetchall()
     finally:
         conn.close()
     return [_from_row(row) for row in rows]
