@@ -391,7 +391,7 @@ def _cmd_sync(sub_id: str | None) -> int:
         )
 
     results = []
-    counts = {"new": 0, "known": 0, "skipped": 0, "failed": 0}
+    counts = {"new": 0, "known": 0, "skipped": 0, "unchanged": 0, "failed": 0}
     for subscription in subscriptions:
         try:
             result = sync_subscription(paths.db_path, subscription)
@@ -406,6 +406,8 @@ def _cmd_sync(sub_id: str | None) -> int:
                 }
             )
             continue
+        if result["status"] == "unchanged":
+            counts["unchanged"] += 1
         for key in ("new", "known", "skipped"):
             counts[key] += result[key]
         results.append(result)

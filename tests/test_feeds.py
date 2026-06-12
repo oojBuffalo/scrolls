@@ -3,8 +3,9 @@
 `parse_feed` understands RSS 2.0 and Atom via stdlib ElementTree;
 `follow_feed` validates a feed by fetching it once before storing the
 subscription; `sync_subscription` registers new entry URLs as detected
-items through the same detection/dedupe path as `scrolls add`. No test
-touches the network — the fetcher is injected everywhere.
+items through the same detection/dedupe path as `scrolls add`, polling
+with conditional GETs so unchanged feeds cost one 304 (ADR 0019). No
+test touches the network — the fetcher is injected everywhere.
 """
 
 import pytest
@@ -27,6 +28,20 @@ from scrolls.feeds import (
 )
 from scrolls.items import get_item
 from scrolls.paths import get_paths
+from scrolls.sources.http import ConditionalText
+
+
+def _fetch_ok(text, etag=None, last_modified=None):
+    """A fake conditional fetcher that always returns a full response."""
+
+    def fetch(url, stored_etag, stored_last_modified):
+        return ConditionalText(text=text, etag=etag, last_modified=last_modified)
+
+    return fetch
+
+
+def _fetch_not_modified(url, stored_etag, stored_last_modified):
+    return ConditionalText(not_modified=True)
 
 ATOM_FEED = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -188,7 +203,7 @@ def test_sync_registers_new_items_as_detected(db_path):
     sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
     insert_subscription(db_path, sub)
 
-    result = sync_subscription(db_path, sub, get_text=lambda url: ATOM_FEED)
+    result = sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
 
     assert result["status"] == "synced"
     assert result["new"] == 2 and result["known"] == 0 and result["skipped"] == 0
@@ -201,9 +216,9 @@ def test_sync_registers_new_items_as_detected(db_path):
 def test_sync_second_run_reports_known(db_path):
     sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
     insert_subscription(db_path, sub)
-    sync_subscription(db_path, sub, get_text=lambda url: ATOM_FEED)
+    sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
 
-    result = sync_subscription(db_path, sub, get_text=lambda url: ATOM_FEED)
+    result = sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
     assert result["new"] == 0 and result["known"] == 2
     assert result["new_items"] == []
 
@@ -217,7 +232,7 @@ def test_sync_skips_entries_without_http_links(db_path):
     sub = _sub("https://blog.example.com/rss")
     insert_subscription(db_path, sub)
 
-    result = sync_subscription(db_path, sub, get_text=lambda url: feed)
+    result = sync_subscription(db_path, sub, fetch=_fetch_ok(feed))
     assert result["new"] == 1 and result["skipped"] == 1
 
 
@@ -225,11 +240,11 @@ def test_sync_fetch_failure_raises_feed_error(db_path):
     sub = _sub("https://blog.example.com/atom.xml")
     insert_subscription(db_path, sub)
 
-    def boom(url):
+    def boom(url, etag, last_modified):
         raise OSError("connection refused")
 
     with pytest.raises(FeedError, match="connection refused"):
-        sync_subscription(db_path, sub, get_text=boom)
+        sync_subscription(db_path, sub, fetch=boom)
     assert get_subscription(db_path, sub.id).last_synced_at is None
 
 
@@ -237,7 +252,81 @@ def test_sync_unparseable_feed_raises_feed_error(db_path):
     sub = _sub("https://blog.example.com/atom.xml")
     insert_subscription(db_path, sub)
     with pytest.raises(FeedError):
-        sync_subscription(db_path, sub, get_text=lambda url: "<html></html>")
+        sync_subscription(db_path, sub, fetch=_fetch_ok("<html></html>"))
+
+
+# --- sync HTTP caching (ADR 0019) ---
+
+
+def test_sync_passes_stored_validators_to_the_fetcher(db_path):
+    sub = _sub(
+        "https://blog.example.com/rss",
+        etag='W/"abc"',
+        last_modified="Thu, 11 Jun 2026 09:00:00 GMT",
+    )
+    insert_subscription(db_path, sub)
+    seen = []
+
+    def fetch(url, etag, last_modified):
+        seen.append((url, etag, last_modified))
+        return ConditionalText(text=RSS_FEED)
+
+    sync_subscription(db_path, sub, fetch=fetch)
+    assert seen == [
+        ("https://blog.example.com/rss", 'W/"abc"', "Thu, 11 Jun 2026 09:00:00 GMT")
+    ]
+
+
+def test_sync_not_modified_reports_unchanged(db_path):
+    sub = _sub("https://blog.example.com/rss", etag='W/"abc"')
+    insert_subscription(db_path, sub)
+
+    result = sync_subscription(db_path, sub, fetch=_fetch_not_modified)
+
+    assert result["status"] == "unchanged"
+    assert result["new"] == 0 and result["known"] == 0 and result["skipped"] == 0
+    assert result["new_items"] == []
+    stored = get_subscription(db_path, sub.id)
+    assert stored.last_synced_at is not None  # the poll itself succeeded
+    assert stored.etag == 'W/"abc"'  # validators survive a 304
+
+
+def test_sync_stores_response_validators(db_path):
+    sub = _sub("https://blog.example.com/rss")
+    insert_subscription(db_path, sub)
+
+    sync_subscription(
+        db_path,
+        sub,
+        fetch=_fetch_ok(
+            RSS_FEED, etag='W/"abc"', last_modified="Thu, 11 Jun 2026 09:00:00 GMT"
+        ),
+    )
+
+    stored = get_subscription(db_path, sub.id)
+    assert stored.etag == 'W/"abc"'
+    assert stored.last_modified == "Thu, 11 Jun 2026 09:00:00 GMT"
+
+
+def test_sync_overwrites_validators_with_latest_response(db_path):
+    """The stored pair always describes the most recent full response."""
+    sub = _sub("https://blog.example.com/rss", etag='W/"old"', last_modified="old")
+    insert_subscription(db_path, sub)
+
+    sync_subscription(db_path, sub, fetch=_fetch_ok(RSS_FEED))  # no validators
+
+    stored = get_subscription(db_path, sub.id)
+    assert stored.etag is None and stored.last_modified is None
+
+
+def test_sync_failure_keeps_stored_validators(db_path):
+    sub = _sub("https://blog.example.com/rss", etag='W/"abc"')
+    insert_subscription(db_path, sub)
+
+    with pytest.raises(FeedError):
+        sync_subscription(db_path, sub, fetch=_fetch_ok("<html></html>"))
+
+    assert get_subscription(db_path, sub.id).etag == 'W/"abc"'
 
 
 # --- follow_feed ---
@@ -278,3 +367,15 @@ def test_follow_feed_bad_feed_stores_nothing(scrolls_home):
     with pytest.raises(FeedError):
         follow_feed("https://blog.example.com/page", get_text=lambda url: "<html></html>")
     assert list_subscriptions(paths.db_path) == []
+
+
+def test_follow_feed_stores_no_validators(scrolls_home):
+    """Follow must not seed the HTTP cache: it registers no entries, so a
+    stored ETag would make the first sync 304 and skip the feed's current
+    entries forever (ADR 0019)."""
+    paths, sub, _ = follow_feed(
+        "https://blog.example.com/atom.xml", get_text=lambda url: RSS_FEED
+    )
+    assert sub.etag is None and sub.last_modified is None
+    stored = get_subscription(paths.db_path, sub.id)
+    assert stored.etag is None and stored.last_modified is None

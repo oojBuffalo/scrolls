@@ -6,7 +6,7 @@ consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
 Every example below is real output captured from `scrolls 0.1.0`
-(schema version 4) on this branch — see
+(schema version 5) on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
 `tests/test_cli.py`.
@@ -65,7 +65,7 @@ $ scrolls init
 
 Report library state without creating anything
 (`test_status_before_init`, `test_status_after_init`).
-`schema_version` is `null` until `init` (current version: 4,
+`schema_version` is `null` until `init` (current version: 5,
 `src/scrolls/db.py`).
 
 ```console
@@ -74,7 +74,7 @@ $ scrolls status        # before init
 [exit 0]
 
 $ scrolls status        # after init
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 4}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 5}
 [exit 0]
 ```
 
@@ -224,9 +224,16 @@ $ scrolls follow http://localhost:8943/missing.xml
 [exit 1]
 
 $ scrolls follow
-[{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "title": "Demo Weblog", "added_at": "2026-06-12T21:29:12+00:00", "last_synced_at": null}]
+[{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "title": "Demo Weblog", "added_at": "2026-06-12T22:07:58+00:00", "last_synced_at": null, "etag": null, "last_modified": null}]
 [exit 0]
 ```
+
+The listing's `etag`/`last_modified` are the feed's HTTP cache
+validators, stored by the last full sync (ADR 0019) — always `null`
+right after `follow`, which deliberately stores none
+(`test_follow_feed_stores_no_validators` in `tests/test_feeds.py`):
+follow registers no entries, so a stored validator would make the
+first sync skip the feed's current entries.
 
 ### `scrolls sync [id]`
 
@@ -242,18 +249,31 @@ subscription (`test_sync_by_id_syncs_one_subscription`); unknown ids
 are an error envelope (`test_sync_unknown_id_is_an_error`). One dead
 feed fails its subscription but never the batch.
 
+Each poll is a conditional GET (ADR 0019): a full response's
+`ETag`/`Last-Modified` are stored on the subscription, and when the
+server answers `304 Not Modified` on the next poll the subscription
+reports `"status": "unchanged"` without re-downloading or re-parsing
+the feed (`test_sync_unchanged_feed_reports_unchanged`;
+`test_sync_not_modified_reports_unchanged` in `tests/test_feeds.py`).
+Feeds that serve no validators just get a full response every time.
+
 | Key | Meaning |
 | --- | --- |
-| `new` / `known` / `skipped` / `failed` | totals (`failed` counts subscriptions) |
+| `new` / `known` / `skipped` / `failed` / `unchanged` | totals (`failed` and `unchanged` count subscriptions) |
 | `results[]` | per-subscription `{id, feed_url, status, ...}` with its own counts; `new_items` lists registered item ids, `error` the failure |
 
 ```console
 $ scrolls sync
-{"new": 2, "known": 0, "skipped": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 2, "known": 0, "skipped": 0, "new_items": ["web:081e89b0b346", "web:dbeb9a37d69a"]}]}
+{"new": 2, "known": 0, "skipped": 0, "unchanged": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 2, "known": 0, "skipped": 0, "new_items": ["web:081e89b0b346", "web:dbeb9a37d69a"]}]}
 [exit 0]
 
-$ scrolls sync          # idempotent: the same entries are now known
-{"new": 0, "known": 2, "skipped": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 0, "known": 2, "skipped": 0, "new_items": []}]}
+$ scrolls sync          # the feed is unchanged: the server answers 304
+{"new": 0, "known": 0, "skipped": 0, "unchanged": 1, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "unchanged", "new": 0, "known": 0, "skipped": 0, "new_items": []}]}
+[exit 0]
+
+$ touch "$DEMO/site/feed.xml"   # the feed "changes" (new Last-Modified)
+$ scrolls sync          # full response again; the same entries are known
+{"new": 0, "known": 2, "skipped": 0, "unchanged": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 0, "known": 2, "skipped": 0, "new_items": []}]}
 [exit 0]
 ```
 
@@ -688,7 +708,9 @@ scrolls follow http://localhost:8943/feed.xml     # local server only
 scrolls follow http://localhost:8943/missing.xml  # 404: exit 1
 scrolls follow                                    # list subscriptions
 scrolls sync                                      # 2 new items
-scrolls sync                                      # idempotent: 2 known
+scrolls sync                                      # 304: unchanged (http.server honors If-Modified-Since)
+touch "$DEMO/site/feed.xml"                       # new Last-Modified
+scrolls sync                                      # full response again: 2 known
 scrolls unfollow http://localhost:8943/feed.xml
 scrolls unfollow ea77c1d5239e                     # already gone: exit 1
 scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"

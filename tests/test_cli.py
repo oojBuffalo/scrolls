@@ -1299,7 +1299,9 @@ FEED_BY_URL = {
 
 @pytest.fixture
 def fake_feeds(monkeypatch):
+    """Feeds that serve no cache validators, so every sync is a full 200."""
     import scrolls.feeds as feeds
+    from scrolls.sources.http import ConditionalText
 
     def get_text(url):
         if url not in FEED_BY_URL:
@@ -1307,6 +1309,29 @@ def fake_feeds(monkeypatch):
         return FEED_BY_URL[url]
 
     monkeypatch.setattr(feeds, "_get_text", get_text)
+    monkeypatch.setattr(
+        feeds,
+        "_get_conditional",
+        lambda url, etag, last_modified: ConditionalText(text=get_text(url)),
+    )
+
+
+@pytest.fixture
+def fake_caching_feed(monkeypatch):
+    """A feed that serves an ETag and honors If-None-Match with a 304."""
+    import scrolls.feeds as feeds
+    from scrolls.sources.http import ConditionalText
+
+    url = "https://blog.example.com/atom.xml"
+    monkeypatch.setattr(feeds, "_get_text", lambda u: FEED_BY_URL[url])
+
+    def get_conditional(u, etag, last_modified):
+        if etag == 'W/"v1"':
+            return ConditionalText(not_modified=True)
+        return ConditionalText(text=FEED_BY_URL[url], etag='W/"v1"')
+
+    monkeypatch.setattr(feeds, "_get_conditional", get_conditional)
+    return url
 
 
 def test_follow_registers_subscription(scrolls_home, fake_feeds, capsys):
@@ -1447,7 +1472,9 @@ def test_sync_continues_past_feed_failures_and_exits_nonzero(
     capsys.readouterr()
     # the feed goes dark after the follow
     monkeypatch.setattr(
-        feeds, "_get_text", lambda url: (_ for _ in ()).throw(OSError("gone"))
+        feeds,
+        "_get_conditional",
+        lambda url, etag, last_modified: (_ for _ in ()).throw(OSError("gone")),
     )
 
     exit_code = main(["sync"])
@@ -1458,11 +1485,31 @@ def test_sync_continues_past_feed_failures_and_exits_nonzero(
     assert "gone" in payload["results"][0]["error"]
 
 
+def test_sync_unchanged_feed_reports_unchanged(scrolls_home, fake_caching_feed, capsys):
+    main(["follow", fake_caching_feed])
+    main(["sync"])  # full 200: registers entries, stores the ETag
+    capsys.readouterr()
+
+    exit_code = main(["sync"])  # the feed now answers 304
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["unchanged"] == 1
+    assert payload["new"] == 0 and payload["known"] == 0 and payload["failed"] == 0
+    assert payload["results"][0]["status"] == "unchanged"
+
+
 def test_sync_before_init_reports_nothing_to_do(scrolls_home, capsys):
     exit_code = main(["sync"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"new": 0, "known": 0, "skipped": 0, "failed": 0, "results": []}
+    assert payload == {
+        "new": 0,
+        "known": 0,
+        "skipped": 0,
+        "unchanged": 0,
+        "failed": 0,
+        "results": [],
+    }
 
 
 # --- set (user classification overrides, ADR 0018) ---

@@ -68,9 +68,10 @@ Two stores, by design (IDEAS.md §3):
   `media`) and `provenance` round-trip through JSON text columns. An
   external-content FTS5 table (`items_fts`) over title/summary/extracted
   text is kept in sync by SQL triggers so no Python write path can forget
-  it. A `subscriptions` table holds followed feeds and their sync state
-  (ADR 0017) — sync state belongs to the index, not config (IDEAS.md
-  §3). `meta` carries the schema version (`SCHEMA_VERSION = 4`);
+  it. A `subscriptions` table holds followed feeds and their sync
+  state, including each feed's HTTP cache validators (ADR 0017,
+  ADR 0019) — sync state belongs to the index, not config (IDEAS.md
+  §3). `meta` carries the schema version (`SCHEMA_VERSION = 5`);
   `MIGRATIONS[n]` walks any version gap in one transaction, and opening a
   newer-versioned library raises instead of corrupting it
   (`tests/test_db.py`).
@@ -221,9 +222,13 @@ choice (ADRs 0004, 0005).
   and stores the subscription; `sync` polls each feed and registers new
   entry URLs at stage `detected` through `detect_source` +
   `make_item_id`, so dedupe and adapter routing are the same as
-  `scrolls add`. YouTube playlist/channel URLs map to their public
+  `scrolls add`. Polls are conditional GETs (ADR 0019): a full
+  response's `ETag`/`Last-Modified` land on the subscription and a 304
+  reports the feed `unchanged` without re-parsing; follow never stores
+  validators, so the first sync always sees the feed's current entries.
+  YouTube playlist/channel URLs map to their public
   feeds syntactically; one dead feed fails its subscription, never the
-  batch (`tests/test_feeds.py`).
+  batch (`tests/test_feeds.py`, `tests/test_http.py`).
 - **Media capture** (`media.py`, ADR 0011) — downloads items' media
   refs to `media/<source>/<id-slug>-<n><ext>`, records each file's
   root-relative `path` on the ref (reused on re-capture, so locations
@@ -283,6 +288,6 @@ Next steps already identified in decision records, in no required order:
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).
-- **Feed HTTP caching** — `sync` makes one uncached GET per feed per
-  run; ETag/Last-Modified columns can join the `subscriptions` table
-  if polling frequency ever warrants it (ADR 0017).
+- **Follow/sync over MCP** — the MCP server exposes read tools plus
+  `ingest_url`, but subscriptions are still shell-only (ADR 0014,
+  ADR 0017).

@@ -2,8 +2,8 @@
 
 v1 pinned the `meta` table with a schema version; v2 adds the `items`
 table (Pass 2 storage); v3 the FTS index; v4 the `subscriptions` table
-(feed sync, ADR 0017). `init_db` must bring both fresh and older
-databases to SCHEMA_VERSION.
+(feed sync, ADR 0017); v5 its HTTP cache validator columns (ADR 0019).
+`init_db` must bring both fresh and older databases to SCHEMA_VERSION.
 """
 
 import sqlite3
@@ -46,9 +46,39 @@ def test_init_db_creates_items_table(tmp_path):
 def test_init_db_creates_subscriptions_table(tmp_path):
     db_path = tmp_path / "db.sqlite"
     init_db(db_path)
-    assert {"id", "feed_url", "title", "added_at", "last_synced_at"} <= _table_columns(
-        db_path, "subscriptions"
-    )
+    assert {
+        "id",
+        "feed_url",
+        "title",
+        "added_at",
+        "last_synced_at",
+        "etag",
+        "last_modified",
+    } <= _table_columns(db_path, "subscriptions")
+
+
+def test_init_db_migrates_v4_database(tmp_path):
+    """A pre-caching library's subscriptions table gains the validator columns."""
+    db_path = tmp_path / "db.sqlite"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        for version in (1, 2, 3, 4):
+            for statement in MIGRATIONS[version]:
+                conn.execute(statement)
+        conn.execute(
+            "INSERT INTO subscriptions (id, feed_url, added_at) VALUES ('abc', 'https://e.com/f', '2026-06-12')"
+        )
+        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+    conn.close()
+
+    init_db(db_path)
+    assert read_schema_version(db_path) == SCHEMA_VERSION
+    assert {"etag", "last_modified"} <= _table_columns(db_path, "subscriptions")
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT etag, last_modified FROM subscriptions").fetchone()
+    conn.close()
+    assert row == (None, None)  # existing rows survive with empty validators
 
 
 def test_init_db_migrates_v3_database(tmp_path):

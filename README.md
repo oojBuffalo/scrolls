@@ -164,7 +164,12 @@ every followed feed (IDEAS.md §13's live-delta path — see
 entry URL at stage `detected` through the same detection/dedupe as
 `scrolls add`, so a YouTube feed entry becomes a `youtube` item and a
 blog entry a `web` item; `scrolls fetch` (then `classify`/`md`) brings
-the new items in. Known entries count as known on re-sync, one dead
+the new items in. Polling is HTTP-cached (see
+`docs/adr/0019-feed-http-caching.md`): each full response's
+`ETag`/`Last-Modified` are stored on the subscription, and an
+unchanged feed answers the next poll with an empty 304 and is reported
+as `unchanged` — so a cron'd sync costs almost nothing when nothing
+changed. Known entries count as known on re-sync, one dead
 feed never aborts the batch, and `scrolls unfollow` removes a
 subscription while keeping the items it registered.
 
@@ -286,7 +291,8 @@ and x (via Field Theory import), search, two-layer classification
 agent install, and the MCP server, all five IDEAS.md §14 MVP passes
 have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
-deltas via `scrolls sync` (IDEAS.md §13). Next candidates: batched LLM
-classification (ADR 0015) and feed HTTP caching (ADR 0017).
+deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
+(ADR 0019). Next candidates: batched LLM classification (ADR 0015)
+and exposing follow/sync over MCP (ADR 0014).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

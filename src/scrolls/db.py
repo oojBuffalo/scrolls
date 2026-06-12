@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -83,11 +83,20 @@ CREATE TABLE subscriptions (
 )
 """
 
+# HTTP cache validators for conditional feed polling (ADR 0019). Stored
+# only by a successful 200 sync — never by follow, which registers no
+# entries and so must not suppress the first sync with a 304.
+_SUBSCRIPTION_VALIDATORS = (
+    "ALTER TABLE subscriptions ADD COLUMN etag TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN last_modified TEXT",
+)
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
     3: _ITEMS_FTS,
     4: (_SUBSCRIPTIONS_TABLE,),
+    5: _SUBSCRIPTION_VALIDATORS,
 }
 
 

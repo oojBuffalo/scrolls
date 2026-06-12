@@ -8,6 +8,12 @@ and normalization, so a YouTube feed entry becomes a youtube item and a
 blog feed entry a web item. Both parse with stdlib ElementTree, the
 arxiv adapter's precedent; subscriptions live in the `subscriptions`
 table because sync state belongs to the index, not config (IDEAS.md §3).
+
+Sync polls with conditional GETs (ADR 0019): each successful full
+response's ETag/Last-Modified are stored on the subscription, and a
+later 304 reports the feed as 'unchanged' without re-downloading or
+re-parsing it. Follow never stores validators — it registers no
+entries, so seeding the cache would make the first sync skip them.
 """
 
 from __future__ import annotations
@@ -30,6 +36,8 @@ from scrolls.sources.detect import YOUTUBE_HOSTS, detect_source
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
 GetText = Callable[[str], str]
+# (url, stored etag, stored last_modified) -> the conditional GET's outcome
+FetchConditional = Callable[[str, str | None, str | None], http.ConditionalText]
 
 
 class FeedError(Exception):
@@ -43,6 +51,8 @@ class Subscription:
     title: str | None
     added_at: str
     last_synced_at: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
 
 
 @dataclass(frozen=True)
@@ -158,23 +168,41 @@ def follow_feed(url: str, *, get_text: GetText | None = None) -> tuple[LibraryPa
 
 
 def sync_subscription(
-    db_path: Path, subscription: Subscription, *, get_text: GetText | None = None
+    db_path: Path, subscription: Subscription, *, fetch: FetchConditional | None = None
 ) -> dict:
     """Poll one subscription's feed and register its new entries.
 
     New entry URLs become items at stage 'detected' — exactly what
     `scrolls add` would store — and existing ids count as known, so
     re-syncing is cheap. Entries whose link is not an http(s) URL are
-    skipped. Raises FeedError when the feed cannot be fetched or parsed;
+    skipped. The poll is a conditional GET (ADR 0019): a 304 against the
+    stored validators reports status 'unchanged' without parsing, and a
+    full response's validators are stored for the next poll. Raises
+    FeedError when the feed cannot be fetched or parsed;
     `last_synced_at` is only stamped on success.
     """
-    get_text = get_text or _get_text
+    fetch = fetch or _get_conditional
     try:
-        feed = parse_feed(get_text(subscription.feed_url))
+        response = fetch(
+            subscription.feed_url, subscription.etag, subscription.last_modified
+        )
     except OSError as exc:
         raise FeedError(f"feed request failed: {exc}") from exc
 
     now = _utcnow()
+    if response.not_modified:
+        mark_synced(db_path, subscription.id, now)
+        return {
+            "id": subscription.id,
+            "feed_url": subscription.feed_url,
+            "status": "unchanged",
+            "new": 0,
+            "known": 0,
+            "skipped": 0,
+            "new_items": [],
+        }
+
+    feed = parse_feed(response.text or "")
     new_items: list[str] = []
     known = skipped = 0
     for entry in feed.entries:
@@ -195,6 +223,7 @@ def sync_subscription(
         else:
             known += 1
     mark_synced(db_path, subscription.id, now)
+    store_validators(db_path, subscription.id, response.etag, response.last_modified)
     return {
         "id": subscription.id,
         "feed_url": subscription.feed_url,
@@ -273,6 +302,26 @@ def mark_synced(db_path: Path, subscription_id: str, when: str) -> None:
         conn.close()
 
 
+def store_validators(
+    db_path: Path, subscription_id: str, etag: str | None, last_modified: str | None
+) -> None:
+    """Record a full response's cache validators, replacing any stored pair.
+
+    Overwriting with None is deliberate: the stored pair always
+    describes the most recent full response, so a feed that stops
+    sending validators stops getting conditional headers.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE subscriptions SET etag = ?, last_modified = ? WHERE id = ?",
+                (etag, last_modified, subscription_id),
+            )
+    finally:
+        conn.close()
+
+
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -296,3 +345,4 @@ def _clean(text: str | None) -> str | None:
 
 
 _get_text = http.get_text
+_get_conditional = http.get_conditional

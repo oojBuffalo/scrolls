@@ -25,3 +25,4 @@ they add up to.
 | [0016](0016-config-toml-classify-section.md) | `config.toml` is read, starting with the `[classify]` section | `default_engine` + `llm_model`; flag/env overrides always win; malformed config errors honestly; only the CLI loads config |
 | [0017](0017-feed-subscriptions-sync.md) | Sync is feed subscriptions, not per-platform sync commands | `follow`/`unfollow`/`sync` over RSS/Atom via stdlib; `subscriptions` table (schema v4); sync registers at `detected`, adapters still fetch |
 | [0018](0018-user-overrides-scrolls-set.md) | User overrides are `scrolls set`, free-form and clearable | IDEAS.md §8 layer three; engines' fields only; empty value clears; all-or-nothing parsing; no override bookkeeping |
+| [0019](0019-feed-http-caching.md) | Feed polling uses HTTP conditional GETs | `etag`/`last_modified` on subscriptions (schema v5); 304 → status `unchanged`; follow never seeds the cache — only a full sync stores validators |
