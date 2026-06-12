@@ -79,6 +79,7 @@ uv run scrolls search <query> # BM25-ranked full-text search, as JSON
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
+uv run scrolls context <query> # compact context bundle, as Markdown
 uv run pytest                 # test suite
 ```
 
@@ -136,11 +137,19 @@ linger; other files under `library/` are left alone. Concept pages merge
 spellings by slug and stay empty until a concept-extraction engine
 populates `concepts`.
 
+`scrolls context <query>` answers "what does my library know about X?"
+with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped
+excerpts (stored summary, else leading extracted text), and source
+links. Unlike the data commands it emits Markdown — the bundle *is* the
+artifact agents drop into context — while errors stay JSON on stderr.
+Each excerpt carries the item id, source, and scroll path so an agent
+can follow up with `scrolls show <id>` or read the full scroll.
+
 Item stages so far: `detected → fetched → rendered`; classification and
 KB compilation are stage-neutral. The IDEAS.md §6 MVP source trio
 (wikipedia, web, youtube) is complete, Pass 4 classification has its
-rules layer, and Pass 5 has the compiled library. Next slices: context
-bundles (`scrolls context`, the other half of Pass 5), an LLM
+rules layer, and Pass 5 has the compiled library and context bundles.
+Next slices: `scrolls agent install` (the last Pass 5 piece), an LLM
 classification engine, or more adapters (github, arxiv).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 
 from scrolls import __version__
 from scrolls.classify import classify_item
+from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
+from scrolls.context import build_context
 from scrolls.db import init_db, read_schema_version
 from scrolls.items import (
     ScrollItem,
@@ -57,6 +59,18 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         help="Classify one item by id, replacing any existing category; "
         "default is every fetched/rendered item without one",
+    )
+
+    context_parser = subparsers.add_parser(
+        "context",
+        help="Compact context bundle of matching scrolls (Markdown output)",
+    )
+    context_parser.add_argument("query", help="Free-text query; tokens are AND-ed")
+    context_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_CONTEXT_LIMIT,
+        help=f"Maximum scrolls in the bundle (default {DEFAULT_CONTEXT_LIMIT})",
     )
 
     detect_parser = subparsers.add_parser(
@@ -117,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(args.url)
     if args.command == "classify":
         return _cmd_classify(args.id)
+    if args.command == "context":
+        return _cmd_context(args.query, args.limit)
     if args.command == "detect":
         return _cmd_detect(args.url)
     if args.command == "fetch":
@@ -434,6 +450,17 @@ def _cmd_paths() -> int:
             }
         )
     )
+    return 0
+
+
+def _cmd_context(query: str, limit: int) -> int:
+    paths = get_paths()
+    try:
+        bundle = build_context(paths.db_path, query, limit=limit)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    print(bundle, end="")
     return 0
 
 
