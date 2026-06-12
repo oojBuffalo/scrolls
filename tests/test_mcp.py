@@ -90,6 +90,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "unfollow_feed",
         "list_feed_subscriptions",
         "sync_feeds",
+        "compile_library",
     }
     # every tool teaches the model what it does
     assert all(tool.description for tool in tools)
@@ -223,3 +224,47 @@ def test_unfollow_feed_accepts_id_or_url(scrolls_home, fake_feed):
 
     with pytest.raises(ValueError, match="no such subscription"):
         mcp_server.unfollow_feed(sub_id)  # already gone
+
+def test_compile_library_builds_the_pages_get_concept_page_serves(
+    scrolls_home, fake_wikipedia_api
+):
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
+    with pytest.raises(ValueError):
+        mcp_server.get_concept_page("Database management systems")
+
+    payload = mcp_server.compile_library()
+    assert payload["items"] == 1
+    assert payload["concepts"] == 1
+    assert payload["pages"] >= 3  # index + source + concept (+ category)
+
+    page = mcp_server.get_concept_page("Database management systems")
+    assert "SQLite" in page
+
+
+def test_compile_library_includes_stored_concept_summaries(
+    scrolls_home, fake_wikipedia_api
+):
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
+    save_concept_summary(get_paths().db_path, ConceptSummary(
+        slug="database-management-systems",
+        display="Database management systems",
+        summary="The library's database scrolls cluster here.",
+        members_hash="abc",
+        engine="kb-llm-v1",
+        model="claude-test",
+        generated_at="2026-06-12T00:00:00+00:00",
+    ))
+
+    payload = mcp_server.compile_library()
+    assert payload["summaries"] == 1
+    page = mcp_server.get_concept_page("Database management systems")
+    assert "The library's database scrolls cluster here." in page
+
+
+def test_compile_library_before_init_is_a_zero_run(scrolls_home):
+    payload = mcp_server.compile_library()
+    assert payload == {"items": 0, "sources": 0, "categories": 0,
+                       "concepts": 0, "summaries": 0, "pages": 0}
+    assert not scrolls_home.exists()  # compiling never creates a library

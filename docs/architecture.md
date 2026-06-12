@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (501 tests at the time of writing). The docs themselves
+`uv run pytest` (504 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -282,12 +282,15 @@ choice (ADRs 0004, 0005).
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,
   `get_related_scrolls`, `get_concept_page`, `list_sources`,
-  `ingest_url`, plus the feed subscription tools `follow_feed`,
-  `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`) registered
+  `ingest_url`, the feed subscription tools `follow_feed`,
+  `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
+  `compile_library`) registered
   on FastMCP, which derives schemas from type hints. Read tools mirror
   CLI conventions — empty library, empty results; unknown id, tool
-  error — and `sync_feeds` shares the CLI's batch semantics through
-  `feeds.sync_many` (`tests/test_mcp.py`).
+  error — `sync_feeds` shares the CLI's batch semantics through
+  `feeds.sync_many`, and `compile_library` is the deterministic
+  compiler only: LLM summary generation (ADR 0025) stays a CLI step so
+  no MCP tool ever makes paid API calls implicitly (`tests/test_mcp.py`).
 
 ## Interface conventions
 

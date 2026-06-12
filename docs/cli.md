@@ -697,6 +697,7 @@ The tools wrap the same engines as the CLI commands
 | `unfollow_feed(ref)` | `scrolls unfollow <id>` | `{id, removed}`; accepts id or feed URL |
 | `list_feed_subscriptions()` | `scrolls follow` | subscriptions with sync state |
 | `sync_feeds(subscription_id=None)` | `scrolls sync [id]` | the sync batch payload; per-feed failures are `failed` results, not tool errors (`test_sync_feeds_registers_entries_then_reports_unchanged`) |
+| `compile_library()` | `scrolls kb` | the compile summary; deterministic only — LLM summary generation stays a CLI step (`test_compile_library_builds_the_pages_get_concept_page_serves`) |
 
 Read tools follow the CLI conventions: an empty or uninitialized
 library yields empty results (`test_search_scrolls_before_init_returns_empty`),

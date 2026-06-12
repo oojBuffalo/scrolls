@@ -75,7 +75,10 @@ transport handling the first one already carries.
   (`test_load_concept_summaries_tolerates_pre_v6_database`).
 - Concept pages lead with the stored summary above the scroll list
   (`docs/library-format.md`); MCP's `get_concept_page` serves it with
-  no changes.
+  no changes. MCP also gains `compile_library` — the deterministic
+  compiler only, so an MCP agent can refresh concept pages after
+  ingesting, but no MCP tool ever makes paid API calls implicitly
+  (the ADR 0015 "explicit, paid, networked step" posture).
 - The Batches API transport (ADR 0022) does not yet apply to concept
   summaries; at typical concept counts the per-call path is fine, and
   the shared transport gives a batch variant an obvious home if

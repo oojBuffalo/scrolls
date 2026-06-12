@@ -309,10 +309,12 @@ them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 (IDEAS.md §10's second phase — see `docs/adr/0014-mcp-server.md`):
 `get_context_bundle`, `search_scrolls`, `get_scroll`,
 `get_related_scrolls`, `get_concept_page`, `list_sources`,
-`ingest_url`, and the feed subscription tools `follow_feed`,
+`ingest_url`, the feed subscription tools `follow_feed`,
 `unfollow_feed`, `list_feed_subscriptions`, and `sync_feeds`
-(ADR 0020) — so a connected agent can run the full
-follow → sync → fetch loop without shelling out. Connect with
+(ADR 0020), and `compile_library` — the deterministic `scrolls kb`,
+so an ingested or synced item reaches its concept pages without
+shelling out (LLM summary generation stays a CLI step: an MCP tool
+must never trigger paid API calls implicitly). Connect with
 `claude mcp add scrolls -- uv run scrolls mcp` or equivalent client
 config; the shell interface remains primary.
 

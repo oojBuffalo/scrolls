@@ -2,7 +2,9 @@
 
 `scrolls mcp` serves the same engines the CLI exposes — search, items,
 related, context bundles, concept pages, ingest, feed subscriptions
-(ADR 0020) — as MCP tools over stdio, for agents that speak the
+(ADR 0020), KB compilation (deterministic only: an MCP tool must never
+trigger paid API calls, so `kb --engine llm` stays a CLI step) — as MCP
+tools over stdio, for agents that speak the
 protocol instead of (or alongside) the shell. Tool functions are plain sync wrappers, defined apart from the
 server so tests exercise them directly; the official SDK is imported
 lazily so every other command stays free of it. Read tools mirror the
@@ -19,6 +21,7 @@ from scrolls import feeds
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.items import count_by_source, get_item
+from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
@@ -36,7 +39,8 @@ _INSTRUCTIONS = (
     "search_scrolls and get_scroll for depth, get_related_scrolls and "
     "get_concept_page to follow connections, and ingest_url to save "
     "something new. follow_feed subscribes the library to an RSS/Atom "
-    "feed and sync_feeds registers its new entries."
+    "feed and sync_feeds registers its new entries. compile_library "
+    "rebuilds the knowledge-base pages get_concept_page serves."
 )
 
 
@@ -92,7 +96,8 @@ def get_concept_page(concept: str) -> str:
     page = paths.library_dir / "concepts" / f"{slugify(concept)}.md"
     if not page.exists():
         raise ValueError(
-            f"no concept page for {concept!r} — compile the library with `scrolls kb`"
+            f"no concept page for {concept!r} — compile the library first "
+            "(the compile_library tool, or `scrolls kb`)"
         )
     return page.read_text(encoding="utf-8")
 
@@ -175,6 +180,19 @@ def sync_feeds(subscription_id: str | None = None) -> dict[str, Any]:
     return feeds.sync_many(paths.db_path, subscriptions)
 
 
+def compile_library() -> dict[str, Any]:
+    """Rebuild the compiled knowledge-base pages under library/ (no network).
+
+    Runs the deterministic compiler: the index plus source, category,
+    and concept pages, including any stored concept summaries. Run it
+    after ingesting or syncing so get_concept_page sees the new items.
+    LLM summary generation stays a CLI step (`scrolls kb --engine llm`,
+    ADR 0025) — this tool never makes paid API calls.
+    """
+    paths = get_paths()
+    return dataclasses.asdict(compile_kb(paths))
+
+
 _TOOLS = (
     search_scrolls,
     get_scroll,
@@ -187,6 +205,7 @@ _TOOLS = (
     unfollow_feed,
     list_feed_subscriptions,
     sync_feeds,
+    compile_library,
 )
 
 
