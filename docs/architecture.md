@@ -1,0 +1,228 @@
+# Scrolls Architecture
+
+How the implemented system works today, with pointers into the code and
+tests that prove each claim. For the product vision and design brainstorm
+see `IDEAS.md`; for the rationale behind individual decisions see the
+ADRs indexed at `docs/adr/README.md`.
+
+Everything below describes code on this branch, verified by
+`uv run pytest` (254 tests at the time of writing).
+
+## The pipeline
+
+The mental model `Sources → Items → Scrolls → Library → Agents` maps to
+a small set of idempotent stages. Each item row carries a `stage` column;
+each command moves items between stages or derives artifacts from them.
+
+```text
+ URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
+                  │                     ▲                  │
+                  │   import fieldtheory┘                  │
+                  │                                        ▼
+                  │            classify (stage-neutral, sets category)
+                  │            kb       (stage-neutral, compiles library/)
+                  │
+                  └─ sources without a fetch adapter stay 'detected'
+```
+
+- `scrolls add <url>` detects the source, mints a stable id, and inserts
+  a row at stage `detected` (`src/scrolls/cli.py`, `src/scrolls/items.py`).
+- `scrolls fetch [id]` runs the source adapter, filling title, extracted
+  text, summary, links, media, content hash, and provenance, and moves
+  the item to `fetched` (`src/scrolls/sources/`).
+- `scrolls md [id]` renders each fetched item to a Markdown scroll at
+  `scrolls/<source>/<slug>.md` and moves it to `rendered`
+  (`src/scrolls/render.py`).
+- `scrolls classify [id]` and `scrolls kb` are stage-neutral engines:
+  classification assigns `category` without advancing the stage, and the
+  KB compiler rebuilds `library/` from whatever is rendered
+  (`src/scrolls/classify.py`, `src/scrolls/kb.py`).
+- `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
+- `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
+  `fetched`, since the archive already contains the content
+  (`src/scrolls/fieldtheory.py`, ADR 0009).
+
+Per-item failures never abort a batch: `fetch` and `md` report each
+failure in their JSON output and continue (`tests/test_cli.py`).
+
+## Storage: SQLite is the index, Markdown is the artifact
+
+Two stores, by design (IDEAS.md §3):
+
+- **`db.sqlite`** — the canonical index. One `items` table whose columns
+  mirror the `ScrollItem` dataclass one-to-one (`src/scrolls/items.py`,
+  `src/scrolls/db.py`). List-valued fields (`tags`, `concepts`, `links`,
+  `media`) and `provenance` round-trip through JSON text columns. An
+  external-content FTS5 table (`items_fts`) over title/summary/extracted
+  text is kept in sync by SQL triggers so no Python write path can forget
+  it. `meta` carries the schema version (`SCHEMA_VERSION = 3`);
+  `MIGRATIONS[n]` walks any version gap in one transaction, and opening a
+  newer-versioned library raises instead of corrupting it
+  (`tests/test_db.py`).
+- **`scrolls/<source>/<slug>.md`** — the durable, human- and
+  agent-readable artifact. Frontmatter lines are `key: <JSON value>`
+  (YAML 1.2 is a JSON superset, so standard parsers read them with zero
+  dependencies). Scrolls can always be rebuilt from the index;
+  `markdown_path` is recorded so re-renders keep a stable path
+  (`src/scrolls/render.py`, `tests/test_render.py`).
+
+The library root is `~/.scrolls`, overridden by `$SCROLLS_HOME` — every
+path derives from the root so tests and portable installs can relocate
+the whole tree (`src/scrolls/paths.py`):
+
+```text
+$SCROLLS_HOME (default ~/.scrolls)
+  db.sqlite      # items table + FTS5 index + schema meta
+  scrolls/       # one Markdown scroll per rendered item, per source
+  library/       # compiled KB: index.md, sources/, categories/, concepts/
+  agents/        # generated agent instruction files (claude/, codex/, hermes/)
+  items/         # reserved (raw record exports; currently unused)
+  media/         # reserved (thumbnails, attachments; currently unused)
+  config.toml    # placeholder written by init; no settings are read yet
+```
+
+## The data model
+
+`ScrollItem` (`src/scrolls/items.py`) is the single normalized record
+every source becomes — the IDEAS.md §12 model, frozen as a dataclass:
+identity (`id`, `source`, `source_id`, `url`, `canonical_url`), content
+(`title`, `author`, `published_at`, `raw_text`, `extracted_text`,
+`summary`), classification (`category`, `domain`, `tags`, `concepts`),
+graph edges (`links`, `media`), and bookkeeping (`content_hash`,
+`markdown_path`, `provenance`, `stage`, `saved_at`).
+
+Item ids are stable and deduplicating: `source:source_id` when the URL
+carries a source-local id (`wikipedia:en:SQLite`, `arxiv:1706.03762`,
+`x:1234567890`), else `source:` plus a 12-hex-char SHA-256 of the URL
+(`make_item_id`). `scrolls add` of a tweet URL and a Field Theory import
+of the same tweet therefore collide on purpose — `INSERT OR IGNORE`
+keeps the existing row (`tests/test_items.py`, `tests/test_fieldtheory.py`).
+
+## The source adapter model
+
+Two small contracts make every platform the same kind of scroll
+(IDEAS.md §1):
+
+1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
+   in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
+   host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`;
+   `.pdf` paths map to `pdf`; everything else is `web`. A known source
+   with `source_id=None` means the adapter resolves identity at fetch
+   time (`tests/test_detect.py`).
+2. **Fetching** — a function `ScrollItem -> ScrollItem` that fills in
+   content and returns the item at stage `fetched`, raising `FetchError`
+   on any failure (`src/scrolls/sources/__init__.py`, ADR 0002). The
+   `FETCH_ADAPTERS` dict maps source names to these functions. A source
+   with no entry (today: `x`, `pdf`) is still registered by `scrolls add`
+   but skipped by `scrolls fetch` until its adapter lands.
+
+Implemented fetch adapters, all keyless:
+
+| Source | Module | Method | Distinctive output | ADR |
+| --- | --- | --- | --- | --- |
+| wikipedia | `sources/wikipedia.py` | MediaWiki action API, stdlib only | page categories → `concepts` | 0002 |
+| web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
+| youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
+| github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
+| arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, PDF → `media`; degrades to abstract-only | 0008, 0010 |
+
+X items arrive through `scrolls import fieldtheory` rather than a fetch
+adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
+(each line preserved verbatim in `raw_text`), and classified pages join
+`category`/`domain` by tweet id.
+
+Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
+urllib, descriptive User-Agent). Adapters take the fetcher as an
+injectable parameter, which is why no test touches the network.
+
+### Adding a new adapter
+
+The pattern every existing adapter followed:
+
+1. Map the URL shape in `sources/detect.py` and cover it in
+   `tests/test_detect.py`. Decide what the stable `source_id` is.
+2. Write `sources/<name>.py` exposing
+   `fetch_item(item, fetcher=...) -> ScrollItem`. Fill what the platform
+   offers; raise `FetchError` for anything else. Degrade gracefully when
+   an enrichment (transcript, README, PDF text) fails — a metadata-only
+   scroll beats no scroll.
+3. Register it in `FETCH_ADAPTERS` (`sources/__init__.py`).
+4. Test against recorded fixture payloads with an injected fetcher
+   (`tests/test_<name>.py`) — never the live API.
+5. If the platform implies a category, add a platform rule to
+   `classify.py` (e.g. arxiv → paper, github → project; ADR 0004).
+6. Note the adapter in `README.md` and record non-obvious choices in an
+   ADR (`docs/adr/`).
+
+## Downstream engines
+
+Each engine is deterministic today, with an explicit slot where an LLM
+version can join later — deterministic-first is a deliberate, recurring
+choice (ADRs 0004, 0005).
+
+- **Classification** (`classify.py`, ADR 0004) — rules engine
+  (`rules-v1`), layer one of IDEAS.md §8's "rules first → optional LLM
+  second → user overrides always win". Precedence: curated platforms,
+  then title patterns, then URL shape, then youtube → media. Unmatched
+  items honestly stay unclassified. Batch runs never overwrite an
+  existing category; `classify <id>` explicitly reclassifies
+  (`tests/test_classify.py`).
+- **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
+  over body. Query tokens are quoted and AND-ed, so arbitrary agent
+  input never hits FTS5 syntax errors (`tests/test_search.py`).
+- **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
+  no LLM: link connections in either direction (resolved through source
+  detection, so `arxiv.org/pdf/X` finds item `arxiv:X`), shared concepts
+  (merged by slug), shared tags, same category/domain as weak
+  corroboration. Every hit carries its `reasons`
+  (`tests/test_related.py`).
+- **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md` plus
+  per-source, per-category, and per-concept pages from scratch each run
+  so stale groups can't linger; other files under `library/` are left
+  alone. Concept pages merge spellings by slug (`tests/test_kb.py`).
+- **Context bundles** (`context.py`, IDEAS.md §11) — `scrolls context`
+  emits Markdown (the bundle *is* the artifact agents drop into
+  context), unlike the data commands; errors stay JSON on stderr. Each
+  excerpt carries item id, source, and scroll path for follow-up
+  (`tests/test_context.py`).
+- **Agent install** (`agents.py`, ADR 0006) — writes instruction files
+  under `<root>/agents/` only, never into another tool's config tree
+  (`tests/test_agents.py`).
+
+## Interface conventions
+
+- **JSON on stdout** for every data command; errors as JSON on stderr
+  with exit 1. Two deliberate exceptions emit Markdown: `context` (the
+  bundle is the artifact) and the scroll/KB files themselves.
+- **CLI is one module** (`cli.py`): argparse subcommands, each a thin
+  `cmd_*` function over the library modules. The CLI owns process
+  concerns (JSON encoding, exit codes); engines stay importable and
+  testable without it (`tests/test_cli.py` covers the seams).
+- **Dependency posture** (ADR 0001): stdlib first; a third-party package
+  must buy its adapter something substantial. Today's full list:
+  `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
+  (arxiv) — see `pyproject.toml`.
+- **No network in tests**: every adapter takes an injectable fetcher;
+  fixtures are recorded payloads. The suite runs in under a second.
+
+## Status and known next steps
+
+All five IDEAS.md §14 MVP passes have a working first version: library
+skeleton, URL → Markdown for the §6 trio plus github/arxiv/x-via-import,
+FTS5 search, rules classification, and the compiled KB with context
+bundles and agent install.
+
+Next steps already identified in decision records, in no required order:
+
+- **LLM classification/concept engine** — the rules engine deliberately
+  leaves items unclassified for it (ADR 0004), and KB concept pages are
+  designed for an LLM producer to join (ADR 0005).
+- **arXiv taxonomy names** — taxonomy codes (`cs.CL`) land in `tags`;
+  mapping them to human-readable concept names via a bundled taxonomy
+  table was explicitly deferred (ADR 0008).
+- **Media capture** — `media/` exists and arXiv records PDF refs in
+  `media`, but nothing downloads artifacts yet.
+- **MCP server** — IDEAS.md §10 sequences it after the shell interface,
+  which is now in place.
+- **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
+  import/sync/add distinction); only `import` and `add` exist today.

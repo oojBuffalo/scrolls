@@ -23,27 +23,30 @@ It is inspired by Field Theory CLI's flow for X/Twitter bookmarks:
 ## Working product shape
 
 ```bash
-scrolls sync youtube <url-or-playlist>
-scrolls sync wikipedia <page-or-query>
-scrolls sync web <url>
-scrolls classify
+scrolls ingest https://en.wikipedia.org/wiki/SQLite  # add + fetch + classify + md
+scrolls import fieldtheory          # bulk-import X bookmarks from Field Theory
 scrolls search "distributed systems"
-scrolls show <id>
-scrolls md
+scrolls context "sqlite fts"        # compact Markdown bundle for agents
+scrolls related wikipedia:en:SQLite
 scrolls kb
 scrolls agent install
 ```
 
+`scrolls sync <source>` — live platform delta updates, as distinct from
+one-off `add` and bulk `import` (IDEAS.md §13) — is a future direction,
+not implemented yet.
+
 ## Library layout
 
 ```text
-~/.scrolls/
-  items/          # normalized JSON/SQLite source records
-  scrolls/        # individual Markdown files
-  library/        # compiled interlinked KB
-  media/          # optional thumbnails, images, transcripts, attachments
+~/.scrolls/        # or $SCROLLS_HOME
+  db.sqlite       # canonical index: items table, FTS5 search, schema meta
+  scrolls/        # individual Markdown files, one per item, per source
+  library/        # compiled interlinked KB (index, sources, categories, concepts)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
-  config.toml
+  items/          # reserved: raw record exports (currently unused)
+  media/          # reserved: thumbnails, transcripts, attachments (currently unused)
+  config.toml     # placeholder written by init; no settings are read yet
 ```
 
 ## Design principles
@@ -59,7 +62,9 @@ scrolls agent install
 ## Status
 
 Early implementation. Stack: Python ≥3.11 managed with uv (see
-`docs/adr/0001-implementation-stack.md`).
+`docs/adr/0001-implementation-stack.md`). `docs/architecture.md` explains
+how the implemented system fits together; `docs/adr/README.md` indexes
+the decision records behind it.
 
 Working today:
 
@@ -70,19 +75,19 @@ uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
 uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
-uv run scrolls import fieldtheory  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
+uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
 uv run scrolls md <id>        # (re)render one item by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
-uv run scrolls search <query> # BM25-ranked full-text search, as JSON
+uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
-uv run scrolls related <id>   # items connected to one item, with reasons, as JSON
+uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
-uv run scrolls context <query> # compact context bundle, as Markdown
+uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run pytest                 # test suite
 ```

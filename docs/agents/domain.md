@@ -2,14 +2,15 @@
 
 Scrolls currently uses a single-context documentation layout.
 
-Primary context sources:
+Primary context sources, in reading order for a new contributor or agent:
 
-- `README.md` — public project framing.
-- `IDEAS.md` — detailed product/architecture brainstorm.
+- `README.md` — public project framing and the current command surface.
+- `docs/architecture.md` — how the implemented system fits together: pipeline stages, module map, data model, the source adapter contract, and how to add an adapter.
+- `docs/adr/` — architectural decision records, indexed at `docs/adr/README.md`.
+- `IDEAS.md` — the product/architecture brainstorm the implementation draws from; not everything in it exists yet.
 - `CLAUDE.md` — agent operating guide.
-- `docs/adr/` — future architectural decision records.
 
-When making consequential decisions, prefer adding a short ADR under `docs/adr/` rather than burying rationale in chat history.
+When making consequential decisions, prefer adding a short ADR under `docs/adr/` (and a row in its index) rather than burying rationale in chat history. When a slice changes the pipeline, adapter contract, or data model, update `docs/architecture.md` in the same commit.
 
 Terminology:
 
