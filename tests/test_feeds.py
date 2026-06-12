@@ -214,6 +214,29 @@ def test_sync_registers_new_items_as_detected(db_path):
     assert get_subscription(db_path, sub.id).last_synced_at is not None
 
 
+def test_sync_seeds_detected_items_with_entry_titles(db_path):
+    """A feed entry's title names the item until fetch replaces it —
+    otherwise synced items sit nameless in list/search until fetched."""
+    sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
+    insert_subscription(db_path, sub)
+
+    sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
+
+    assert get_item(db_path, "youtube:abc123def45").title == "New Paper!"
+    assert get_item(db_path, "youtube:xyz987uvw65").title == "Another Paper!"
+
+
+def test_sync_never_retitles_known_items(db_path):
+    sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
+    insert_subscription(db_path, sub)
+    sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
+
+    retitled = ATOM_FEED.replace("New Paper!", "Clickbait rename!")
+    sync_subscription(db_path, sub, fetch=_fetch_ok(retitled))
+
+    assert get_item(db_path, "youtube:abc123def45").title == "New Paper!"
+
+
 def test_sync_second_run_reports_known(db_path):
     sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
     insert_subscription(db_path, sub)

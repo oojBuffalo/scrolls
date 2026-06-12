@@ -163,7 +163,9 @@ every followed feed (IDEAS.md §13's live-delta path — see
 `docs/adr/0017-feed-subscriptions-sync.md`) and registers each new
 entry URL at stage `detected` through the same detection/dedupe as
 `scrolls add`, so a YouTube feed entry becomes a `youtube` item and a
-blog entry a `web` item; `scrolls fetch` (then `classify`/`md`) brings
+blog entry a `web` item; the entry's feed title names the item (and
+makes it searchable) until fetch replaces it with the source's own.
+`scrolls fetch` (then `classify`/`md`) brings
 the new items in. Polling is HTTP-cached (see
 `docs/adr/0019-feed-http-caching.md`): each full response's
 `ETag`/`Last-Modified` are stored on the subscription, and an
@@ -297,6 +299,6 @@ have a working first version plus the full §8 classification stack
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
 (ADR 0019), on both the shell and MCP interfaces (ADR 0020). Next
 candidates: batched LLM classification (ADR 0015) and carrying feed
-entry titles onto detected items (ADR 0017).
+entry published dates onto detected items (ADR 0017).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

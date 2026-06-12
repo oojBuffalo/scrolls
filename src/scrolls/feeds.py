@@ -216,6 +216,9 @@ def sync_subscription(
             source=detected.source,
             source_id=detected.source_id,
             url=entry.url,
+            # the entry's feed title names the item until fetch replaces
+            # it; INSERT OR IGNORE keeps known items' titles untouched
+            title=entry.title,
             saved_at=now,
         )
         if insert_item(db_path, item):

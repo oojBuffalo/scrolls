@@ -222,7 +222,8 @@ choice (ADRs 0004, 0005).
   and stores the subscription; `sync` polls each feed and registers new
   entry URLs at stage `detected` through `detect_source` +
   `make_item_id`, so dedupe and adapter routing are the same as
-  `scrolls add`. Polls are conditional GETs (ADR 0019): a full
+  `scrolls add`; each entry's feed title names the new item until
+  fetch replaces it. Polls are conditional GETs (ADR 0019): a full
   response's `ETag`/`Last-Modified` land on the subscription and a 304
   reports the feed `unchanged` without re-parsing; follow never stores
   validators, so the first sync always sees the feed's current entries.
@@ -291,6 +292,6 @@ Next steps already identified in decision records, in no required order:
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).
-- **Feed entry titles** — `parse_feed` already captures each entry's
-  title, but sync discards it; carrying it onto the detected item
-  would give unfetched items a human-readable name (ADR 0017).
+- **Feed entry published dates** — RSS `pubDate`/Atom `published`
+  are not parsed yet; carrying them onto detected items would fill
+  `published_at` before fetch (ADR 0017).

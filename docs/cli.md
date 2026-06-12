@@ -240,7 +240,10 @@ first sync skip the feed's current entries.
 Poll every followed feed (network) and register each new entry URL as
 an item at stage `detected` — exactly what `scrolls add` would store,
 so a YouTube feed entry becomes a `youtube` item and a blog entry a
-`web` item (`test_sync_registers_new_items_at_stage_detected`). Sync
+`web` item (`test_sync_registers_new_items_at_stage_detected`), except
+that the entry's feed title names the item until fetch replaces it
+(`test_sync_seeds_detected_items_with_entry_titles`,
+`test_sync_never_retitles_known_items` in `tests/test_feeds.py`). Sync
 only discovers URLs; run `scrolls fetch` (then `classify`/`md`) to
 bring the new items in. Entries already in the library count as
 `known`, so re-syncs are cheap (`test_sync_is_idempotent`); entries
