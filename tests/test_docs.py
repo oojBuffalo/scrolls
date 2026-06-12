@@ -225,6 +225,15 @@ def test_library_format_names_every_generated_artifact():
     )
 
 
+def test_adr_index_lists_every_adr():
+    """A new ADR file must get a row in docs/adr/README.md."""
+    adr_dir = REPO_ROOT / "docs" / "adr"
+    index = (adr_dir / "README.md").read_text(encoding="utf-8")
+    missing = [f.name for f in sorted(adr_dir.glob("[0-9]*.md"))
+               if f.name not in index]
+    assert not missing, "docs/adr/README.md is missing rows for: " + ", ".join(missing)
+
+
 def test_cli_reference_capture_pin_matches_code():
     """docs/cli.md pins the version/schema its examples were captured from.
 
