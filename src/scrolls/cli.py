@@ -22,6 +22,7 @@ from scrolls.items import (
     update_item,
 )
 from scrolls.paths import LibraryPaths, get_paths
+from scrolls.render import write_scroll
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 
@@ -61,6 +62,16 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
     subparsers.add_parser("list", help="List library items (JSON output)")
+
+    md_parser = subparsers.add_parser(
+        "md", help="Render fetched items as Markdown scrolls (JSON output)"
+    )
+    md_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Render one item by id, re-rendering even if already rendered; "
+        "default is every item at stage 'fetched'",
+    )
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
@@ -76,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_init()
     if args.command == "list":
         return _cmd_list()
+    if args.command == "md":
+        return _cmd_md(args.id)
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "status":
@@ -190,6 +203,46 @@ def _cmd_fetch(item_id: str | None) -> int:
                 "title": fetched.title,
                 "stage": fetched.stage,
             }
+        )
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
+
+
+def _cmd_md(item_id: str | None) -> int:
+    paths = get_paths()
+    if item_id is not None:
+        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        if item is None:
+            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            return 1
+        items = [item]
+    else:
+        items = list_items(paths.db_path, stage="fetched") if paths.db_path.exists() else []
+
+    results = []
+    counts = {"rendered": 0, "failed": 0}
+    for item in items:
+        if not item.extracted_text and not item.title:
+            counts["failed"] += 1
+            results.append(
+                {
+                    "id": item.id,
+                    "status": "failed",
+                    "error": f"item has no fetched content (stage '{item.stage}')",
+                }
+            )
+            continue
+        try:
+            rendered = write_scroll(paths, item)
+        except OSError as exc:
+            counts["failed"] += 1
+            results.append({"id": item.id, "status": "failed", "error": str(exc)})
+            continue
+        update_item(paths.db_path, rendered)
+        counts["rendered"] += 1
+        results.append(
+            {"id": rendered.id, "status": "rendered", "path": rendered.markdown_path}
         )
 
     print(json.dumps({**counts, "results": results}))

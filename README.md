@@ -70,6 +70,8 @@ uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSO
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
+uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
+uv run scrolls md <id>        # (re)render one item by id, as JSON
 uv run scrolls list           # list items, as JSON
 uv run pytest                 # test suite
 ```
@@ -83,7 +85,15 @@ title, extracted text, summary, canonical URL, content hash, and
 provenance, and moving the item to stage `fetched`. Wikipedia is the first
 adapter (see `docs/adr/0002-first-fetch-adapter-wikipedia.md`); items from
 sources without an adapter yet are skipped, and per-item failures don't
-abort the batch. Next slices: more adapters (web, YouTube), then Markdown
-scroll rendering.
+abort the batch.
+
+`scrolls md` renders each fetched item to a durable Markdown scroll at
+`scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
+which YAML accepts) plus summary, extracted content, and links — and moves
+the item to stage `rendered`. The item's `markdown_path` is recorded so
+re-renders keep a stable path.
+
+Item stages so far: `detected → fetched → rendered`. Next slices: more
+adapters (web, YouTube), then SQLite FTS search (`scrolls search`/`show`).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

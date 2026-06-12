@@ -268,6 +268,79 @@ def test_fetch_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def test_md_renders_fetched_items_to_scroll_files(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["md"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1
+    assert payload["failed"] == 0
+    assert payload["results"] == [
+        {
+            "id": "wikipedia:en:SQLite",
+            "status": "rendered",
+            "path": "scrolls/wikipedia/sqlite.md",
+        }
+    ]
+
+    scroll = scrolls_home / "scrolls" / "wikipedia" / "sqlite.md"
+    assert scroll.is_file()
+    assert "# SQLite" in scroll.read_text(encoding="utf-8")
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.stage == "rendered"
+    assert stored.markdown_path == "scrolls/wikipedia/sqlite.md"
+
+
+def test_md_bulk_run_is_idempotent(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    capsys.readouterr()
+
+    exit_code = main(["md"])  # nothing left at stage 'fetched'
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"rendered": 0, "failed": 0, "results": []}
+
+
+def test_md_by_id_rerenders_a_rendered_item(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    capsys.readouterr()
+
+    exit_code = main(["md", "wikipedia:en:SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1
+    assert payload["results"][0]["path"] == "scrolls/wikipedia/sqlite.md"
+
+
+def test_md_by_id_fails_for_unfetched_item(scrolls_home, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["md", "wikipedia:en:SQLite"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert "detected" in payload["results"][0]["error"]
+    # still no scroll file, stage unchanged
+    assert not (scrolls_home / "scrolls" / "wikipedia").exists()
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").stage == "detected"
+
+
+def test_md_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["md", "wikipedia:en:Missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
