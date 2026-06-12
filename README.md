@@ -110,8 +110,9 @@ index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
 so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
 prints the full stored item.
 
-`scrolls ingest <url>` chains add → fetch → md for one URL; re-ingesting
-an existing URL refreshes its content. A URL whose source has no adapter
+`scrolls ingest <url>` chains add → fetch → classify → md for one URL, so
+the first render already carries the category; re-ingesting an existing
+URL refreshes its content without replacing an existing category. A URL whose source has no adapter
 yet is still registered, but ingest reports the failure and exits 1.
 
 `scrolls classify` assigns a `category` with a deterministic rules engine

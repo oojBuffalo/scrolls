@@ -224,11 +224,17 @@ def _cmd_ingest(url: str) -> int:
         return 1
     update_item(paths.db_path, fetched)
 
+    # classify before the first render so frontmatter carries the category;
+    # an existing category (user override or earlier run) is never replaced
+    if fetched.category is None:
+        fetched = classify_item(fetched)
+
     rendered = write_scroll(paths, fetched)
     update_item(paths.db_path, rendered)
     payload.update(
         {
             "title": rendered.title,
+            "category": rendered.category,
             "stage": rendered.stage,
             "markdown_path": rendered.markdown_path,
         }

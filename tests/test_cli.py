@@ -442,6 +442,7 @@ def test_ingest_youtube_video_end_to_end(scrolls_home, fake_youtube_api, capsys)
         "url": "https://youtu.be/dQw4w9WgXcQ",
         "created": True,
         "title": "How SQLite FTS Works",
+        "category": "media",  # classified inline: youtube source default
         "stage": "rendered",
         "markdown_path": "scrolls/youtube/how-sqlite-fts-works.md",
     }
@@ -466,10 +467,35 @@ def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_ap
         "url": "https://en.wikipedia.org/wiki/SQLite",
         "created": True,
         "title": "SQLite",
+        "category": "reference",
         "stage": "rendered",
         "markdown_path": "scrolls/wikipedia/sqlite.md",
     }
-    assert (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").is_file()
+    # the first render already carries the category — no second pass needed
+    scroll = (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").read_text()
+    assert '\ncategory: "reference"\n' in scroll
+
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.category == "reference"
+    assert stored.provenance["classified_by"] == "rules-v1"
+
+
+def test_ingest_leaves_unmatched_items_unclassified(scrolls_home, monkeypatch, capsys):
+    import scrolls.sources.web as web
+
+    html = (
+        "<html><head><title>An ordinary post</title></head><body><article>"
+        "<h1>An ordinary post</h1><p>Some long enough paragraph about nothing "
+        "in particular, just plain prose for the extractor to find.</p>"
+        "</article></body></html>"
+    )
+    monkeypatch.setattr(web, "_get_html", lambda url: html)
+
+    exit_code = main(["ingest", "https://blog.example.com/post"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["category"] is None
+    assert payload["stage"] == "rendered"
 
 
 def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, capsys):
@@ -517,7 +543,11 @@ def test_ingest_rejects_non_http_url(scrolls_home, capsys):
 
 
 def test_classify_batch_categorizes_and_rerenders(scrolls_home, fake_wikipedia_api, capsys):
-    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    # add + fetch + md, not ingest: ingest classifies inline, and this test
+    # exercises the batch path over an already-rendered uncategorized scroll
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
     capsys.readouterr()
 
     exit_code = main(["classify"])

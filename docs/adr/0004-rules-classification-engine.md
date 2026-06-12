@@ -46,9 +46,11 @@ classification.
 
 ## Consequences
 
-- `scrolls classify` is idempotent and safe to run after every fetch;
-  a future `scrolls ingest --classify` (or always-on classification in
-  ingest) is a trivial follow-up.
+- `scrolls classify` is idempotent and safe to run after every fetch.
+  `scrolls ingest` classifies inline (add → fetch → classify → md) so the
+  first render already carries the category; it never replaces an
+  existing one. The batch command remains for items added via
+  `add`/`fetch` and for re-running improved rules.
 - Unmatched items are re-examined every batch run — wasted work at large
   scale, revisit if libraries get big.
 - There is no way yet to *set* a category by hand from the CLI; user
