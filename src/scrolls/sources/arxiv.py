@@ -1,11 +1,13 @@
-"""arXiv fetch adapter (IDEAS.md §6, ADR 0008).
+"""arXiv fetch adapter (IDEAS.md §6, ADR 0008, ADR 0010).
 
 One GET against the keyless arXiv export API returns an Atom feed parsed
-with stdlib ElementTree — no auth, no runtime dependencies. The abstract
-is the paper's summary by definition, so it maps to `summary` and is
-indexed for search; `extracted_text` stays empty until a PDF-extraction
-slice can supply full text, and the PDF link is kept as a `media` entry
-for it. Taxonomy category codes (`cs.CL`) go to `tags`, not `concepts` —
+with stdlib ElementTree — no auth required. The abstract is the paper's
+summary by definition, so it maps to `summary` and is indexed for
+search. The feed's PDF link is kept as a `media` entry, and the PDF is
+downloaded and its full text extracted with pypdf into `extracted_text`
+(ADR 0010); any PDF failure degrades to the abstract-only scroll rather
+than failing the fetch, the same contract as caption-less youtube
+videos. Taxonomy category codes (`cs.CL`) go to `tags`, not `concepts` —
 they are curated but not readable concept names. The raw feed is kept in
 `raw_text` so scrolls and indexes can be rebuilt without refetching.
 """
@@ -27,16 +29,24 @@ API_ROOT = "https://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
 GetText = Callable[[str], str]
+GetBytes = Callable[[str], bytes]
 
 
-def fetch_item(item: ScrollItem, *, get_text: GetText | None = None) -> ScrollItem:
-    """Fetch a detected arXiv paper's metadata and abstract; return it at stage 'fetched'.
+def fetch_item(
+    item: ScrollItem,
+    *,
+    get_text: GetText | None = None,
+    get_bytes: GetBytes | None = None,
+) -> ScrollItem:
+    """Fetch a detected arXiv paper's metadata, abstract, and PDF full text.
 
-    Raises FetchError when the paper identity is missing, the request
-    fails, or the API reports an unknown/malformed id. The input item is
-    never mutated.
+    Returns the item at stage 'fetched'. Raises FetchError when the paper
+    identity is missing, the request fails, or the API reports an
+    unknown/malformed id; PDF problems never raise — the scroll degrades
+    to abstract-only. The input item is never mutated.
     """
     get_text = get_text or _get_text
+    get_bytes = get_bytes or _get_bytes
     if not item.source_id:
         raise FetchError(f"cannot determine arxiv paper for item {item.id!r}")
 
@@ -61,7 +71,14 @@ def fetch_item(item: ScrollItem, *, get_text: GetText | None = None) -> ScrollIt
         if name.text and name.text.strip()
     ]
     pdf_url = _link_href(entry, title="pdf")
-    hashed = abstract or feed_text
+    full_text = _pdf_text(pdf_url, get_bytes) if pdf_url else None
+    extraction_method = "arxiv-api:atom"
+    if full_text:
+        import pypdf
+
+        extraction_method = f"arxiv-api:atom+pypdf-{pypdf.__version__}"
+
+    hashed = full_text or abstract or feed_text
     return replace(
         item,
         title=_text(entry, "title") or item.title,
@@ -69,6 +86,7 @@ def fetch_item(item: ScrollItem, *, get_text: GetText | None = None) -> ScrollIt
         published_at=_text(entry, "published") or None,
         canonical_url=_link_href(entry, rel="alternate") or entry_id or None,
         raw_text=feed_text,
+        extracted_text=full_text,
         summary=abstract,
         tags=tuple(dict.fromkeys(
             category.get("term")
@@ -80,10 +98,32 @@ def fetch_item(item: ScrollItem, *, get_text: GetText | None = None) -> ScrollIt
         provenance={
             "adapter": "arxiv",
             "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "extraction_method": "arxiv-api:atom",
+            "extraction_method": extraction_method,
         },
         stage="fetched",
     )
+
+
+def _pdf_text(pdf_url: str, get_bytes: GetBytes) -> str | None:
+    """The paper's PDF text, or None when anything fails (degradation contract).
+
+    pypdf is imported lazily so commands that never fetch a paper don't
+    pay for it (same pattern as trafilatura in the web adapter).
+    """
+    import io
+
+    from pypdf import PdfReader
+
+    # the feed advertises plain-http links that arxiv redirects anyway
+    if pdf_url.startswith("http://"):
+        pdf_url = "https://" + pdf_url.removeprefix("http://")
+    try:
+        reader = PdfReader(io.BytesIO(get_bytes(pdf_url)))
+        pages = (page.extract_text() for page in reader.pages)
+        text = "\n\n".join(part.strip() for part in pages if part.strip()).strip()
+    except Exception:  # any PDF failure must keep the abstract-only scroll
+        return None
+    return text or None
 
 
 def _text(entry: ElementTree.Element, name: str) -> str:
@@ -99,3 +139,4 @@ def _link_href(entry: ElementTree.Element, **attrs: str) -> str | None:
 
 
 _get_text = http.get_text
+_get_bytes = http.get_bytes

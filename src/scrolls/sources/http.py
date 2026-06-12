@@ -17,12 +17,16 @@ USER_AGENT = f"scrolls/{__version__} (+https://github.com/oojBuffalo/scrolls)"
 _TIMEOUT_SECONDS = 30
 
 
-def get_text(url: str, headers: dict[str, str] | None = None) -> str:
+def get_bytes(url: str, headers: dict[str, str] | None = None) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-        return response.read().decode("utf-8", errors="replace")
+        return response.read()
+
+
+def get_text(url: str, headers: dict[str, str] | None = None) -> str:
+    return get_bytes(url, headers).decode("utf-8", errors="replace")
 
 
 def get_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:

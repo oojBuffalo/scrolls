@@ -107,9 +107,12 @@ repo topics become `concepts`, the first producer for the KB's concept
 pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
 `docs/adr/0007-github-adapter-topics-as-concepts.md`), and **arxiv**
 (keyless Atom export API, stdlib XML: the abstract becomes the
-searchable summary, taxonomy codes become `tags`, and the PDF link is
-recorded as `media` for a future full-text slice — see
-`docs/adr/0008-arxiv-adapter-atom-abstracts.md`). Items from sources
+searchable summary, taxonomy codes become `tags`, the PDF link is
+recorded as `media`, and the paper's full text is extracted from the
+PDF with `pypdf` into searchable extracted text — any PDF failure
+degrades to the abstract-only scroll — see
+`docs/adr/0008-arxiv-adapter-atom-abstracts.md` and
+`docs/adr/0010-arxiv-pdf-full-text-pypdf.md`). Items from sources
 without an adapter yet are skipped, and per-item failures don't abort the
 batch.
 
@@ -189,6 +192,6 @@ KB compilation are stage-neutral. With the IDEAS.md §6 MVP source trio
 import), search, rules classification, the compiled library, context
 bundles, and agent install, all five IDEAS.md §14 MVP passes have a
 working first version. Next slices: an LLM classification/concept
-engine, PDF full-text extraction, media capture, or an MCP server.
+engine, media capture, or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

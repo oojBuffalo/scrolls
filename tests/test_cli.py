@@ -518,8 +518,9 @@ def test_ingest_github_repo_end_to_end(scrolls_home, fake_github_api, capsys):
 
 @pytest.fixture
 def fake_arxiv_api(monkeypatch):
-    """Serve a canned Atom feed instead of the network."""
+    """Serve a canned Atom feed and PDF instead of the network."""
     import scrolls.sources.arxiv as arxiv
+    from test_arxiv import make_pdf
 
     feed = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -530,10 +531,14 @@ def fake_arxiv_api(monkeypatch):
     <summary>We introduce Mistral 7B, a 7-billion-parameter language model.</summary>
     <author><name>Albert Q. Jiang</name></author>
     <link href="http://arxiv.org/abs/2310.06825v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2310.06825v1" rel="related"
+          type="application/pdf"/>
     <category term="cs.CL"/>
   </entry>
 </feed>"""
+    pdf = make_pdf("Grouped-query attention accelerates decoding throughput.")
     monkeypatch.setattr(arxiv, "_get_text", lambda url: feed)
+    monkeypatch.setattr(arxiv, "_get_bytes", lambda url: pdf)
     return feed
 
 
@@ -554,10 +559,19 @@ def test_ingest_arxiv_paper_end_to_end(scrolls_home, fake_arxiv_api, capsys):
     scroll = (scrolls_home / "scrolls" / "arxiv" / "mistral-7b.md").read_text()
     assert '\ntags: ["cs.CL"]\n' in scroll
     assert "We introduce Mistral 7B" in scroll
+    # PDF full text lands in the scroll's extracted content (ADR 0010)
+    assert "Grouped-query attention accelerates decoding throughput." in scroll
     capsys.readouterr()
 
     # the abstract is indexed: search finds the paper by its summary
     exit_code = main(["search", "language model"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["arxiv:2310.06825"]
+    capsys.readouterr()
+
+    # the PDF full text is indexed too: this phrase appears nowhere else
+    exit_code = main(["search", "decoding throughput"])
     assert exit_code == 0
     hits = json.loads(capsys.readouterr().out)
     assert [hit["id"] for hit in hits] == ["arxiv:2310.06825"]

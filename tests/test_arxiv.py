@@ -1,7 +1,8 @@
-"""Tests for the arXiv fetch adapter (IDEAS.md §6, ADR 0008).
+"""Tests for the arXiv fetch adapter (IDEAS.md §6, ADR 0008, ADR 0010).
 
-The Atom transport is faked; tests cover the abstract-as-summary
-semantics and error entries offline.
+The Atom and PDF transports are faked; tests cover the
+abstract-as-summary semantics, PDF full-text extraction with its
+degradation contract, and error entries offline.
 """
 
 import json
@@ -11,6 +12,37 @@ import pytest
 from scrolls.items import ScrollItem
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.arxiv import fetch_item
+
+
+def make_pdf(text: str) -> bytes:
+    """A minimal one-page PDF carrying `text` in its content stream."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref_at = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref_at,
+    )
+    return bytes(out)
+
+
+PDF_TEXT = "Mistral 7B leverages grouped-query attention for faster inference."
+PDF = make_pdf(PDF_TEXT)
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -63,8 +95,15 @@ def make_item(**overrides):
     return ScrollItem(**base)
 
 
-def fetch(item=None, feed=FEED):
-    return fetch_item(item or make_item(), get_text=lambda url: feed)
+def fetch(item=None, feed=FEED, pdf=PDF):
+    def get_bytes(url):
+        if isinstance(pdf, Exception):
+            raise pdf
+        return pdf
+
+    return fetch_item(
+        item or make_item(), get_text=lambda url: feed, get_bytes=get_bytes
+    )
 
 
 def test_fetch_item_normalizes_entry_onto_item():
@@ -78,7 +117,7 @@ def test_fetch_item_normalizes_entry_onto_item():
         "We introduce Mistral 7B, a 7-billion-parameter language model. "
         "It outperforms Llama 2 13B across all evaluated benchmarks."
     )
-    assert fetched.extracted_text is None  # full text waits for a pdf slice
+    assert PDF_TEXT in fetched.extracted_text  # full text from the PDF (ADR 0010)
     assert fetched.tags == ("cs.CL", "cs.AI")  # taxonomy codes, deduped
     assert fetched.concepts == ()  # codes are not readable concept names
     assert fetched.media == (
@@ -86,8 +125,65 @@ def test_fetch_item_normalizes_entry_onto_item():
     )
     assert fetched.content_hash.startswith("sha256:")
     assert fetched.provenance["adapter"] == "arxiv"
+    assert fetched.provenance["extraction_method"].startswith("arxiv-api:atom+pypdf-")
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_item_downloads_the_pdf_link_over_https():
+    seen = {}
+
+    def get_bytes(url):
+        seen["url"] = url
+        return PDF
+
+    fetch_item(make_item(), get_text=lambda url: FEED, get_bytes=get_bytes)
+    # the feed's link is plain http; arxiv redirects to https anyway
+    assert seen["url"] == "https://arxiv.org/pdf/2310.06825v1"
+
+
+def test_fetch_item_content_hash_covers_the_full_text():
+    with_text = fetch()
+    without_text = fetch(pdf=OSError("offline"))
+    assert with_text.content_hash != without_text.content_hash
+
+
+def test_fetch_item_pdf_download_failure_degrades_to_abstract_only():
+    fetched = fetch(pdf=OSError("connection refused"))
+
+    assert fetched.extracted_text is None
+    assert fetched.summary.startswith("We introduce Mistral 7B")
     assert fetched.provenance["extraction_method"] == "arxiv-api:atom"
     assert fetched.stage == "fetched"
+
+
+def test_fetch_item_unparseable_pdf_degrades_to_abstract_only():
+    fetched = fetch(pdf=b"this is not a pdf")
+    assert fetched.extracted_text is None
+    assert fetched.provenance["extraction_method"] == "arxiv-api:atom"
+
+
+def test_fetch_item_textless_pdf_degrades_to_abstract_only():
+    fetched = fetch(pdf=make_pdf(""))
+    assert fetched.extracted_text is None
+    assert fetched.provenance["extraction_method"] == "arxiv-api:atom"
+
+
+def test_fetch_item_without_pdf_link_skips_the_download():
+    feed = FEED.replace(
+        '<link title="pdf" href="http://arxiv.org/pdf/2310.06825v1" rel="related"\n'
+        '          type="application/pdf"/>',
+        "",
+    )
+    calls = []
+
+    def get_bytes(url):
+        calls.append(url)
+        return PDF
+
+    fetched = fetch_item(make_item(), get_text=lambda url: feed, get_bytes=get_bytes)
+    assert calls == []
+    assert fetched.extracted_text is None
+    assert fetched.media == ()
 
 
 def test_fetch_item_keeps_raw_feed_for_rebuilds():
@@ -112,7 +208,7 @@ def test_fetch_item_requests_the_export_api():
         seen["url"] = url
         return FEED
 
-    fetch_item(make_item(), get_text=capture)
+    fetch_item(make_item(), get_text=capture, get_bytes=lambda url: PDF)
     assert seen["url"] == (
         "https://export.arxiv.org/api/query?id_list=2310.06825&max_results=1"
     )
@@ -127,18 +223,19 @@ def test_fetch_item_handles_old_style_slashed_ids():
 
     item = make_item(id="arxiv:math/0211159", source_id="math/0211159",
                      url="https://arxiv.org/abs/math/0211159")
-    fetch_item(item, get_text=capture)
+    fetch_item(item, get_text=capture, get_bytes=lambda url: PDF)
     assert "id_list=math%2F0211159" in seen["url"]
 
 
-def test_fetch_item_without_summary_degrades_to_metadata_only():
+def test_fetch_item_without_summary_or_pdf_degrades_to_metadata_only():
     feed = FEED.replace(
         "<summary>  We introduce Mistral 7B, a 7-billion-parameter language model.\n"
         "It outperforms Llama 2 13B across all evaluated benchmarks.\n</summary>",
         "<summary> </summary>",
     )
-    fetched = fetch(feed=feed)
+    fetched = fetch(feed=feed, pdf=OSError("offline"))
     assert fetched.summary is None
+    assert fetched.extracted_text is None
     assert fetched.title == "Mistral 7B"
     assert fetched.content_hash.startswith("sha256:")
 
