@@ -94,6 +94,14 @@ def test_fetch_item_preserves_identity_fields():
     assert fetched.saved_at == item.saved_at
 
 
+def test_fetch_item_keeps_seeded_published_at_when_repo_has_no_created_at():
+    # a feed-seeded date (ADR 0021) survives a fetch that finds no date
+    repo = {key: value for key, value in REPO.items() if key != "created_at"}
+    item = make_item(published_at="2026-06-01T00:00:00+00:00")
+    fetched = fetch_item(item, get_json=routed_get_json(repo=repo))
+    assert fetched.published_at == "2026-06-01T00:00:00+00:00"
+
+
 def test_fetch_item_requests_the_expected_api_urls():
     seen = []
     routed = routed_get_json()

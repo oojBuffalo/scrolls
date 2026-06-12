@@ -51,7 +51,7 @@ def fetch_item(item: ScrollItem, *, get_html: GetHtml | None = None) -> ScrollIt
         item,
         title=data.get("title") or item.title,
         author=data.get("author") or None,
-        published_at=data.get("date") or None,
+        published_at=data.get("date") or item.published_at,
         canonical_url=data.get("source") or item.url,
         raw_text=extracted,
         extracted_text=text,

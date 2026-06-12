@@ -187,6 +187,14 @@ def test_fetch_item_keeps_raw_feed_for_rebuilds():
     assert fetched.raw_text == FEED
 
 
+def test_fetch_item_keeps_seeded_published_at_when_entry_has_none():
+    # a feed-seeded date (ADR 0021) survives a fetch that finds no date
+    feed = FEED.replace("<published>2023-10-10T17:54:02Z</published>", "")
+    item = make_item(published_at="2023-10-09T00:00:00+00:00")
+    fetched = fetch(item, feed=feed)
+    assert fetched.published_at == "2023-10-09T00:00:00+00:00"
+
+
 def test_fetch_item_preserves_identity_fields():
     item = make_item()
     fetched = fetch(item)

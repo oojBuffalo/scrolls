@@ -93,7 +93,7 @@ def fetch_item(
         item,
         title=_text(entry, "title") or item.title,
         author=", ".join(authors) or None,
-        published_at=_text(entry, "published") or None,
+        published_at=_text(entry, "published") or item.published_at,
         canonical_url=_link_href(entry, rel="alternate") or entry_id or None,
         raw_text=feed_text,
         extracted_text=full_text,

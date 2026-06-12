@@ -58,7 +58,7 @@ def fetch_item(item: ScrollItem, *, get_bytes: GetBytes | None = None) -> Scroll
         item,
         title=meta.get("title") or _filename_title(item.url) or item.title,
         author=meta.get("author"),
-        published_at=meta.get("created"),
+        published_at=meta.get("created") or item.published_at,
         canonical_url=item.url,
         extracted_text=_pages_text(reader),
         summary=meta.get("subject"),

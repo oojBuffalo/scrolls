@@ -81,6 +81,14 @@ def test_fetch_item_preserves_identity_fields():
     assert fetched.saved_at == item.saved_at
 
 
+def test_fetch_item_keeps_seeded_published_at():
+    # oEmbed has no publish date, so a channel-feed-seeded date (ADR 0021)
+    # is the only one a synced video will ever carry — fetch must keep it
+    item = make_item(published_at="2026-06-10T08:30:00+00:00")
+    fetched = fetch(item)
+    assert fetched.published_at == "2026-06-10T08:30:00+00:00"
+
+
 def test_fetch_item_requests_oembed_for_the_canonical_url():
     seen = {}
 

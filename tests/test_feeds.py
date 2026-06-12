@@ -52,11 +52,14 @@ ATOM_FEED = """\
     <id>yt:video:abc123def45</id>
     <title>New Paper!</title>
     <link rel="alternate" href="https://www.youtube.com/watch?v=abc123def45"/>
+    <published>2026-06-10T08:30:00Z</published>
+    <updated>2026-06-11T00:00:00Z</updated>
   </entry>
   <entry>
     <id>yt:video:xyz987uvw65</id>
     <title>Another Paper!</title>
     <link rel="alternate" href="https://www.youtube.com/watch?v=xyz987uvw65"/>
+    <updated>2026-06-11T09:00:00-04:00</updated>
   </entry>
 </feed>
 """
@@ -70,6 +73,7 @@ RSS_FEED = """\
     <item>
       <title>Post one</title>
       <link>https://blog.example.com/2026/post-one/</link>
+      <pubDate>Tue, 02 Jun 2026 10:00:00 GMT</pubDate>
     </item>
     <item>
       <title>Linkless item is dropped</title>
@@ -147,8 +151,18 @@ def test_parse_feed_atom():
     assert feed == Feed(
         title="Two Minute Papers",
         entries=(
-            FeedEntry(url="https://www.youtube.com/watch?v=abc123def45", title="New Paper!"),
-            FeedEntry(url="https://www.youtube.com/watch?v=xyz987uvw65", title="Another Paper!"),
+            # <published> beats <updated>; a trailing Z normalizes to +00:00
+            FeedEntry(
+                url="https://www.youtube.com/watch?v=abc123def45",
+                title="New Paper!",
+                published="2026-06-10T08:30:00+00:00",
+            ),
+            # no <published>: <updated> stands in, converted to UTC
+            FeedEntry(
+                url="https://www.youtube.com/watch?v=xyz987uvw65",
+                title="Another Paper!",
+                published="2026-06-11T13:00:00+00:00",
+            ),
         ),
     )
 
@@ -160,6 +174,26 @@ def test_parse_feed_rss_drops_linkless_items():
         "https://blog.example.com/2026/post-one/",
         "https://blog.example.com/2026/post-two/",
     ]
+
+
+def test_parse_feed_rss_normalizes_pubdate_to_iso_utc():
+    """RFC 822 pubDates must not leak into `published_at` — every stored
+    timestamp is UTC ISO 8601 like `saved_at`."""
+    feed = parse_feed(RSS_FEED)
+    assert feed.entries[0].published == "2026-06-02T10:00:00+00:00"
+    assert feed.entries[1].published is None  # dateless item stays honest
+
+
+def test_parse_feed_unparseable_dates_become_none():
+    feed = parse_feed(RSS_FEED.replace("Tue, 02 Jun 2026 10:00:00 GMT", "yesterday-ish"))
+    assert feed.entries[0].published is None
+
+
+def test_parse_feed_naive_dates_are_assumed_utc():
+    feed = parse_feed(
+        ATOM_FEED.replace("2026-06-10T08:30:00Z", "2026-06-10T08:30:00")
+    )
+    assert feed.entries[0].published == "2026-06-10T08:30:00+00:00"
 
 
 def test_parse_feed_rejects_html():
@@ -224,6 +258,18 @@ def test_sync_seeds_detected_items_with_entry_titles(db_path):
 
     assert get_item(db_path, "youtube:abc123def45").title == "New Paper!"
     assert get_item(db_path, "youtube:xyz987uvw65").title == "Another Paper!"
+
+
+def test_sync_seeds_detected_items_with_entry_published_dates(db_path):
+    """The feed entry's date is often the only `published_at` an item will
+    ever get — YouTube's oEmbed fetch has no publish date at all."""
+    sub = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
+    insert_subscription(db_path, sub)
+
+    sync_subscription(db_path, sub, fetch=_fetch_ok(ATOM_FEED))
+
+    assert get_item(db_path, "youtube:abc123def45").published_at == "2026-06-10T08:30:00+00:00"
+    assert get_item(db_path, "youtube:xyz987uvw65").published_at == "2026-06-11T13:00:00+00:00"
 
 
 def test_sync_never_retitles_known_items(db_path):

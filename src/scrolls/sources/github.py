@@ -60,7 +60,7 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         item,
         title=repo.get("full_name") or item.title,
         author=(repo.get("owner") or {}).get("login") or None,
-        published_at=repo.get("created_at") or None,
+        published_at=repo.get("created_at") or item.published_at,
         canonical_url=repo.get("html_url"),
         raw_text=json.dumps({"repo": repo, "readme": readme}, ensure_ascii=False),
         extracted_text=readme,

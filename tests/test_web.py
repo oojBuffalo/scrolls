@@ -69,6 +69,22 @@ def test_fetch_item_preserves_identity_fields():
     assert fetched.saved_at == item.saved_at
 
 
+def test_fetch_item_keeps_seeded_published_at_when_page_has_none():
+    # a feed-seeded date (ADR 0021) survives a fetch that finds no date
+    html = ARTICLE_HTML.replace(
+        '<meta property="article:published_time" content="2025-03-01T10:00:00Z">', ""
+    )
+    item = make_item(published_at="2025-02-28T00:00:00+00:00")
+    fetched = fetch_item(item, get_html=lambda url: html)
+    assert fetched.published_at == "2025-02-28T00:00:00+00:00"
+
+
+def test_fetch_item_page_date_beats_seeded_published_at():
+    item = make_item(published_at="2025-02-28T00:00:00+00:00")
+    fetched = fetch_item(item, get_html=lambda url: ARTICLE_HTML)
+    assert fetched.published_at == "2025-03-01"
+
+
 def test_fetch_item_requests_the_item_url():
     seen = {}
 

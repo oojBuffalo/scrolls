@@ -5,7 +5,9 @@ each followed feed and registers new entry URLs as items at stage
 'detected', through the same detection/dedupe path as `scrolls add`.
 Sync only discovers URLs — the source adapters still do all fetching
 and normalization, so a YouTube feed entry becomes a youtube item and a
-blog feed entry a web item. Both parse with stdlib ElementTree, the
+blog feed entry a web item. The entry's feed title and published date
+(normalized to UTC ISO 8601, ADR 0021) seed the new item; fetch
+replaces them only with the source's own values. Both parse with stdlib ElementTree, the
 arxiv adapter's precedent; subscriptions live in the `subscriptions`
 table because sync state belongs to the index, not config (IDEAS.md §3).
 
@@ -22,6 +24,7 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
@@ -59,6 +62,7 @@ class Subscription:
 class FeedEntry:
     url: str
     title: str | None = None
+    published: str | None = None  # UTC ISO 8601, normalized by _parse_date
 
 
 @dataclass(frozen=True)
@@ -116,7 +120,16 @@ def parse_feed(text: str) -> Feed:
         return Feed(
             title=_clean(root.findtext(f"{_ATOM}title")),
             entries=tuple(
-                FeedEntry(url=href.strip(), title=_clean(entry.findtext(f"{_ATOM}title")))
+                FeedEntry(
+                    url=href.strip(),
+                    title=_clean(entry.findtext(f"{_ATOM}title")),
+                    # Atom requires <updated>; <published> is optional but
+                    # is the actual publication time when present
+                    published=_parse_date(
+                        entry.findtext(f"{_ATOM}published")
+                        or entry.findtext(f"{_ATOM}updated")
+                    ),
+                )
                 for entry in root.findall(f"{_ATOM}entry")
                 if (href := _atom_link(entry))
             ),
@@ -128,7 +141,11 @@ def parse_feed(text: str) -> Feed:
         return Feed(
             title=_clean(channel.findtext("title")),
             entries=tuple(
-                FeedEntry(url=link.strip(), title=_clean(item.findtext("title")))
+                FeedEntry(
+                    url=link.strip(),
+                    title=_clean(item.findtext("title")),
+                    published=_parse_date(item.findtext("pubDate")),
+                )
                 for item in channel.findall("item")
                 if (link := item.findtext("link")) and link.strip()
             ),
@@ -216,9 +233,11 @@ def sync_subscription(
             source=detected.source,
             source_id=detected.source_id,
             url=entry.url,
-            # the entry's feed title names the item until fetch replaces
-            # it; INSERT OR IGNORE keeps known items' titles untouched
+            # the entry's feed title and date seed the item; fetch replaces
+            # them only with the source's own values, and INSERT OR IGNORE
+            # keeps known items untouched
             title=entry.title,
+            published_at=entry.published,
             saved_at=now,
         )
         if insert_item(db_path, item):
@@ -382,6 +401,28 @@ def _clean(text: str | None) -> str | None:
     """Whitespace-collapsed text, or None when empty/absent."""
     collapsed = " ".join((text or "").split())
     return collapsed or None
+
+
+def _parse_date(text: str | None) -> str | None:
+    """A feed date normalized to UTC ISO 8601, or None when absent/unparseable.
+
+    Accepts Atom's RFC 3339 dates (fromisoformat) and RSS 2.0's RFC 822
+    pubDates (parsedate_to_datetime); naive datetimes are assumed UTC.
+    One feed format must not leak its date syntax into `published_at`,
+    and an honest None beats storing a feed's garbage.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    for parse in (datetime.fromisoformat, parsedate_to_datetime):
+        try:
+            parsed = parse(cleaned)
+        except (ValueError, TypeError):
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return None
 
 
 _get_text = http.get_text

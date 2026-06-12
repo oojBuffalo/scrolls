@@ -164,8 +164,11 @@ every followed feed (IDEAS.md §13's live-delta path — see
 entry URL at stage `detected` through the same detection/dedupe as
 `scrolls add`, so a YouTube feed entry becomes a `youtube` item and a
 blog entry a `web` item; the entry's feed title names the item (and
-makes it searchable) until fetch replaces it with the source's own.
-`scrolls fetch` (then `classify`/`md`) brings
+makes it searchable), and its published date — RSS `pubDate` or Atom
+`published`, normalized to UTC ISO 8601 — fills `published_at`
+(ADR 0021). Fetch replaces both only with the source's own values, so
+a synced YouTube video keeps the feed's date its keyless oEmbed fetch
+can't provide. `scrolls fetch` (then `classify`/`md`) brings
 the new items in. Polling is HTTP-cached (see
 `docs/adr/0019-feed-http-caching.md`): each full response's
 `ETag`/`Last-Modified` are stored on the subscription, and an
@@ -298,7 +301,6 @@ have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
 (ADR 0019), on both the shell and MCP interfaces (ADR 0020). Next
-candidates: batched LLM classification (ADR 0015) and carrying feed
-entry published dates onto detected items (ADR 0017).
+candidate: batched LLM classification (ADR 0015).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

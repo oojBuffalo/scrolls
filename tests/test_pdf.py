@@ -71,6 +71,13 @@ def test_fetch_item_keeps_no_raw_text():
     assert fetch().raw_text is None
 
 
+def test_fetch_item_keeps_seeded_published_at_when_document_has_no_date():
+    # a feed-seeded date (ADR 0021) survives a fetch that finds no date
+    item = make_item(published_at="2024-03-01T00:00:00+00:00")
+    fetched = fetch(item, pdf=make_pdf(PDF_TEXT))
+    assert fetched.published_at == "2024-03-01T00:00:00+00:00"
+
+
 def test_fetch_item_title_falls_back_to_the_filename():
     fetched = fetch(pdf=make_pdf(PDF_TEXT))
     assert fetched.title == "attention is all you need"

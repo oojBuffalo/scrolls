@@ -27,3 +27,4 @@ they add up to.
 | [0018](0018-user-overrides-scrolls-set.md) | User overrides are `scrolls set`, free-form and clearable | IDEAS.md §8 layer three; engines' fields only; empty value clears; all-or-nothing parsing; no override bookkeeping |
 | [0019](0019-feed-http-caching.md) | Feed polling uses HTTP conditional GETs | `etag`/`last_modified` on subscriptions (schema v5); 304 → status `unchanged`; follow never seeds the cache — only a full sync stores validators |
 | [0020](0020-mcp-feed-subscriptions.md) | The MCP server exposes feed subscriptions | `follow_feed`/`unfollow_feed`/`list_feed_subscriptions`/`sync_feeds`; batch semantics shared with the CLI via `feeds.sync_many` |
+| [0021](0021-feed-entry-published-dates.md) | Feed entry dates seed `published_at`, normalized to UTC ISO 8601 | RSS `pubDate`/Atom `published`-else-`updated`; adapters' own date wins, seed is the fallback; unparseable dates become None |
