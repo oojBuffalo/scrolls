@@ -93,7 +93,8 @@ stores the item at stage `detected` — registered but not yet fetched.
 title, extracted text, summary, canonical URL, content hash, and
 provenance, and moving the item to stage `fetched`. Adapters so far:
 **wikipedia** (MediaWiki action API, no dependencies — see
-`docs/adr/0002-first-fetch-adapter-wikipedia.md`), **web** (readable
+`docs/adr/0002-first-fetch-adapter-wikipedia.md`; visible page categories
+become `concepts`), **web** (readable
 article extraction via `trafilatura`, the project's first per-adapter
 dependency per ADR 0001), **youtube** (keyless oEmbed metadata plus
 optional transcript via `youtube-transcript-api`; caption-less videos and
@@ -140,8 +141,8 @@ deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
 that link back to rendered scrolls with relative Markdown links. The
 generated pages are rebuilt from scratch each run so stale groups can't
 linger; other files under `library/` are left alone. Concept pages merge
-spellings by slug; github repo topics populate them today, and other
-producers (wikipedia categories, an LLM engine) can join later.
+spellings by slug; github repo topics and wikipedia page categories
+populate them today, and an LLM concept engine can join later.
 
 `scrolls context <query>` answers "what does my library know about X?"
 with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped

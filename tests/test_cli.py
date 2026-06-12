@@ -169,6 +169,9 @@ def fake_wikipedia_api(monkeypatch):
                     "fullurl": "https://en.wikipedia.org/wiki/SQLite",
                     "canonicalurl": "https://en.wikipedia.org/wiki/SQLite",
                     "extract": "SQLite is a database engine.\n\n\n== History ==\nEarly days.",
+                    "categories": [
+                        {"ns": 14, "title": "Category:Database management systems"}
+                    ],
                 }
             ]
         }
@@ -530,6 +533,8 @@ def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_ap
     # the first render already carries the category — no second pass needed
     scroll = (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").read_text()
     assert '\ncategory: "reference"\n' in scroll
+    # visible page categories arrive as concepts (ADR 0007 follow-up)
+    assert '\nconcepts: ["Database management systems"]\n' in scroll
 
     stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
     assert stored.category == "reference"

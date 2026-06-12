@@ -1,9 +1,12 @@
 """Wikipedia fetch adapter (IDEAS.md §6, ADR 0002).
 
-One GET against the MediaWiki action API (`prop=extracts|info`,
+One GET against the MediaWiki action API (`prop=extracts|info|categories`,
 `explaintext`, `redirects`) returns the full plain-text page plus its
-canonical URL — no auth, no runtime dependencies. The raw page object is
-kept in `raw_text` so scrolls and indexes can be rebuilt without refetching.
+canonical URL — no auth, no runtime dependencies. Visible (editor-curated)
+page categories become `concepts`, joining github repo topics as honest
+concept producers (ADR 0007); hidden maintenance categories are excluded
+server-side. The raw page object is kept in `raw_text` so scrolls and
+indexes can be rebuilt without refetching.
 """
 
 from __future__ import annotations
@@ -24,9 +27,11 @@ _API_PARAMS = {
     "format": "json",
     "formatversion": "2",
     "redirects": "1",
-    "prop": "extracts|info",
+    "prop": "extracts|info|categories",
     "explaintext": "1",
     "inprop": "url",
+    "clshow": "!hidden",
+    "cllimit": "max",
 }
 
 GetJson = Callable[[str], dict[str, Any]]
@@ -61,6 +66,7 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         raw_text=json.dumps(page, ensure_ascii=False),
         extracted_text=extract,
         summary=_lead_section(extract),
+        concepts=_concepts(page),
         content_hash="sha256:" + hashlib.sha256(extract.encode("utf-8")).hexdigest(),
         provenance={
             "adapter": "wikipedia",
@@ -86,6 +92,17 @@ def _single_page(payload: dict[str, Any]) -> dict[str, Any]:
 def _lead_section(extract: str) -> str:
     """Plain-text extract before the first '== Heading ==' marker."""
     return extract.split("\n==", 1)[0].strip()
+
+
+def _concepts(page: dict[str, Any]) -> tuple:
+    """Visible category names, with the localized 'Category:' prefix stripped."""
+    names = []
+    for category in page.get("categories") or ():
+        title = category.get("title") or ""
+        name = title.partition(":")[2] or title
+        if name:
+            names.append(name)
+    return tuple(names)
 
 
 _get_json = http.get_json

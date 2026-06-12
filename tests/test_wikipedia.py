@@ -89,7 +89,35 @@ def test_fetch_item_builds_action_api_url_for_language_and_title():
     assert "titles=Stra%C3%9Fe" in seen["url"]
     assert "explaintext=1" in seen["url"]
     assert "redirects=1" in seen["url"]
-    assert "prop=extracts%7Cinfo" in seen["url"]
+    assert "prop=extracts%7Cinfo%7Ccategories" in seen["url"]
+    assert "clshow=%21hidden" in seen["url"]
+    assert "cllimit=max" in seen["url"]
+
+
+def test_fetch_item_maps_visible_categories_to_concepts():
+    payload = make_payload(
+        categories=[
+            {"ns": 14, "title": "Category:Database management systems"},
+            {"ns": 14, "title": "Category:SQLite"},
+        ]
+    )
+    fetched = fetch_item(make_item(), get_json=lambda url: payload)
+    assert fetched.concepts == ("Database management systems", "SQLite")
+    # the raw page keeps the category records for rebuilds
+    assert json.loads(fetched.raw_text)["categories"][0]["title"] == (
+        "Category:Database management systems"
+    )
+
+
+def test_fetch_item_strips_localized_category_prefixes():
+    payload = make_payload(categories=[{"ns": 14, "title": "Kategorie:Datenbanken"}])
+    fetched = fetch_item(make_item(source_id="de:SQLite"), get_json=lambda url: payload)
+    assert fetched.concepts == ("Datenbanken",)
+
+
+def test_fetch_item_without_categories_has_no_concepts():
+    fetched = fetch_item(make_item(), get_json=lambda url: make_payload())
+    assert fetched.concepts == ()
 
 
 def test_fetch_item_splits_source_id_on_first_colon_only():
