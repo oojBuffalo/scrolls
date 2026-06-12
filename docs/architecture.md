@@ -6,7 +6,10 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (254 tests at the time of writing).
+`uv run pytest` (258 tests at the time of writing). The docs themselves
+are guarded by `tests/test_docs.py`: cited test names, relative links,
+and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
+examples are pinned to the code's version and schema.
 
 ## The pipeline
 
