@@ -7,6 +7,7 @@ Commands emit JSON on stdout so coding agents can consume them directly
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from scrolls.items import (
 )
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.render import write_scroll
+from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 
@@ -73,6 +75,20 @@ def main(argv: list[str] | None = None) -> int:
         "default is every item at stage 'fetched'",
     )
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
+
+    search_parser = subparsers.add_parser(
+        "search", help="Full-text search over items (JSON output)"
+    )
+    search_parser.add_argument("query", help="Free-text query; tokens are AND-ed")
+    search_parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum hits to return (default 20)"
+    )
+
+    show_parser = subparsers.add_parser(
+        "show", help="Print one item in full (JSON output)"
+    )
+    show_parser.add_argument("id", help="Item id, e.g. wikipedia:en:SQLite")
+
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
     args = parser.parse_args(argv)
@@ -91,6 +107,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_md(args.id)
     if args.command == "paths":
         return _cmd_paths()
+    if args.command == "search":
+        return _cmd_search(args.query, args.limit)
+    if args.command == "show":
+        return _cmd_show(args.id)
     if args.command == "status":
         return _cmd_status()
     return 2  # pragma: no cover - argparse enforces a valid command
@@ -285,6 +305,30 @@ def _cmd_paths() -> int:
             }
         )
     )
+    return 0
+
+
+def _cmd_search(query: str, limit: int) -> int:
+    paths = get_paths()
+    try:
+        hits = search_items(paths.db_path, query, limit=limit)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    print(json.dumps([dataclasses.asdict(hit) for hit in hits]))
+    return 0
+
+
+def _cmd_show(item_id: str) -> int:
+    paths = get_paths()
+    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    if item is None:
+        print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+        return 1
+    payload = dataclasses.asdict(item)
+    for name in ("tags", "concepts", "links", "media"):
+        payload[name] = list(payload[name])
+    print(json.dumps(payload))
     return 0
 
 

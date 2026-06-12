@@ -72,6 +72,8 @@ uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
 uv run scrolls md <id>        # (re)render one item by id, as JSON
+uv run scrolls search <query> # BM25-ranked full-text search, as JSON
+uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls list           # list items, as JSON
 uv run pytest                 # test suite
 ```
@@ -93,7 +95,13 @@ which YAML accepts) plus summary, extracted content, and links — and moves
 the item to stage `rendered`. The item's `markdown_path` is recorded so
 re-renders keep a stable path.
 
+`scrolls search` runs SQLite FTS5 over title, summary, and extracted text
+(BM25-ranked, title weighted highest) and returns hits with snippets; the
+index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
+so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
+prints the full stored item.
+
 Item stages so far: `detected → fetched → rendered`. Next slices: more
-adapters (web, YouTube), then SQLite FTS search (`scrolls search`/`show`).
+adapters (web, YouTube), classification, then the compiled library/KB.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

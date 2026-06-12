@@ -341,6 +341,79 @@ def test_md_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["search", "database engine"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    hit = payload[0]
+    assert hit["id"] == "wikipedia:en:SQLite"
+    assert hit["title"] == "SQLite"
+    assert set(hit) == {"id", "source", "title", "url", "stage", "score", "snippet"}
+
+
+def test_search_no_matches_prints_empty_array(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["search", "pelicans"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_search_before_init_prints_empty_array(scrolls_home, capsys):
+    exit_code = main(["search", "anything"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_search_blank_query_is_an_error(scrolls_home, capsys):
+    exit_code = main(["search", '""'])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+def test_search_respects_limit_flag(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["search", "database", "--limit", "0"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    exit_code = main(["show", "wikipedia:en:SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == "wikipedia:en:SQLite"
+    assert payload["title"] == "SQLite"
+    assert payload["stage"] == "fetched"
+    assert payload["extracted_text"].startswith("SQLite is a database engine.")
+    assert payload["provenance"]["adapter"] == "wikipedia"
+    assert payload["tags"] == []
+
+
+def test_show_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["show", "wikipedia:en:Missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

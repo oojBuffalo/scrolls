@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -40,9 +40,41 @@ CREATE TABLE items (
 )
 """
 
+# External-content FTS5 index over items, kept in sync by triggers so no
+# Python write path can forget it (IDEAS.md §14 Pass 3). The final INSERT
+# backfills rows that predate the index.
+_ITEMS_FTS = (
+    """\
+CREATE VIRTUAL TABLE items_fts USING fts5(
+    title, summary, extracted_text,
+    content='items', content_rowid='rowid'
+)""",
+    """\
+CREATE TRIGGER items_fts_insert AFTER INSERT ON items BEGIN
+    INSERT INTO items_fts(rowid, title, summary, extracted_text)
+    VALUES (new.rowid, new.title, new.summary, new.extracted_text);
+END""",
+    """\
+CREATE TRIGGER items_fts_delete AFTER DELETE ON items BEGIN
+    INSERT INTO items_fts(items_fts, rowid, title, summary, extracted_text)
+    VALUES ('delete', old.rowid, old.title, old.summary, old.extracted_text);
+END""",
+    """\
+CREATE TRIGGER items_fts_update AFTER UPDATE ON items BEGIN
+    INSERT INTO items_fts(items_fts, rowid, title, summary, extracted_text)
+    VALUES ('delete', old.rowid, old.title, old.summary, old.extracted_text);
+    INSERT INTO items_fts(rowid, title, summary, extracted_text)
+    VALUES (new.rowid, new.title, new.summary, new.extracted_text);
+END""",
+    """\
+INSERT INTO items_fts(rowid, title, summary, extracted_text)
+SELECT rowid, title, summary, extracted_text FROM items""",
+)
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
+    3: _ITEMS_FTS,
 }
 
 
