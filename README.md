@@ -97,6 +97,7 @@ uv run scrolls media <id>     # (re)capture one item's media by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls classify --engine llm  # LLM pass: category + domain + concepts (needs ANTHROPIC_API_KEY)
+uv run scrolls set <id> category=tool tags=a,b  # set classification fields by hand; empty value clears
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
@@ -226,6 +227,15 @@ Batch semantics are unchanged (existing categories are never
 overwritten; per-item API failures don't abort the run), and missing
 credentials abort with the standard error envelope.
 
+`scrolls set <id> field=value...` is layer three — user overrides
+always win (see `docs/adr/0018-user-overrides-scrolls-set.md`). It sets
+exactly the fields the engines write (`category`, `domain`, and the
+comma-separated lists `tags`/`concepts`), free-form: engines pin
+vocabularies, the user's word is final. An empty value clears a field
+so the item is batch-classifiable again, and a set category sticks
+because batch runs never overwrite one. Rendered scrolls re-render so
+frontmatter stays in sync.
+
 `config.toml`'s `[classify]` section makes both choices sticky per
 library (see `docs/adr/0016-config-toml-classify-section.md`):
 `default_engine = "llm"` routes a bare `scrolls classify` to the LLM
@@ -274,8 +284,9 @@ media capture, and KB compilation are stage-neutral. With the IDEAS.md
 and x (via Field Theory import), search, two-layer classification
 (rules + LLM), media capture, the compiled library, context bundles,
 agent install, and the MCP server, all five IDEAS.md §14 MVP passes
-have a working first version plus the §8 LLM layer and feed-based
-live deltas via `scrolls sync` (IDEAS.md §13). Next slice: a
-`scrolls set`-style user override command (ADR 0004).
+have a working first version plus the full §8 classification stack
+(rules, LLM, and `scrolls set` user overrides) and feed-based live
+deltas via `scrolls sync` (IDEAS.md §13). Next candidates: batched LLM
+classification (ADR 0015) and feed HTTP caching (ADR 0017).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

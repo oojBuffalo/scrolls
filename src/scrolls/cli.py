@@ -34,6 +34,7 @@ from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.items import get_item, insert_item, list_items, update_item
 from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
+from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import get_paths
 from scrolls.pipeline import ensure_library, ingest_url, register_url
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
@@ -198,6 +199,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=20, help="Maximum hits to return (default 20)"
     )
 
+    set_parser = subparsers.add_parser(
+        "set", help="Set classification fields on one item by hand (JSON output)"
+    )
+    set_parser.add_argument("id", help="Item id, e.g. wikipedia:en:SQLite")
+    set_parser.add_argument(
+        "assignments",
+        nargs="+",
+        metavar="field=value",
+        help="category=..., domain=..., tags=a,b, concepts=a,b; "
+        "an empty value clears the field",
+    )
+
     show_parser = subparsers.add_parser(
         "show", help="Print one item in full (JSON output)"
     )
@@ -263,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_related(args.id, args.limit)
     if args.command == "search":
         return _cmd_search(args.query, args.limit)
+    if args.command == "set":
+        return _cmd_set(args.id, args.assignments)
     if args.command == "show":
         return _cmd_show(args.id)
     if args.command == "status":
@@ -738,6 +753,42 @@ def _cmd_search(query: str, limit: int) -> int:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
     print(json.dumps([dataclasses.asdict(hit) for hit in hits]))
+    return 0
+
+
+def _cmd_set(item_id: str, assignments: list[str]) -> int:
+    paths = get_paths()
+    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    if item is None:
+        print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+        return 1
+    try:
+        overrides = parse_assignments(assignments)
+    except OverrideError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    updated = apply_overrides(item, overrides)
+    if updated.markdown_path:
+        # keep the rendered scroll's frontmatter in sync with the DB
+        try:
+            updated = write_scroll(paths, updated)
+        except OSError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+    update_item(paths.db_path, updated)
+    print(
+        json.dumps(
+            {
+                "id": updated.id,
+                "status": "set",
+                "category": updated.category,
+                "domain": updated.domain,
+                "tags": list(updated.tags),
+                "concepts": list(updated.concepts),
+                "markdown_path": updated.markdown_path,
+            }
+        )
+    )
     return 0
 
 

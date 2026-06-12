@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (383 tests at the time of writing). The docs themselves
+`uv run pytest` (398 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -197,6 +197,12 @@ choice (ADRs 0004, 0005).
   `[classify]` section (`config.py`, ADR 0016) makes the engine and
   model sticky per library; the `--engine` flag and `$SCROLLS_LLM_MODEL`
   always win (`tests/test_config.py`).
+- **User overrides** (`overrides.py`, ADR 0018) — `scrolls set` is
+  IDEAS.md §8's third layer: it writes exactly the fields the engines
+  write (`category`, `domain`, `tags`, `concepts`), free-form, with
+  empty values clearing a field back to the batch-classifiable pool. A
+  set category sticks because batch runs never overwrite one
+  (`tests/test_overrides.py`).
 - **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
   over body. Query tokens are quoted and AND-ed, so arbitrary agent
   input never hits FTS5 syntax errors (`tests/test_search.py`).
@@ -274,8 +280,6 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **A `scrolls set`-style user override command** — categories can be
-  configured but not set by hand from the CLI yet (ADR 0004).
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).

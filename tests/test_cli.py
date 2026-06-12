@@ -1463,3 +1463,118 @@ def test_sync_before_init_reports_nothing_to_do(scrolls_home, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"new": 0, "known": 0, "skipped": 0, "failed": 0, "results": []}
+
+
+# --- set (user classification overrides, ADR 0018) ---
+
+
+def _seed_rendered_item(item_id="x:1111", **overrides):
+    """Insert a fetched item and render it; library must exist."""
+    base = dict(
+        id=item_id,
+        source=item_id.split(":", 1)[0],
+        source_id=item_id.split(":", 1)[1],
+        url="https://x.com/karpathy/status/1111",
+        saved_at="2026-06-12T08:00:00+00:00",
+        title="SQLite FTS5 is criminally underrated.",
+        extracted_text="SQLite FTS5 is criminally underrated for local search.",
+        stage="fetched",
+    )
+    base.update(overrides)
+    insert_item(get_paths().db_path, ScrollItem(**base))
+    main(["md", item_id])
+    return get_item(get_paths().db_path, item_id)
+
+
+def test_set_overrides_fields_and_rerenders(scrolls_home, capsys):
+    main(["init"])
+    item = _seed_rendered_item(category="technique")
+    capsys.readouterr()
+
+    exit_code = main(["set", item.id, "category=tool", "domain=databases", "tags=sqlite,fts"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": item.id,
+        "status": "set",
+        "category": "tool",
+        "domain": "databases",
+        "tags": ["sqlite", "fts"],
+        "concepts": [],
+        "markdown_path": item.markdown_path,
+    }
+    stored = get_item(get_paths().db_path, item.id)
+    assert stored.category == "tool" and stored.domain == "databases"
+    assert stored.stage == "rendered"  # set is stage-neutral
+    scroll = (get_paths().root / item.markdown_path).read_text()
+    assert '"tool"' in scroll and '"sqlite"' in scroll
+
+
+def test_set_empty_value_clears_for_reclassification(scrolls_home, capsys):
+    main(["init"])
+    item = _seed_rendered_item(category="technique")
+    capsys.readouterr()
+
+    main(["set", item.id, "category="])
+    capsys.readouterr()
+    assert get_item(get_paths().db_path, item.id).category is None
+
+    # the cleared item is batch-classifiable again (title rule: none matches here)
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert any(r["id"] == item.id for r in payload["results"])
+
+
+def test_set_survives_batch_classify(scrolls_home, capsys):
+    """IDEAS.md §8: user overrides always win over batch runs."""
+    main(["init"])
+    item = _seed_rendered_item(item_id="x:2222", title="a guide to reading papers")
+    capsys.readouterr()
+
+    main(["set", item.id, "category=opinion"])
+    main(["classify"])  # title would match the tutorial rule, but category is set
+    capsys.readouterr()
+    assert get_item(get_paths().db_path, item.id).category == "opinion"
+
+
+def test_set_unknown_field_is_an_error(scrolls_home, capsys):
+    main(["init"])
+    item = _seed_rendered_item()
+    capsys.readouterr()
+
+    exit_code = main(["set", item.id, "usefulness=high"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cannot set 'usefulness'" in json.loads(captured.err)["error"]
+    assert get_item(get_paths().db_path, item.id).category is None  # nothing applied
+
+
+def test_set_malformed_assignment_is_an_error(scrolls_home, capsys):
+    main(["init"])
+    item = _seed_rendered_item()
+    capsys.readouterr()
+
+    exit_code = main(["set", item.id, "category"])
+    assert exit_code == 1
+    assert "field=value" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_set_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["set", "x:9999", "category=tool"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no such item" in json.loads(captured.err)["error"]
+
+
+def test_set_unrendered_item_skips_rerender(scrolls_home, capsys):
+    main(["add", "https://x.com/karpathy/status/7777"])
+    capsys.readouterr()
+
+    exit_code = main(["set", "x:7777", "category=tool"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["category"] == "tool" and payload["markdown_path"] is None
+    assert get_item(get_paths().db_path, "x:7777").category == "tool"

@@ -362,6 +362,32 @@ $ scrolls classify       # after writing broken TOML into config.toml
 [exit 1]
 ```
 
+### `scrolls set <id> field=value...`
+
+Layer three of IDEAS.md §8 — user overrides always win (ADR 0018). Set
+exactly the fields the classification engines write: `category`,
+`domain`, and the comma-separated lists `tags` and `concepts`
+(`test_set_overrides_fields_and_rerenders`). Values are free-form —
+engines pin vocabularies, the user's word is final. An empty value
+clears the field, returning the item to the batch-classifiable pool
+(`test_set_empty_value_clears_for_reclassification`); list values
+replace, not merge. A set category sticks because batch `classify`
+never overwrites one (`test_set_survives_batch_classify`). A rendered
+scroll is re-rendered so frontmatter stays in sync; nothing is applied
+when any assignment is invalid (`test_set_unknown_field_is_an_error`,
+`test_set_malformed_assignment_is_an_error`; the parser itself in
+`tests/test_overrides.py`).
+
+```console
+$ scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
+{"id": "x:1111", "status": "set", "category": "technique", "domain": "databases", "tags": ["sqlite", "fts"], "concepts": ["full-text search"], "markdown_path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md"}
+[exit 0]
+
+$ scrolls set x:1111 usefulness=high
+{"error": "cannot set 'usefulness'; settable fields: category, domain, tags, concepts"}
+[exit 1]
+```
+
 ### `scrolls md [id]`
 
 No argument: render every item at stage `fetched` to a Markdown scroll
@@ -665,6 +691,8 @@ scrolls sync                                      # 2 new items
 scrolls sync                                      # idempotent: 2 known
 scrolls unfollow http://localhost:8943/feed.xml
 scrolls unfollow ea77c1d5239e                     # already gone: exit 1
+scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
+scrolls set x:1111 usefulness=high                # unknown field: exit 1
 ```
 
 (Stop the feed server with `kill %1` when done.)
