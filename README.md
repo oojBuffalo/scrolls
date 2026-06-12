@@ -70,6 +70,7 @@ uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
 uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
+uv run scrolls import fieldtheory  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
@@ -110,6 +111,15 @@ recorded as `media` for a future full-text slice — see
 `docs/adr/0008-arxiv-adapter-atom-abstracts.md`). Items from sources
 without an adapter yet are skipped, and per-item failures don't abort the
 batch.
+
+`scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
+bookmarks from a local Field Theory archive (IDEAS.md §7 — see
+`docs/adr/0009-fieldtheory-import.md`): the raw JSONL cache becomes
+`source="x"` items at stage `fetched` (each line preserved in
+`raw_text`), and Field Theory's classified pages contribute
+`category`/`domain` via a frontmatter join on tweet id. Item ids
+(`x:<tweetId>`) match URL detection, so imports and `scrolls add` of a
+tweet URL dedupe against each other; re-imports skip existing items.
 
 `scrolls md` renders each fetched item to a durable Markdown scroll at
 `scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
@@ -165,10 +175,10 @@ them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
 Item stages so far: `detected → fetched → rendered`; classification and
 KB compilation are stage-neutral. With the IDEAS.md §6 MVP source trio
-(wikipedia, web, youtube) plus github and arxiv, search, rules
-classification, the compiled library, context bundles, and agent
-install, all five IDEAS.md §14 MVP passes have a working first version.
-Next slices: an LLM classification/concept engine, x via Field Theory
-import, PDF full-text extraction, media capture, or an MCP server.
+(wikipedia, web, youtube) plus github, arxiv, and x (via Field Theory
+import), search, rules classification, the compiled library, context
+bundles, and agent install, all five IDEAS.md §14 MVP passes have a
+working first version. Next slices: an LLM classification/concept
+engine, PDF full-text extraction, media capture, or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

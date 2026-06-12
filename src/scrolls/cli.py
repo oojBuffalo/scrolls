@@ -11,6 +11,7 @@ import dataclasses
 import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from scrolls import __version__
 from scrolls.agents import install_agent_docs
@@ -18,6 +19,8 @@ from scrolls.classify import classify_item
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import init_db, read_schema_version
+from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
+from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.items import (
     ScrollItem,
     get_item,
@@ -98,6 +101,20 @@ def main(argv: list[str] | None = None) -> int:
         "default is every item at stage 'detected'",
     )
 
+    import_parser = subparsers.add_parser(
+        "import", help="Bulk-import a local archive (JSON output)"
+    )
+    import_sub = import_parser.add_subparsers(dest="import_command", required=True)
+    fieldtheory_parser = import_sub.add_parser(
+        "fieldtheory",
+        help="Import X bookmarks from a local Field Theory archive (JSON output)",
+    )
+    fieldtheory_parser.add_argument(
+        "--root",
+        default=None,
+        help=f"Field Theory archive root (default {FIELDTHEORY_ROOT})",
+    )
+
     ingest_parser = subparsers.add_parser(
         "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
     )
@@ -149,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_detect(args.url)
     if args.command == "fetch":
         return _cmd_fetch(args.id)
+    if args.command == "import":
+        return _cmd_import_fieldtheory(args.root)
     if args.command == "ingest":
         return _cmd_ingest(args.url)
     if args.command == "init":
@@ -275,6 +294,31 @@ def _cmd_ingest(url: str) -> int:
     )
     print(json.dumps(payload))
     return 0
+
+
+def _cmd_import_fieldtheory(root: str | None) -> int:
+    ft_root = Path(root).expanduser() if root else FIELDTHEORY_ROOT
+    try:
+        imported_items, failures = load_bookmarks(ft_root)
+    except ImportSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    _ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0, "failed": len(failures)}
+    for item in imported_items:
+        # INSERT OR IGNORE: an existing item (earlier import, or a manual
+        # `add`/user edit) is never overwritten — re-imports stay cheap
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    # bulk imports can cover hundreds of bookmarks, so per-item success
+    # entries are omitted; only line-level failures are detailed
+    print(json.dumps({**counts, "failures": failures}))
+    return 1 if counts["failed"] else 0
 
 
 def _cmd_fetch(item_id: str | None) -> int:

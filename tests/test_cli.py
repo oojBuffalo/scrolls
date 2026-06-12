@@ -751,6 +751,97 @@ def test_classify_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+@pytest.fixture
+def fake_fieldtheory_root(tmp_path):
+    """A miniature ~/.fieldtheory archive with one classified bookmark."""
+    record = {
+        "id": "1111",
+        "tweetId": "1111",
+        "url": "https://x.com/karpathy/status/1111",
+        "text": "SQLite FTS5 is criminally underrated for local search.",
+        "authorHandle": "karpathy",
+        "authorName": "Andrej Karpathy",
+        "postedAt": "Mon Jun 01 15:34:00 +0000 2026",
+        "bookmarkedAt": None,
+        "syncedAt": "2026-06-04T04:27:46.057Z",
+        "media": [],
+        "mediaObjects": [],
+        "links": ["https://sqlite.org/fts5.html"],
+        "tags": [],
+    }
+    root = tmp_path / "fieldtheory"
+    (root / "bookmarks").mkdir(parents=True)
+    (root / "bookmarks" / "bookmarks.jsonl").write_text(json.dumps(record) + "\n")
+    pages = root / "library" / "bookmarks"
+    pages.mkdir(parents=True)
+    (pages / "2026-06-01-karpathy.md").write_text(
+        '---\ncategory: technique\ndomain: databases\ntweet_id: "1111"\n---\n'
+    )
+    return root
+
+
+def test_import_fieldtheory_end_to_end(scrolls_home, fake_fieldtheory_root, capsys):
+    exit_code = main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"imported": 1, "skipped": 0, "failed": 0, "failures": []}
+
+    stored = get_item(get_paths().db_path, "x:1111")
+    assert stored.stage == "fetched"
+    assert stored.category == "technique"
+    assert stored.domain == "databases"
+    assert stored.saved_at == "2026-06-04T04:27:46+00:00"
+
+    # the imported bookmark flows through md and search unchanged
+    main(["md"])
+    capsys.readouterr()
+    exit_code = main(["search", "criminally underrated"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["x:1111"]
+    scroll = scrolls_home / "scrolls" / "x"
+    assert list(scroll.glob("*.md"))
+
+
+def test_import_fieldtheory_is_idempotent(scrolls_home, fake_fieldtheory_root, capsys):
+    main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    capsys.readouterr()
+    exit_code = main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"imported": 0, "skipped": 1, "failed": 0, "failures": []}
+
+
+def test_import_fieldtheory_never_overwrites_existing_item(
+    scrolls_home, fake_fieldtheory_root, capsys
+):
+    main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    import dataclasses
+    item = get_item(get_paths().db_path, "x:1111")
+    update_item(get_paths().db_path, dataclasses.replace(item, category="tool"))
+    main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    assert get_item(get_paths().db_path, "x:1111").category == "tool"
+
+
+def test_import_fieldtheory_reports_bad_lines(scrolls_home, fake_fieldtheory_root, capsys):
+    jsonl = fake_fieldtheory_root / "bookmarks" / "bookmarks.jsonl"
+    jsonl.write_text("not json\n" + jsonl.read_text())
+    exit_code = main(["import", "fieldtheory", "--root", str(fake_fieldtheory_root)])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1
+    assert payload["failed"] == 1
+    assert payload["failures"][0]["line"] == 1
+
+
+def test_import_fieldtheory_missing_archive_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "fieldtheory", "--root", str(tmp_path / "nowhere")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
