@@ -424,6 +424,35 @@ $ scrolls agent install
 [exit 0]
 ```
 
+## Agent protocol server
+
+### `scrolls mcp`
+
+The one command that blocks and prints nothing: serve the library to
+MCP clients over stdio until the client disconnects (ADR 0014,
+`tests/test_mcp.py`). Connect a client to the command itself, e.g.:
+
+```bash
+claude mcp add scrolls -- uv run scrolls mcp
+```
+
+The tools wrap the same engines as the CLI commands
+(`test_server_exposes_exactly_the_documented_tools`):
+
+| Tool | CLI equivalent | Returns |
+| --- | --- | --- |
+| `get_context_bundle(query, limit=8)` | `scrolls context` | Markdown bundle |
+| `search_scrolls(query, limit=20)` | `scrolls search` | hit list with snippets |
+| `get_scroll(item_id)` | `scrolls show` | full item record |
+| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
+| `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
+| `list_sources()` | — | item counts per source |
+| `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |
+
+Read tools follow the CLI conventions: an empty or uninitialized
+library yields empty results (`test_search_scrolls_before_init_returns_empty`),
+unknown ids are tool errors (`test_get_scroll_unknown_id_raises`).
+
 ## Reproducing these examples
 
 Everything above except the three marked network calls (`ingest` of a

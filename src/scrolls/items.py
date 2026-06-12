@@ -103,6 +103,18 @@ def get_item(db_path: Path, item_id: str) -> ScrollItem | None:
     return _from_row(row) if row else None
 
 
+def count_by_source(db_path: Path) -> dict[str, int]:
+    """Item counts keyed by source, alphabetical."""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT source, COUNT(*) FROM items GROUP BY source ORDER BY source"
+        ).fetchall()
+    finally:
+        conn.close()
+    return dict(rows)
+
+
 def list_items(db_path: Path, stage: str | None = None) -> list[ScrollItem]:
     """All items (optionally only one pipeline stage), oldest saved first."""
     query = "SELECT * FROM items"

@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (298 tests at the time of writing). The docs themselves
+`uv run pytest` (311 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -204,6 +204,13 @@ choice (ADRs 0004, 0005).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`).
+- **MCP server** (`mcp_server.py`, ADR 0014) — `scrolls mcp` serves the
+  same engines to MCP clients over stdio: plain sync tool functions
+  (`get_context_bundle`, `search_scrolls`, `get_scroll`,
+  `get_related_scrolls`, `get_concept_page`, `list_sources`,
+  `ingest_url`) registered on FastMCP, which derives schemas from type
+  hints. Read tools mirror CLI conventions — empty library, empty
+  results; unknown id, tool error (`tests/test_mcp.py`).
 
 ## Interface conventions
 
@@ -217,11 +224,14 @@ recurring rules:
 - **CLI is one module** (`cli.py`): argparse subcommands, each a thin
   `cmd_*` function over the library modules. The CLI owns process
   concerns (JSON encoding, exit codes); engines stay importable and
-  testable without it (`tests/test_cli.py` covers the seams).
+  testable without it (`tests/test_cli.py` covers the seams). The
+  add/ingest chain lives in `src/scrolls/pipeline.py` so the CLI and
+  the MCP server share one implementation (ADR 0014).
 - **Dependency posture** (ADR 0001): stdlib first; a third-party package
-  must buy its adapter something substantial. Today's full list:
+  must buy its feature something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
-  (arxiv and pdf) — see `pyproject.toml`.
+  (arxiv and pdf), `mcp` (the protocol server, imported only by
+  `scrolls mcp`) — see `pyproject.toml`.
 - **No network in tests**: every adapter takes an injectable fetcher;
   fixtures are recorded payloads. The suite runs in under a second.
 
@@ -237,7 +247,5 @@ Next steps already identified in decision records, in no required order:
 - **LLM classification/concept engine** — the rules engine deliberately
   leaves items unclassified for it (ADR 0004), and KB concept pages are
   designed for an LLM producer to join (ADR 0005).
-- **MCP server** — IDEAS.md §10 sequences it after the shell interface,
-  which is now in place.
 - **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
   import/sync/add distinction); only `import` and `add` exist today.

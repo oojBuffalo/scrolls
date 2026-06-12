@@ -95,6 +95,7 @@ uv run scrolls list           # list items, as JSON
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
 uv run scrolls agent install  # write agent instruction files, as JSON
+uv run scrolls mcp            # serve the library to MCP clients over stdio
 uv run pytest                 # test suite
 ```
 
@@ -216,12 +217,20 @@ can follow up with `scrolls show <id>` or read the full scroll.
 tools' config trees; copy or symlink the files where your tool expects
 them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
+`scrolls mcp` serves the same engines to MCP clients over stdio
+(IDEAS.md §10's second phase — see `docs/adr/0014-mcp-server.md`):
+`get_context_bundle`, `search_scrolls`, `get_scroll`,
+`get_related_scrolls`, `get_concept_page`, `list_sources`, and
+`ingest_url`. Connect with
+`claude mcp add scrolls -- uv run scrolls mcp` or equivalent client
+config; the shell interface remains primary.
+
 Item stages so far: `detected → fetched → rendered`; classification,
 media capture, and KB compilation are stage-neutral. With the IDEAS.md
 §6 MVP source trio (wikipedia, web, youtube) plus github, arxiv, pdf,
 and x (via Field Theory import), search, rules classification, media
-capture, the compiled library, context bundles, and agent install, all
-five IDEAS.md §14 MVP passes have a working first version. Next slices: an
-LLM classification/concept engine or an MCP server.
+capture, the compiled library, context bundles, agent install, and the
+MCP server, all five IDEAS.md §14 MVP passes have a working first
+version. Next slice: an LLM classification/concept engine.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

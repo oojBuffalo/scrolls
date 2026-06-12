@@ -28,6 +28,9 @@ LIMIT ?
 """
 
 
+DEFAULT_LIMIT = 20
+
+
 @dataclass(frozen=True)
 class SearchHit:
     id: str
@@ -39,7 +42,7 @@ class SearchHit:
     snippet: str
 
 
-def search_items(db_path: Path, query: str, limit: int = 20) -> list[SearchHit]:
+def search_items(db_path: Path, query: str, limit: int = DEFAULT_LIMIT) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
 
     A missing database means an empty library: no hits, and the query is

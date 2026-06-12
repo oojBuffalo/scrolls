@@ -10,7 +10,6 @@ import argparse
 import dataclasses
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from scrolls import __version__
@@ -18,31 +17,20 @@ from scrolls.agents import install_agent_docs
 from scrolls.classify import classify_item
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
-from scrolls.db import init_db, read_schema_version
+from scrolls.db import read_schema_version
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
-from scrolls.items import (
-    ScrollItem,
-    get_item,
-    insert_item,
-    list_items,
-    make_item_id,
-    update_item,
-)
+from scrolls.items import get_item, insert_item, list_items, update_item
 from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
-from scrolls.paths import LibraryPaths, get_paths
+from scrolls.paths import get_paths
+from scrolls.pipeline import ensure_library, ingest_url, register_url
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
 from scrolls.render import write_scroll
 from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
-
-CONFIG_TEMPLATE = """\
-# Scrolls configuration (no settings are read yet; this file is reserved
-# for upcoming options such as [classify] engines).
-"""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("list", help="List library items (JSON output)")
 
+    subparsers.add_parser(
+        "mcp",
+        help="Serve the library to agents over the Model Context Protocol (stdio)",
+    )
+
     md_parser = subparsers.add_parser(
         "md", help="Render fetched items as Markdown scrolls (JSON output)"
     )
@@ -210,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_kb()
     if args.command == "list":
         return _cmd_list()
+    if args.command == "mcp":
+        return _cmd_mcp()
     if args.command == "md":
         return _cmd_md(args.id)
     if args.command == "media":
@@ -227,53 +222,16 @@ def main(argv: list[str] | None = None) -> int:
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
-def _ensure_library(paths: LibraryPaths) -> bool:
-    """Create the library skeleton if missing; return True if it already existed."""
-    existed_before = paths.db_path.exists() and paths.config_path.exists() and all(
-        d.is_dir() for d in paths.subdirs
-    )
-    paths.root.mkdir(parents=True, exist_ok=True)
-    for subdir in paths.subdirs:
-        subdir.mkdir(exist_ok=True)
-    init_db(paths.db_path)
-    if not paths.config_path.exists():
-        paths.config_path.write_text(CONFIG_TEMPLATE)
-    return existed_before
-
-
 def _cmd_init() -> int:
     paths = get_paths()
-    existed_before = _ensure_library(paths)
+    existed_before = ensure_library(paths)
     print(json.dumps({"root": str(paths.root), "created": not existed_before}))
     return 0
 
 
-def _register_url(url: str) -> tuple[LibraryPaths, ScrollItem, bool]:
-    """Detect, ensure the library exists, and register the URL as an item.
-
-    Returns the (existing) item and whether it was newly created; raises
-    ValueError for URLs no adapter can handle.
-    """
-    detected = detect_source(url)
-    paths = get_paths()
-    _ensure_library(paths)
-    cleaned = url.strip()
-    item = ScrollItem(
-        id=make_item_id(detected.source, detected.source_id, cleaned),
-        source=detected.source,
-        source_id=detected.source_id,
-        url=cleaned,
-        saved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    )
-    created = insert_item(paths.db_path, item)
-    if not created:
-        item = get_item(paths.db_path, item.id) or item
-    return paths, item, created
-
-
 def _cmd_add(url: str) -> int:
     try:
-        _, item, created = _register_url(url)
+        _, item, created = register_url(url)
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
@@ -294,43 +252,19 @@ def _cmd_add(url: str) -> int:
 
 def _cmd_ingest(url: str) -> int:
     try:
-        paths, item, created = _register_url(url)
+        payload = ingest_url(url)
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
-    payload = {"id": item.id, "source": item.source, "url": item.url, "created": created}
-
-    adapter = FETCH_ADAPTERS.get(item.source)
-    if adapter is None:
-        payload.update(
-            {"stage": item.stage, "error": f"no fetch adapter for source '{item.source}'"}
-        )
-        print(json.dumps(payload))
-        return 1
-    try:
-        fetched = adapter(item)
-    except FetchError as exc:
-        payload.update({"stage": item.stage, "error": str(exc)})
-        print(json.dumps(payload))
-        return 1
-    update_item(paths.db_path, fetched)
-
-    # classify before the first render so frontmatter carries the category;
-    # an existing category (user override or earlier run) is never replaced
-    if fetched.category is None:
-        fetched = classify_item(fetched)
-
-    rendered = write_scroll(paths, fetched)
-    update_item(paths.db_path, rendered)
-    payload.update(
-        {
-            "title": rendered.title,
-            "category": rendered.category,
-            "stage": rendered.stage,
-            "markdown_path": rendered.markdown_path,
-        }
-    )
     print(json.dumps(payload))
+    return 1 if "error" in payload else 0
+
+
+def _cmd_mcp() -> int:
+    # lazy: only `scrolls mcp` pays the SDK import (ADR 0014)
+    from scrolls.mcp_server import run
+
+    run()  # blocks serving stdio until the client disconnects
     return 0
 
 
@@ -343,7 +277,7 @@ def _cmd_import_fieldtheory(root: str | None) -> int:
         return 1
 
     paths = get_paths()
-    _ensure_library(paths)
+    ensure_library(paths)
     counts = {"imported": 0, "skipped": 0, "failed": len(failures)}
     for item in imported_items:
         # INSERT OR IGNORE: an existing item (earlier import, or a manual
@@ -551,7 +485,7 @@ def _cmd_media(item_id: str | None) -> int:
 
 def _cmd_agent_install() -> int:
     paths = get_paths()
-    _ensure_library(paths)
+    ensure_library(paths)
     installed = install_agent_docs(paths)
     print(json.dumps({"root": str(paths.root), "installed": installed}))
     return 0
