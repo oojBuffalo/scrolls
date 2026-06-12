@@ -1280,3 +1280,186 @@ def test_media_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypat
     # the failed ref stays pending: no path recorded, nothing on disk
     stored = get_item(get_paths().db_path, "x:1111")
     assert "path" not in stored.media[0]
+
+
+# --- follow / unfollow / sync (feed subscriptions, ADR 0017) ---
+
+FEED_BY_URL = {
+    "https://blog.example.com/atom.xml": """\
+<rss version="2.0"><channel><title>A Weblog</title>
+<item><title>Post one</title><link>https://blog.example.com/2026/post-one/</link></item>
+<item><title>Post two</title><link>https://blog.example.com/2026/post-two/</link></item>
+</channel></rss>""",
+    "https://www.youtube.com/feeds/videos.xml?playlist_id=PLabc123": """\
+<feed xmlns="http://www.w3.org/2005/Atom"><title>A Playlist</title>
+<entry><title>Video</title><link rel="alternate" href="https://www.youtube.com/watch?v=abc123def45"/></entry>
+</feed>""",
+}
+
+
+@pytest.fixture
+def fake_feeds(monkeypatch):
+    import scrolls.feeds as feeds
+
+    def get_text(url):
+        if url not in FEED_BY_URL:
+            raise OSError(f"connection refused: {url}")
+        return FEED_BY_URL[url]
+
+    monkeypatch.setattr(feeds, "_get_text", get_text)
+
+
+def test_follow_registers_subscription(scrolls_home, fake_feeds, capsys):
+    exit_code = main(["follow", "https://blog.example.com/atom.xml"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": payload["id"],
+        "feed_url": "https://blog.example.com/atom.xml",
+        "title": "A Weblog",
+        "created": True,
+    }
+    assert len(payload["id"]) == 12
+
+
+def test_follow_is_idempotent(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+    exit_code = main(["follow", "https://blog.example.com/atom.xml"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["created"] is False
+
+
+def test_follow_youtube_playlist_url_follows_its_feed(scrolls_home, fake_feeds, capsys):
+    exit_code = main(["follow", "https://www.youtube.com/playlist?list=PLabc123"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["feed_url"] == "https://www.youtube.com/feeds/videos.xml?playlist_id=PLabc123"
+    assert payload["title"] == "A Playlist"
+
+
+def test_follow_unreachable_feed_is_an_error(scrolls_home, fake_feeds, capsys):
+    exit_code = main(["follow", "https://nowhere.example.com/feed"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "connection refused" in json.loads(captured.err)["error"]
+
+
+def test_follow_without_url_lists_subscriptions(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+    exit_code = main(["follow"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    assert payload[0]["feed_url"] == "https://blog.example.com/atom.xml"
+    assert payload[0]["title"] == "A Weblog"
+    assert payload[0]["last_synced_at"] is None
+
+
+def test_follow_list_before_init_prints_empty_array(scrolls_home, capsys):
+    exit_code = main(["follow"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_unfollow_removes_subscription(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    sub_id = json.loads(capsys.readouterr().out)["id"]
+
+    exit_code = main(["unfollow", sub_id])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {"id": sub_id, "removed": True}
+    main(["follow"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_unfollow_accepts_the_feed_url(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+    exit_code = main(["unfollow", "https://blog.example.com/atom.xml"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["removed"] is True
+
+
+def test_unfollow_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["unfollow", "feedcafe1234"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no such subscription" in json.loads(captured.err)["error"]
+
+
+def test_sync_registers_new_items_at_stage_detected(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+
+    exit_code = main(["sync"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["new"] == 2 and payload["known"] == 0 and payload["failed"] == 0
+    assert payload["results"][0]["status"] == "synced"
+    assert len(payload["results"][0]["new_items"]) == 2
+
+    item_id = payload["results"][0]["new_items"][0]
+    stored = get_item(get_paths().db_path, item_id)
+    assert stored.source == "web" and stored.stage == "detected"
+
+
+def test_sync_is_idempotent(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    main(["sync"])
+    capsys.readouterr()
+    exit_code = main(["sync"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["new"] == 0 and payload["known"] == 2
+
+
+def test_sync_by_id_syncs_one_subscription(scrolls_home, fake_feeds, capsys):
+    main(["follow", "https://blog.example.com/atom.xml"])
+    sub_id = json.loads(capsys.readouterr().out)["id"]
+    main(["follow", "https://www.youtube.com/playlist?list=PLabc123"])
+    capsys.readouterr()
+
+    exit_code = main(["sync", sub_id])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["new"] == 2
+    assert [r["id"] for r in payload["results"]] == [sub_id]
+
+
+def test_sync_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["sync", "feedcafe1234"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no such subscription" in json.loads(captured.err)["error"]
+
+
+def test_sync_continues_past_feed_failures_and_exits_nonzero(
+    scrolls_home, fake_feeds, monkeypatch, capsys
+):
+    import scrolls.feeds as feeds
+
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+    # the feed goes dark after the follow
+    monkeypatch.setattr(
+        feeds, "_get_text", lambda url: (_ for _ in ()).throw(OSError("gone"))
+    )
+
+    exit_code = main(["sync"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert "gone" in payload["results"][0]["error"]
+
+
+def test_sync_before_init_reports_nothing_to_do(scrolls_home, capsys):
+    exit_code = main(["sync"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"new": 0, "known": 0, "skipped": 0, "failed": 0, "results": []}

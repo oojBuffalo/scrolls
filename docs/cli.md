@@ -6,7 +6,7 @@ consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
 Every example below is real output captured from `scrolls 0.1.0`
-(schema version 3) on this branch — see
+(schema version 4) on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
 `tests/test_cli.py`.
@@ -20,11 +20,13 @@ claim cites the test that locks it; unless noted, tests live in
   Nothing is printed to stdout in that case
   (`test_detect_rejects_non_http_url`, `test_show_unknown_id_is_an_error`).
 - **Batch commands report per-item results.** `fetch`, `classify`, `md`,
-  `media`, and `import fieldtheory` process every item, never abort
-  mid-batch, and exit 1 if **any** item *failed* — skipped items do not
+  `media`, `sync`, and `import fieldtheory` process every item (for
+  `sync`, every subscription), never abort mid-batch, and exit 1 if
+  **any** item *failed* — skipped items do not
   fail the run (`test_fetch_continues_past_failures_and_exits_nonzero`,
   `test_fetch_all_skips_sources_without_adapter`,
-  `test_media_continues_past_failures_and_exits_nonzero`).
+  `test_media_continues_past_failures_and_exits_nonzero`,
+  `test_sync_continues_past_feed_failures_and_exits_nonzero`).
 - **`ingest` is the asymmetry to know about:** its failure payload goes to
   *stdout* (with an `error` key merged into the normal payload) plus
   exit 1, because the item was still registered
@@ -63,7 +65,7 @@ $ scrolls init
 
 Report library state without creating anything
 (`test_status_before_init`, `test_status_after_init`).
-`schema_version` is `null` until `init` (current version: 3,
+`schema_version` is `null` until `init` (current version: 4,
 `src/scrolls/db.py`).
 
 ```console
@@ -72,7 +74,7 @@ $ scrolls status        # before init
 [exit 0]
 
 $ scrolls status        # after init
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 3}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 4}
 [exit 0]
 ```
 
@@ -179,6 +181,98 @@ $ scrolls import fieldtheory --root /tmp/scrolls-demo.BgrqMO/fieldtheory
 $ scrolls import fieldtheory --root /tmp/scrolls-demo.BgrqMO/fieldtheory
 {"imported": 0, "skipped": 2, "failed": 0, "failures": []}
 [exit 0]
+```
+
+## Following feeds
+
+Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any
+RSS 2.0/Atom feed — a blog, a YouTube channel or playlist, an arXiv
+category, a GitHub releases feed — and `sync` registers its new entries
+through the same detection/dedupe as `scrolls add`. The examples below
+talk to a feed served from localhost; any feed URL behaves the same
+(see [Reproducing these examples](#reproducing-these-examples)).
+
+### `scrolls follow [url]`
+
+Subscribe to a feed. The URL is fetched once (network) to validate it
+and capture the feed's title — a typo'd or non-feed URL is rejected
+with nothing stored, instead of failing every future sync
+(`test_follow_unreachable_feed_is_an_error`;
+`test_follow_feed_bad_feed_stores_nothing` in `tests/test_feeds.py`).
+Re-following returns the stored row with `"created": false`
+(`test_follow_is_idempotent`). YouTube playlist and channel-id page
+URLs map to their public Atom feeds purely syntactically
+(`test_follow_youtube_playlist_url_follows_its_feed`). Without a URL:
+list current subscriptions
+(`test_follow_without_url_lists_subscriptions`,
+`test_follow_list_before_init_prints_empty_array`).
+
+| Key | Meaning |
+| --- | --- |
+| `id` | subscription id — 12 hex chars of the feed URL's SHA-256 |
+| `feed_url` | the feed that will be polled (after any URL mapping) |
+| `title` | the feed's own title, if it declares one |
+| `created` | `false` when the feed was already followed |
+
+```console
+$ scrolls follow http://localhost:8943/feed.xml
+{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "title": "Demo Weblog", "created": true}
+[exit 0]
+
+$ scrolls follow http://localhost:8943/missing.xml
+{"error": "feed request failed: HTTP Error 404: File not found"}
+[exit 1]
+
+$ scrolls follow
+[{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "title": "Demo Weblog", "added_at": "2026-06-12T21:29:12+00:00", "last_synced_at": null}]
+[exit 0]
+```
+
+### `scrolls sync [id]`
+
+Poll every followed feed (network) and register each new entry URL as
+an item at stage `detected` — exactly what `scrolls add` would store,
+so a YouTube feed entry becomes a `youtube` item and a blog entry a
+`web` item (`test_sync_registers_new_items_at_stage_detected`). Sync
+only discovers URLs; run `scrolls fetch` (then `classify`/`md`) to
+bring the new items in. Entries already in the library count as
+`known`, so re-syncs are cheap (`test_sync_is_idempotent`); entries
+whose link is not http(s) are skipped. With an id: sync only that
+subscription (`test_sync_by_id_syncs_one_subscription`); unknown ids
+are an error envelope (`test_sync_unknown_id_is_an_error`). One dead
+feed fails its subscription but never the batch.
+
+| Key | Meaning |
+| --- | --- |
+| `new` / `known` / `skipped` / `failed` | totals (`failed` counts subscriptions) |
+| `results[]` | per-subscription `{id, feed_url, status, ...}` with its own counts; `new_items` lists registered item ids, `error` the failure |
+
+```console
+$ scrolls sync
+{"new": 2, "known": 0, "skipped": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 2, "known": 0, "skipped": 0, "new_items": ["web:081e89b0b346", "web:dbeb9a37d69a"]}]}
+[exit 0]
+
+$ scrolls sync          # idempotent: the same entries are now known
+{"new": 0, "known": 2, "skipped": 0, "failed": 0, "results": [{"id": "ea77c1d5239e", "feed_url": "http://localhost:8943/feed.xml", "status": "synced", "new": 0, "known": 2, "skipped": 0, "new_items": []}]}
+[exit 0]
+```
+
+### `scrolls unfollow <id>`
+
+Remove a subscription by id — or by feed URL, which resolves to the
+same id `follow` minted (`test_unfollow_removes_subscription`,
+`test_unfollow_accepts_the_feed_url`). Items the feed registered stay
+in the library; only the subscription goes. Unknown ids are an error
+envelope (`test_unfollow_unknown_id_is_an_error`).
+
+```console
+$ scrolls unfollow http://localhost:8943/feed.xml
+{"id": "ea77c1d5239e", "removed": true}
+[exit 0]
+
+$ scrolls unfollow ea77c1d5239e
+{"error": "no such subscription: ea77c1d5239e"}
+[exit 1]
 ```
 
 ## Pipeline stages
@@ -493,11 +587,33 @@ unknown ids are tool errors (`test_get_scroll_unknown_id_raises`).
 
 Everything above except the three marked network calls (`ingest` of a
 Wikipedia page, `fetch arxiv:1706.03762`, and the `scrolls media` run
-that downloads its PDF) runs fully offline. Scratch setup:
+that downloads its PDF) runs fully offline — the feed examples talk
+only to a local server. Scratch setup:
 
 ```bash
 DEMO=$(mktemp -d)
 export SCROLLS_HOME="$DEMO/home"
+
+# a local feed for the follow/sync examples (any RSS/Atom URL works the same)
+mkdir "$DEMO/site"
+cat > "$DEMO/site/feed.xml" <<'EOF'
+<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Demo Weblog</title>
+    <link>http://localhost:8943/</link>
+    <item>
+      <title>Post one</title>
+      <link>http://localhost:8943/2026/post-one/</link>
+    </item>
+    <item>
+      <title>Post two</title>
+      <link>http://localhost:8943/2026/post-two/</link>
+    </item>
+  </channel>
+</rss>
+EOF
+(cd "$DEMO/site" && python3 -m http.server 8943 &)
 
 mkdir -p "$DEMO/fieldtheory/bookmarks" "$DEMO/fieldtheory/library/bookmarks"
 cat > "$DEMO/fieldtheory/bookmarks/bookmarks.jsonl" <<'EOF'
@@ -542,7 +658,16 @@ scrolls related x:2222
 scrolls kb
 scrolls context "local search"
 scrolls agent install
+scrolls follow http://localhost:8943/feed.xml     # local server only
+scrolls follow http://localhost:8943/missing.xml  # 404: exit 1
+scrolls follow                                    # list subscriptions
+scrolls sync                                      # 2 new items
+scrolls sync                                      # idempotent: 2 known
+scrolls unfollow http://localhost:8943/feed.xml
+scrolls unfollow ea77c1d5239e                     # already gone: exit 1
 ```
+
+(Stop the feed server with `kill %1` when done.)
 
 The walkthrough exercises the dedupe (`x:` ids from the import collide
 with `scrolls add` of the same tweet URL on purpose), the title-pattern

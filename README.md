@@ -25,6 +25,8 @@ It is inspired by Field Theory CLI's flow for X/Twitter bookmarks:
 ```bash
 scrolls ingest https://en.wikipedia.org/wiki/SQLite  # add + fetch + classify + md
 scrolls import fieldtheory          # bulk-import X bookmarks from Field Theory
+scrolls follow https://www.youtube.com/playlist?list=PL12345  # subscribe to a feed
+scrolls sync                        # register new items from followed feeds
 scrolls search "distributed systems"
 scrolls context "sqlite fts"        # compact Markdown bundle for agents
 scrolls related wikipedia:en:SQLite
@@ -32,15 +34,16 @@ scrolls kb
 scrolls agent install
 ```
 
-`scrolls sync <source>` — live platform delta updates, as distinct from
-one-off `add` and bulk `import` (IDEAS.md §13) — is a future direction,
-not implemented yet.
+`scrolls sync` — live delta updates, as distinct from one-off `add` and
+bulk `import` (IDEAS.md §13) — is feed-based: follow any RSS/Atom feed
+(a blog, a YouTube channel or playlist, an arXiv category, a GitHub
+releases feed) and sync registers its new entries.
 
 ## Library layout
 
 ```text
 ~/.scrolls/        # or $SCROLLS_HOME
-  db.sqlite       # canonical index: items table, FTS5 search, schema meta
+  db.sqlite       # canonical index: items + subscriptions tables, FTS5 search, schema meta
   scrolls/        # individual Markdown files, one per item, per source
   library/        # compiled interlinked KB (index, sources, categories, concepts)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
@@ -80,6 +83,11 @@ uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSO
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
 uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
 uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
+uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
+uv run scrolls follow         # list feed subscriptions, as JSON
+uv run scrolls sync           # register new items from followed feeds, as JSON
+uv run scrolls sync <id>      # sync one subscription by id, as JSON
+uv run scrolls unfollow <id>  # remove a subscription by id or feed URL, as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
@@ -145,6 +153,19 @@ bookmarks from a local Field Theory archive (IDEAS.md §7 — see
 `category`/`domain` via a frontmatter join on tweet id. Item ids
 (`x:<tweetId>`) match URL detection, so imports and `scrolls add` of a
 tweet URL dedupe against each other; re-imports skip existing items.
+
+`scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
+the URL is fetched once to validate it and capture the feed's title
+(a typo'd URL is rejected, not stored), and YouTube playlist/channel
+URLs map to their public feeds automatically. `scrolls sync` then polls
+every followed feed (IDEAS.md §13's live-delta path — see
+`docs/adr/0017-feed-subscriptions-sync.md`) and registers each new
+entry URL at stage `detected` through the same detection/dedupe as
+`scrolls add`, so a YouTube feed entry becomes a `youtube` item and a
+blog entry a `web` item; `scrolls fetch` (then `classify`/`md`) brings
+the new items in. Known entries count as known on re-sync, one dead
+feed never aborts the batch, and `scrolls unfollow` removes a
+subscription while keeping the items it registered.
 
 `scrolls md` renders each fetched item to a durable Markdown scroll at
 `scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
@@ -253,7 +274,8 @@ media capture, and KB compilation are stage-neutral. With the IDEAS.md
 and x (via Field Theory import), search, two-layer classification
 (rules + LLM), media capture, the compiled library, context bundles,
 agent install, and the MCP server, all five IDEAS.md §14 MVP passes
-have a working first version plus the §8 LLM layer. Next slice:
-`scrolls sync <source>` for live platform deltas (IDEAS.md §13).
+have a working first version plus the §8 LLM layer and feed-based
+live deltas via `scrolls sync` (IDEAS.md §13). Next slice: a
+`scrolls set`-style user override command (ADR 0004).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

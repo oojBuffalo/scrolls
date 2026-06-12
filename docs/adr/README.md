@@ -23,3 +23,4 @@ they add up to.
 | [0014](0014-mcp-server.md) | `scrolls mcp` serves the library over stdio via the official MCP SDK | tools wrap the same engines as the CLI; ingest chain extracted to `src/scrolls/pipeline.py`; SDK imported lazily |
 | [0015](0015-llm-classification-engine.md) | LLM classification is an explicit opt-in: `classify --engine llm` via the Anthropic SDK | fills `domain` + merges `concepts`; structured outputs pin the category vocabulary; missing credentials abort the batch |
 | [0016](0016-config-toml-classify-section.md) | `config.toml` is read, starting with the `[classify]` section | `default_engine` + `llm_model`; flag/env overrides always win; malformed config errors honestly; only the CLI loads config |
+| [0017](0017-feed-subscriptions-sync.md) | Sync is feed subscriptions, not per-platform sync commands | `follow`/`unfollow`/`sync` over RSS/Atom via stdlib; `subscriptions` table (schema v4); sync registers at `detected`, adapters still fetch |

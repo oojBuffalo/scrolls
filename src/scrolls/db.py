@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -71,10 +71,23 @@ INSERT INTO items_fts(rowid, title, summary, extracted_text)
 SELECT rowid, title, summary, extracted_text FROM items""",
 )
 
+# Feed subscriptions for `scrolls follow`/`scrolls sync` (ADR 0017).
+# Sync state lives here, not in config.toml (IDEAS.md §3).
+_SUBSCRIPTIONS_TABLE = """\
+CREATE TABLE subscriptions (
+    id TEXT PRIMARY KEY,
+    feed_url TEXT NOT NULL UNIQUE,
+    title TEXT,
+    added_at TEXT NOT NULL,
+    last_synced_at TEXT
+)
+"""
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
     3: _ITEMS_FTS,
+    4: (_SUBSCRIPTIONS_TABLE,),
 }
 
 

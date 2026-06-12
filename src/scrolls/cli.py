@@ -19,6 +19,16 @@ from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import read_schema_version
+from scrolls.feeds import (
+    FeedError,
+    follow_feed,
+    get_subscription,
+    list_subscriptions,
+    make_subscription_id,
+    remove_subscription,
+    sync_subscription,
+    to_feed_url,
+)
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.items import get_item, insert_item, list_items, update_item
@@ -107,6 +117,16 @@ def build_parser() -> argparse.ArgumentParser:
         "default is every item at stage 'detected'",
     )
 
+    follow_parser = subparsers.add_parser(
+        "follow", help="Subscribe to an RSS/Atom feed for sync (JSON output)"
+    )
+    follow_parser.add_argument(
+        "url",
+        nargs="?",
+        help="Feed URL — or a YouTube playlist/channel URL, which maps to "
+        "its public feed; omit to list current subscriptions",
+    )
+
     import_parser = subparsers.add_parser(
         "import", help="Bulk-import a local archive (JSON output)"
     )
@@ -185,6 +205,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
+    sync_parser = subparsers.add_parser(
+        "sync", help="Register new items from followed feeds (JSON output)"
+    )
+    sync_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Sync one subscription by id; default is every followed feed",
+    )
+
+    unfollow_parser = subparsers.add_parser(
+        "unfollow", help="Remove a feed subscription (JSON output)"
+    )
+    unfollow_parser.add_argument(
+        "id", help="Subscription id (from `scrolls follow`), or the feed URL"
+    )
+
     return parser
 
 
@@ -203,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_detect(args.url)
     if args.command == "fetch":
         return _cmd_fetch(args.id)
+    if args.command == "follow":
+        return _cmd_follow(args.url)
     if args.command == "import":
         return _cmd_import_fieldtheory(args.root)
     if args.command == "ingest":
@@ -229,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_show(args.id)
     if args.command == "status":
         return _cmd_status()
+    if args.command == "sync":
+        return _cmd_sync(args.id)
+    if args.command == "unfollow":
+        return _cmd_unfollow(args.id)
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
@@ -276,6 +318,85 @@ def _cmd_mcp() -> int:
 
     run()  # blocks serving stdio until the client disconnects
     return 0
+
+
+def _cmd_follow(url: str | None) -> int:
+    paths = get_paths()
+    if url is None:
+        subs = list_subscriptions(paths.db_path) if paths.db_path.exists() else []
+        print(json.dumps([dataclasses.asdict(sub) for sub in subs]))
+        return 0
+    try:
+        _, subscription, created = follow_feed(url)
+    except (ValueError, FeedError) as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "id": subscription.id,
+                "feed_url": subscription.feed_url,
+                "title": subscription.title,
+                "created": created,
+            }
+        )
+    )
+    return 0
+
+
+def _cmd_unfollow(ref: str) -> int:
+    paths = get_paths()
+    try:
+        # a URL is resolved to its subscription id the same way follow minted it
+        sub_id = make_subscription_id(to_feed_url(ref)) if "://" in ref else ref
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    removed = remove_subscription(paths.db_path, sub_id) if paths.db_path.exists() else False
+    if not removed:
+        print(json.dumps({"error": f"no such subscription: {ref}"}), file=sys.stderr)
+        return 1
+    print(json.dumps({"id": sub_id, "removed": True}))
+    return 0
+
+
+def _cmd_sync(sub_id: str | None) -> int:
+    paths = get_paths()
+    if sub_id is not None:
+        subscription = (
+            get_subscription(paths.db_path, sub_id) if paths.db_path.exists() else None
+        )
+        if subscription is None:
+            print(json.dumps({"error": f"no such subscription: {sub_id}"}), file=sys.stderr)
+            return 1
+        subscriptions = [subscription]
+    else:
+        subscriptions = (
+            list_subscriptions(paths.db_path) if paths.db_path.exists() else []
+        )
+
+    results = []
+    counts = {"new": 0, "known": 0, "skipped": 0, "failed": 0}
+    for subscription in subscriptions:
+        try:
+            result = sync_subscription(paths.db_path, subscription)
+        except FeedError as exc:
+            counts["failed"] += 1
+            results.append(
+                {
+                    "id": subscription.id,
+                    "feed_url": subscription.feed_url,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+        for key in ("new", "known", "skipped"):
+            counts[key] += result[key]
+        results.append(result)
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
 
 
 def _cmd_import_fieldtheory(root: str | None) -> int:

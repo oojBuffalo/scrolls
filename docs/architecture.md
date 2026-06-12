@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (345 tests at the time of writing). The docs themselves
+`uv run pytest` (383 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -18,6 +18,8 @@ a small set of idempotent stages. Each item row carries a `stage` column;
 each command moves items between stages or derives artifacts from them.
 
 ```text
+ feed ── follow ──▶ subscription ── sync ──▶ new entry URLs join at 'detected'
+
  URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
                   │                     ▲                  │
                   │   import fieldtheory┘                  │
@@ -47,9 +49,14 @@ each command moves items between stages or derives artifacts from them.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
   (`src/scrolls/fieldtheory.py`, ADR 0009).
+- `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
+  feeds and register their new entry URLs at stage `detected` through
+  the same detection/dedupe as `add` — sync discovers URLs, adapters
+  still fetch (`src/scrolls/feeds.py`, ADR 0017).
 
-Per-item failures never abort a batch: `fetch`, `md`, and `media` report
-each failure in their JSON output and continue (`tests/test_cli.py`).
+Per-item failures never abort a batch: `fetch`, `md`, `media`, and
+`sync` (per subscription) report each failure in their JSON output and
+continue (`tests/test_cli.py`).
 
 ## Storage: SQLite is the index, Markdown is the artifact
 
@@ -61,7 +68,9 @@ Two stores, by design (IDEAS.md §3):
   `media`) and `provenance` round-trip through JSON text columns. An
   external-content FTS5 table (`items_fts`) over title/summary/extracted
   text is kept in sync by SQL triggers so no Python write path can forget
-  it. `meta` carries the schema version (`SCHEMA_VERSION = 3`);
+  it. A `subscriptions` table holds followed feeds and their sync state
+  (ADR 0017) — sync state belongs to the index, not config (IDEAS.md
+  §3). `meta` carries the schema version (`SCHEMA_VERSION = 4`);
   `MIGRATIONS[n]` walks any version gap in one transaction, and opening a
   newer-versioned library raises instead of corrupting it
   (`tests/test_db.py`).
@@ -81,7 +90,7 @@ the whole tree (`src/scrolls/paths.py`):
 
 ```text
 $SCROLLS_HOME (default ~/.scrolls)
-  db.sqlite      # items table + FTS5 index + schema meta
+  db.sqlite      # items + subscriptions tables + FTS5 index + schema meta
   scrolls/       # one Markdown scroll per rendered item, per source
   library/       # compiled KB: index.md, sources/, categories/, concepts/
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
@@ -201,6 +210,14 @@ choice (ADRs 0004, 0005).
   per-source, per-category, and per-concept pages from scratch each run
   so stale groups can't linger; other files under `library/` are left
   alone. Concept pages merge spellings by slug (`tests/test_kb.py`).
+- **Feed sync** (`feeds.py`, ADR 0017) — `follow` validates an RSS
+  2.0/Atom feed by fetching it once (stdlib ElementTree, no feedparser)
+  and stores the subscription; `sync` polls each feed and registers new
+  entry URLs at stage `detected` through `detect_source` +
+  `make_item_id`, so dedupe and adapter routing are the same as
+  `scrolls add`. YouTube playlist/channel URLs map to their public
+  feeds syntactically; one dead feed fails its subscription, never the
+  batch (`tests/test_feeds.py`).
 - **Media capture** (`media.py`, ADR 0011) — downloads items' media
   refs to `media/<source>/<id-slug>-<n><ext>`, records each file's
   root-relative `path` on the ref (reused on re-capture, so locations
@@ -257,10 +274,11 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **`scrolls sync <source>`** — live platform deltas (IDEAS.md §13's
-  import/sync/add distinction); only `import` and `add` exist today.
 - **A `scrolls set`-style user override command** — categories can be
   configured but not set by hand from the CLI yet (ADR 0004).
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).
+- **Feed HTTP caching** — `sync` makes one uncached GET per feed per
+  run; ETag/Last-Modified columns can join the `subscriptions` table
+  if polling frequency ever warrants it (ADR 0017).
