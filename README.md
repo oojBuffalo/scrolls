@@ -78,6 +78,7 @@ uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls search <query> # BM25-ranked full-text search, as JSON
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls list           # list items, as JSON
+uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run pytest                 # test suite
 ```
 
@@ -126,10 +127,20 @@ unclassified for a future LLM engine. Batch runs never overwrite an
 existing category; `scrolls classify <id>` explicitly reclassifies.
 Already-rendered scrolls are re-rendered so frontmatter stays in sync.
 
-Item stages so far: `detected → fetched → rendered`; classification is
-stage-neutral enrichment. The IDEAS.md §6 MVP source trio (wikipedia, web,
-youtube) is complete and Pass 4 classification has its rules layer. Next
-slices: the compiled library/KB and context bundles (Pass 5), an LLM
+`scrolls kb` compiles the interlinked library (IDEAS.md §9, the
+deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
+`library/index.md` plus per-source, per-category, and per-concept pages
+that link back to rendered scrolls with relative Markdown links. The
+generated pages are rebuilt from scratch each run so stale groups can't
+linger; other files under `library/` are left alone. Concept pages merge
+spellings by slug and stay empty until a concept-extraction engine
+populates `concepts`.
+
+Item stages so far: `detected → fetched → rendered`; classification and
+KB compilation are stage-neutral. The IDEAS.md §6 MVP source trio
+(wikipedia, web, youtube) is complete, Pass 4 classification has its
+rules layer, and Pass 5 has the compiled library. Next slices: context
+bundles (`scrolls context`, the other half of Pass 5), an LLM
 classification engine, or more adapters (github, arxiv).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

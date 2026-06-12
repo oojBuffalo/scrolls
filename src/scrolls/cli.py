@@ -23,6 +23,7 @@ from scrolls.items import (
     make_item_id,
     update_item,
 )
+from scrolls.kb import compile_kb
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.render import write_scroll
 from scrolls.search import search_items
@@ -79,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     ingest_parser.add_argument("url", help="URL to ingest")
 
     subparsers.add_parser("init", help="Create the library skeleton (idempotent)")
+    subparsers.add_parser(
+        "kb", help="Compile the interlinked library pages (JSON output)"
+    )
     subparsers.add_parser("list", help="List library items (JSON output)")
 
     md_parser = subparsers.add_parser(
@@ -121,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ingest(args.url)
     if args.command == "init":
         return _cmd_init()
+    if args.command == "kb":
+        return _cmd_kb()
     if args.command == "list":
         return _cmd_list()
     if args.command == "md":
@@ -383,6 +389,13 @@ def _cmd_md(item_id: str | None) -> int:
 
     print(json.dumps({**counts, "results": results}))
     return 1 if counts["failed"] else 0
+
+
+def _cmd_kb() -> int:
+    paths = get_paths()
+    result = compile_kb(paths)
+    print(json.dumps(dataclasses.asdict(result)))
+    return 0
 
 
 def _cmd_list() -> int:

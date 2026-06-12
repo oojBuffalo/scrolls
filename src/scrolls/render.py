@@ -81,7 +81,7 @@ def write_scroll(paths: LibraryPaths, item: ScrollItem) -> ScrollItem:
 
 
 def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
-    slug = _slug(item.title or "") or _slug(item.id) or "item"
+    slug = slugify(item.title or "") or slugify(item.id) or "item"
     source_dir = paths.scrolls_dir / item.source
     candidate = source_dir / f"{slug}.md"
     if candidate.exists():  # another item owns this slug
@@ -90,7 +90,8 @@ def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
     return str(candidate.relative_to(paths.root))
 
 
-def _slug(text: str) -> str:
+def slugify(text: str) -> str:
+    """Filesystem-safe ascii slug; shared by scroll paths and KB page names."""
     ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     cleaned = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
     return cleaned[:_MAX_SLUG_LENGTH].rstrip("-")
