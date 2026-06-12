@@ -10,6 +10,15 @@ Sources → Items → Scrolls → Library → Agents
 
 See `README.md` and `IDEAS.md` before making architectural or implementation changes.
 
+## Development commands
+
+Python ≥3.11 + uv, src layout (see `docs/adr/0001-implementation-stack.md`):
+
+```bash
+uv run pytest          # run the test suite
+uv run scrolls --help  # run the CLI from source
+```
+
 ## Current working branch
 
 The autonomous hourly work happens on `work/scrolls-dev`, or branches/worktrees created from it. Keep `main` stable.

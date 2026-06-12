@@ -57,4 +57,12 @@ scrolls agent install
 
 ## Status
 
-New repository scaffold. Implementation TBD.
+Early implementation. Stack: Python ≥3.11 managed with uv (see
+`docs/adr/0001-implementation-stack.md`).
+
+Working today:
+
+```bash
+uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
+uv run pytest                 # test suite
+```
