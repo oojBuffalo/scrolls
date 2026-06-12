@@ -5,6 +5,7 @@ import json
 import pytest
 
 import scrolls.sources.wikipedia as wikipedia
+import scrolls.sources.youtube as youtube
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
 from scrolls.paths import get_paths
@@ -195,7 +196,7 @@ def test_fetch_all_fetches_detected_wikipedia_item(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_api, capsys):
-    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    main(["add", "https://github.com/oojBuffalo/scrolls"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     capsys.readouterr()
 
@@ -205,10 +206,10 @@ def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_ap
     assert payload["fetched"] == 1
     assert payload["skipped"] == 1
     by_id = {entry["id"]: entry for entry in payload["results"]}
-    assert by_id["youtube:dQw4w9WgXcQ"]["status"] == "skipped"
-    assert "youtube" in by_id["youtube:dQw4w9WgXcQ"]["reason"]
+    assert by_id["github:oojBuffalo/scrolls"]["status"] == "skipped"
+    assert "github" in by_id["github:oojBuffalo/scrolls"]["reason"]
     # the skipped item is untouched and will be picked up once an adapter lands
-    assert get_item(get_paths().db_path, "youtube:dQw4w9WgXcQ").stage == "detected"
+    assert get_item(get_paths().db_path, "github:oojBuffalo/scrolls").stage == "detected"
 
 
 def test_fetch_all_with_nothing_detected(scrolls_home, capsys):
@@ -249,15 +250,15 @@ def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_by_id_without_adapter_fails(scrolls_home, capsys):
-    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    main(["add", "https://github.com/oojBuffalo/scrolls"])
     capsys.readouterr()
 
-    exit_code = main(["fetch", "youtube:dQw4w9WgXcQ"])
+    exit_code = main(["fetch", "github:oojBuffalo/scrolls"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["failed"] == 1
     assert payload["results"][0]["status"] == "failed"
-    assert "youtube" in payload["results"][0]["error"]
+    assert "github" in payload["results"][0]["error"]
 
 
 def test_fetch_unknown_id_is_an_error(scrolls_home, capsys):
@@ -414,6 +415,47 @@ def test_show_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+@pytest.fixture
+def fake_youtube_api(monkeypatch):
+    """Serve canned oEmbed metadata and transcript instead of the network."""
+    oembed = {
+        "title": "How SQLite FTS Works",
+        "author_name": "Example Channel",
+        "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    }
+    transcript = [
+        {"text": "today we look at SQLite FTS5", "start": 0.0, "duration": 3.0},
+        {"text": "and BM25 ranking", "start": 3.0, "duration": 2.0},
+    ]
+    monkeypatch.setattr(youtube, "_get_json", lambda url: dict(oembed))
+    monkeypatch.setattr(youtube, "_get_transcript", lambda video_id: list(transcript))
+    return oembed
+
+
+def test_ingest_youtube_video_end_to_end(scrolls_home, fake_youtube_api, capsys):
+    exit_code = main(["ingest", "https://youtu.be/dQw4w9WgXcQ"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "youtube:dQw4w9WgXcQ",
+        "source": "youtube",
+        "url": "https://youtu.be/dQw4w9WgXcQ",
+        "created": True,
+        "title": "How SQLite FTS Works",
+        "stage": "rendered",
+        "markdown_path": "scrolls/youtube/how-sqlite-fts-works.md",
+    }
+    scroll = (scrolls_home / "scrolls" / "youtube" / "how-sqlite-fts-works.md").read_text()
+    assert "SQLite FTS5 and BM25 ranking" in scroll
+    capsys.readouterr()
+
+    # the transcript is indexed: search finds the video by spoken content
+    exit_code = main(["search", "BM25 ranking"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["youtube:dQw4w9WgXcQ"]
+
+
 def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_api, capsys):
     exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
     assert exit_code == 0
@@ -443,14 +485,14 @@ def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, caps
 
 
 def test_ingest_without_adapter_registers_but_reports_failure(scrolls_home, capsys):
-    exit_code = main(["ingest", "https://youtu.be/dQw4w9WgXcQ"])
+    exit_code = main(["ingest", "https://github.com/oojBuffalo/scrolls"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["id"] == "youtube:dQw4w9WgXcQ"
+    assert payload["id"] == "github:oojBuffalo/scrolls"
     assert payload["stage"] == "detected"
-    assert "youtube" in payload["error"]
+    assert "github" in payload["error"]
     # the item is still durably registered for a future adapter
-    assert get_item(get_paths().db_path, "youtube:dQw4w9WgXcQ").stage == "detected"
+    assert get_item(get_paths().db_path, "github:oojBuffalo/scrolls").stage == "detected"
 
 
 def test_ingest_fetch_failure_leaves_item_detected(scrolls_home, monkeypatch, capsys):

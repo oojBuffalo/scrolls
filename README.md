@@ -87,10 +87,14 @@ stores the item at stage `detected` — registered but not yet fetched.
 title, extracted text, summary, canonical URL, content hash, and
 provenance, and moving the item to stage `fetched`. Adapters so far:
 **wikipedia** (MediaWiki action API, no dependencies — see
-`docs/adr/0002-first-fetch-adapter-wikipedia.md`) and **web** (readable
+`docs/adr/0002-first-fetch-adapter-wikipedia.md`), **web** (readable
 article extraction via `trafilatura`, the project's first per-adapter
-dependency per ADR 0001). Items from sources without an adapter yet are
-skipped, and per-item failures don't abort the batch.
+dependency per ADR 0001), and **youtube** (keyless oEmbed metadata plus
+optional transcript via `youtube-transcript-api`; caption-less videos and
+playlists degrade to metadata-only scrolls — see
+`docs/adr/0003-youtube-adapter-oembed-transcripts.md`). Items from sources
+without an adapter yet are skipped, and per-item failures don't abort the
+batch.
 
 `scrolls md` renders each fetched item to a durable Markdown scroll at
 `scrolls/<source>/<slug>.md` — YAML frontmatter (emitted as JSON values,
@@ -108,7 +112,9 @@ prints the full stored item.
 an existing URL refreshes its content. A URL whose source has no adapter
 yet is still registered, but ingest reports the failure and exits 1.
 
-Item stages so far: `detected → fetched → rendered`. Next slices: YouTube
-adapter, classification, then the compiled library/KB.
+Item stages so far: `detected → fetched → rendered`. The IDEAS.md §6 MVP
+source trio (wikipedia, web, youtube) is complete. Next slices:
+classification (Pass 4), then the compiled library/KB and context bundles
+(Pass 5).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
