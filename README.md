@@ -64,7 +64,9 @@ not implemented yet.
 Early implementation. Stack: Python ≥3.11 managed with uv (see
 `docs/adr/0001-implementation-stack.md`). `docs/architecture.md` explains
 how the implemented system fits together; `docs/adr/README.md` indexes
-the decision records behind it.
+the decision records behind it; `docs/cli.md` documents every command's
+JSON output contract, exit codes, and error envelope with captured real
+output.
 
 Working today:
 

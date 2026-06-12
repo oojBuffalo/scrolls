@@ -191,6 +191,10 @@ choice (ADRs 0004, 0005).
 
 ## Interface conventions
 
+The per-command contract — output keys, exit-code semantics, error
+envelopes, with captured real output — lives in `docs/cli.md`. The
+recurring rules:
+
 - **JSON on stdout** for every data command; errors as JSON on stderr
   with exit 1. Two deliberate exceptions emit Markdown: `context` (the
   bundle is the artifact) and the scroll/KB files themselves.
