@@ -8,7 +8,7 @@ Core flow:
 Sources → Items → Scrolls → Library → Agents
 ```
 
-See `README.md` and `IDEAS.md` before making architectural or implementation changes.
+See `README.md`, `docs/architecture.md`, and `IDEAS.md` before making architectural or implementation changes.
 
 ## Development commands
 
@@ -56,7 +56,7 @@ Use the default Matt Pocock triage vocabulary. See `docs/agents/triage-labels.md
 
 ### Domain docs
 
-This is a single-context project. Use this `CLAUDE.md`, root `README.md`, root `IDEAS.md`, and future `docs/adr/` records. See `docs/agents/domain.md`.
+This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order.
 
 ## Development process
 
