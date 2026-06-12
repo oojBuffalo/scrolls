@@ -1,0 +1,97 @@
+"""Rules classification engine (IDEAS.md §8, ADR 0004).
+
+Layer one of "regex/rules first → optional LLM second → user overrides
+always win": a deterministic category from signals that don't need a
+model — which platform the item came from, how its title reads, and what
+its URL looks like. Items nothing matches stay unclassified rather than
+getting a guessed label; a future LLM engine can pick them up.
+
+Precedence (first hit wins):
+
+1. curated-platform defaults — wikipedia/arxiv/github items are what
+   their platform makes them, whatever the title says;
+2. title patterns (tutorial, opinion);
+3. URL shape (documentation sites);
+4. weak source defaults (youtube → media).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import replace
+from urllib.parse import urlparse
+
+from scrolls.items import ScrollItem
+
+ENGINE = "rules-v1"
+
+# Platforms whose category is inherent to the platform itself.
+_CURATED_SOURCE_CATEGORIES = {
+    "wikipedia": "reference",
+    "arxiv": "paper",
+    "github": "project",
+}
+
+# Ordered: first matching pattern decides.
+_TITLE_RULES = (
+    (
+        re.compile(
+            r"\b(tutorial|how to|guide|walkthrough|getting started"
+            r"|introduction to|intro to)\b",
+            re.IGNORECASE,
+        ),
+        "tutorial",
+    ),
+    (
+        re.compile(r"\b(why i|i think|opinion|in defense of|hot take)\b", re.IGNORECASE),
+        "opinion",
+    ),
+)
+
+_WEAK_SOURCE_CATEGORIES = {
+    "youtube": "media",
+}
+
+
+def classify_item(item: ScrollItem) -> ScrollItem:
+    """Return the item with a rule-derived category, or unchanged if none match.
+
+    The input item is never mutated. When a rule fires, the engine name is
+    recorded as `provenance.classified_by` alongside the fetch provenance.
+    """
+    category = _category(item)
+    if category is None:
+        return item
+    return replace(
+        item,
+        category=category,
+        provenance={**(item.provenance or {}), "classified_by": ENGINE},
+    )
+
+
+def _category(item: ScrollItem) -> str | None:
+    curated = _CURATED_SOURCE_CATEGORIES.get(item.source)
+    if curated:
+        return curated
+
+    title = item.title or ""
+    for pattern, category in _TITLE_RULES:
+        if pattern.search(title):
+            return category
+
+    if _is_documentation_url(item.url):
+        return "documentation"
+
+    return _WEAK_SOURCE_CATEGORIES.get(item.source)
+
+
+def _is_documentation_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path_parts = [p.lower() for p in parsed.path.split("/") if p]
+    return (
+        host.startswith("docs.")
+        or host.endswith(".readthedocs.io")
+        or "docs" in path_parts
+        or "documentation" in path_parts
+    )

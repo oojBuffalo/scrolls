@@ -9,7 +9,7 @@ import scrolls.sources.youtube as youtube
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
 from scrolls.paths import get_paths
-from scrolls.items import get_item
+from scrolls.items import get_item, update_item
 
 
 @pytest.fixture
@@ -514,6 +514,103 @@ def test_ingest_rejects_non_http_url(scrolls_home, capsys):
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
     assert not scrolls_home.exists()
+
+
+def test_classify_batch_categorizes_and_rerenders(scrolls_home, fake_wikipedia_api, capsys):
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 1
+    assert payload["results"] == [
+        {"id": "wikipedia:en:SQLite", "status": "classified", "category": "reference"}
+    ]
+
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.category == "reference"
+    assert stored.provenance["classified_by"] == "rules-v1"
+    assert stored.stage == "rendered"
+    # the already-rendered scroll was re-rendered with the category in frontmatter
+    scroll = (scrolls_home / "scrolls" / "wikipedia" / "sqlite.md").read_text()
+    assert '\ncategory: "reference"\n' in scroll
+
+
+def test_classify_batch_reports_unmatched_items(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    # make the stored item look like an unclassifiable web post
+    plain = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    import dataclasses
+    update_item(
+        get_paths().db_path,
+        dataclasses.replace(plain, source="web", title="An ordinary post",
+                            url="https://blog.example.com/post"),
+    )
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 0
+    assert payload["unmatched"] == 1
+    assert payload["results"][0]["status"] == "unmatched"
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").category is None
+
+
+def test_classify_batch_never_overwrites_an_existing_category(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    # a user-set category must win over the rules engine (IDEAS.md §8)
+    import dataclasses
+    item = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    update_item(get_paths().db_path, dataclasses.replace(item, category="tool"))
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"classified": 0, "unmatched": 0, "failed": 0, "results": []}
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").category == "tool"
+
+
+def test_classify_batch_ignores_unfetched_items(scrolls_home, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])  # stage: detected
+    capsys.readouterr()
+
+    exit_code = main(["classify"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"classified": 0, "unmatched": 0, "failed": 0, "results": []}
+
+
+def test_classify_by_id_reclassifies_explicitly(scrolls_home, fake_wikipedia_api, capsys):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    import dataclasses
+    item = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    update_item(get_paths().db_path, dataclasses.replace(item, category="tool"))
+
+    exit_code = main(["classify", "wikipedia:en:SQLite"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 1
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").category == "reference"
+
+
+def test_classify_unknown_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["classify", "wikipedia:en:Missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
 
 
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):

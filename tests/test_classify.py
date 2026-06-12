@@ -1,0 +1,113 @@
+"""Tests for the rules classification engine (IDEAS.md §8, ADR 0004).
+
+Deterministic, offline: category comes from source defaults, title
+patterns, and URL shape — no LLM, no network.
+"""
+
+from scrolls.classify import classify_item
+from scrolls.items import ScrollItem
+
+
+def make_item(**overrides):
+    base = dict(
+        id="web:3f1a2b3c4d5e",
+        source="web",
+        source_id=None,
+        url="https://blog.example.com/post",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title="An ordinary post",
+        stage="fetched",
+        provenance={"adapter": "web", "fetched_at": "2026-06-12T00:00:00+00:00"},
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def test_wikipedia_is_reference():
+    item = make_item(source="wikipedia", title="SQLite")
+    assert classify_item(item).category == "reference"
+
+
+def test_arxiv_is_paper():
+    item = make_item(source="arxiv", title="Attention Is All You Need")
+    assert classify_item(item).category == "paper"
+
+
+def test_github_is_project():
+    item = make_item(source="github", title="oojBuffalo/scrolls")
+    assert classify_item(item).category == "project"
+
+
+def test_curated_platform_default_beats_title_pattern():
+    # A wikipedia page titled like a tutorial is still an encyclopedia entry.
+    item = make_item(source="wikipedia", title="How to Solve It")
+    assert classify_item(item).category == "reference"
+
+
+def test_tutorial_title_pattern():
+    for title in (
+        "How to build a CLI in Python",
+        "Getting started with SQLite FTS5",
+        "A Practical Guide to BM25",
+        "FTS5 tutorial for beginners",
+    ):
+        assert classify_item(make_item(title=title)).category == "tutorial", title
+
+
+def test_opinion_title_pattern():
+    item = make_item(title="Why I left my job to build local-first tools")
+    assert classify_item(item).category == "opinion"
+
+
+def test_docs_url_is_documentation():
+    for url in (
+        "https://docs.python.org/3/library/sqlite3.html",
+        "https://example.com/docs/getting-started",  # /docs/ path, generic title
+        "https://trafilatura.readthedocs.io/en/latest/",
+    ):
+        item = make_item(url=url, title="sqlite3 module reference")
+        assert classify_item(item).category == "documentation", url
+
+
+def test_tutorial_title_beats_docs_url():
+    # Title is more specific than URL shape.
+    item = make_item(
+        url="https://docs.python.org/3/tutorial/index.html",
+        title="The Python Tutorial",
+    )
+    assert classify_item(item).category == "tutorial"
+
+
+def test_youtube_defaults_to_media_but_title_wins():
+    video = make_item(source="youtube", title="Me at the zoo")
+    assert classify_item(video).category == "media"
+
+    howto = make_item(source="youtube", title="How to use SQLite FTS5")
+    assert classify_item(howto).category == "tutorial"
+
+
+def test_unmatched_web_item_stays_unclassified():
+    item = make_item(title="An ordinary post")
+    classified = classify_item(item)
+    assert classified.category is None
+    # nothing matched, so the engine leaves no provenance stamp either
+    assert classified == item
+
+
+def test_classification_is_stamped_in_provenance():
+    classified = classify_item(make_item(source="wikipedia", title="SQLite"))
+    assert classified.provenance["classified_by"] == "rules-v1"
+    # fetch provenance is preserved, not replaced
+    assert classified.provenance["adapter"] == "web"
+
+
+def test_input_item_is_never_mutated():
+    item = make_item(source="wikipedia", title="SQLite")
+    classify_item(item)
+    assert item.category is None
+    assert "classified_by" not in item.provenance
+
+
+def test_titleless_item_falls_back_to_source_rules():
+    item = make_item(source="youtube", title=None)
+    assert classify_item(item).category == "media"

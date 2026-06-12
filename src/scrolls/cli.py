@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 
 from scrolls import __version__
+from scrolls.classify import classify_item
 from scrolls.db import init_db, read_schema_version
 from scrolls.items import (
     ScrollItem,
@@ -46,6 +47,16 @@ def main(argv: list[str] | None = None) -> int:
         "add", help="Register a URL as a library item, unfetched (JSON output)"
     )
     add_parser.add_argument("url", help="URL to add")
+
+    classify_parser = subparsers.add_parser(
+        "classify", help="Categorize items with the rules engine (JSON output)"
+    )
+    classify_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Classify one item by id, replacing any existing category; "
+        "default is every fetched/rendered item without one",
+    )
 
     detect_parser = subparsers.add_parser(
         "detect", help="Detect which source adapter handles a URL (JSON output)"
@@ -100,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "add":
         return _cmd_add(args.url)
+    if args.command == "classify":
+        return _cmd_classify(args.id)
     if args.command == "detect":
         return _cmd_detect(args.url)
     if args.command == "fetch":
@@ -276,6 +289,50 @@ def _cmd_fetch(item_id: str | None) -> int:
                 "title": fetched.title,
                 "stage": fetched.stage,
             }
+        )
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
+
+
+def _cmd_classify(item_id: str | None) -> int:
+    paths = get_paths()
+    if item_id is not None:
+        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        if item is None:
+            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            return 1
+        # Asking for one item by id is an explicit reclassify; batch runs
+        # below never overwrite an existing category (user overrides win).
+        items = [dataclasses.replace(item, category=None)]
+    else:
+        everything = list_items(paths.db_path) if paths.db_path.exists() else []
+        items = [
+            item
+            for item in everything
+            if item.category is None and item.stage in ("fetched", "rendered")
+        ]
+
+    results = []
+    counts = {"classified": 0, "unmatched": 0, "failed": 0}
+    for item in items:
+        classified = classify_item(item)
+        if classified.category is None:
+            counts["unmatched"] += 1
+            results.append({"id": item.id, "status": "unmatched"})
+            continue
+        if classified.markdown_path:
+            # keep the rendered scroll's frontmatter in sync with the DB
+            try:
+                classified = write_scroll(paths, classified)
+            except OSError as exc:
+                counts["failed"] += 1
+                results.append({"id": item.id, "status": "failed", "error": str(exc)})
+                continue
+        update_item(paths.db_path, classified)
+        counts["classified"] += 1
+        results.append(
+            {"id": classified.id, "status": "classified", "category": classified.category}
         )
 
     print(json.dumps({**counts, "results": results}))

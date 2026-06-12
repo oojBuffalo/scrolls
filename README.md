@@ -73,6 +73,8 @@ uv run scrolls fetch          # fetch content for detected items, as JSON
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
 uv run scrolls md <id>        # (re)render one item by id, as JSON
+uv run scrolls classify       # categorize items with the rules engine, as JSON
+uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls search <query> # BM25-ranked full-text search, as JSON
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls list           # list items, as JSON
@@ -112,9 +114,21 @@ prints the full stored item.
 an existing URL refreshes its content. A URL whose source has no adapter
 yet is still registered, but ingest reports the failure and exits 1.
 
-Item stages so far: `detected → fetched → rendered`. The IDEAS.md §6 MVP
-source trio (wikipedia, web, youtube) is complete. Next slices:
-classification (Pass 4), then the compiled library/KB and context bundles
-(Pass 5).
+`scrolls classify` assigns a `category` with a deterministic rules engine
+(`rules-v1`, layer one of IDEAS.md §8's "regex/rules first → optional LLM
+second → user overrides always win" — see
+`docs/adr/0004-rules-classification-engine.md`): curated platforms first
+(wikipedia → reference, arxiv → paper, github → project), then title
+patterns (tutorial, opinion), then URL shape (docs sites →
+documentation), then youtube → media. Unmatched items honestly stay
+unclassified for a future LLM engine. Batch runs never overwrite an
+existing category; `scrolls classify <id>` explicitly reclassifies.
+Already-rendered scrolls are re-rendered so frontmatter stays in sync.
+
+Item stages so far: `detected → fetched → rendered`; classification is
+stage-neutral enrichment. The IDEAS.md §6 MVP source trio (wikipedia, web,
+youtube) is complete and Pass 4 classification has its rules layer. Next
+slices: the compiled library/KB and context bundles (Pass 5), an LLM
+classification engine, or more adapters (github, arxiv).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
