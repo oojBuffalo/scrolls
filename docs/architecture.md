@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (265 tests at the time of writing). The docs themselves
+`uv run pytest` (298 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -122,7 +122,7 @@ Two small contracts make every platform the same kind of scroll
    content and returns the item at stage `fetched`, raising `FetchError`
    on any failure (`src/scrolls/sources/__init__.py`, ADR 0002). The
    `FETCH_ADAPTERS` dict maps source names to these functions. A source
-   with no entry (today: `x`, `pdf`) is still registered by `scrolls add`
+   with no entry (today only `x`) is still registered by `scrolls add`
    but skipped by `scrolls fetch` until its adapter lands.
 
 Implemented fetch adapters, all keyless:
@@ -134,6 +134,7 @@ Implemented fetch adapters, all keyless:
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`; degrades to abstract-only | 0008, 0010, 0012 |
+| pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -220,7 +221,7 @@ recurring rules:
 - **Dependency posture** (ADR 0001): stdlib first; a third-party package
   must buy its adapter something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
-  (arxiv) — see `pyproject.toml`.
+  (arxiv and pdf) — see `pyproject.toml`.
 - **No network in tests**: every adapter takes an injectable fetcher;
   fixtures are recorded payloads. The suite runs in under a second.
 

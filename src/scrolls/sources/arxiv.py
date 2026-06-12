@@ -116,25 +116,17 @@ def fetch_item(
 
 
 def _pdf_text(pdf_url: str, get_bytes: GetBytes) -> str | None:
-    """The paper's PDF text, or None when anything fails (degradation contract).
-
-    pypdf is imported lazily so commands that never fetch a paper don't
-    pay for it (same pattern as trafilatura in the web adapter).
-    """
-    import io
-
-    from pypdf import PdfReader
+    """The paper's PDF text, or None when anything fails (degradation contract)."""
+    from scrolls.sources import pdf
 
     # the feed advertises plain-http links that arxiv redirects anyway
     if pdf_url.startswith("http://"):
         pdf_url = "https://" + pdf_url.removeprefix("http://")
     try:
-        reader = PdfReader(io.BytesIO(get_bytes(pdf_url)))
-        pages = (page.extract_text() for page in reader.pages)
-        text = "\n\n".join(part.strip() for part in pages if part.strip()).strip()
+        blob = get_bytes(pdf_url)
     except Exception:  # any PDF failure must keep the abstract-only scroll
         return None
-    return text or None
+    return pdf.extract_text(blob)
 
 
 def _text(entry: ElementTree.Element, name: str) -> str:

@@ -121,8 +121,8 @@ with `"created": false` (`test_add_persists_detected_item`,
 | `created` | `false` when the item already existed |
 
 ```console
-$ scrolls add https://example.com/papers/attention.pdf
-{"id": "pdf:eb2e6487c357", "source": "pdf", "source_id": null, "url": "https://example.com/papers/attention.pdf", "stage": "detected", "created": true}
+$ scrolls add https://x.com/karpathy/status/3333
+{"id": "x:3333", "source": "x", "source_id": "3333", "url": "https://x.com/karpathy/status/3333", "stage": "detected", "created": true}
 [exit 0]
 ```
 
@@ -147,8 +147,8 @@ still registered (stage `detected`) and the same payload gains an
 `test_ingest_fetch_failure_leaves_item_detected`):
 
 ```console
-$ scrolls ingest https://example.com/papers/attention.pdf
-{"id": "pdf:eb2e6487c357", "source": "pdf", "url": "https://example.com/papers/attention.pdf", "created": false, "stage": "detected", "error": "no fetch adapter for source 'pdf'"}
+$ scrolls ingest https://x.com/karpathy/status/3333
+{"id": "x:3333", "source": "x", "url": "https://x.com/karpathy/status/3333", "created": false, "stage": "detected", "error": "no fetch adapter for source 'x'"}
 [exit 1]
 ```
 
@@ -200,12 +200,12 @@ by id is an honest *failure*, not a skip
 | `results[]` | per-item `{id, status, ...}`; `title`+`stage` on success, `reason` on skip, `error` on failure |
 
 ```console
-$ scrolls fetch                       # only a pdf item is detected
-{"fetched": 0, "skipped": 1, "failed": 0, "results": [{"id": "pdf:eb2e6487c357", "status": "skipped", "reason": "no fetch adapter for source 'pdf'"}]}
+$ scrolls fetch                       # only an x item is detected
+{"fetched": 0, "skipped": 1, "failed": 0, "results": [{"id": "x:3333", "status": "skipped", "reason": "no fetch adapter for source 'x'"}]}
 [exit 0]
 
-$ scrolls fetch pdf:eb2e6487c357      # by id: same situation is a failure
-{"fetched": 0, "skipped": 0, "failed": 1, "results": [{"id": "pdf:eb2e6487c357", "status": "failed", "error": "no fetch adapter for source 'pdf'"}]}
+$ scrolls fetch x:3333                # by id: same situation is a failure
+{"fetched": 0, "skipped": 0, "failed": 1, "results": [{"id": "x:3333", "status": "failed", "error": "no fetch adapter for source 'x'"}]}
 [exit 1]
 
 $ scrolls fetch arxiv:1706.03762      # by id, with network
@@ -293,7 +293,7 @@ uninitialized library prints `[]` (`test_list_after_adds_prints_summaries`,
 
 ```console
 $ scrolls list
-[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}, {"id": "x:2222", ...}, {"id": "pdf:eb2e6487c357", ..., "title": null, "stage": "detected", ...}, {"id": "arxiv:1706.03762", ...}]
+[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
 [exit 0]
 ```
 
@@ -309,7 +309,7 @@ are `null`, not omitted.
 
 ```console
 $ scrolls show x:1111
-{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "1111", "canonical_url": null, "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "author": "Andrej Karpathy (@karpathy)", "published_at": "2026-06-01T15:34:00+00:00", "raw_text": "{\"id\": \"1111\", \"tweetId\": \"1111\", …}", "extracted_text": "SQLite FTS5 is criminally underrated for local search.", "summary": null, "category": "technique", "domain": "databases", "tags": [], "concepts": [], "links": ["https://sqlite.org/fts5.html"], "media": [], "content_hash": "sha256:da27b0…", "markdown_path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "provenance": {"adapter": "fieldtheory-import", "fetched_at": "2026-06-12T19:10:47+00:00", "extraction_method": "fieldtheory:bookmarks.jsonl"}, "stage": "rendered"}
+{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "1111", "canonical_url": null, "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "author": "Andrej Karpathy (@karpathy)", "published_at": "2026-06-01T15:34:00+00:00", "raw_text": "{\"id\": \"1111\", \"tweetId\": \"1111\", …}", "extracted_text": "SQLite FTS5 is criminally underrated for local search.", "summary": null, "category": "technique", "domain": "databases", "tags": [], "concepts": [], "links": ["https://sqlite.org/fts5.html"], "media": [], "content_hash": "sha256:da27b0…", "markdown_path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "provenance": {"adapter": "fieldtheory-import", "fetched_at": "2026-06-12T20:29:15+00:00", "extraction_method": "fieldtheory:bookmarks.jsonl"}, "stage": "rendered"}
 [exit 1 if no such item, else 0]
 ```
 
@@ -455,9 +455,10 @@ scrolls init
 scrolls status
 scrolls paths
 scrolls detect https://en.wikipedia.org/wiki/SQLite
-scrolls add https://example.com/papers/attention.pdf
-scrolls fetch                                      # skips the pdf item
-scrolls fetch pdf:<id-from-add>                    # by-id: fails, exit 1
+scrolls add https://x.com/karpathy/status/3333
+scrolls ingest https://x.com/karpathy/status/3333  # no adapter: exit 1
+scrolls fetch                                      # skips the x item
+scrolls fetch x:3333                               # by-id: fails, exit 1
 scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
 scrolls add https://arxiv.org/abs/1706.03762

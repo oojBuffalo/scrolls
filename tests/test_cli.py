@@ -520,7 +520,7 @@ def test_ingest_github_repo_end_to_end(scrolls_home, fake_github_api, capsys):
 def fake_arxiv_api(monkeypatch):
     """Serve a canned Atom feed and PDF instead of the network."""
     import scrolls.sources.arxiv as arxiv
-    from test_arxiv import make_pdf
+    from pdf_fixtures import make_pdf
 
     feed = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -577,6 +577,46 @@ def test_ingest_arxiv_paper_end_to_end(scrolls_home, fake_arxiv_api, capsys):
     assert exit_code == 0
     hits = json.loads(capsys.readouterr().out)
     assert [hit["id"] for hit in hits] == ["arxiv:2310.06825"]
+
+
+def test_ingest_pdf_url_end_to_end(scrolls_home, monkeypatch, capsys):
+    import scrolls.sources.pdf as pdf
+    from pdf_fixtures import make_pdf
+
+    blob = make_pdf(
+        "Grouped-query attention trades model capacity for decode speed.",
+        {"Title": "GQA Technical Report", "Subject": "A grouped-query attention report."},
+    )
+    monkeypatch.setattr(pdf, "_get_bytes", lambda url: blob)
+
+    exit_code = main(["ingest", "https://example.com/papers/attention.pdf"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "pdf:eb2e6487c357",
+        "source": "pdf",
+        "url": "https://example.com/papers/attention.pdf",
+        "created": True,
+        "title": "GQA Technical Report",
+        "category": None,  # honestly unclassified: no rule for generic PDFs
+        "stage": "rendered",
+        "markdown_path": "scrolls/pdf/gqa-technical-report.md",
+    }
+    scroll = (scrolls_home / "scrolls" / "pdf" / "gqa-technical-report.md").read_text()
+    assert "A grouped-query attention report." in scroll
+    assert "Grouped-query attention trades model capacity" in scroll
+    # the document itself is a media ref, so `scrolls media` can capture it
+    assert (
+        '\nmedia: [{"type": "pdf", "url": "https://example.com/papers/attention.pdf"}]\n'
+        in scroll
+    )
+    capsys.readouterr()
+
+    # the PDF text is indexed for search
+    exit_code = main(["search", "decode speed"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["pdf:eb2e6487c357"]
 
 
 def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_api, capsys):

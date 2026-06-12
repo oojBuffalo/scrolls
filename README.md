@@ -126,9 +126,14 @@ PDF with `pypdf` into searchable extracted text — any PDF failure
 degrades to the abstract-only scroll — see
 `docs/adr/0008-arxiv-adapter-atom-abstracts.md`,
 `docs/adr/0010-arxiv-pdf-full-text-pypdf.md`, and
-`docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`). Items from sources
-without an adapter yet are skipped, and per-item failures don't abort the
-batch.
+`docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`), and **pdf**
+(any other `.pdf` URL: text and document metadata via `pypdf`, the
+`/Title`-or-filename as title, `/Subject` as the only honest summary,
+and the document itself as a media ref for `scrolls media`; a non-PDF
+payload fails the fetch, while a textless-but-real PDF degrades to a
+metadata-only scroll — see `docs/adr/0013-generic-pdf-adapter.md`).
+Items from sources without an adapter yet (today only `x`) are skipped,
+and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -213,10 +218,10 @@ them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
 Item stages so far: `detected → fetched → rendered`; classification,
 media capture, and KB compilation are stage-neutral. With the IDEAS.md
-§6 MVP source trio (wikipedia, web, youtube) plus github, arxiv, and x
-(via Field Theory import), search, rules classification, media capture,
-the compiled library, context bundles, and agent install, all five
-IDEAS.md §14 MVP passes have a working first version. Next slices: an
+§6 MVP source trio (wikipedia, web, youtube) plus github, arxiv, pdf,
+and x (via Field Theory import), search, rules classification, media
+capture, the compiled library, context bundles, and agent install, all
+five IDEAS.md §14 MVP passes have a working first version. Next slices: an
 LLM classification/concept engine or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
