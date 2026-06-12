@@ -197,7 +197,7 @@ def test_fetch_all_fetches_detected_wikipedia_item(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_api, capsys):
-    main(["add", "https://github.com/oojBuffalo/scrolls"])
+    main(["add", "https://arxiv.org/abs/2310.06825"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     capsys.readouterr()
 
@@ -207,10 +207,10 @@ def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_ap
     assert payload["fetched"] == 1
     assert payload["skipped"] == 1
     by_id = {entry["id"]: entry for entry in payload["results"]}
-    assert by_id["github:oojBuffalo/scrolls"]["status"] == "skipped"
-    assert "github" in by_id["github:oojBuffalo/scrolls"]["reason"]
+    assert by_id["arxiv:2310.06825"]["status"] == "skipped"
+    assert "arxiv" in by_id["arxiv:2310.06825"]["reason"]
     # the skipped item is untouched and will be picked up once an adapter lands
-    assert get_item(get_paths().db_path, "github:oojBuffalo/scrolls").stage == "detected"
+    assert get_item(get_paths().db_path, "arxiv:2310.06825").stage == "detected"
 
 
 def test_fetch_all_with_nothing_detected(scrolls_home, capsys):
@@ -251,15 +251,15 @@ def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_by_id_without_adapter_fails(scrolls_home, capsys):
-    main(["add", "https://github.com/oojBuffalo/scrolls"])
+    main(["add", "https://arxiv.org/abs/2310.06825"])
     capsys.readouterr()
 
-    exit_code = main(["fetch", "github:oojBuffalo/scrolls"])
+    exit_code = main(["fetch", "arxiv:2310.06825"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["failed"] == 1
     assert payload["results"][0]["status"] == "failed"
-    assert "github" in payload["results"][0]["error"]
+    assert "arxiv" in payload["results"][0]["error"]
 
 
 def test_fetch_unknown_id_is_an_error(scrolls_home, capsys):
@@ -458,6 +458,61 @@ def test_ingest_youtube_video_end_to_end(scrolls_home, fake_youtube_api, capsys)
     assert [hit["id"] for hit in hits] == ["youtube:dQw4w9WgXcQ"]
 
 
+@pytest.fixture
+def fake_github_api(monkeypatch):
+    """Serve canned repo metadata and README instead of the network."""
+    import base64
+
+    import scrolls.sources.github as github
+
+    repo = {
+        "full_name": "oojBuffalo/scrolls",
+        "html_url": "https://github.com/oojBuffalo/scrolls",
+        "description": "Turn saved internet artifacts into agent-readable knowledge.",
+        "owner": {"login": "oojBuffalo"},
+        "created_at": "2026-05-01T12:00:00Z",
+        "topics": ["knowledge-base", "sqlite"],
+    }
+    readme = "# Scrolls\n\nSQLite FTS5 keeps the library searchable.\n"
+    encoded = base64.b64encode(readme.encode("utf-8")).decode("ascii")
+
+    def get_json(url):
+        if url.endswith("/readme"):
+            return {"content": encoded, "encoding": "base64"}
+        return dict(repo)
+
+    monkeypatch.setattr(github, "_get_json", get_json)
+    return repo
+
+
+def test_ingest_github_repo_end_to_end(scrolls_home, fake_github_api, capsys):
+    exit_code = main(["ingest", "https://github.com/oojBuffalo/scrolls"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "github:oojBuffalo/scrolls",
+        "source": "github",
+        "url": "https://github.com/oojBuffalo/scrolls",
+        "created": True,
+        "title": "oojBuffalo/scrolls",
+        "category": "project",  # classified inline: github curated default
+        "stage": "rendered",
+        "markdown_path": "scrolls/github/oojbuffalo-scrolls.md",
+    }
+    scroll = (scrolls_home / "scrolls" / "github" / "oojbuffalo-scrolls.md").read_text()
+    assert '\nconcepts: ["knowledge-base", "sqlite"]\n' in scroll
+    assert "SQLite FTS5 keeps the library searchable." in scroll
+    capsys.readouterr()
+
+    # repo topics are the first concepts producer: kb builds concept pages
+    exit_code = main(["kb"])
+    assert exit_code == 0
+    kb_payload = json.loads(capsys.readouterr().out)
+    assert kb_payload["concepts"] == 2
+    concept_page = scrolls_home / "library" / "concepts" / "knowledge-base.md"
+    assert "oojBuffalo/scrolls" in concept_page.read_text()
+
+
 def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_api, capsys):
     exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
     assert exit_code == 0
@@ -512,14 +567,14 @@ def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, caps
 
 
 def test_ingest_without_adapter_registers_but_reports_failure(scrolls_home, capsys):
-    exit_code = main(["ingest", "https://github.com/oojBuffalo/scrolls"])
+    exit_code = main(["ingest", "https://arxiv.org/abs/2310.06825"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["id"] == "github:oojBuffalo/scrolls"
+    assert payload["id"] == "arxiv:2310.06825"
     assert payload["stage"] == "detected"
-    assert "github" in payload["error"]
+    assert "arxiv" in payload["error"]
     # the item is still durably registered for a future adapter
-    assert get_item(get_paths().db_path, "github:oojBuffalo/scrolls").stage == "detected"
+    assert get_item(get_paths().db_path, "arxiv:2310.06825").stage == "detected"
 
 
 def test_ingest_fetch_failure_leaves_item_detected(scrolls_home, monkeypatch, capsys):

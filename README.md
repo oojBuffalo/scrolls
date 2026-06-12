@@ -95,10 +95,14 @@ provenance, and moving the item to stage `fetched`. Adapters so far:
 **wikipedia** (MediaWiki action API, no dependencies — see
 `docs/adr/0002-first-fetch-adapter-wikipedia.md`), **web** (readable
 article extraction via `trafilatura`, the project's first per-adapter
-dependency per ADR 0001), and **youtube** (keyless oEmbed metadata plus
+dependency per ADR 0001), **youtube** (keyless oEmbed metadata plus
 optional transcript via `youtube-transcript-api`; caption-less videos and
 playlists degrade to metadata-only scrolls — see
-`docs/adr/0003-youtube-adapter-oembed-transcripts.md`). Items from sources
+`docs/adr/0003-youtube-adapter-oembed-transcripts.md`), and **github**
+(keyless REST API: repo metadata plus optional README; author-curated
+repo topics become `concepts`, the first producer for the KB's concept
+pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
+`docs/adr/0007-github-adapter-topics-as-concepts.md`). Items from sources
 without an adapter yet are skipped, and per-item failures don't abort the
 batch.
 
@@ -136,8 +140,8 @@ deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
 that link back to rendered scrolls with relative Markdown links. The
 generated pages are rebuilt from scratch each run so stale groups can't
 linger; other files under `library/` are left alone. Concept pages merge
-spellings by slug and stay empty until a concept-extraction engine
-populates `concepts`.
+spellings by slug; github repo topics populate them today, and other
+producers (wikipedia categories, an LLM engine) can join later.
 
 `scrolls context <query>` answers "what does my library know about X?"
 with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped
@@ -156,10 +160,10 @@ them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
 Item stages so far: `detected → fetched → rendered`; classification and
 KB compilation are stage-neutral. With the IDEAS.md §6 MVP source trio
-(wikipedia, web, youtube), search, rules classification, the compiled
-library, context bundles, and agent install, all five IDEAS.md §14 MVP
-passes have a working first version. Next slices: an LLM
-classification/concept engine, more adapters (github, arxiv, x via
-Field Theory import), media capture, or an MCP server.
+(wikipedia, web, youtube) plus github, search, rules classification, the
+compiled library, context bundles, and agent install, all five IDEAS.md
+§14 MVP passes have a working first version. Next slices: an LLM
+classification/concept engine, more adapters (arxiv, x via Field Theory
+import), media capture, or an MCP server.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
