@@ -243,13 +243,16 @@ choice (ADRs 0004, 0005).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`).
-- **MCP server** (`mcp_server.py`, ADR 0014) — `scrolls mcp` serves the
-  same engines to MCP clients over stdio: plain sync tool functions
-  (`get_context_bundle`, `search_scrolls`, `get_scroll`,
+- **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
+  serves the same engines to MCP clients over stdio: plain sync tool
+  functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,
   `get_related_scrolls`, `get_concept_page`, `list_sources`,
-  `ingest_url`) registered on FastMCP, which derives schemas from type
-  hints. Read tools mirror CLI conventions — empty library, empty
-  results; unknown id, tool error (`tests/test_mcp.py`).
+  `ingest_url`, plus the feed subscription tools `follow_feed`,
+  `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`) registered
+  on FastMCP, which derives schemas from type hints. Read tools mirror
+  CLI conventions — empty library, empty results; unknown id, tool
+  error — and `sync_feeds` shares the CLI's batch semantics through
+  `feeds.sync_many` (`tests/test_mcp.py`).
 
 ## Interface conventions
 
@@ -288,6 +291,6 @@ Next steps already identified in decision records, in no required order:
 - **Batched LLM classification** — `classify --engine llm` makes one
   API call per item; the Batches API halves the cost when libraries
   outgrow that (ADR 0015).
-- **Follow/sync over MCP** — the MCP server exposes read tools plus
-  `ingest_url`, but subscriptions are still shell-only (ADR 0014,
-  ADR 0017).
+- **Feed entry titles** — `parse_feed` already captures each entry's
+  title, but sync discards it; carrying it onto the detected item
+  would give unfetched items a human-readable name (ADR 0017).

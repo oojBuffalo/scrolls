@@ -235,6 +235,43 @@ def sync_subscription(
     }
 
 
+def sync_many(
+    db_path: Path,
+    subscriptions: list[Subscription],
+    *,
+    fetch: FetchConditional | None = None,
+) -> dict:
+    """Sync every given subscription and aggregate the batch payload.
+
+    The shared batch semantics behind both the CLI and the MCP server:
+    one dead feed becomes a 'failed' result with its error, never an
+    exception, and the totals count items (`new`/`known`/`skipped`) and
+    subscriptions (`unchanged`/`failed`).
+    """
+    results: list[dict] = []
+    counts = {"new": 0, "known": 0, "skipped": 0, "unchanged": 0, "failed": 0}
+    for subscription in subscriptions:
+        try:
+            result = sync_subscription(db_path, subscription, fetch=fetch)
+        except FeedError as exc:
+            counts["failed"] += 1
+            results.append(
+                {
+                    "id": subscription.id,
+                    "feed_url": subscription.feed_url,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+        if result["status"] == "unchanged":
+            counts["unchanged"] += 1
+        for key in ("new", "known", "skipped"):
+            counts[key] += result[key]
+        results.append(result)
+    return {**counts, "results": results}
+
+
 def insert_subscription(db_path: Path, subscription: Subscription) -> bool:
     """Insert a subscription; return False (keeping the row) if the id is taken."""
     columns = ", ".join(_SUB_FIELDS)

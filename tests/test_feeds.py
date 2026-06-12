@@ -23,6 +23,7 @@ from scrolls.feeds import (
     make_subscription_id,
     parse_feed,
     remove_subscription,
+    sync_many,
     sync_subscription,
     to_feed_url,
 )
@@ -327,6 +328,51 @@ def test_sync_failure_keeps_stored_validators(db_path):
         sync_subscription(db_path, sub, fetch=_fetch_ok("<html></html>"))
 
     assert get_subscription(db_path, sub.id).etag == 'W/"abc"'
+
+
+# --- sync_many ---
+
+
+def test_sync_many_aggregates_counts_and_continues_past_failures(db_path):
+    good = _sub("https://www.youtube.com/feeds/videos.xml?channel_id=UCabc123")
+    dead = _sub("https://gone.example.com/rss")
+    insert_subscription(db_path, good)
+    insert_subscription(db_path, dead)
+
+    def fetch(url, etag, last_modified):
+        if "gone" in url:
+            raise OSError("connection refused")
+        return ConditionalText(text=ATOM_FEED)
+
+    payload = sync_many(db_path, [good, dead], fetch=fetch)
+
+    assert payload["new"] == 2 and payload["failed"] == 1
+    assert payload["known"] == 0 and payload["skipped"] == 0 and payload["unchanged"] == 0
+    statuses = {result["id"]: result["status"] for result in payload["results"]}
+    assert statuses == {good.id: "synced", dead.id: "failed"}
+    failed = next(r for r in payload["results"] if r["status"] == "failed")
+    assert "connection refused" in failed["error"]
+
+
+def test_sync_many_counts_unchanged_feeds(db_path):
+    sub = _sub("https://blog.example.com/rss", etag='W/"abc"')
+    insert_subscription(db_path, sub)
+
+    payload = sync_many(db_path, [sub], fetch=_fetch_not_modified)
+
+    assert payload["unchanged"] == 1 and payload["failed"] == 0
+    assert payload["results"][0]["status"] == "unchanged"
+
+
+def test_sync_many_with_no_subscriptions_is_empty_success(db_path):
+    assert sync_many(db_path, []) == {
+        "new": 0,
+        "known": 0,
+        "skipped": 0,
+        "unchanged": 0,
+        "failed": 0,
+        "results": [],
+    }
 
 
 # --- follow_feed ---

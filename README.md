@@ -278,8 +278,11 @@ them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 `scrolls mcp` serves the same engines to MCP clients over stdio
 (IDEAS.md §10's second phase — see `docs/adr/0014-mcp-server.md`):
 `get_context_bundle`, `search_scrolls`, `get_scroll`,
-`get_related_scrolls`, `get_concept_page`, `list_sources`, and
-`ingest_url`. Connect with
+`get_related_scrolls`, `get_concept_page`, `list_sources`,
+`ingest_url`, and the feed subscription tools `follow_feed`,
+`unfollow_feed`, `list_feed_subscriptions`, and `sync_feeds`
+(ADR 0020) — so a connected agent can run the full
+follow → sync → fetch loop without shelling out. Connect with
 `claude mcp add scrolls -- uv run scrolls mcp` or equivalent client
 config; the shell interface remains primary.
 
@@ -292,7 +295,8 @@ agent install, and the MCP server, all five IDEAS.md §14 MVP passes
 have a working first version plus the full §8 classification stack
 (rules, LLM, and `scrolls set` user overrides) and feed-based live
 deltas via `scrolls sync` (IDEAS.md §13) with HTTP-cached polling
-(ADR 0019). Next candidates: batched LLM classification (ADR 0015)
-and exposing follow/sync over MCP (ADR 0014).
+(ADR 0019), on both the shell and MCP interfaces (ADR 0020). Next
+candidates: batched LLM classification (ADR 0015) and carrying feed
+entry titles onto detected items (ADR 0017).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

@@ -26,7 +26,7 @@ from scrolls.feeds import (
     list_subscriptions,
     make_subscription_id,
     remove_subscription,
-    sync_subscription,
+    sync_many,
     to_feed_url,
 )
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
@@ -390,30 +390,9 @@ def _cmd_sync(sub_id: str | None) -> int:
             list_subscriptions(paths.db_path) if paths.db_path.exists() else []
         )
 
-    results = []
-    counts = {"new": 0, "known": 0, "skipped": 0, "unchanged": 0, "failed": 0}
-    for subscription in subscriptions:
-        try:
-            result = sync_subscription(paths.db_path, subscription)
-        except FeedError as exc:
-            counts["failed"] += 1
-            results.append(
-                {
-                    "id": subscription.id,
-                    "feed_url": subscription.feed_url,
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
-            continue
-        if result["status"] == "unchanged":
-            counts["unchanged"] += 1
-        for key in ("new", "known", "skipped"):
-            counts[key] += result[key]
-        results.append(result)
-
-    print(json.dumps({**counts, "results": results}))
-    return 1 if counts["failed"] else 0
+    payload = sync_many(paths.db_path, subscriptions)
+    print(json.dumps(payload))
+    return 1 if payload["failed"] else 0
 
 
 def _cmd_import_fieldtheory(root: str | None) -> int:

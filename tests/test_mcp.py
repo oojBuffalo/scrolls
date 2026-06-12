@@ -47,6 +47,34 @@ def fake_wikipedia_api(monkeypatch):
     return payload
 
 
+@pytest.fixture
+def fake_feed(monkeypatch):
+    """A two-entry blog feed; serves an ETag and honors it with a 304."""
+    import scrolls.feeds as feeds
+    from scrolls.sources.http import ConditionalText
+
+    document = """\
+<rss version="2.0"><channel><title>A Weblog</title>
+<item><title>Post one</title><link>https://blog.example.com/2026/post-one/</link></item>
+<item><title>Post two</title><link>https://blog.example.com/2026/post-two/</link></item>
+</channel></rss>"""
+    url = "https://blog.example.com/atom.xml"
+
+    def get_text(u):
+        if u != url:
+            raise OSError(f"connection refused: {u}")
+        return document
+
+    def get_conditional(u, etag, last_modified):
+        if etag == 'W/"v1"':
+            return ConditionalText(not_modified=True)
+        return ConditionalText(text=get_text(u), etag='W/"v1"')
+
+    monkeypatch.setattr(feeds, "_get_text", get_text)
+    monkeypatch.setattr(feeds, "_get_conditional", get_conditional)
+    return url
+
+
 def test_server_exposes_exactly_the_documented_tools(scrolls_home):
     server = mcp_server.build_server()
     tools = asyncio.run(server.list_tools())
@@ -58,6 +86,10 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_concept_page",
         "list_sources",
         "ingest_url",
+        "follow_feed",
+        "unfollow_feed",
+        "list_feed_subscriptions",
+        "sync_feeds",
     }
     # every tool teaches the model what it does
     assert all(tool.description for tool in tools)
@@ -135,3 +167,59 @@ def test_list_sources_counts_items(scrolls_home, fake_wikipedia_api):
 
 def test_list_sources_before_init_is_empty(scrolls_home):
     assert mcp_server.list_sources() == {}
+
+
+# --- feed subscriptions (ADR 0020) ---
+
+
+def test_follow_feed_subscribes_and_lists(scrolls_home, fake_feed):
+    payload = mcp_server.follow_feed(fake_feed)
+    assert payload["feed_url"] == fake_feed
+    assert payload["title"] == "A Weblog"
+    assert payload["created"] is True
+
+    listed = mcp_server.list_feed_subscriptions()
+    assert [sub["feed_url"] for sub in listed] == [fake_feed]
+
+
+def test_follow_feed_unreachable_url_raises(scrolls_home, fake_feed):
+    from scrolls.feeds import FeedError
+
+    with pytest.raises(FeedError, match="connection refused"):
+        mcp_server.follow_feed("https://nowhere.example.com/feed")
+    assert mcp_server.list_feed_subscriptions() == []
+
+
+def test_list_feed_subscriptions_before_init_is_empty(scrolls_home):
+    assert mcp_server.list_feed_subscriptions() == []
+
+
+def test_sync_feeds_registers_entries_then_reports_unchanged(scrolls_home, fake_feed):
+    mcp_server.follow_feed(fake_feed)
+
+    first = mcp_server.sync_feeds()
+    assert first["new"] == 2 and first["failed"] == 0
+    assert first["results"][0]["status"] == "synced"
+
+    second = mcp_server.sync_feeds()  # the stored ETag now answers 304
+    assert second["unchanged"] == 1 and second["new"] == 0
+    assert second["results"][0]["status"] == "unchanged"
+
+
+def test_sync_feeds_by_unknown_id_raises(scrolls_home):
+    with pytest.raises(ValueError, match="no such subscription"):
+        mcp_server.sync_feeds("feedcafe1234")
+
+
+def test_sync_feeds_before_init_is_empty_success(scrolls_home):
+    payload = mcp_server.sync_feeds()
+    assert payload["results"] == [] and payload["failed"] == 0
+
+
+def test_unfollow_feed_accepts_id_or_url(scrolls_home, fake_feed):
+    sub_id = mcp_server.follow_feed(fake_feed)["id"]
+    assert mcp_server.unfollow_feed(fake_feed) == {"id": sub_id, "removed": True}
+    assert mcp_server.list_feed_subscriptions() == []
+
+    with pytest.raises(ValueError, match="no such subscription"):
+        mcp_server.unfollow_feed(sub_id)  # already gone

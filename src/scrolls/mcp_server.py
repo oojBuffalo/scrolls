@@ -1,9 +1,9 @@
 """MCP server: the library over the Model Context Protocol (IDEAS.md §10, ADR 0014).
 
 `scrolls mcp` serves the same engines the CLI exposes — search, items,
-related, context bundles, concept pages, ingest — as MCP tools over
-stdio, for agents that speak the protocol instead of (or alongside) the
-shell. Tool functions are plain sync wrappers, defined apart from the
+related, context bundles, concept pages, ingest, feed subscriptions
+(ADR 0020) — as MCP tools over stdio, for agents that speak the
+protocol instead of (or alongside) the shell. Tool functions are plain sync wrappers, defined apart from the
 server so tests exercise them directly; the official SDK is imported
 lazily so every other command stays free of it. Read tools mirror the
 CLI conventions: an empty library returns empty results, unknown ids
@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from scrolls import feeds
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.items import count_by_source, get_item
@@ -34,7 +35,8 @@ _INSTRUCTIONS = (
     "get_context_bundle for a compact, citable overview of a topic; use "
     "search_scrolls and get_scroll for depth, get_related_scrolls and "
     "get_concept_page to follow connections, and ingest_url to save "
-    "something new."
+    "something new. follow_feed subscribes the library to an RSS/Atom "
+    "feed and sync_feeds registers its new entries."
 )
 
 
@@ -112,6 +114,67 @@ def ingest_url(url: str) -> dict[str, Any]:
     return _ingest_url(url)
 
 
+def follow_feed(url: str) -> dict[str, Any]:
+    """Subscribe the library to an RSS/Atom feed for sync_feeds (network).
+
+    The feed is fetched once to validate it; a typo'd or non-feed URL is
+    an error and stores nothing. YouTube playlist/channel URLs map to
+    their public feeds automatically. `created` is false when the feed
+    was already followed.
+    """
+    _, subscription, created = feeds.follow_feed(url)
+    return {**dataclasses.asdict(subscription), "created": created}
+
+
+def unfollow_feed(ref: str) -> dict[str, Any]:
+    """Remove a feed subscription by id or feed URL.
+
+    Items the feed registered stay in the library; only the
+    subscription goes.
+    """
+    paths = get_paths()
+    sub_id = feeds.make_subscription_id(feeds.to_feed_url(ref)) if "://" in ref else ref
+    removed = (
+        feeds.remove_subscription(paths.db_path, sub_id) if paths.db_path.exists() else False
+    )
+    if not removed:
+        raise ValueError(f"no such subscription: {ref}")
+    return {"id": sub_id, "removed": True}
+
+
+def list_feed_subscriptions() -> list[dict[str, Any]]:
+    """Every followed feed with its sync state and HTTP cache validators."""
+    paths = get_paths()
+    if not paths.db_path.exists():
+        return []
+    return [dataclasses.asdict(sub) for sub in feeds.list_subscriptions(paths.db_path)]
+
+
+def sync_feeds(subscription_id: str | None = None) -> dict[str, Any]:
+    """Poll followed feeds and register new entries as detected items (network).
+
+    Run ingest/fetch afterwards to bring the new items in. Polls are
+    HTTP-cached: an unchanged feed reports status 'unchanged'. Per-feed
+    failures are 'failed' results in the payload, not tool errors; only
+    an unknown subscription_id raises.
+    """
+    paths = get_paths()
+    if subscription_id is not None:
+        subscription = (
+            feeds.get_subscription(paths.db_path, subscription_id)
+            if paths.db_path.exists()
+            else None
+        )
+        if subscription is None:
+            raise ValueError(f"no such subscription: {subscription_id}")
+        subscriptions = [subscription]
+    else:
+        subscriptions = (
+            feeds.list_subscriptions(paths.db_path) if paths.db_path.exists() else []
+        )
+    return feeds.sync_many(paths.db_path, subscriptions)
+
+
 _TOOLS = (
     search_scrolls,
     get_scroll,
@@ -120,6 +183,10 @@ _TOOLS = (
     get_concept_page,
     list_sources,
     ingest_url,
+    follow_feed,
+    unfollow_feed,
+    list_feed_subscriptions,
+    sync_feeds,
 )
 
 
