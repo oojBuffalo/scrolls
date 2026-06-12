@@ -17,9 +17,10 @@ class FetchError(Exception):
 
 # Imported below the FetchError definition because adapter modules import it
 # back from this package.
-from scrolls.sources import github, web, wikipedia, youtube  # noqa: E402
+from scrolls.sources import arxiv, github, web, wikipedia, youtube  # noqa: E402
 
 FETCH_ADAPTERS = {
+    "arxiv": arxiv.fetch_item,
     "github": github.fetch_item,
     "web": web.fetch_item,
     "wikipedia": wikipedia.fetch_item,

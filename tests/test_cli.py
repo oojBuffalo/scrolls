@@ -200,7 +200,7 @@ def test_fetch_all_fetches_detected_wikipedia_item(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_api, capsys):
-    main(["add", "https://arxiv.org/abs/2310.06825"])
+    main(["add", "https://x.com/karpathy/status/1234567890123456789"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     capsys.readouterr()
 
@@ -210,10 +210,10 @@ def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_ap
     assert payload["fetched"] == 1
     assert payload["skipped"] == 1
     by_id = {entry["id"]: entry for entry in payload["results"]}
-    assert by_id["arxiv:2310.06825"]["status"] == "skipped"
-    assert "arxiv" in by_id["arxiv:2310.06825"]["reason"]
+    assert by_id["x:1234567890123456789"]["status"] == "skipped"
+    assert "x" in by_id["x:1234567890123456789"]["reason"]
     # the skipped item is untouched and will be picked up once an adapter lands
-    assert get_item(get_paths().db_path, "arxiv:2310.06825").stage == "detected"
+    assert get_item(get_paths().db_path, "x:1234567890123456789").stage == "detected"
 
 
 def test_fetch_all_with_nothing_detected(scrolls_home, capsys):
@@ -254,15 +254,15 @@ def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_
 
 
 def test_fetch_by_id_without_adapter_fails(scrolls_home, capsys):
-    main(["add", "https://arxiv.org/abs/2310.06825"])
+    main(["add", "https://x.com/karpathy/status/1234567890123456789"])
     capsys.readouterr()
 
-    exit_code = main(["fetch", "arxiv:2310.06825"])
+    exit_code = main(["fetch", "x:1234567890123456789"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["failed"] == 1
     assert payload["results"][0]["status"] == "failed"
-    assert "arxiv" in payload["results"][0]["error"]
+    assert "'x'" in payload["results"][0]["error"]
 
 
 def test_fetch_unknown_id_is_an_error(scrolls_home, capsys):
@@ -516,6 +516,53 @@ def test_ingest_github_repo_end_to_end(scrolls_home, fake_github_api, capsys):
     assert "oojBuffalo/scrolls" in concept_page.read_text()
 
 
+@pytest.fixture
+def fake_arxiv_api(monkeypatch):
+    """Serve a canned Atom feed instead of the network."""
+    import scrolls.sources.arxiv as arxiv
+
+    feed = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2310.06825v1</id>
+    <published>2023-10-10T17:54:02Z</published>
+    <title>Mistral 7B</title>
+    <summary>We introduce Mistral 7B, a 7-billion-parameter language model.</summary>
+    <author><name>Albert Q. Jiang</name></author>
+    <link href="http://arxiv.org/abs/2310.06825v1" rel="alternate" type="text/html"/>
+    <category term="cs.CL"/>
+  </entry>
+</feed>"""
+    monkeypatch.setattr(arxiv, "_get_text", lambda url: feed)
+    return feed
+
+
+def test_ingest_arxiv_paper_end_to_end(scrolls_home, fake_arxiv_api, capsys):
+    exit_code = main(["ingest", "https://arxiv.org/abs/2310.06825"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "id": "arxiv:2310.06825",
+        "source": "arxiv",
+        "url": "https://arxiv.org/abs/2310.06825",
+        "created": True,
+        "title": "Mistral 7B",
+        "category": "paper",  # classified inline: arxiv curated default
+        "stage": "rendered",
+        "markdown_path": "scrolls/arxiv/mistral-7b.md",
+    }
+    scroll = (scrolls_home / "scrolls" / "arxiv" / "mistral-7b.md").read_text()
+    assert '\ntags: ["cs.CL"]\n' in scroll
+    assert "We introduce Mistral 7B" in scroll
+    capsys.readouterr()
+
+    # the abstract is indexed: search finds the paper by its summary
+    exit_code = main(["search", "language model"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["arxiv:2310.06825"]
+
+
 def test_ingest_runs_add_fetch_md_in_one_command(scrolls_home, fake_wikipedia_api, capsys):
     exit_code = main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
     assert exit_code == 0
@@ -572,14 +619,14 @@ def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, caps
 
 
 def test_ingest_without_adapter_registers_but_reports_failure(scrolls_home, capsys):
-    exit_code = main(["ingest", "https://arxiv.org/abs/2310.06825"])
+    exit_code = main(["ingest", "https://x.com/karpathy/status/1234567890123456789"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["id"] == "arxiv:2310.06825"
+    assert payload["id"] == "x:1234567890123456789"
     assert payload["stage"] == "detected"
-    assert "arxiv" in payload["error"]
+    assert "'x'" in payload["error"]
     # the item is still durably registered for a future adapter
-    assert get_item(get_paths().db_path, "arxiv:2310.06825").stage == "detected"
+    assert get_item(get_paths().db_path, "x:1234567890123456789").stage == "detected"
 
 
 def test_ingest_fetch_failure_leaves_item_detected(scrolls_home, monkeypatch, capsys):
