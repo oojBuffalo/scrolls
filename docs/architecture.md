@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (258 tests at the time of writing). The docs themselves
+`uv run pytest` (262 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -67,7 +67,10 @@ Two stores, by design (IDEAS.md §3):
   (YAML 1.2 is a JSON superset, so standard parsers read them with zero
   dependencies). Scrolls can always be rebuilt from the index;
   `markdown_path` is recorded so re-renders keep a stable path
-  (`src/scrolls/render.py`, `tests/test_render.py`).
+  (`src/scrolls/render.py`, `tests/test_render.py`). The full file
+  format — frontmatter keys, body sections, KB page formats, and the
+  stability guarantees consumers may rely on — is specified in
+  `docs/library-format.md`.
 
 The library root is `~/.scrolls`, overridden by `$SCROLLS_HOME` — every
 path derives from the root so tests and portable installs can relocate

@@ -66,7 +66,9 @@ Early implementation. Stack: Python ≥3.11 managed with uv (see
 how the implemented system fits together; `docs/adr/README.md` indexes
 the decision records behind it; `docs/cli.md` documents every command's
 JSON output contract, exit codes, and error envelope with captured real
-output.
+output; `docs/library-format.md` specifies the on-disk artifacts —
+scroll frontmatter and body, compiled `library/` pages, agent files —
+and what consumers of a library may rely on.
 
 Working today:
 

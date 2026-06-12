@@ -14,7 +14,12 @@ import re
 from pathlib import Path
 
 from scrolls import __version__
-from scrolls.db import SCHEMA_VERSION
+from scrolls.agents import _TARGETS
+from scrolls.db import SCHEMA_VERSION, init_db
+from scrolls.items import ScrollItem, insert_item
+from scrolls.kb import _GENERATED_DIRS, compile_kb
+from scrolls.paths import get_paths
+from scrolls.render import _FRONTMATTER_FIELDS, render_markdown
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -78,6 +83,109 @@ def test_ideas_section_references_exist():
         if n not in sections
     ]
     assert not bad, "references to nonexistent IDEAS.md sections: " + ", ".join(bad)
+
+
+_LIBRARY_FORMAT = REPO_ROOT / "docs" / "library-format.md"
+
+# The illustrative item docs/library-format.md describes; its pinned example
+# scroll and KB index are regenerated from this fixture by the tests below,
+# so a format change fails here instead of silently rotting the doc.
+_EXAMPLE_ITEM = ScrollItem(
+    id="arxiv:1706.03762",
+    source="arxiv",
+    url="https://arxiv.org/abs/1706.03762",
+    saved_at="2026-06-12T08:00:00+00:00",
+    source_id="1706.03762",
+    canonical_url="http://arxiv.org/abs/1706.03762v7",
+    title="Attention Is All You Need",
+    author="Ashish Vaswani et al.",
+    published_at="2017-06-12T17:57:34+00:00",
+    raw_text="<the raw Atom entry; stored in the index, never rendered>",
+    extracted_text="The dominant sequence transduction models are based on "
+    "complex recurrent or convolutional neural networks…",
+    summary="We propose the Transformer, a model architecture relying "
+    "entirely on attention.",
+    category="paper",
+    tags=("cs.CL", "cs.LG"),
+    links=("https://arxiv.org/pdf/1706.03762",),
+    media=("https://arxiv.org/pdf/1706.03762",),
+    content_hash="sha256:6d2e1066c2f3aae40f4ea846cebee5ee5cdc77a2f9bb582a0f5a526f70b48aaa",
+    markdown_path="scrolls/arxiv/attention-is-all-you-need.md",
+    provenance={
+        "adapter": "arxiv",
+        "fetched_at": "2026-06-12T08:00:05+00:00",
+        "extraction_method": "arxiv-atom+pypdf",
+    },
+    stage="rendered",
+)
+
+_EXAMPLE_NEIGHBOR = ScrollItem(
+    id="wikipedia:en:SQLite",
+    source="wikipedia",
+    url="https://en.wikipedia.org/wiki/SQLite",
+    saved_at="2026-06-12T09:00:00+00:00",
+    title="SQLite",
+    category="reference",
+    concepts=("Database software",),
+    markdown_path="scrolls/wikipedia/sqlite.md",
+    stage="rendered",
+)
+
+
+def _pinned_block(marker: str) -> str:
+    """The fenced block right after `<!-- pinned: <marker> -->` in the format doc."""
+    text = _LIBRARY_FORMAT.read_text(encoding="utf-8")
+    match = re.search(
+        rf"<!-- pinned: {re.escape(marker)} -->\n+```[^\n]*\n(.*?)```", text, re.DOTALL
+    )
+    assert match, f"docs/library-format.md has no pinned block '{marker}'"
+    return match.group(1)
+
+
+def test_library_format_frontmatter_table_matches_render_fields():
+    """The doc's frontmatter key table lists exactly render's fields, in order."""
+    text = _LIBRARY_FORMAT.read_text(encoding="utf-8")
+    match = re.search(r"<!-- pinned: frontmatter-keys -->\n+((?:\|[^\n]*\n)+)", text)
+    assert match, "docs/library-format.md has no pinned frontmatter key table"
+    rows = match.group(1).splitlines()[2:]  # drop header and separator rows
+    documented = tuple(row.split("|")[1].strip().strip("`") for row in rows)
+    assert documented == _FRONTMATTER_FIELDS, (
+        "docs/library-format.md frontmatter table no longer matches "
+        "render._FRONTMATTER_FIELDS — update the table (order matters)"
+    )
+
+
+def test_library_format_example_scroll_is_render_output():
+    assert _pinned_block("example-scroll") == render_markdown(_EXAMPLE_ITEM), (
+        "docs/library-format.md's example scroll no longer matches "
+        "render_markdown() for the documented fixture item"
+    )
+
+
+def test_library_format_kb_index_example_matches_compiler_output(tmp_path):
+    paths = get_paths(tmp_path / "home")
+    paths.root.mkdir(parents=True)
+    init_db(paths.db_path)
+    insert_item(paths.db_path, _EXAMPLE_ITEM)
+    insert_item(paths.db_path, _EXAMPLE_NEIGHBOR)
+    compile_kb(paths)
+    index = (paths.library_dir / "index.md").read_text(encoding="utf-8")
+    assert index == _pinned_block("example-kb-index"), (
+        "docs/library-format.md's example library/index.md no longer matches "
+        "compile_kb() output for the documented fixture items"
+    )
+
+
+def test_library_format_names_every_generated_artifact():
+    """Generated KB dirs and agent install paths must appear in the doc."""
+    text = _LIBRARY_FORMAT.read_text(encoding="utf-8")
+    missing = [f"library/{name}/" for name in _GENERATED_DIRS
+               if f"library/{name}/" not in text]
+    missing += [relpath for relpath in _TARGETS if relpath not in text]
+    assert not missing, (
+        "docs/library-format.md no longer mentions generated artifacts: "
+        + ", ".join(missing)
+    )
 
 
 def test_cli_reference_capture_pin_matches_code():
