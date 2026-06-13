@@ -537,7 +537,31 @@ the body else the engagement status ("142 points, 4 comments"). Like Hacker
 News, Lobsters, and the social posts, it gets *no* category default, and the
 whole `{post, comments}` stays in `raw_text`. We target API v3, the
 near-universal backwards-compatible surface; Lemmy 1.0's v4 keeps it
-working). Items from sources without an adapter yet (today only `x`) are
+working). The same `/post/<digits>` shape is also served by **PieFed**
+(see `docs/adr/0053-piefed-adapter.md`: PieFed is the *other* federated
+link aggregator, and its post URL is byte-identical to Lemmy's — same
+`/post/<integer-id>` shape — so it can't be told apart at detection. But its
+API is its own: `/api/alpha` rather than Lemmy's `/api/v3`, with diverging
+field names (`post.title` not `post.name`, `creator.user_name` not `name`,
+`comment.body` not `content`, a `post_type` enum rather than
+`url_content_type`). So PieFed can't ride Lemmy's adapter the way GoToSocial
+rides Mastodon's, nor be its own detected source the way Misskey is — it is a
+hybrid: its own *adapter* on Lemmy's *source*, reached by a fetch-time
+fallback the way DataCite sits behind Crossref (ADR 0045). A new
+`threadiverse` dispatcher backs the `lemmy` source: it tries Lemmy's
+`/api/v3` first — Lemmy is far more deployed, so only a PieFed post pays the
+one wasted request — and falls back to PieFed's `/api/alpha` when Lemmy 404s
+the instance. Identity stays `lemmy:<host>/<id>`, minted before the backend
+is knowable, and `provenance.adapter="piefed"` records which implementation
+answered. The adapter mirrors Lemmy's behavior under the field-name mapping:
+post + comments in two GETs, the flat comments sorted into thread pre-order by
+their integer `path` and bylined, an image post told by `post_type=="Image"`,
+a link/video post's `url` a `link` (so a PieFed video pointing at a YouTube
+URL becomes a cross-source edge), cross-posts — which PieFed nests with a
+`post_id` and no `ap_id` — becoming same-instance `/post/<id>` post↔post
+links, the community a `concept`, no category default, and the `Poll`/`Event`
+payloads kept in `raw_text` for a future render). Items from sources without
+an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
@@ -914,12 +938,19 @@ the flat comments sorted into thread pre-order by their `path` and bylined
 like Lobsters, a *real* title (it is an aggregator entry, not a synthesized
 social post), the link/text/image post handled by `url_content_type`, body
 URLs and `cross_posts` as edges, the community as a concept, classified with
-no category default (ADR 0052). Next candidates: **PieFed** as a fourth
-Fediverse API (it serves an `/api/alpha` namespace, so likely its own
-source/adapter rather than a `lemmy` route — the Misskey-vs-mastodon-forks
-judgment again); home-instance-canonical Mastodon/Misskey/Lemmy and
+no category default (ADR 0052), and a keyless **PieFed** adapter joining it on
+the *same* `lemmy` source — PieFed shares Lemmy's byte-identical
+`/post/<digits>` URL (so it can't be told apart at detection) but speaks its
+own `/api/alpha` API with diverging field names (so it can't ride Lemmy's
+adapter either), making it a hybrid: its own *adapter* on Lemmy's *source*,
+reached by a fetch-time `threadiverse` dispatcher (Lemmy first, PieFed
+fallback) the way DataCite sits behind Crossref, with `source="lemmy"` kept
+and `provenance.adapter="piefed"` recording the truth (ADR 0053). Next
+candidates: **Mbin** as a third link aggregator (its thread URL
+`/m/<magazine>/t/<id>` is a *distinct* shape, so it would detect separately,
+unlike PieFed); home-instance-canonical Mastodon/Misskey/Lemmy and
 DID-canonical Bluesky identity so a post saved through two routes dedupes —
-the fetch-time id rewrite no adapter does yet (ADR 0048–0052); a third DOI
+the fetch-time id rewrite no adapter does yet (ADR 0048–0053); a third DOI
 registration agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or
 two-phase batch submit/collect if a terminal wait ever outgrows the library
 (ADR 0022, ADR 0032). A native `x` fetch adapter
