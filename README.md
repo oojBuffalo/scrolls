@@ -191,9 +191,25 @@ github repo topics, the trove classifiers become `tags` like arXiv
 codes, and the declared project URLs become `links` — so a package's
 Source link to its github repo connects them in `scrolls related`. A
 PyPI package classifies as `tool`, the first rule to produce that
-category; search/user/help pages register but have no package to fetch).
-Items from sources without an adapter yet (today only `x`) are
-skipped, and per-item failures don't abort the batch.
+category; search/user/help pages register but have no package to fetch),
+and **npm** (the keyless npm registry — see
+`docs/adr/0035-npm-adapter.md`: a saved `npmjs.com/package/<name>` page
+becomes a clean scroll from the package's latest-release metadata, the
+JavaScript sibling of the PyPI adapter. Identity is the package name
+preserved verbatim — the registry is case-sensitive, so unlike PyPI it
+is not folded — with scoped names (`@babel/core`) and version pages
+handled. The README is the searchable content, taken from the registry's
+packument when present and otherwise extracted from the published
+tarball (`dist.tarball`, a capped download) — the fallback that matters,
+because the packument's README is empty for high-traffic packages like
+`express` and `react`. Author-declared keywords become `concepts` like
+github repo topics; npm has no trove-classifier analog so `tags` stay
+empty; and the homepage and repository become `links`, the repository's
+`git+https://…​.git` form normalized to a clean URL so a package's repo
+connects to it in `scrolls related`. An npm package classifies as
+`tool` like a PyPI one; search/user/org pages register but have no
+package to fetch). Items from sources without an adapter yet (today
+only `x`) are skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -463,10 +479,15 @@ becomes a clean scroll from the project's latest-release metadata —
 keywords as concepts, classifiers as tags, the source-repo URL as a
 `related` edge, and the package classified as `tool` (the first rule to
 produce that category), with the package name PEP 503-normalized so a
-version-pinned page dedupes to the package (ADR 0034). Next candidates: a
+version-pinned page dedupes to the package (ADR 0034), and a keyless npm
+adapter — the JavaScript sibling — so a saved `npmjs.com/package/<name>`
+becomes a clean scroll with its README pulled from the registry packument
+or, when that is empty (as it is for high-traffic packages), from the
+published tarball, keywords as concepts and the normalized repository URL
+as the package↔repo `related` edge (ADR 0035). Next candidates: a
 native `x` fetch adapter so saved tweets enrich beyond the Field Theory
-import; more package registries (npm, crates.io) following the PyPI
-pattern; or two-phase batch submit/collect if a terminal wait ever
-outgrows the library (ADR 0022, ADR 0032).
+import; more package registries (crates.io and friends) following the
+PyPI/npm pattern; or two-phase batch submit/collect if a terminal wait
+ever outgrows the library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

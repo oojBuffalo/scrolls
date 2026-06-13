@@ -29,12 +29,33 @@ class ConditionalText:
     not_modified: bool = False
 
 
-def get_bytes(url: str, headers: dict[str, str] | None = None) -> bytes:
+def get_bytes(
+    url: str, headers: dict[str, str] | None = None, max_bytes: int | None = None
+) -> bytes:
+    """GET the URL's bytes, optionally refusing a body larger than `max_bytes`.
+
+    With `max_bytes` set the body is read in chunks and a ValueError is
+    raised the moment it would exceed the cap, so a caller that only wants
+    a small file (a package README inside a tarball, say) never buffers an
+    unexpectedly huge download.
+    """
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-        return response.read()
+        if max_bytes is None:
+            return response.read()
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(f"response body exceeds {max_bytes} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 def get_text(url: str, headers: dict[str, str] | None = None) -> str:

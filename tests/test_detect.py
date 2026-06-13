@@ -103,6 +103,21 @@ CASES = [
     ("https://pypi.org/search/?q=http", "pypi", None),
     ("https://pypi.org/user/someone/", "pypi", None),
     ("https://pypi.org/help/", "pypi", None),
+    # --- npm ---
+    ("https://www.npmjs.com/package/express", "npm", "express"),
+    # a versioned page is the same package: identity is the name only
+    ("https://www.npmjs.com/package/express/v/4.18.2", "npm", "express"),
+    ("https://npmjs.com/package/chalk", "npm", "chalk"),
+    # scoped packages keep the @scope/name shape
+    ("https://www.npmjs.com/package/@babel/core", "npm", "@babel/core"),
+    ("https://www.npmjs.com/package/@babel/core/v/7.24.0", "npm", "@babel/core"),
+    # the registry is case-sensitive, so the name is preserved verbatim
+    ("https://www.npmjs.com/package/JSONStream", "npm", "JSONStream"),
+    # search, user, and org pages: source known, package unknown
+    ("https://www.npmjs.com/", "npm", None),
+    ("https://www.npmjs.com/search?q=http", "npm", None),
+    ("https://www.npmjs.com/~someone", "npm", None),
+    ("https://www.npmjs.com/package", "npm", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

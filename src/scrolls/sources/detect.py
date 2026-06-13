@@ -18,6 +18,7 @@ GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
+NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -81,6 +82,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in PYPI_HOSTS:
         return DetectedSource("pypi", _pypi_id(path_parts))
+
+    if host in NPM_HOSTS:
+        return DetectedSource("npm", _npm_id(path_parts))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -187,6 +191,36 @@ def _normalize_project_name(name: str) -> str | None:
     """Canonical PyPI project name (PEP 503): case-folded, `[-_.]` runs to one `-`."""
     normalized = re.sub(r"[-_.]+", "-", unquote(name)).strip("-").lower()
     return normalized or None
+
+
+def _npm_id(path_parts: list[str]) -> str | None:
+    """The package name for a `/package/<name>[/v/<version>]` URL, else None.
+
+    The name may be scoped (`@scope/name`, three URL segments after
+    `package`), and a `/v/<version>` suffix is ignored: a version page is
+    the same package, identity is the name only — the PyPI pattern
+    (ADR 0034). Unlike PyPI's PEP 503 fold, the name is preserved
+    verbatim because the npm registry is case-sensitive (legacy
+    mixed-case packages like `JSONStream` 404 when lowercased), so
+    folding could break the fetch. Search, user (`~name`), and org pages
+    carry no package name and resolve to the source with no fetchable
+    item — github's and PyPI's pattern.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "package":
+        return None
+    first = unquote(path_parts[1]).strip()
+    if first.startswith("@"):
+        # Scoped: `@scope/name`. Normally three segments, but a
+        # percent-encoded slash (`@scope%2Fname`) decodes whole here.
+        if "/" in first:
+            name = first
+        elif len(path_parts) >= 3:
+            name = f"{first}/{unquote(path_parts[2]).strip()}"
+        else:
+            return None
+    else:
+        name = first
+    return name or None
 
 
 def _hackernews_id(path_parts: list[str], query: str) -> str | None:

@@ -44,6 +44,12 @@ def test_pypi_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_npm_is_a_tool():
+    # An npm package is a published thing you install and use, like a PyPI one.
+    item = make_item(source="npm", title="express")
+    assert classify_item(item).category == "tool"
+
+
 def test_curated_platform_default_beats_title_pattern():
     # A wikipedia page titled like a tutorial is still an encyclopedia entry.
     item = make_item(source="wikipedia", title="How to Solve It")

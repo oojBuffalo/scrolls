@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (717 tests at the time of writing). The docs themselves
+`uv run pytest` (754 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -150,9 +150,12 @@ Two small contracts make every platform the same kind of scroll
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
    host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
    `hackernews`, the `stackexchange` network (every site's question
-   URL, the per-site API slug carried in `source_id`), and `pypi`
+   URL, the per-site API slug carried in `source_id`), `pypi`
    (project pages, the PEP 503-normalized package name as `source_id` so
-   a versioned page dedupes to the package); `.pdf` paths map
+   a versioned page dedupes to the package), and `npm` (package pages,
+   the package name verbatim as `source_id` — the registry is
+   case-sensitive, so unlike PyPI it is not folded — scoped names and
+   version pages included); `.pdf` paths map
    to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -176,6 +179,7 @@ Implemented fetch adapters, all keyless:
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
 | stackexchange | `sources/stackexchange.py` | keyless Stack Exchange API, stdlib only; optional second GET for answers | one adapter for the whole network (site in `source_id`); question + accepted-first top answers → `extracted_text`; tags → `concepts`; degrades to question-only | 0033 |
 | pypi | `sources/pypi.py` | keyless PyPI JSON API, stdlib only | latest-release metadata; description (README) → searchable text; keywords → `concepts`, classifiers → `tags`, project URLs → `links` (package↔repo edge); `pypi → tool`; degrades to metadata-only | 0034 |
+| npm | `sources/npm.py` | keyless registry JSON, stdlib only; capped `dist.tarball` GET when the packument has no README | latest-release metadata; README from packument or, when empty (common for high-traffic packages), its tarball → searchable text; keywords → `concepts` (no classifier analog, `tags` empty); homepage + normalized repository → `links` (package↔repo edge); `npm → tool`; degrades to metadata-only | 0035 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
