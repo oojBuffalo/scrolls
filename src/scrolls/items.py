@@ -116,6 +116,20 @@ def replace_items(db_path: Path, remove_ids: list[str], item: ScrollItem) -> Non
         conn.close()
 
 
+def delete_item(db_path: Path, item_id: str) -> bool:
+    """Delete one item row; return False if no such row.
+
+    The FTS delete trigger keeps the search index in sync (ADR 0027).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        return cursor.rowcount == 1
+    finally:
+        conn.close()
+
+
 def get_item(db_path: Path, item_id: str) -> ScrollItem | None:
     """Fetch one item by id, or None if absent."""
     conn = sqlite3.connect(db_path)

@@ -99,6 +99,7 @@ uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
 uv run scrolls classify --engine llm  # LLM pass: category + domain + concepts (needs ANTHROPIC_API_KEY)
 uv run scrolls classify --engine llm --batch  # same LLM pass via the Batches API at half price
 uv run scrolls set <id> category=tool tags=a,b  # set classification fields by hand; empty value clears
+uv run scrolls rm <id-or-url> [...]  # remove items and the files they own, as JSON
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
@@ -261,6 +262,19 @@ so the item is batch-classifiable again, and a set category sticks
 because batch runs never overwrite one. Rendered scrolls re-render so
 frontmatter stays in sync.
 
+`scrolls rm <id-or-url>...` takes items back out — the row, the
+rendered scroll, and any captured media files, with the search index
+following automatically (see `docs/adr/0027-rm-command.md`). A ref can
+be the item id or the URL that saved it, in any tracking-decorated
+spelling (ADR 0023's normalization applies), so the receipt from `add`
+is also the handle for undoing it — and re-adding the echoed URL
+reconstructs the item from the source. Files are deleted before the
+row, so an interrupted removal is re-runnable rather than leaving
+orphan files. There is no tombstone: an item still listed in a followed
+feed returns on the next `sync`, so `unfollow` first when pruning a
+feed; KB pages mentioning the removed scroll stay until the next
+`scrolls kb`.
+
 `config.toml`'s `[classify]` section makes both choices sticky per
 library (see `docs/adr/0016-config-toml-classify-section.md`):
 `default_engine = "llm"` routes a bare `scrolls classify` to the LLM
@@ -349,8 +363,9 @@ one uniform UTC ISO 8601 vocabulary from every writer (ADR 0024), and
 both halves of IDEAS.md §9 — the deterministic KB compiler and the
 LLM concept engine behind `kb --engine llm` (ADR 0025) — and
 `scrolls doctor` to find and repair index/file-tree drift, including
-the pre-normalization duplicates ADR 0023 deferred (ADR 0026). Next
-candidate: a Batches transport for concept summaries if libraries
-outgrow per-call generation (ADR 0025).
+the pre-normalization duplicates ADR 0023 deferred (ADR 0026), and
+`scrolls rm` to take items — row, scroll file, captured media — back
+out of the library (ADR 0027). Next candidate: a Batches transport for
+concept summaries if libraries outgrow per-call generation (ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

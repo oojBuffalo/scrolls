@@ -7,6 +7,7 @@ import pytest
 from scrolls.db import init_db
 from scrolls.items import (
     ScrollItem,
+    delete_item,
     get_item,
     insert_item,
     list_items,
@@ -180,3 +181,13 @@ def test_replace_items_may_reuse_a_removed_id(db_path):
                        url="https://example.com/post", title="Rewritten")
     replace_items(db_path, ["web:only"], merged)
     assert get_item(db_path, "web:only").title == "Rewritten"
+
+
+def test_delete_item_removes_the_row(db_path):
+    insert_item(db_path, make_item())
+    assert delete_item(db_path, "youtube:abc123") is True
+    assert get_item(db_path, "youtube:abc123") is None
+
+
+def test_delete_item_reports_absent_id(db_path):
+    assert delete_item(db_path, "youtube:nope") is False

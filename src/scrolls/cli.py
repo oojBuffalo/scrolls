@@ -40,6 +40,7 @@ from scrolls.paths import get_paths
 from scrolls.pipeline import ensure_library, ingest_url, register_url
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
+from scrolls.remove import remove_item, resolve_item_id
 from scrolls.render import write_scroll
 from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
@@ -238,6 +239,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Maximum hits to return (default {DEFAULT_RELATED_LIMIT})",
     )
 
+    rm_parser = subparsers.add_parser(
+        "rm", help="Remove items and the files they own (JSON output)"
+    )
+    rm_parser.add_argument(
+        "refs",
+        nargs="+",
+        metavar="id-or-url",
+        help="Item id, or the item's URL — resolved to the same id "
+        "`scrolls add` would mint, so the URL that saved an item removes it",
+    )
+
     search_parser = subparsers.add_parser(
         "search", help="Full-text search over items (JSON output)"
     )
@@ -323,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_paths()
     if args.command == "related":
         return _cmd_related(args.id, args.limit)
+    if args.command == "rm":
+        return _cmd_rm(args.refs)
     if args.command == "search":
         return _cmd_search(args.query, args.limit)
     if args.command == "set":
@@ -851,6 +865,46 @@ def _cmd_related(item_id: str, limit: int) -> int:
         hit["reasons"] = list(hit["reasons"])
     print(json.dumps(payload))
     return 0
+
+
+def _cmd_rm(refs: list[str]) -> int:
+    paths = get_paths()
+    results = []
+    counts = {"removed": 0, "failed": 0}
+    for ref in refs:
+        try:
+            item_id = resolve_item_id(ref)
+        except ValueError as exc:
+            counts["failed"] += 1
+            results.append({"ref": ref, "status": "failed", "error": str(exc)})
+            continue
+        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        if item is None:
+            counts["failed"] += 1
+            results.append(
+                {"ref": ref, "status": "failed", "error": f"no such item: {item_id}"}
+            )
+            continue
+        try:
+            files = remove_item(paths, item)
+        except (OSError, ValueError) as exc:
+            counts["failed"] += 1
+            results.append({"ref": ref, "status": "failed", "error": str(exc)})
+            continue
+        counts["removed"] += 1
+        # url is the receipt: `scrolls add <url>` re-registers the item
+        results.append(
+            {
+                "ref": ref,
+                "id": item.id,
+                "url": item.url,
+                "status": "removed",
+                "files": files,
+            }
+        )
+
+    print(json.dumps({**counts, "results": results}))
+    return 1 if counts["failed"] else 0
 
 
 def _cmd_search(query: str, limit: int) -> int:

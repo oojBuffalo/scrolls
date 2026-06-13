@@ -289,6 +289,15 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
+- **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
+  files (scroll, captured media) and then its row, in that order, so an
+  interrupted removal leaves a re-runnable item rather than orphan
+  files; the FTS delete trigger keeps search in sync. Refs are ids or
+  URLs resolved through the same normalize → detect → mint chain as
+  `add`, and every recorded path is validated against the library root
+  before anything is deleted. No tombstone: a still-followed feed
+  re-registers the entry on the next sync. Deliberately not exposed
+  over MCP, like doctor (`tests/test_remove.py`).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,

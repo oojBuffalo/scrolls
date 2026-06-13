@@ -1,5 +1,6 @@
 """Tests for the `scrolls` CLI entry point."""
 
+import dataclasses
 import json
 
 import pytest
@@ -10,6 +11,7 @@ from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
 from scrolls.paths import get_paths
 from scrolls.items import ScrollItem, get_item, insert_item, update_item
+from scrolls.render import write_scroll
 
 
 @pytest.fixture
@@ -1773,3 +1775,84 @@ def test_set_unrendered_item_skips_rerender(scrolls_home, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["category"] == "tool" and payload["markdown_path"] is None
     assert get_item(get_paths().db_path, "x:7777").category == "tool"
+
+
+def test_rm_removes_item_and_its_files(scrolls_home, capsys):
+    main(["add", "https://x.com/karpathy/status/1111"])
+    item = get_item(get_paths().db_path, "x:1111")
+    rendered = write_scroll(
+        get_paths(),
+        dataclasses.replace(
+            item, title="A tweet", extracted_text="text", stage="fetched"
+        ),
+    )
+    update_item(get_paths().db_path, rendered)
+    capsys.readouterr()
+
+    exit_code = main(["rm", "x:1111"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "removed": 1,
+        "failed": 0,
+        "results": [
+            {
+                "ref": "x:1111",
+                "id": "x:1111",
+                "url": "https://x.com/karpathy/status/1111",
+                "status": "removed",
+                "files": [rendered.markdown_path],
+            }
+        ],
+    }
+    assert get_item(get_paths().db_path, "x:1111") is None
+    assert not (scrolls_home / rendered.markdown_path).exists()
+
+
+def test_rm_accepts_the_url_that_added_the_item(scrolls_home, capsys):
+    main(["add", "https://example.com/post?utm_source=newsletter"])
+    capsys.readouterr()
+
+    # the clean spelling resolves to the same id (ADR 0023 normalization)
+    exit_code = main(["rm", "https://example.com/post"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == 1
+    assert payload["results"][0]["status"] == "removed"
+    assert main(["list"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_rm_unknown_id_fails_with_batch_payload(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+
+    exit_code = main(["rm", "web:nope"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == 0 and payload["failed"] == 1
+    assert payload["results"][0] == {
+        "ref": "web:nope",
+        "status": "failed",
+        "error": "no such item: web:nope",
+    }
+
+
+def test_rm_continues_past_failures_and_exits_nonzero(scrolls_home, capsys):
+    main(["add", "https://x.com/karpathy/status/1111"])
+    capsys.readouterr()
+
+    exit_code = main(["rm", "web:nope", "x:1111", "ftp://bad"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == 1 and payload["failed"] == 2
+    statuses = [result["status"] for result in payload["results"]]
+    assert statuses == ["failed", "removed", "failed"]
+    assert get_item(get_paths().db_path, "x:1111") is None
+
+
+def test_rm_before_init_fails(scrolls_home, capsys):
+    exit_code = main(["rm", "x:1111"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == 0 and payload["failed"] == 1

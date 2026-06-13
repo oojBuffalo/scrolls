@@ -20,11 +20,12 @@ claim cites the test that locks it; unless noted, tests live in
   Nothing is printed to stdout in that case
   (`test_detect_rejects_non_http_url`, `test_show_unknown_id_is_an_error`).
 - **Batch commands report per-item results.** `fetch`, `classify`, `md`,
-  `media`, `sync`, `import fieldtheory`, and `kb --engine llm` process
-  every item (for `sync`, every subscription; for `kb --engine llm`,
-  every qualifying concept), never abort mid-batch, and exit 1 if
-  **any** item *failed* — skipped items do not
-  fail the run (`test_fetch_continues_past_failures_and_exits_nonzero`,
+  `media`, `rm`, `sync`, `import fieldtheory`, and `kb --engine llm`
+  process every item (for `rm`, every ref; for `sync`, every
+  subscription; for `kb --engine llm`, every qualifying concept), never
+  abort mid-batch, and exit 1 if **any** item *failed* — skipped items
+  do not fail the run
+  (`test_fetch_continues_past_failures_and_exits_nonzero`,
   `test_fetch_all_skips_sources_without_adapter`,
   `test_media_continues_past_failures_and_exits_nonzero`,
   `test_sync_continues_past_feed_failures_and_exits_nonzero`).
@@ -549,6 +550,46 @@ $ scrolls media x:1111                # this bookmark has no media refs
 [exit 0]
 ```
 
+### `scrolls rm <id-or-url>...`
+
+Remove items: the row, the rendered scroll, and captured media files —
+the search index follows via the FTS delete trigger
+(`test_removed_item_leaves_the_search_index`, `tests/test_remove.py`).
+Each ref is an item id, or a URL resolved to the id `add` would mint —
+normalization included, so any tracking-decorated spelling of the saved
+URL is a valid handle (`test_rm_accepts_the_url_that_added_the_item`).
+Files are deleted before the row, so an interrupted removal leaves a
+re-runnable item, never orphan files
+(`test_remove_rejects_paths_escaping_the_root` also locks the guard:
+a recorded path escaping the library root fails its item before
+anything is deleted). Batch semantics
+(`test_rm_continues_past_failures_and_exits_nonzero`): per-ref results,
+exit 1 if any ref failed.
+
+Two things `rm` deliberately does not do (ADR 0027): KB pages
+referencing the removed scroll stay until the next `scrolls kb`, and
+there is no tombstone — an item still listed in a followed feed returns
+on the next `sync`, so `unfollow` first when pruning a feed.
+
+| Key | Meaning |
+| --- | --- |
+| `removed` / `failed` | batch counts (per ref) |
+| `results[]` | per-ref `{ref, status, ...}`; on success `id`, `url` (the re-add receipt: `scrolls add <url>` re-registers the item), and `files` — deleted root-relative paths |
+
+```console
+$ scrolls rm x:3333                          # registered but never fetched
+{"removed": 1, "failed": 0, "results": [{"ref": "x:3333", "id": "x:3333", "url": "https://x.com/karpathy/status/3333", "status": "removed", "files": []}]}
+[exit 0]
+
+$ scrolls rm https://x.com/simonw/status/2222     # by URL: files go too
+{"removed": 1, "failed": 0, "results": [{"ref": "https://x.com/simonw/status/2222", "id": "x:2222", "url": "https://x.com/simonw/status/2222", "status": "removed", "files": ["scrolls/x/simonw-attention-is-all-you-need-still-holds-up-a-guide-to-reading-it-prope.md"]}]}
+[exit 0]
+
+$ scrolls rm x:2222 x:1111                   # x:2222 is already gone
+{"removed": 1, "failed": 1, "results": [{"ref": "x:2222", "status": "failed", "error": "no such item: x:2222"}, {"ref": "x:1111", "id": "x:1111", "url": "https://x.com/karpathy/status/1111", "status": "removed", "files": ["scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md"]}]}
+[exit 1]
+```
+
 ## Reading the library
 
 ### `scrolls list [--source S] [--stage S] [--category C]`
@@ -875,6 +916,9 @@ rm "$SCROLLS_HOME"/scrolls/x/karpathy-*.md        # ... and a lost scroll file
 scrolls doctor                                    # 2 findings: exit 1
 scrolls doctor --fix                              # merged + rewritten: exit 0
 scrolls doctor                                    # healthy again
+scrolls rm x:3333                                 # never fetched: row only
+scrolls rm https://x.com/simonw/status/2222       # by URL; scroll file too
+scrolls rm x:2222 x:1111                          # one already gone: exit 1
 ```
 
 (Stop the feed server with `kill %1` when done.)
