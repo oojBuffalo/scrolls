@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (754 tests at the time of writing). The docs themselves
+`uv run pytest` (824 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -152,11 +152,14 @@ Two small contracts make every platform the same kind of scroll
    `hackernews`, the `stackexchange` network (every site's question
    URL, the per-site API slug carried in `source_id`), `pypi`
    (project pages, the PEP 503-normalized package name as `source_id` so
-   a versioned page dedupes to the package), and `npm` (package pages,
+   a versioned page dedupes to the package), `npm` (package pages,
    the package name verbatim as `source_id` — the registry is
    case-sensitive, so unlike PyPI it is not folded — scoped names and
-   version pages included); `.pdf` paths map
-   to `pdf`; everything else is `web`. A
+   version pages included), `crates` (crate pages, the name folded
+   case-insensitively like a PyPI one so a version page dedupes), and
+   `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
+   lowercase as `source_id` since DOIs are case-insensitive); `.pdf`
+   paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
 2. **Fetching** — a function `ScrollItem -> ScrollItem` that fills in
@@ -180,6 +183,8 @@ Implemented fetch adapters, all keyless:
 | stackexchange | `sources/stackexchange.py` | keyless Stack Exchange API, stdlib only; optional second GET for answers | one adapter for the whole network (site in `source_id`); question + accepted-first top answers → `extracted_text`; tags → `concepts`; degrades to question-only | 0033 |
 | pypi | `sources/pypi.py` | keyless PyPI JSON API, stdlib only | latest-release metadata; description (README) → searchable text; keywords → `concepts`, classifiers → `tags`, project URLs → `links` (package↔repo edge); `pypi → tool`; degrades to metadata-only | 0034 |
 | npm | `sources/npm.py` | keyless registry JSON, stdlib only; capped `dist.tarball` GET when the packument has no README | latest-release metadata; README from packument or, when empty (common for high-traffic packages), its tarball → searchable text; keywords → `concepts` (no classifier analog, `tags` empty); homepage + normalized repository → `links` (package↔repo edge); `npm → tool`; degrades to metadata-only | 0035 |
+| crates | `sources/crates.py` | keyless crates.io JSON API + capped `.crate` tarball GET for the README | displayed-version metadata; raw README from the `.crate` tarball → searchable text; keywords → `concepts`, curated category taxonomy → `tags`; homepage/docs/normalized repository → `links` (crate↔repo edge); `crates → tool`; degrades to metadata-only | 0036 |
+| crossref | `sources/crossref.py` | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -390,7 +395,16 @@ Next steps already identified in decision records, in no required order:
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs
   weighed and deferred has an obvious home in the shared `llm.py`.
-- **More package registries** — the PyPI adapter (ADR 0034) sets the
-  pattern: npm, crates.io, and friends share the JSON-metadata shape and
-  the keywords→`concepts` / source-URL→`links` mapping, each a small
-  adapter.
+- **More package registries** — the PyPI adapter (ADR 0034) set the
+  pattern and npm (0035) and crates.io (0036) followed it; RubyGems,
+  Packagist, and Go modules share the same JSON-metadata shape and the
+  keywords→`concepts` / source-URL→`links` mapping, each a small adapter.
+- **A DataCite DOI adapter** — Crossref (ADR 0037) covers the published
+  literature behind a `doi.org` link, but dataset and software DOIs are
+  registered with DataCite and 404 against Crossref. A DataCite adapter
+  on the same `doi.org` detection, chosen by a fetch-time fallback, would
+  extend DOI coverage to those without a new URL shape.
+- **Linking preprints to their published versions** — arXiv (ADR 0008)
+  and Crossref (ADR 0037) both land in the `paper` category, but a saved
+  `arxiv.org/abs/X` and the `doi.org/10.…` of its published version are
+  distinct items; the DOI arXiv records in its metadata is the join.

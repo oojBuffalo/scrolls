@@ -20,6 +20,9 @@ HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
+# doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
+# Both carry the DOI as the whole path, handled by the Crossref adapter.
+DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -89,6 +92,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in CRATES_HOSTS:
         return DetectedSource("crates", _crates_id(path_parts))
+
+    if host in DOI_HOSTS:
+        return DetectedSource("crossref", _crossref_id(path_parts))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -249,6 +255,26 @@ def _normalize_crate_name(name: str) -> str | None:
     """Canonical crates.io lookup name: case-folded, `[-_]` runs to one `-`."""
     normalized = re.sub(r"[-_]+", "-", unquote(name)).strip("-").lower()
     return normalized or None
+
+
+_DOI_RE = re.compile(r"^10\.\d{4,}/.+$")
+
+
+def _crossref_id(path_parts: list[str]) -> str | None:
+    """The DOI for a `doi.org/<doi>` URL, lowercased, else None.
+
+    A DOI is `10.<registrant>/<suffix>` and the suffix may itself contain
+    slashes, so the whole path is the identifier (path segments rejoined,
+    percent-decoded). DOIs are case-insensitive — the DOI Handbook §2.4 —
+    and Crossref stores them lowercased, so the id is folded: `doi.org`
+    and the legacy `dx.doi.org`, and any case variant, dedupe to one item.
+    The canonical published form is read back from the Crossref response.
+    The bare resolver host and non-DOI paths carry no fetchable item.
+    """
+    if not path_parts:
+        return None
+    doi = unquote("/".join(path_parts)).strip().lower()
+    return doi if _DOI_RE.match(doi) else None
 
 
 def _hackernews_id(path_parts: list[str], query: str) -> str | None:

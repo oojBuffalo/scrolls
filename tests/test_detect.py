@@ -132,6 +132,21 @@ CASES = [
     ("https://crates.io/search?q=http", "crates", None),
     ("https://crates.io/users/dtolnay", "crates", None),
     ("https://crates.io/categories/encoding", "crates", None),
+    # --- crossref (doi.org) ---
+    ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
+    # the suffix may itself contain slashes; the whole path is the DOI
+    ("https://doi.org/10.1000/182/sub", "crossref", "10.1000/182/sub"),
+    # DOIs are case-insensitive: the id is folded lowercase to dedupe
+    ("https://doi.org/10.1145/ABC.DEF", "crossref", "10.1145/abc.def"),
+    # the legacy dx.doi.org resolver dedupes to the same item
+    ("https://dx.doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
+    # percent-encoded suffix characters decode
+    ("https://doi.org/10.1007/978-3-319-10590-1_53", "crossref",
+     "10.1007/978-3-319-10590-1_53"),
+    # the bare resolver and non-DOI paths: source known, item unknown
+    ("https://doi.org/", "crossref", None),
+    ("https://doi.org/about", "crossref", None),
+    ("https://doi.org/not-a-doi", "crossref", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

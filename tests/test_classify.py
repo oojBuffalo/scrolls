@@ -38,6 +38,12 @@ def test_github_is_project():
     assert classify_item(item).category == "project"
 
 
+def test_crossref_is_paper():
+    # A Crossref work is a published paper, arXiv's preprint sibling.
+    item = make_item(source="crossref", title="node2vec: Scalable Feature Learning")
+    assert classify_item(item).category == "paper"
+
+
 def test_pypi_is_a_tool():
     # A published package is something you install and use, not a repo to read.
     item = make_item(source="pypi", title="rich")

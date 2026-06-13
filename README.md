@@ -225,9 +225,29 @@ taxonomy's display names become `tags` like PyPI classifiers; and the
 homepage, `docs.rs` docs, and repository become `links`, the repository
 normalized so a crate's repo connects to it in `scrolls related`. A
 crate classifies as `tool` like a PyPI or npm package;
-search/user/category pages register but have no crate to fetch). Items
-from sources without an adapter yet (today only `x`) are skipped, and
-per-item failures don't abort the batch.
+search/user/category pages register but have no crate to fetch), and
+**crossref** (the keyless Crossref DOI metadata API — see
+`docs/adr/0037-crossref-doi-adapter.md`: a saved `doi.org/<doi>` link
+becomes a clean scroll from the work's registered metadata instead of a
+redirect into whatever publisher page — often a paywall — the DOI
+resolves to. Identity is the DOI folded lowercase — DOIs are
+case-insensitive, so `doi.org` and the legacy `dx.doi.org`, and any case
+variant, dedupe to one `crossref:10.…` item, the canonical form read
+back from the response. Crossref carries metadata only, so the JATS-XML
+abstract — when one exists — is stripped to a plain `summary` that FTS
+indexes, with no `extracted_text` (there is no full text); a record with
+no abstract is an honest metadata-only scroll of title, authors, venue,
+and date, still far better than the `web` scrape it replaces. The
+`subject` categories become `concepts` like github topics, the work
+`type` (`journal-article`, `proceedings-article`, …) and its publication
+venue become `tags`, and only the publisher's landing page becomes a
+`link` — a work's `reference` DOIs run to hundreds and are deliberately
+not turned into links. `published_at` follows Crossref's date precedence
+(`issued` first, `created` last). A Crossref work classifies as `paper`
+like an arXiv preprint, so Scrolls covers both halves of the literature;
+the bare resolver and non-DOI paths register but have no work to fetch).
+Items from sources without an adapter yet (today only `x`) are skipped,
+and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -509,11 +529,17 @@ crate's displayed-version metadata, its README extracted from the
 published `.crate` tarball (the crate JSON carries no inline README), the
 name folded like a PyPI one since crates.io is case-insensitive, keywords
 as concepts, the curated category taxonomy as tags, and the normalized
-repository URL as the crate↔repo `related` edge (ADR 0036). Next
+repository URL as the crate↔repo `related` edge (ADR 0036), and a keyless
+Crossref adapter so a saved `doi.org/<doi>` link becomes a clean scroll
+from the work's registered metadata — title, authors, venue, date, and a
+JATS abstract reduced to plain text — instead of a redirect into a
+publisher paywall, classified as `paper` alongside arXiv so Scrolls now
+spans both preprints and the published literature (ADR 0037). Next
 candidates: a native `x` fetch adapter so saved tweets enrich beyond the
-Field Theory import; more package registries (RubyGems, Packagist, Go
-modules) following the PyPI/npm/crates pattern; or two-phase batch
-submit/collect if a terminal wait ever outgrows the library (ADR 0022,
-ADR 0032).
+Field Theory import; a DataCite adapter on the same `doi.org` detection
+for dataset DOIs Crossref doesn't hold; more package registries
+(RubyGems, Packagist, Go modules) following the PyPI/npm/crates pattern;
+or two-phase batch submit/collect if a terminal wait ever outgrows the
+library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

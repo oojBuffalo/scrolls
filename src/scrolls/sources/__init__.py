@@ -20,6 +20,7 @@ class FetchError(Exception):
 from scrolls.sources import (  # noqa: E402
     arxiv,
     crates,
+    crossref,
     github,
     hackernews,
     npm,
@@ -34,6 +35,7 @@ from scrolls.sources import (  # noqa: E402
 FETCH_ADAPTERS = {
     "arxiv": arxiv.fetch_item,
     "crates": crates.fetch_item,
+    "crossref": crossref.fetch_item,
     "github": github.fetch_item,
     "hackernews": hackernews.fetch_item,
     "npm": npm.fetch_item,

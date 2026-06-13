@@ -8,8 +8,8 @@ getting a guessed label; a future LLM engine can pick them up.
 
 Precedence (first hit wins):
 
-1. curated-platform defaults — wikipedia/arxiv/github/pypi/npm/crates
-   items are what their platform makes them, whatever the title says;
+1. curated-platform defaults — wikipedia/arxiv/crossref/github/pypi/npm/
+   crates items are what their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -29,6 +29,9 @@ ENGINE = "rules-v1"
 _CURATED_SOURCE_CATEGORIES = {
     "wikipedia": "reference",
     "arxiv": "paper",
+    # A Crossref work is a published paper (journal article, conference
+    # paper, book chapter) — arXiv's preprint sibling, the same category.
+    "crossref": "paper",
     "github": "project",
     # A published package is something you install and use — distinct from a
     # github repo (a "project" to read). PyPI, npm, and crates.io all ship
