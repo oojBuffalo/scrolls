@@ -136,6 +136,13 @@ def detect_source(url: str) -> DetectedSource:
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
 
+    # Mastodon/Fediverse has no shared host, so it is matched by URL shape on
+    # whatever instance the URL names — after every known-host branch above,
+    # before the generic pdf/web fallback.
+    mastodon_id = _mastodon_id(host, path_parts)
+    if mastodon_id is not None:
+        return DetectedSource("mastodon", mastodon_id)
+
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
 
@@ -485,6 +492,45 @@ def _bluesky_id(path_parts: list[str]) -> str | None:
         rkey = unquote(path_parts[3]).strip()
         if actor and rkey:
             return f"{actor}/{rkey}"
+    return None
+
+
+def _mastodon_id(host: str, path_parts: list[str]) -> str | None:
+    """`<host>/<status_id>` for a Mastodon status URL on any instance, else None.
+
+    Mastodon is federated across thousands of independent instances with no
+    shared host, so unlike every other adapter a status is recognized by its
+    URL *shape* on whatever host the saved URL carries — this branch runs
+    only after every known-platform host has already been ruled out. Two
+    canonical forms are matched:
+
+        /@<user>/<status_id>                  — the web/UI permalink
+        /users/<user>/statuses/<status_id>    — the ActivityPub object URL
+
+    The status id must be all digits: Mastodon and its API-compatible forks
+    (Hometown, glitch-soc) mint snowflake integer ids, and the numeric
+    constraint is what keeps the host-agnostic heuristic from stealing
+    lookalike paths — a Medium `/@user/<slug>` post (non-numeric), a
+    Threads/TikTok `/@user/<kind>/<id>` (three segments). A misdetected
+    non-Mastodon URL degrades to a failed fetch (the adapter's API call
+    404s), never a wrong scroll — the conservative, reversible tradeoff a
+    federated network with no host list forces (ADR 0049).
+
+    Identity carries the instance host because a status id is unique only
+    within its instance, and the two URL forms collapse to the same
+    `<host>/<status_id>` so a status saved either way dedupes. The host is
+    lowercased (DNS is case-insensitive); the `<user>` segment is not part
+    of identity. Profile pages, timelines, tag pages, and API/media routes
+    carry no status id and resolve to the source with no fetchable item —
+    Bluesky's and Lobsters' pattern (ADR 0048, ADR 0046).
+    """
+    status_id: str | None = None
+    if len(path_parts) == 2 and path_parts[0].startswith("@"):
+        status_id = path_parts[1]
+    elif len(path_parts) == 4 and path_parts[0] == "users" and path_parts[2] == "statuses":
+        status_id = path_parts[3]
+    if status_id and status_id.isdigit():
+        return f"{host}/{status_id}"
     return None
 
 

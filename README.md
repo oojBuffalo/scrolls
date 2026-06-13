@@ -431,7 +431,39 @@ image alt text, then the link card's title, then the engagement status
 heterogeneous social post gets *no* category default — unclassified until
 a title rule or the LLM engine names it; the whole thread stays in
 `raw_text` for a future nested render, and profile/feed/list/home routes
-register but have no post to fetch).
+register but have no post to fetch), and **mastodon** (the keyless
+Mastodon REST API — see `docs/adr/0049-mastodon-adapter.md`: the second
+open social network after Bluesky, and the first source matched by URL
+*shape* rather than host. Mastodon is federated — an account lives on one
+of thousands of independent instances (`mastodon.social`, `hachyderm.io`,
+`infosec.exchange`), so there is no host set to claim. Detection instead
+recognizes a status by its shape on whatever instance the URL names —
+`/@<user>/<digits>` (the web permalink) or `/users/<user>/statuses/<digits>`
+(the ActivityPub object URL), both collapsing to one `<host>/<status_id>`
+identity since a status id is unique only within its instance. The
+all-digits id is the safety: it keeps a Medium `/@author/<slug>` post or a
+Threads/TikTok `/@user/<kind>/<id>` from being stolen, and a misdetected
+URL degrades to a benign failed fetch (the API 404s), never a wrong
+scroll. The adapter talks to that same host's keyless API: one GET for the
+status (`/api/v1/statuses/<id>`) and, when it has replies, a second for the
+thread (`.../context`) — the two-request shape Bluesky and Stack Exchange
+use, the context call skipped for a reply-less post and degrading to a
+post-only scroll on failure. The post `content` is HTML, reduced to
+searchable text by a stdlib parser (no `trafilatura` dependency); the
+context's `descendants` arrive already flattened, so the bylined replies
+render in one pass (Bluesky returns a nested tree). The external link card
+and plain body links become `links` — `@mention` and `#hashtag` anchors
+excluded as navigation, not references — so a post pointing at an arXiv
+paper or github repo wires to it through `scrolls related`/`graph`; image
+attachments become `photo` media and videos their preview image (alt text
+searchable when the post has no text); `tags[].name` hashtags become
+`concepts` like github topics. A `spoiler_text` content warning leads the
+body so the hidden text stays honest, a boost unwraps to the post it
+boosts, and the synthesized title and `summary` (lead else alt else card
+title else "N favourites, M boosts, K replies") mirror Bluesky. Like
+Bluesky, Hacker News, and Lobsters, a heterogeneous social post gets *no*
+category default; the whole `{status, context}` stays in `raw_text`, and
+profile, timeline, and tag routes carry no status id to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -776,14 +808,28 @@ carrying its text and reply thread (one `getPostThread` call, after a
 `resolveHandle` GET turns a handle into the DID the AT-URI needs), its
 external card / quoted post / inline links as edges, its images as media,
 and its hashtags as concepts, classified like Hacker News and Lobsters
-with no category default (ADR 0048). Next candidates: DID-canonical
-Bluesky identity so a post saved under both its handle and its DID dedupes
-(ADR 0048); other open-network social sources on documented public APIs
-(Mastodon's per-instance API, the Fediverse); a third DOI registration
-agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or two-phase
-batch submit/collect if a terminal wait ever outgrows the library
-(ADR 0022, ADR 0032). A native `x` fetch adapter remains out of reach
-while X's read API stays paywalled; `x` enriches only through the Field
-Theory import (ADR 0009).
+with no category default (ADR 0048), and a keyless Mastodon adapter
+reaching the *second* open social network — and the first source matched
+by URL *shape* rather than host, since the Fediverse is federated across
+thousands of instances with no host set to claim: a saved
+`<instance>/@<user>/<id>` (or `/users/<user>/statuses/<id>`) status becomes
+a clean scroll from that instance's keyless REST API, its all-digits id the
+safety that keeps Medium/Threads lookalikes out and a misdetect a benign
+failed fetch; status + thread are two requests like Bluesky, the HTML
+content reduced to text by a stdlib parser (no `trafilatura`), the flat
+`descendants` rendered as bylined replies in one pass, the card and body
+links as edges, images and video previews as media, hashtags as concepts,
+a content warning leading the body, a boost unwrapped, classified like
+Bluesky and Hacker News with no category default (ADR 0049). Next
+candidates: other Fediverse software on the same shape-only detection
+pattern (Pleroma/Akkoma and GoToSocial expose the `/api/v1/statuses`
+surface but mint non-numeric ids on different routes — each a new shape
+branch, not a rewrite); home-instance-canonical Mastodon and DID-canonical
+Bluesky identity so a post saved through two routes dedupes (ADR 0048,
+ADR 0049); a third DOI registration agency (mEDRA, JaLC) joining the same
+`doi.py` dispatch; or two-phase batch submit/collect if a terminal wait
+ever outgrows the library (ADR 0022, ADR 0032). A native `x` fetch adapter
+remains out of reach while X's read API stays paywalled; `x` enriches only
+through the Field Theory import (ADR 0009).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

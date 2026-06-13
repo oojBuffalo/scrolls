@@ -91,6 +91,29 @@ CASES = [
     ("https://bsky.app/profile/alice.bsky.social/lists/3kqlist", "bluesky", None),
     ("https://bsky.app/", "bluesky", None),
     ("https://bsky.app/search", "bluesky", None),
+    # --- mastodon / fediverse (no shared host: matched by URL shape) ---
+    ("https://mastodon.social/@Gargron/109252172978473811",
+     "mastodon", "mastodon.social/109252172978473811"),
+    # the ActivityPub object URL collapses to the same host/<id> identity
+    ("https://mastodon.social/users/Gargron/statuses/109252172978473811",
+     "mastodon", "mastodon.social/109252172978473811"),
+    # any instance host, with a trailing slash tolerated
+    ("https://hachyderm.io/@user/110000000000000001/", "mastodon",
+     "hachyderm.io/110000000000000001"),
+    ("https://infosec.exchange/@someone/111111111111111111", "mastodon",
+     "infosec.exchange/111111111111111111"),
+    # the host is lowercased (DNS is case-insensitive)
+    ("https://Mastodon.Social/@user/109252172978473811", "mastodon",
+     "mastodon.social/109252172978473811"),
+    # a non-numeric last segment is NOT a status: Medium's /@user/<slug>
+    # stays a web page, not a misdetected mastodon post
+    ("https://medium.com/@author/why-rust-is-great-a1b2c3d4", "web", None),
+    # a three-segment /@user/<kind>/<id> (Threads, TikTok) is not the shape
+    ("https://www.threads.net/@user/post/abc123", "web", None),
+    # profile, timeline, and tag pages carry no status id -> plain web
+    ("https://mastodon.social/@Gargron", "web", None),
+    ("https://mastodon.social/public", "web", None),
+    ("https://mastodon.social/tags/introductions", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),
