@@ -149,6 +149,18 @@ CASES = [
     ("https://packagist.org/packages/", "packagist", None),
     ("https://packagist.org/packages/monolog/", "packagist", None),
     ("https://packagist.org/search/?q=log", "packagist", None),
+    # --- rubygems ---
+    ("https://rubygems.org/gems/rails", "rubygems", "rails"),
+    # a version page is the same gem: identity is the name only
+    ("https://rubygems.org/gems/rails/versions/8.1.3", "rubygems", "rails"),
+    # gem names are case-sensitive (gems/Ascii85 resolves, ascii85 404s), so
+    # the name is preserved verbatim — npm's rule, not PyPI's fold
+    ("https://rubygems.org/gems/Ascii85", "rubygems", "Ascii85"),
+    ("https://www.rubygems.org/gems/nokogiri", "rubygems", "nokogiri"),
+    # the gems list and search pages: source known, gem unknown
+    ("https://rubygems.org/", "rubygems", None),
+    ("https://rubygems.org/gems", "rubygems", None),
+    ("https://rubygems.org/search?query=http", "rubygems", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI

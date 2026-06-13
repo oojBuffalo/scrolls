@@ -21,6 +21,7 @@ PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
 PACKAGIST_HOSTS = {"packagist.org", "www.packagist.org"}
+RUBYGEMS_HOSTS = {"rubygems.org", "www.rubygems.org"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -96,6 +97,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in PACKAGIST_HOSTS:
         return DetectedSource("packagist", _packagist_id(path_parts))
+
+    if host in RUBYGEMS_HOSTS:
+        return DetectedSource("rubygems", _rubygems_id(path_parts))
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
@@ -293,6 +297,23 @@ def _packagist_id(path_parts: list[str]) -> str | None:
 
 def _fullmatch(pattern: re.Pattern[str], text: str) -> bool:
     return bool(text) and pattern.fullmatch(text) is not None
+
+
+def _rubygems_id(path_parts: list[str]) -> str | None:
+    """The gem name for a `/gems/<name>[/versions/<v>]` URL, verbatim, else None.
+
+    Identity is the gem name only: `/gems/rails` and the version page
+    `/gems/rails/versions/8.1.3` are the same gem. RubyGems gem names are
+    case-sensitive (`gems/Ascii85` resolves, `gems/ascii85` 404s), so the
+    name is preserved verbatim — npm's rule (ADR 0035), not the
+    case-folding PyPI/crates/Packagist apply. The gems list and search
+    pages carry no gem name and resolve to the source with no fetchable
+    item.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "gems":
+        return None
+    name = unquote(path_parts[1]).strip()
+    return name or None
 
 
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")

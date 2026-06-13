@@ -68,6 +68,12 @@ def test_packagist_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_rubygems_is_a_tool():
+    # A gem is a published thing you install, like PyPI/npm/crates/Packagist.
+    item = make_item(source="rubygems", title="rails")
+    assert classify_item(item).category == "tool"
+
+
 def test_curated_platform_default_beats_title_pattern():
     # A wikipedia page titled like a tutorial is still an encyclopedia entry.
     item = make_item(source="wikipedia", title="How to Solve It")

@@ -266,7 +266,22 @@ classifiers; and the repository, homepage, and git source become `links`,
 the source's `…​.git` form normalized so a package's repo connects to it
 in `scrolls related`. A Composer package classifies as `tool` like a
 PyPI, npm, or crates one; the packages list, vendor pages, and search
-register but have no package to fetch).
+register but have no package to fetch), and **rubygems** (the keyless
+RubyGems JSON API — see `docs/adr/0040-rubygems-adapter.md`: a saved
+`rubygems.org/gems/<name>` page becomes a clean scroll from the gem's
+metadata, the Ruby sibling of the PyPI, npm, crates, and Packagist
+adapters, and the simplest of the five — `gems/<name>.json` returns the
+latest version inline, so there is no version to select. Identity is the
+gem name preserved verbatim — RubyGems is case-sensitive (`gems/Ascii85`
+resolves, `gems/ascii85` 404s), npm's rule rather than PyPI's fold. A
+gemspec has no keywords field, so a gem contributes nothing to the
+concept graph — `concepts` empty by design — and the API ships no README,
+so the gem's description becomes the `summary` that FTS indexes. The SPDX
+`license`s become `tags`; and the homepage, source, and documentation
+URIs become `links`, the source URI resolving to the gem's github repo in
+`scrolls related` even when it points at a tagged tree. A gem classifies
+as `tool` like the other packages; the gems list and search register but
+have no gem to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
