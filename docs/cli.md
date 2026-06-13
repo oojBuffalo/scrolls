@@ -967,7 +967,8 @@ written one — the default compile includes them without any model call
 | `sources` / `categories` / `concepts` / `tags` | group pages written per kind |
 | `summaries` | concept pages that carried a stored synthesized summary |
 | `clusters` | connected components in the link-graph page `graph.md` (ADR 0062) |
-| `pages` | total files written, including `index.md` and `graph.md` |
+| `works` | multi-representation works in the works page `works.md` (ADR 0070) |
+| `pages` | total files written, including `index.md`, `graph.md`, and `works.md` |
 
 Tag pages (`tags/<name>.md`, ADR 0064) mirror concept pages — the
 library's items grouped by each `tag`, case-insensitively (`MIT` and `mit`
@@ -980,6 +981,17 @@ rendered scrolls that link to one another grouped into clusters, largest
 first, each an adjacency list of members and their `→ target` edges; it is
 always written (empty → `No linked scrolls yet.`) and the index links to it
 (`test_kb_graph_page_clusters_linked_scrolls`).
+
+`works.md` is the browsable form of `scrolls works`'s DOI clustering
+(ADR 0070): the rendered scrolls that are the same scholarly work — a
+preprint and its published article, an indexing record — grouped under the
+DOI that names the work, each a `## <doi>` section linking its
+representations' scrolls; always written (empty → `No works held in
+multiple representations yet.`) and the index links to it
+(`test_kb_works_page_clusters_representations_by_shared_doi`). Because the
+page is over rendered items only, its work count can be below `scrolls
+works`'s whole-library count — the rendered-only divergence `graph.md` also
+has from `scrolls graph`.
 
 `--engine llm` (engine `kb-llm-v1`, ADR 0025) first brings the summary
 store up to date via the Anthropic API (network; needs
@@ -1018,11 +1030,11 @@ and shares the Batches transport with `classify --engine llm --batch`
 
 ```console
 $ scrolls kb
-{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 5}
+{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 6}
 [exit 0]
 
 $ scrolls kb --engine llm     # no 2-scroll concepts yet: a zero run, no key needed
-{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 5}
+{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 6}
 [exit 0]
 
 $ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set

@@ -28,9 +28,10 @@ from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
+from scrolls.works import Work, works_over
 
 _GENERATED_DIRS = ("sources", "categories", "concepts", "tags")
-_GENERATED_FILES = ("index.md", "graph.md")
+_GENERATED_FILES = ("index.md", "graph.md", "works.md")
 _RECENT_LIMIT = 10
 _RELATED_CONCEPTS_LIMIT = 10
 _RELATED_TAGS_LIMIT = 10
@@ -45,6 +46,7 @@ class KbResult:
     tags: int
     summaries: int
     clusters: int
+    works: int
     pages: int
 
 
@@ -161,7 +163,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     database means an uninitialized library: nothing is written.
     """
     if not paths.db_path.exists():
-        return KbResult(0, 0, 0, 0, 0, 0, 0, 0)
+        return KbResult(0, 0, 0, 0, 0, 0, 0, 0, 0)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
 
     by_source: dict[str, list[ScrollItem]] = {}
@@ -180,6 +182,9 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     # resolves to a scroll file the page can link (graph_over drops links to
     # unrendered targets, just as the rest of the KB ignores unrendered items)
     components = connected_components(graph_over(items))
+    # scholarly works clustered by shared DOI (ADR 0069), over the same
+    # rendered items so every representation links to a scroll file
+    works = works_over(items)
 
     _clear_generated(paths.library_dir)
     paths.library_dir.mkdir(parents=True, exist_ok=True)
@@ -220,10 +225,14 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             ),
         )
         pages += 1
-    _write_graph_page(paths, components, {item.id: item for item in items})
+    items_by_id = {item.id: item for item in items}
+    _write_graph_page(paths, components, items_by_id)
+    pages += 1
+    _write_works_page(paths, works, items_by_id)
     pages += 1
     _write_index(
-        paths, items, by_source, by_category, by_concept, by_tag, tag_filenames, components
+        paths, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+        components, works,
     )
 
     return KbResult(
@@ -234,12 +243,14 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         tags=len(by_tag),
         summaries=summarized,
         clusters=len(components),
+        works=len(works),
         pages=pages,
     )
 
 
 def _write_index(
-    paths, items, by_source, by_category, by_concept, by_tag, tag_filenames, components
+    paths, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+    components, works,
 ) -> None:
     lines = [
         "# Scrolls Library",
@@ -247,6 +258,7 @@ def _write_index(
         f"{_count(len(items))} from {len(by_source)} source"
         f"{'' if len(by_source) == 1 else 's'}.",
         _graph_index_line(components),
+        _works_index_line(works),
     ]
     if by_source:
         lines += ["", "## Sources", ""]
@@ -395,6 +407,66 @@ def _graph_index_line(components: tuple[Component, ...]) -> str:
 
 def _cluster_count(n: int) -> str:
     return f"{n} cluster{'' if n == 1 else 's'}"
+
+
+def _write_works_page(
+    paths: LibraryPaths,
+    works: list[Work],
+    items_by_id: dict[str, ScrollItem],
+) -> None:
+    """Write `library/works.md`: scholarly works clustered by shared DOI.
+
+    The browsable, human/agent-readable form of `scrolls works`'s JSON
+    (ADR 0069, ADR 0070). Built over the rendered items only, so every
+    representation links to a scroll file (a representation whose target is
+    unrendered drops out, and a work that thereby keeps fewer than two
+    representations isn't shown — the same rendered-only rule the graph page
+    and the rest of the KB follow). Each work is a `## <doi>` section: the
+    resolver link and a representation count, then every representation as a
+    bullet linking to its scroll. Always written, like the index; a library
+    with no DOI held in two-plus representations says so, so the page is a
+    stable entry point.
+    """
+    page_dir = "library"
+    lines = ["# Scrolls Works", ""]
+    if not works:
+        lines.append("No works held in multiple representations yet.")
+    else:
+        reps = sum(len(work.representations) for work in works)
+        lines.append(
+            f"{_work_count(len(works))} held as {_representation_count(reps)}."
+        )
+        for work in works:
+            count = _representation_count(len(work.representations))
+            lines += [
+                "", f"## {work.doi}", "",
+                f"[doi.org/{work.doi}]({work.url}) — {count}.", "",
+            ]
+            for rep in work.representations:  # already sorted by id
+                item = items_by_id[rep.id]
+                lines.append(_item_line(item, page_dir, note=item.source))
+    (paths.library_dir / "works.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+
+def _works_index_line(works: list[Work]) -> str:
+    """The one-line link to `works.md` the index carries under the graph line."""
+    if not works:
+        return "[Works](works.md) — no works held in multiple representations yet."
+    reps = sum(len(work.representations) for work in works)
+    return (
+        f"[Works](works.md) — {_work_count(len(works))} "
+        f"held as {_representation_count(reps)}."
+    )
+
+
+def _work_count(n: int) -> str:
+    return f"{n} work{'' if n == 1 else 's'}"
+
+
+def _representation_count(n: int) -> str:
+    return f"{n} representation{'' if n == 1 else 's'}"
 
 
 def _item_line(item: ScrollItem, page_dir: str, note: str | None = None) -> str:

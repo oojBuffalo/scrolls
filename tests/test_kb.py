@@ -19,12 +19,14 @@ def scrolls_home(monkeypatch, tmp_path):
 
 
 def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=(),
-                  links=(), saved_at="2026-06-01T00:00:00+00:00", markdown_path=None):
+                  links=(), saved_at="2026-06-01T00:00:00+00:00", markdown_path=None,
+                  source_id=None, url=None):
     slug = title.lower().replace(" ", "-")
     return ScrollItem(
         id=item_id,
         source=source,
-        url=f"https://example.org/{item_id}",
+        source_id=source_id,
+        url=url or f"https://example.org/{item_id}",
         saved_at=saved_at,
         title=title,
         category=category,
@@ -44,7 +46,7 @@ def run_kb(capsys):
 
 def test_kb_before_init_reports_zero_pages(scrolls_home, capsys):
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 0}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 0}
     assert not scrolls_home.exists()  # kb never creates a library
 
 
@@ -69,7 +71,7 @@ def test_kb_compiles_index_source_and_category_pages(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 6}
+    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 7}
 
     library = scrolls_home / "library"
     index = (library / "index.md").read_text(encoding="utf-8")
@@ -114,7 +116,7 @@ def test_kb_counts_unclassified_items_in_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 3}
+    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 4}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "- unclassified — 1 scroll" in index
     assert not (scrolls_home / "library" / "categories").exists()
@@ -332,7 +334,7 @@ def test_kb_empty_initialized_library_writes_empty_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 2}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 3}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "0 scrolls from 0 sources." in index
     assert "## Sources" not in index
@@ -352,7 +354,7 @@ def test_kb_graph_page_clusters_linked_scrolls(scrolls_home, capsys):
 
     payload = run_kb(capsys)
     assert payload["clusters"] == 1
-    assert payload["pages"] == 3  # index + graph + 1 source page (web)
+    assert payload["pages"] == 4  # index + graph + works + 1 source page (web)
 
     graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
     assert "# Scrolls Link Graph" in graph
@@ -422,6 +424,111 @@ def test_kb_recompile_clears_a_stale_graph_cluster(scrolls_home, capsys):
     run_kb(capsys)
     graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
     assert graph == "# Scrolls Link Graph\n\nNo linked scrolls yet.\n"
+
+
+# --- the works page library/works.md (ADR 0070) --------------------------
+
+
+def _crossref_rep(doi, title):
+    """A rendered crossref representation whose source_id is the work's DOI."""
+    return make_rendered(
+        f"crossref:{doi}", "crossref", title,
+        source_id=doi, url=f"https://doi.org/{doi}")
+
+
+def test_kb_works_page_clusters_representations_by_shared_doi(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    # a preprint that names the published DOI as a link, and the crossref
+    # record whose source_id *is* that DOI — one work, two representations
+    doi = "10.5555/3295222"
+    insert_item(db, make_rendered(
+        "arxiv:1706.03762", "arxiv", "Attention Is All You Need",
+        links=(f"https://doi.org/{doi}",)))
+    insert_item(db, _crossref_rep(doi, "Attention Is All You Need"))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["works"] == 1
+    # index + works + graph + 2 source pages + 1 category page (crossref → paper?)
+    # arxiv has no category here, crossref none either, so 0 category pages
+    assert payload["pages"] == 5  # index + works + graph + arxiv + crossref
+
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    assert "# Scrolls Works" in works
+    assert "1 work held as 2 representations." in works
+    assert f"## {doi}" in works
+    assert f"[doi.org/{doi}](https://doi.org/{doi}) — 2 representations." in works
+    # both representations link to their scroll relative to library/
+    assert "- [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md) — arxiv" in works
+    assert "- [Attention Is All You Need](../scrolls/crossref/attention-is-all-you-need.md) — crossref" in works
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "[Works](works.md) — 1 work held as 2 representations." in index
+
+
+def test_kb_works_page_is_empty_when_no_shared_doi(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:a", "web", "Article A"))
+    insert_item(db, _crossref_rep("10.1/solo", "A Lonely Paper"))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["works"] == 0  # the crossref DOI has only one representation
+
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "[Works](works.md) — no works held in multiple representations yet." in index
+
+
+def test_kb_works_page_orders_works_by_representation_count(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    # a 3-representation work (DOI ...big) and a 2-representation work (...small)
+    big = "10.5555/big"
+    small = "10.5555/small"
+    insert_item(db, _crossref_rep(big, "Big Work"))
+    insert_item(db, make_rendered(
+        "arxiv:9001", "arxiv", "Big Preprint", links=(f"https://doi.org/{big}",)))
+    insert_item(db, make_rendered(
+        "pubmed:9001", "pubmed", "Big Indexed", links=(f"https://doi.org/{big}",)))
+    insert_item(db, _crossref_rep(small, "Small Work"))
+    insert_item(db, make_rendered(
+        "arxiv:9002", "arxiv", "Small Preprint", links=(f"https://doi.org/{small}",)))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["works"] == 2
+
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    assert "2 works held as 5 representations." in works
+    # the 3-representation work sorts before the 2-representation work
+    assert works.index(f"## {big}") < works.index(f"## {small}")
+    assert f"[doi.org/{big}](https://doi.org/{big}) — 3 representations." in works
+    assert f"[doi.org/{small}](https://doi.org/{small}) — 2 representations." in works
+
+
+def test_kb_recompile_clears_a_stale_work(scrolls_home, capsys):
+    import dataclasses
+
+    main(["init"])
+    db = get_paths().db_path
+    doi = "10.5555/3295222"
+    preprint = make_rendered(
+        "arxiv:1706.03762", "arxiv", "Attention Is All You Need",
+        links=(f"https://doi.org/{doi}",))
+    insert_item(db, preprint)
+    insert_item(db, _crossref_rep(doi, "Attention Is All You Need"))
+    capsys.readouterr()
+    run_kb(capsys)
+    assert f"## {doi}" in (scrolls_home / "library" / "works.md").read_text()
+
+    update_item(db, dataclasses.replace(preprint, links=()))  # the DOI edge is gone
+    run_kb(capsys)
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
 
 
 def make_summary(slug, display, text, members_hash="abc123"):

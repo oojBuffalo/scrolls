@@ -151,9 +151,10 @@ The dominant sequence transduction models are based on complex recurrent or conv
 
 `scrolls kb` (ADR [0005](adr/0005-deterministic-kb-compiler.md))
 rebuilds a generated tree — `library/index.md`, `library/graph.md`,
-`library/sources/`, `library/categories/`, `library/concepts/`,
-`library/tags/` — from scratch on every run, so a stale group page can't
-linger; anything *else* under `library/` is preserved, so hand-written
+`library/works.md`, `library/sources/`, `library/categories/`,
+`library/concepts/`, `library/tags/` — from scratch on every run, so a
+stale group page can't linger; anything *else* under `library/` is
+preserved, so hand-written
 notes can live alongside
 (`test_kb_recompile_removes_stale_pages_but_keeps_user_files`). Only
 rendered items appear: KB pages link to scroll files, and an unrendered
@@ -231,8 +232,9 @@ moved, mounted, or committed wholesale without breaking navigation.
 
 ### The index
 
-`library/index.md` is the entry point: a count line, then a one-line link
-to the link-graph page (`graph.md`) summarising connectivity, then
+`library/index.md` is the entry point: a count line, then one-line links
+to the link-graph page (`graph.md`) and the works page (`works.md`) each
+summarising what it holds, then
 `## Sources`, `## Categories`, `## Concepts`, and `## Tags` lists linking
 to group pages (the categories list ends with an unlinked
 `- unclassified — N scrolls` line when any rendered item lacks a category,
@@ -246,7 +248,8 @@ are `tags`) plus one rendered Wikipedia item (title `SQLite`, category
 `reference`, concept `Database software` — the second fixture in
 `tests/test_docs.py`,
 `test_library_format_kb_index_example_matches_compiler_output`); neither
-links to the other, so the graph line reports nothing connected:
+links to the other and neither carries a DOI, so the graph and works lines
+both report nothing held:
 
 <!-- pinned: example-kb-index -->
 ```markdown
@@ -254,6 +257,7 @@ links to the other, so the graph line reports nothing connected:
 
 2 scrolls from 2 sources.
 [Link graph](graph.md) — no linked scrolls yet.
+[Works](works.md) — no works held in multiple representations yet.
 
 ## Sources
 
@@ -320,6 +324,50 @@ ADR [0041](adr/0041-huggingface-hub-adapter.md); the third fixture in
   - → [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md)
 ```
 
+### The works page
+
+`library/works.md` is the browsable form of `scrolls works`'s JSON
+(ADR [0069](adr/0069-works-by-doi.md),
+ADR [0070](adr/0070-kb-works-page.md)): the library's scholarly works
+that sit in it as more than one near-duplicate `paper` entry — an arXiv
+preprint, its published Crossref article, a PubMed record, a
+bioRxiv/medRxiv preprint — grouped by the **DOI that names the work**.
+Like the graph page it is built over the rendered items only, so every
+representation links to a scroll file (a work whose rendered
+representations drop below two isn't shown). Each work is a `## <doi>`
+section: the `doi.org` resolver link and a representation count, then every
+representation as a bullet linking to its scroll. The page is always
+written, like the index; a library with no DOI held in two-plus
+representations gets a single `No works held in multiple representations
+yet.` line, so the page is a stable entry point
+(`test_kb_works_page_clusters_representations_by_shared_doi`,
+`test_kb_works_page_is_empty_when_no_shared_doi`).
+
+Because the page scopes to *rendered* items while `scrolls works` clusters
+over the whole library, the page's work count can be smaller than the
+CLI's — the same rendered-only divergence the graph page has from `scrolls
+graph`.
+
+Compiled from a rendered arXiv preprint that names its published DOI as a
+link and the rendered Crossref record whose `source_id` *is* that DOI (the
+preprint↔published edge of ADR [0038](adr/0038-arxiv-published-doi-link.md);
+the fourth and fifth fixtures in `tests/test_docs.py`,
+`test_library_format_works_page_example_matches_compiler_output`):
+
+<!-- pinned: example-works-page -->
+```markdown
+# Scrolls Works
+
+1 work held as 2 representations.
+
+## 10.5555/3295222
+
+[doi.org/10.5555/3295222](https://doi.org/10.5555/3295222) — 2 representations.
+
+- [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md) — arxiv
+- [Attention Is All You Need](../scrolls/crossref/attention-is-all-you-need.md) — crossref
+```
+
 ## Captured media files: `media/`
 
 `scrolls media` (ADR [0011](adr/0011-media-capture-command.md))
@@ -360,9 +408,9 @@ Stable — agents and scripts may depend on these:
   and the `## Links` section (starting with the `- Source:` line) are
   always in the body.
 - A scroll's path never changes once written.
-- After a `scrolls kb` run, `library/index.md` and `library/graph.md`
-  exist and every link in the generated tree resolves; non-generated
-  files under `library/` survive recompiles.
+- After a `scrolls kb` run, `library/index.md`, `library/graph.md`, and
+  `library/works.md` exist and every link in the generated tree resolves;
+  non-generated files under `library/` survive recompiles.
 
 Not stable — expect these to grow without notice:
 

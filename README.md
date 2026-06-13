@@ -45,7 +45,7 @@ releases feed) and sync registers its new entries.
 ~/.scrolls/        # or $SCROLLS_HOME
   db.sqlite       # canonical index: items + subscriptions + concept_summaries tables, FTS5 search, schema meta
   scrolls/        # individual Markdown files, one per item, per source
-  library/        # compiled interlinked KB (index, graph, sources, categories, concepts, tags)
+  library/        # compiled interlinked KB (index, graph, works, sources, categories, concepts, tags)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
   items/          # reserved: raw record exports (currently unused)
   media/          # captured media files (PDFs, thumbnails, photos), per source
@@ -933,9 +933,9 @@ keyless and offline.
 
 `scrolls kb` compiles the interlinked library (IDEAS.md §9, the
 deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
-`library/index.md`, `library/graph.md`, plus per-source, per-category,
-per-concept, and per-tag pages that link back to rendered scrolls with
-relative Markdown links. The generated pages are rebuilt from scratch each
+`library/index.md`, `library/graph.md`, `library/works.md`, plus
+per-source, per-category, per-concept, and per-tag pages that link back to
+rendered scrolls with relative Markdown links. The generated pages are rebuilt from scratch each
 run so stale groups can't linger; other files under `library/` are left
 alone. Concept pages merge spellings by slug; github repo topics, wikipedia
 page categories, and arXiv taxonomy names populate them today. `library/tags/`
@@ -953,6 +953,13 @@ into clusters (connected components), largest first, each rendered as an
 adjacency list of members and their `→ target` edges; built over rendered
 items only so every link on the page resolves to a scroll file, always
 written (empty → `No linked scrolls yet.`), and linked from the index.
+`library/works.md` is the browsable form of `scrolls works`'s DOI
+clustering (see `docs/adr/0070-kb-works-page.md`): the rendered scrolls
+that are the same scholarly work — a preprint and its published article, an
+indexing record — grouped under the DOI that names the work, each a
+`## <doi>` section linking its representations' scrolls; built over rendered
+items only, always written (empty → `No works held in multiple
+representations yet.`), and linked from the index.
 Each concept page additionally ends with a **Related Concepts** section
 (see `docs/adr/0063-kb-related-concepts.md`): the concepts that co-occur on
 its member scrolls, ranked by how many scrolls carry both — the

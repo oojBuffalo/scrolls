@@ -188,6 +188,34 @@ _EXAMPLE_MODEL = ScrollItem(
     stage="rendered",
 )
 
+# A preprint that names its published DOI and the Crossref record whose
+# source_id is that DOI — one work, two representations — so the documented
+# library/works.md shows one real cluster (ADR 0069, ADR 0070).
+_EXAMPLE_WORK_PREPRINT = ScrollItem(
+    id="arxiv:1706.03762",
+    source="arxiv",
+    url="https://arxiv.org/abs/1706.03762",
+    saved_at="2026-06-12T08:00:00+00:00",
+    source_id="1706.03762",
+    title="Attention Is All You Need",
+    category="paper",
+    links=("https://doi.org/10.5555/3295222",),
+    markdown_path="scrolls/arxiv/attention-is-all-you-need.md",
+    stage="rendered",
+)
+
+_EXAMPLE_WORK_PUBLISHED = ScrollItem(
+    id="crossref:10.5555/3295222",
+    source="crossref",
+    url="https://doi.org/10.5555/3295222",
+    saved_at="2026-06-12T11:00:00+00:00",
+    source_id="10.5555/3295222",
+    title="Attention Is All You Need",
+    category="paper",
+    markdown_path="scrolls/crossref/attention-is-all-you-need.md",
+    stage="rendered",
+)
+
 
 def _pinned_block(marker: str) -> str:
     """The fenced block right after `<!-- pinned: <marker> -->` in the format doc."""
@@ -243,6 +271,20 @@ def test_library_format_graph_page_example_matches_compiler_output(tmp_path):
     graph = (paths.library_dir / "graph.md").read_text(encoding="utf-8")
     assert graph == _pinned_block("example-graph-page"), (
         "docs/library-format.md's example library/graph.md no longer matches "
+        "compile_kb() output for the documented fixture items"
+    )
+
+
+def test_library_format_works_page_example_matches_compiler_output(tmp_path):
+    paths = get_paths(tmp_path / "home")
+    paths.root.mkdir(parents=True)
+    init_db(paths.db_path)
+    insert_item(paths.db_path, _EXAMPLE_WORK_PREPRINT)
+    insert_item(paths.db_path, _EXAMPLE_WORK_PUBLISHED)
+    compile_kb(paths)
+    works = (paths.library_dir / "works.md").read_text(encoding="utf-8")
+    assert works == _pinned_block("example-works-page"), (
+        "docs/library-format.md's example library/works.md no longer matches "
         "compile_kb() output for the documented fixture items"
     )
 
