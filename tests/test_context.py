@@ -208,6 +208,28 @@ def test_context_ranks_connected_by_centrality(scrolls_home, capsys):
     assert "(+1 more)" in connected  # the hub connects to two matches
 
 
+def test_context_connected_shows_unfetched_neighbor_by_id(scrolls_home, capsys):
+    # A linked paper that is saved but not yet fetched has no title; it still
+    # surfaces (by id), honestly flagging "you have this but haven't pulled it".
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search.",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", stage="detected",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine")
+    _, _, connected = out.partition("## Connected scrolls")
+    assert "- arxiv:1706.03762 (`arxiv:1706.03762`) · arxiv — linked from SQLite" in connected
+
+
 def test_context_omits_connected_section_when_no_links(scrolls_home, capsys):
     main(["init"])
     insert_item(get_paths().db_path, make_item(

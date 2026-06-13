@@ -177,6 +177,34 @@ def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     assert "wikipedia:en:SQLite" in bundle
 
 
+def test_get_context_bundle_surfaces_connected_scrolls(scrolls_home):
+    # The CLI's link-graph enrichment (ADR 0047) reaches MCP clients through
+    # the same build_context — no MCP-side code, so it must be locked here.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:SQLite", source="wikipedia",
+        url="https://en.wikipedia.org/wiki/SQLite",
+        saved_at="2026-06-12T00:00:00+00:00", title="SQLite",
+        summary="SQLite is a database engine.", stage="rendered",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        summary="A sequence model built on attention.", stage="fetched",
+    ))
+
+    bundle = mcp_server.get_context_bundle("database engine")
+    _, _, connected = bundle.partition("## Connected scrolls")
+    assert "Attention Is All You Need" in connected
+    assert "`arxiv:1706.03762`" in connected
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
