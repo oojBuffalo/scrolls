@@ -132,6 +132,23 @@ CASES = [
     ("https://crates.io/search?q=http", "crates", None),
     ("https://crates.io/users/dtolnay", "crates", None),
     ("https://crates.io/categories/encoding", "crates", None),
+    # --- packagist (Composer/PHP) ---
+    ("https://packagist.org/packages/monolog/monolog", "packagist", "monolog/monolog"),
+    # case-insensitive: the schema is lowercase, mixed case folds to dedupe
+    ("https://packagist.org/packages/Monolog/Monolog", "packagist", "monolog/monolog"),
+    # a deeper subpage is the same package: identity is vendor/name only
+    ("https://packagist.org/packages/monolog/monolog/stats", "packagist",
+     "monolog/monolog"),
+    # the API URL people paste drops its trailing .json
+    ("https://packagist.org/packages/symfony/console.json", "packagist",
+     "symfony/console"),
+    ("https://www.packagist.org/packages/laravel/framework", "packagist",
+     "laravel/framework"),
+    # the list, a vendor-only page, and search: source known, package unknown
+    ("https://packagist.org/", "packagist", None),
+    ("https://packagist.org/packages/", "packagist", None),
+    ("https://packagist.org/packages/monolog/", "packagist", None),
+    ("https://packagist.org/search/?q=log", "packagist", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI

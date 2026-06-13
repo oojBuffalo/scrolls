@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (827 tests at the time of writing). The docs themselves
+`uv run pytest` (858 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -156,7 +156,10 @@ Two small contracts make every platform the same kind of scroll
    the package name verbatim as `source_id` — the registry is
    case-sensitive, so unlike PyPI it is not folded — scoped names and
    version pages included), `crates` (crate pages, the name folded
-   case-insensitively like a PyPI one so a version page dedupes), and
+   case-insensitively like a PyPI one so a version page dedupes),
+   `packagist` (Composer package pages, the `vendor/name` folded
+   lowercase as `source_id` since Composer names are case-insensitive, a
+   trailing `.json` and deeper subpages stripped), and
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
    lowercase as `source_id` since DOIs are case-insensitive); `.pdf`
    paths map to `pdf`; everything else is `web`. A
@@ -185,6 +188,7 @@ Implemented fetch adapters, all keyless:
 | npm | `sources/npm.py` | keyless registry JSON, stdlib only; capped `dist.tarball` GET when the packument has no README | latest-release metadata; README from packument or, when empty (common for high-traffic packages), its tarball → searchable text; keywords → `concepts` (no classifier analog, `tags` empty); homepage + normalized repository → `links` (package↔repo edge); `npm → tool`; degrades to metadata-only | 0035 |
 | crates | `sources/crates.py` | keyless crates.io JSON API + capped `.crate` tarball GET for the README | displayed-version metadata; raw README from the `.crate` tarball → searchable text; keywords → `concepts`, curated category taxonomy → `tags`; homepage/docs/normalized repository → `links` (crate↔repo edge); `crates → tool`; degrades to metadata-only | 0036 |
 | crossref | `sources/crossref.py` | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
+| packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -398,9 +402,12 @@ Next steps already identified in decision records, in no required order:
   outgrows a terminal wait, the persisted-batch-id design those ADRs
   weighed and deferred has an obvious home in the shared `llm.py`.
 - **More package registries** — the PyPI adapter (ADR 0034) set the
-  pattern and npm (0035) and crates.io (0036) followed it; RubyGems,
-  Packagist, and Go modules share the same JSON-metadata shape and the
+  pattern and npm (0035), crates.io (0036), and Packagist (0039) followed
+  it; RubyGems and Go modules share the same JSON-metadata shape and the
   keywords→`concepts` / source-URL→`links` mapping, each a small adapter.
+  Packagist's comparator-free "highest stable `version_normalized`"
+  selection (ADR 0039) is the technique a registry with no
+  `default_version` pointer can reuse.
 - **A DataCite DOI adapter** — Crossref (ADR 0037) covers the published
   literature behind a `doi.org` link, but dataset and software DOIs are
   registered with DataCite and 404 against Crossref. A DataCite adapter

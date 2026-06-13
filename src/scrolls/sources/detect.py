@@ -20,6 +20,7 @@ HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
+PACKAGIST_HOSTS = {"packagist.org", "www.packagist.org"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -92,6 +93,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in CRATES_HOSTS:
         return DetectedSource("crates", _crates_id(path_parts))
+
+    if host in PACKAGIST_HOSTS:
+        return DetectedSource("packagist", _packagist_id(path_parts))
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
@@ -255,6 +259,40 @@ def _normalize_crate_name(name: str) -> str | None:
     """Canonical crates.io lookup name: case-folded, `[-_]` runs to one `-`."""
     normalized = re.sub(r"[-_]+", "-", unquote(name)).strip("-").lower()
     return normalized or None
+
+
+# A Composer package name is `vendor/package`; each part is lowercase
+# alphanumerics with single `_.-` separators (the composer.json schema).
+_PACKAGIST_NAME_RE = re.compile(r"[a-z0-9]([_.-]?[a-z0-9]+)*")
+
+
+def _packagist_id(path_parts: list[str]) -> str | None:
+    """The `vendor/package` name for a `/packages/<vendor>/<package>` URL, else None.
+
+    Composer package names are `vendor/package` and case-insensitive —
+    the schema forbids uppercase, and Packagist redirects mixed case to
+    the lowercase canonical — so the id is folded lowercase: `Monolog/Monolog`
+    and `monolog/monolog` dedupe to one item, the canonical form read back
+    from the API response. A trailing `.json` (the API URL people paste)
+    and any deeper path (`/stats`, `/dependents`) are dropped; the
+    packages list, a vendor-only page, and search carry no package name
+    and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) < 3 or path_parts[0] != "packages":
+        return None
+    vendor = unquote(path_parts[1]).strip().lower()
+    package = unquote(path_parts[2]).strip().lower()
+    if package.endswith(".json"):
+        package = package[: -len(".json")]
+    if not _fullmatch(_PACKAGIST_NAME_RE, vendor) or not _fullmatch(
+        _PACKAGIST_NAME_RE, package
+    ):
+        return None
+    return f"{vendor}/{package}"
+
+
+def _fullmatch(pattern: re.Pattern[str], text: str) -> bool:
+    return bool(text) and pattern.fullmatch(text) is not None
 
 
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")

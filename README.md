@@ -245,7 +245,28 @@ venue become `tags`, and only the publisher's landing page becomes a
 not turned into links. `published_at` follows Crossref's date precedence
 (`issued` first, `created` last). A Crossref work classifies as `paper`
 like an arXiv preprint, so Scrolls covers both halves of the literature;
-the bare resolver and non-DOI paths register but have no work to fetch).
+the bare resolver and non-DOI paths register but have no work to fetch),
+and **packagist** (the keyless Packagist JSON API — see
+`docs/adr/0039-packagist-adapter.md`: a saved
+`packagist.org/packages/<vendor>/<name>` page becomes a clean scroll from
+the package's metadata, the PHP/Composer sibling of the PyPI, npm, and
+crates adapters. Identity is the `vendor/name` folded lowercase —
+Composer names are case-insensitive, so `Monolog/Monolog` and a
+`/stats` subpage all dedupe to `packagist:monolog/monolog`, the canonical
+form read back from the API. Packagist keys its `versions` by string and
+exposes no "default version" pointer, so the adapter selects the highest
+*stable* release by ranking the numeric `version_normalized`
+(`3.9.0` beats both a later-dated `2.9.x` patch and the `dev-main`
+branch), with no semver dependency. The API carries no README — it lives
+only in the dist zip — so a Packagist scroll is honestly metadata-only,
+the package description becoming the `summary` that FTS indexes.
+Author-declared keywords become `concepts` like github repo topics; the
+package `type` and the release's SPDX `license`s become `tags` like PyPI
+classifiers; and the repository, homepage, and git source become `links`,
+the source's `…​.git` form normalized so a package's repo connects to it
+in `scrolls related`. A Composer package classifies as `tool` like a
+PyPI, npm, or crates one; the packages list, vendor pages, and search
+register but have no package to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
