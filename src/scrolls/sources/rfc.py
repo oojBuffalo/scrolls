@@ -27,11 +27,17 @@ ADR 0061. Three platform facts and two cross-document edges shape the design:
    …) is title-cased into the one `tag`, the controlled facet Crossref's `type`
    fills (ADR 0037).
 
-3. **The abstract is the content; there is no full text.** The RFC body is
-   published separately (the `.txt`/`.html` a reader opens); the JSON view carries
-   only the abstract, so it is the searchable `summary` with **no
-   `extracted_text`** — the Crossref/PubMed shape (ADR 0037/0065). A record with
-   no abstract degrades to a metadata-only scroll (ADR 0002), not a `FetchError`.
+3. **The abstract is the summary; the spec text is the content.** The JSON view's
+   abstract is the searchable `summary`, and the published spec text
+   (`rfc-editor.org/rfc/rfc<N>.txt`) is fetched and normalized into
+   `extracted_text` (ADR 0067) — the arXiv abstract+PDF split (ADR 0008/0010), so
+   an agent can search the actual normative text, not only the abstract. The
+   plaintext normalizer strips the pagination old RFCs carry (form-feed page
+   breaks, `[Page N]` footers, the running `RFC <N> … <date>` header on each
+   continuation page); the modern unpaginated format passes through unchanged. Any
+   `.txt` failure degrades to an abstract-only scroll (the arXiv PDF-degrade
+   contract, not a `FetchError`), and a record with no abstract *or* text is still
+   a useful metadata-only scroll (ADR 0002).
 
 The two edges: the RFC's own DOI (`10.17487/RFC<N>`, registered with Crossref)
 becomes a `doi.org` link resolving to its `crossref:<doi>` scroll — the
@@ -68,10 +74,19 @@ DOI_RESOLVER = "https://doi.org"
 _MAX_AUTHORS = 10
 
 GetJson = Callable[[str], Any]
+GetText = Callable[[str], str]
 
 # A relation entry is "RFCxxxx" (zero-padded for low numbers, "RFC0020"); the
 # digits are the number, leading zeros dropped so the link matches the id form.
 _RELATION_RE = re.compile(r"rfc0*(\d+)", re.IGNORECASE)
+
+# Old RFCs paginate the plaintext: each page ends with a right-aligned footer
+# ("Fielding, et al.  Standards Track  [Page 12]") and every continuation page
+# begins, after a form-feed, with a running header ("RFC 9110  HTTP Semantics
+# June 2022"). Both are boilerplate, stripped so they don't pollute the searchable
+# body; the modern unpaginated format has neither (ADR 0067).
+_PAGE_FOOTER_RE = re.compile(r"\[Page\s+\d+\]\s*$")
+_RUNNING_HEADER_RE = re.compile(r"^RFC\s+\d+\b")
 
 # English month names → number, so date parsing is locale-independent (strptime's
 # %B follows LC_TIME, which would break a "June 2022" parse under a non-English
@@ -83,13 +98,21 @@ _MONTHS = {
 }
 
 
-def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollItem:
-    """Fetch a detected RFC's bibliographic metadata; return it at stage 'fetched'.
+def fetch_item(
+    item: ScrollItem,
+    *,
+    get_json: GetJson | None = None,
+    get_text: GetText | None = None,
+) -> ScrollItem:
+    """Fetch a detected RFC's metadata, abstract, and full spec text.
 
-    Raises FetchError when the RFC number is missing, the request fails, or the
-    response is not an RFC record. The input item is never mutated.
+    Returns the item at stage 'fetched'. Raises FetchError when the RFC number is
+    missing, the metadata request fails, or the response is not an RFC record;
+    full-text problems never raise — the scroll degrades to abstract-only (the
+    arXiv PDF-degrade contract, ADR 0010). The input item is never mutated.
     """
     get_json = get_json or _get_json
+    get_text = get_text or _get_text
     if not item.source_id:
         raise FetchError(f"cannot determine RFC number for item {item.id!r}")
 
@@ -104,8 +127,10 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         raise FetchError(f"RFC not found: {number}")
 
     summary = _clean_text(data.get("abstract"))
+    full_text = _full_text(number, get_text)
+    extraction_method = "rfc-editor:json+txt" if full_text else "rfc-editor:json"
     raw = json.dumps(data, ensure_ascii=False)
-    hashed = summary or raw
+    hashed = full_text or summary or raw
     return replace(
         item,
         title=_title(data, number),
@@ -113,6 +138,7 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         published_at=_published(data.get("pub_date")) or item.published_at,
         canonical_url=f"{RFC_EDITOR}/rfc{number}",
         raw_text=raw,
+        extracted_text=full_text,
         summary=summary,
         tags=_tags(data),
         concepts=_concepts(data),
@@ -121,10 +147,51 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         provenance={
             "adapter": "rfc",
             "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "extraction_method": "rfc-editor:json",
+            "extraction_method": extraction_method,
         },
         stage="fetched",
     )
+
+
+def _full_text(number: str, get_text: GetText) -> str | None:
+    """The RFC's normalized spec text, or None when anything fails (degrade).
+
+    The published `.txt` is fetched and de-paginated; any transport failure keeps
+    the abstract-only scroll, never raising — the arXiv PDF-degrade contract
+    (ADR 0010).
+    """
+    try:
+        raw = get_text(f"{RFC_EDITOR}/rfc{number}.txt")
+    except Exception:  # any full-text failure must keep the metadata scroll
+        return None
+    return _normalize_rfc_text(raw)
+
+
+def _normalize_rfc_text(text: Any) -> str | None:
+    """Strip RFC plaintext pagination to a clean searchable body, or None if empty.
+
+    Old RFCs paginate: form-feed page breaks, a `[Page N]` footer per page, and a
+    running `RFC <N> … <date>` header atop every continuation page. These are
+    removed and runs of blank lines collapsed; the modern unpaginated format
+    (no form feeds, no footers) passes through with only blank-line collapsing.
+    The page-1 document header block is content and is kept.
+    """
+    if not isinstance(text, str):
+        return None
+    out_lines: list[str] = []
+    for page_index, page in enumerate(text.replace("\ufeff", "").split("\f")):
+        lines = page.split("\n")
+        if page_index > 0:  # drop the running header atop a continuation page
+            for line_index, line in enumerate(lines):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if _RUNNING_HEADER_RE.match(stripped):
+                    del lines[line_index]
+                break
+        out_lines.extend(line for line in lines if not _PAGE_FOOTER_RE.search(line))
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines)).strip()
+    return body or None
 
 
 def _clean(value: Any) -> str | None:
@@ -242,3 +309,4 @@ def _links(data: dict[str, Any]) -> tuple[str, ...]:
 
 
 _get_json = http.get_json
+_get_text = http.get_text

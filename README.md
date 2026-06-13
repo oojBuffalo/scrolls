@@ -707,9 +707,14 @@ controlled subject vocabulary that joins github topics, arXiv taxonomy, and MeSH
 in the KB concept graph, with the whitespace-only placeholder older RFCs store
 dropped — and the maturity `status` (`Internet Standard`, `Proposed Standard`,
 `Informational`, …) is title-cased into the one `tag`, the controlled facet
-Crossref's `type` fills. The abstract becomes a plain `summary` with no
-`extracted_text` (the RFC body is published separately — the Crossref/PubMed
-metadata-only shape). Two cross-document edges: the RFC's own DOI
+Crossref's `type` fills. The abstract becomes the plain `summary`, and the
+published spec text (`rfc-editor.org/rfc/rfc<N>.txt`) is fetched and normalized
+into `extracted_text` so an agent can search the actual normative content
+(`docs/adr/0067-rfc-full-text.md`, the arXiv abstract+PDF split): one de-pagination
+pass strips the form-feed page breaks, `[Page N]` footers, and running headers
+classic RFCs carry for print while the modern unpaginated format passes through,
+and any `.txt` failure degrades to an abstract-only scroll (the arXiv PDF-degrade
+contract). Two cross-document edges: the RFC's own DOI
 (`10.17487/RFC<N>`, Crossref-registered) becomes a `doi.org` `link` resolving to
 its `crossref:<doi>` scroll — the RFC↔Crossref edge, ADR 0038's analog — and each
 `obsoletes`/`updates` target becomes an `rfc-editor.org/rfc/rfc<M>` `link`
@@ -717,8 +722,9 @@ resolving to that RFC's scroll, the RFC↔RFC standards-lineage edge (the invers
 `obsoleted_by`/`updated_by` relations are not re-emitted, since the graph resolves
 edges in both directions). Publication dates are `Month Year`, padded to the first
 of the month. An RFC classifies as `reference` — a normative spec to consult, like
-a Wikipedia article, not a paper to cite; a record with no abstract is an honest
-metadata-only scroll, and STD/BCP sub-series and Internet-Drafts are deferred).
+a Wikipedia article, not a paper to cite; a record with neither an abstract nor
+fetchable text is an honest metadata-only scroll, and STD/BCP sub-series and
+Internet-Drafts are deferred).
 Items from
 sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.

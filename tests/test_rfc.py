@@ -48,6 +48,31 @@ RFC_DOC = {
     "errata_url": "https://www.rfc-editor.org/errata/rfc9110",
 }
 
+# A modern, unpaginated RFC .txt (RFC 9110-style): a BOM, no form feeds, no
+# `[Page N]` footers — the normalizer just collapses blank lines.
+RFC_TXT = (
+    "﻿\n\n\nInternet Engineering Task Force (IETF)\n\n\n\n"
+    "1.  Introduction\n\n"
+    "   HTTP is a stateless application-level protocol.\n"
+)
+
+# A paginated, old-format RFC .txt (RFC 2616-style): form-feed page breaks, a
+# `[Page N]` footer per page, and a running `RFC <N> ... <date>` header atop each
+# continuation page — all of which the normalizer strips.
+PAGINATED_TXT = (
+    "Network Working Group                                      R. Fielding\n\n"
+    "1.  Introduction\n\n"
+    "   The first page body.\n\n\n\n\n\n"
+    "Fielding, et al.            Standards Track                     [Page 1]\n"
+    "\x0c\n"
+    "RFC 2616                        HTTP/1.1                       June 1999\n\n\n"
+    "   The second page body.\n\n\n\n\n\n"
+    "Fielding, et al.            Standards Track                     [Page 2]\n"
+    "\x0c\n"
+    "RFC 2616                        HTTP/1.1                       June 1999\n\n\n"
+    "   Closing remarks.\n"
+)
+
 
 def make_item(**overrides):
     base = dict(
@@ -61,9 +86,13 @@ def make_item(**overrides):
     return ScrollItem(**base)
 
 
-def fetch(doc=None, item=None):
+def fetch(doc=None, item=None, txt=RFC_TXT):
     payload = RFC_DOC if doc is None else doc
-    return fetch_item(item or make_item(), get_json=lambda url: payload)
+    return fetch_item(
+        item or make_item(),
+        get_json=lambda url: payload,
+        get_text=lambda url: txt,
+    )
 
 
 def variant(**changes):
@@ -87,26 +116,84 @@ def test_fetch_maps_core_metadata():
     assert fetched.author == "R. Fielding, Ed., M. Nottingham, Ed., J. Reschke, Ed."
     assert fetched.canonical_url == "https://www.rfc-editor.org/rfc/rfc9110"
     assert fetched.provenance["adapter"] == "rfc"
-    assert fetched.provenance["extraction_method"] == "rfc-editor:json"
+    assert fetched.provenance["extraction_method"] == "rfc-editor:json+txt"
     assert fetched.content_hash.startswith("sha256:")
     assert fetched.stage == "fetched"
 
 
-def test_abstract_becomes_plain_summary_no_full_text():
+def test_abstract_becomes_the_plain_summary():
+    assert fetch().summary.startswith("The Hypertext Transfer Protocol")
+
+
+def test_full_text_extracted_from_the_txt():
     fetched = fetch()
-    assert fetched.summary.startswith("The Hypertext Transfer Protocol")
-    # the RFC body is published separately, so the JSON view has no full text —
-    # the Crossref/PubMed metadata-only shape
+    # the modern unpaginated body is the searchable extracted_text
+    assert "HTTP is a stateless application-level protocol." in fetched.extracted_text
+    assert "1.  Introduction" in fetched.extracted_text
+    assert fetched.provenance["extraction_method"] == "rfc-editor:json+txt"
+
+
+def test_full_text_strips_pagination_headers_and_footers():
+    body = fetch(txt=PAGINATED_TXT).extracted_text
+    # all page bodies survive, in order
+    assert "The first page body." in body
+    assert "The second page body." in body
+    assert "Closing remarks." in body
+    # page footers, running headers, and form feeds are removed
+    assert "[Page" not in body
+    assert "\x0c" not in body
+    assert "HTTP/1.1                       June 1999" not in body  # running header
+    # the page-1 document header block is content and is kept
+    assert "Network Working Group" in body
+    # blank-line runs collapse to at most one blank line
+    assert "\n\n\n" not in body
+
+
+def test_full_text_failure_degrades_to_abstract_only():
+    def boom(url):
+        raise OSError("HTTP Error 500: Server Error")
+
+    fetched = fetch_item(
+        make_item(), get_json=lambda url: RFC_DOC, get_text=boom
+    )
     assert fetched.extracted_text is None
+    assert fetched.summary.startswith("The Hypertext")  # abstract still present
+    assert fetched.provenance["extraction_method"] == "rfc-editor:json"
 
 
-def test_no_abstract_degrades_to_metadata_only():
+def test_empty_txt_degrades_to_abstract_only():
+    fetched = fetch(txt="   \n\n   ")
+    assert fetched.extracted_text is None
+    assert fetched.provenance["extraction_method"] == "rfc-editor:json"
+
+
+def test_content_hash_covers_the_full_text():
+    # a record fetched with full text hashes differently from a degraded one
+    with_text = fetch().content_hash
+    degraded = fetch(txt="").content_hash
+    assert with_text != degraded
+
+
+def test_no_abstract_leaves_summary_none_but_keeps_the_rest():
     fetched = fetch(without("abstract"))
     assert fetched.summary is None
-    # still a useful scroll: title, authors, keywords, status, links
+    # still a useful scroll: title, authors, keywords, status, full text, links
     assert fetched.title == "RFC 9110: HTTP Semantics"
     assert fetched.concepts[0] == "Hypertext Transfer Protocol"
     assert fetched.tags == ("Internet Standard",)
+    assert "HTTP is a stateless" in fetched.extracted_text
+
+
+def test_no_abstract_and_no_text_is_a_metadata_only_scroll():
+    def boom(url):
+        raise OSError("404")
+
+    fetched = fetch_item(
+        make_item(), get_json=lambda url: without("abstract"), get_text=boom
+    )
+    assert fetched.summary is None
+    assert fetched.extracted_text is None
+    assert fetched.title == "RFC 9110: HTTP Semantics"  # still useful
 
 
 def test_whitespace_only_abstract_is_dropped():
@@ -248,15 +335,22 @@ def test_preserves_identity_and_the_saved_url():
     assert fetched.saved_at == item.saved_at
 
 
-def test_requests_the_expected_json_url():
+def test_requests_the_expected_json_and_txt_urls():
     seen = []
 
     def get_json(url):
         seen.append(url)
         return RFC_DOC
 
-    fetch_item(make_item(), get_json=get_json)
-    assert seen == ["https://www.rfc-editor.org/rfc/rfc9110.json"]
+    def get_text(url):
+        seen.append(url)
+        return RFC_TXT
+
+    fetch_item(make_item(), get_json=get_json, get_text=get_text)
+    assert seen == [
+        "https://www.rfc-editor.org/rfc/rfc9110.json",
+        "https://www.rfc-editor.org/rfc/rfc9110.txt",
+    ]
 
 
 @pytest.mark.parametrize("source_id", [None, ""])
