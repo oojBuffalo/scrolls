@@ -354,7 +354,16 @@ choice (ADRs 0004, 0005).
 - **Context bundles** (`context.py`, IDEAS.md §11) — `scrolls context`
   emits Markdown (the bundle *is* the artifact agents drop into
   context), unlike the data commands; errors stay JSON on stderr. Each
-  excerpt carries item id, source, and scroll path for follow-up
+  excerpt carries item id, source, and scroll path for follow-up. Beyond
+  the FTS matches, a **Connected scrolls** section pulls in items linked
+  to or from those matches through the link graph (`build_graph`, the
+  same edges `scrolls graph` reports) but not themselves keyword hits —
+  the model↔paper, package↔repo, and dataset↔parent-work edges of
+  ADRs 0034–0046 surfacing where an agent reads them, not only in
+  `scrolls related`/`graph` (ADR 0047). Link-only and high-precision
+  (concept/tag signal deferred), ranked by centrality, capped at the
+  match count, and omitted when nothing connects; the MCP
+  `get_context_bundle` inherits it through `build_context`
   (`tests/test_context.py`).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree

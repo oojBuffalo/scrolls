@@ -123,6 +123,123 @@ def test_context_uses_canonical_url_in_links_when_present(scrolls_home, capsys):
     assert "- [SQLite](https://en.wikipedia.org/wiki/SQLite)" in out
 
 
+def test_context_surfaces_connected_scrolls(scrolls_home, capsys):
+    # A match that links to a saved arXiv paper which is *not* itself a
+    # keyword hit: the link graph the adapters build (ADR 0044) should pull
+    # the paper into the bundle even though FTS never would.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer, a sequence model built on attention.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine")
+    above, _, connected = out.partition("## Connected scrolls")
+    # The paper is connected, not a keyword match: absent above the section...
+    assert connected, "expected a Connected scrolls section"
+    assert "Attention Is All You Need" not in above
+    # ...and present in it, named with its id and the match that pulled it in.
+    assert "Attention Is All You Need" in connected
+    assert "`arxiv:1706.03762`" in connected
+    assert "linked from" in connected.lower()
+    assert "SQLite" in connected
+
+
+def test_context_connected_includes_reverse_links(scrolls_home, capsys):
+    # A model that links *to* a matched paper is connected by the reverse edge.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:1706.03762", "A paper on database engines",
+        "This paper studies database engines and attention.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+    insert_item(db, make_item(
+        "huggingface:model:google/bert", "BERT base",
+        "A pretrained language model card.",
+        source="huggingface", url="https://huggingface.co/google/bert",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engines")
+    _, _, connected = out.partition("## Connected scrolls")
+    assert "BERT base" in connected
+    assert "`huggingface:model:google/bert`" in connected
+    assert "links to" in connected.lower()
+
+
+def test_context_ranks_connected_by_centrality(scrolls_home, capsys):
+    # A neighbor connected to two matches outranks one connected to a single
+    # match, and the busier neighbor reports the extra connection.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite database engine",
+        "SQLite is a small database engine.",
+        links=("https://arxiv.org/abs/0001.0001", "https://arxiv.org/abs/0002.0002"),
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Postgres", "Postgres database engine",
+        "Postgres is a database engine server.",
+        links=("https://arxiv.org/abs/0001.0001",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:0001.0001", "Shared Hub Paper", "An attention model.",
+        source="arxiv", url="https://arxiv.org/abs/0001.0001",
+    ))
+    insert_item(db, make_item(
+        "arxiv:0002.0002", "Solo Paper", "Another attention model.",
+        source="arxiv", url="https://arxiv.org/abs/0002.0002",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine")
+    _, _, connected = out.partition("## Connected scrolls")
+    assert connected.index("Shared Hub Paper") < connected.index("Solo Paper")
+    assert "(+1 more)" in connected  # the hub connects to two matches
+
+
+def test_context_omits_connected_section_when_no_links(scrolls_home, capsys):
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "## Connected scrolls" not in out
+
+
+def test_context_connected_excludes_items_already_matched(scrolls_home, capsys):
+    # Two matches that link to each other must not list each other as
+    # connected — a keyword hit is already in Best Matches.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite database",
+        "SQLite is a database engine.",
+        links=("https://example.org/wikipedia:en:Postgres",),
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Postgres", "Postgres database",
+        "Postgres is a database engine.",
+        links=("https://example.org/wikipedia:en:SQLite",),
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine")
+    assert "## Connected scrolls" not in out
+
+
 def test_context_no_matches_prints_empty_bundle(scrolls_home, capsys):
     main(["init"])
     capsys.readouterr()

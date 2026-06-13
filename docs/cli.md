@@ -851,8 +851,14 @@ The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
 (IDEAS.md §11, `tests/test_context.py`). Each excerpt carries the item
 id, source, and scroll path for follow-up with `scrolls show` or a file
-read. Default limit 8. Errors are still JSON on stderr (blank query, as
-with `search`).
+read. When the matches link to or from other saved scrolls, a
+`## Connected scrolls` section (between Excerpts and Links) lists those
+neighbors from the link graph (`scrolls graph`, ADR 0044/0047) — a match's
+paper, repo, or dataset that keyword search would miss — each naming the
+match and direction that pulled it in
+(`test_context_surfaces_connected_scrolls`). It is omitted when there are
+no such connections. Default limit 8. Errors are still JSON on stderr
+(blank query, as with `search`).
 
 ```console
 $ scrolls context "local search"

@@ -606,7 +606,14 @@ excerpts (stored summary, else leading extracted text), and source
 links. Unlike the data commands it emits Markdown — the bundle *is* the
 artifact agents drop into context — while errors stay JSON on stderr.
 Each excerpt carries the item id, source, and scroll path so an agent
-can follow up with `scrolls show <id>` or read the full scroll.
+can follow up with `scrolls show <id>` or read the full scroll. When the
+matches link to or from other saved scrolls, a **Connected scrolls**
+section lists those neighbors from the link graph (ADR 0047) — a match's
+arXiv paper, source repo, or parent dataset that keyword search alone
+would miss — each naming the match and direction that pulled it in, so
+the cross-source edges the adapters built (model↔paper, package↔repo,
+dataset↔parent-work) surface in the bundle itself, not only in
+`scrolls related`/`scrolls graph`.
 
 `scrolls agent install` writes instruction files for coding agents under
 `<root>/agents/` — `claude/SKILL.md`, `codex/AGENTS.md`,
