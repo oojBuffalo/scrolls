@@ -246,6 +246,64 @@ $ scrolls ingest https://x.com/karpathy/status/3333
 [exit 1]
 ```
 
+### `scrolls import bookmarks <path>`
+
+Bulk-import a browser bookmarks export (ADR 0030). `path` is the
+`bookmarks.html` every major browser emits (Chrome, Firefox, Safari,
+Edge — the Netscape bookmark file format, also spoken by Pinboard-style
+services). A missing file, or one without the format's DOCTYPE marker,
+is an error envelope on stderr
+(`test_import_bookmarks_missing_file_is_an_error` in
+`tests/test_cli.py`; `test_non_bookmark_html_raises` in
+`tests/test_bookmarks.py`).
+
+Bookmarks are a spine-only archive like Takeout — URL, anchor text,
+`ADD_DATE`, folder placement — so items enter at stage `detected` and
+`scrolls fetch` enriches them. Unlike Takeout the spine is
+heterogeneous: every http(s) URL routes through the same source
+detection and URL normalization as `scrolls add`, so a bookmarked
+video becomes a `youtube` item, a repo a `github` item, a tweet an
+`x` item, and they all dedupe against items the library already has
+(`test_imports_bookmarks_as_detected_items`,
+`test_x_bookmarks_register_without_an_adapter`,
+`test_import_bookmarks_never_overwrites_existing_item`).
+
+Folder ancestry becomes `tags` — the user's own curation, free-form
+like `scrolls set`; root containers ("Bookmarks bar", "Other
+Bookmarks", …) are browser furniture and excluded, and Firefox's
+`TAGS` attribute merges in
+(`test_folder_ancestry_becomes_tags`,
+`test_root_container_folders_are_not_tags`,
+`test_firefox_tags_attribute_merges_with_folder_tags`). The anchor
+text seeds `title`, a `<DD>` note seeds `summary`, and `ADD_DATE`
+(epoch seconds, or the milli/microsecond variants some exporters
+write) becomes `saved_at` — when the page entered the user's life,
+never `published_at` (`test_dd_description_seeds_summary`,
+`test_millisecond_add_dates_are_normalized`).
+
+Per-bookmark oddities never fail the run — exports accumulate
+bookmarklets and smart folders — so the command exits 0 and counts
+them instead:
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new items inserted |
+| `skipped` | already existed (id collision is the dedupe working) |
+| `bookmarks` | total bookmark entries in the export |
+| `repeats` | extra copies of an already-seen URL (earliest `ADD_DATE` wins `saved_at`; folder tags union) |
+| `ignored.not_http` | non-http(s) bookmarks (`javascript:` bookmarklets, Firefox `place:` folders, `file:` links) |
+| `ignored.no_url` | anchors without an href |
+
+```console
+$ scrolls import bookmarks /tmp/scrolls-demo.BgrqMO/bookmarks.html
+{"imported": 2, "skipped": 0, "bookmarks": 4, "repeats": 1, "ignored": {"not_http": 1, "no_url": 0}}
+[exit 0]
+
+$ scrolls import bookmarks /tmp/scrolls-demo.BgrqMO/bookmarks.html
+{"imported": 0, "skipped": 2, "bookmarks": 4, "repeats": 1, "ignored": {"not_http": 1, "no_url": 0}}
+[exit 0]
+```
+
 ### `scrolls import fieldtheory [--root PATH]`
 
 Bulk-import X bookmarks from a local Field Theory archive (default root
@@ -937,6 +995,28 @@ tweet_id: "1111"
 ---
 EOF
 
+cat > "$DEMO/bookmarks.html" <<'EOF'
+<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>
+    <DL><p>
+        <DT><H3>Databases</H3>
+        <DL><p>
+            <DT><A HREF="https://www.youtube.com/watch?v=fts5video01" ADD_DATE="1614556800">SQLite Internals: B-trees</A>
+            <DT><A HREF="https://example.com/sqlite-article?utm_source=share" ADD_DATE="1620000000">SQLite &amp; FTS Internals</A>
+            <DD>Why SQLite's full-text search is enough.
+        </DL><p>
+        <DT><A HREF="javascript:void(0)" ADD_DATE="1610000000">Bookmarklet</A>
+    </DL><p>
+    <DT><H3>Reading</H3>
+    <DL><p>
+        <DT><A HREF="https://example.com/sqlite-article" ADD_DATE="1700000000">SQLite article again</A>
+    </DL><p>
+</DL><p>
+EOF
+
 python3 - "$DEMO" <<'EOF'
 import json, sys, zipfile
 from pathlib import Path
@@ -977,6 +1057,8 @@ scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
 scrolls import google-takeout "$DEMO/takeout.zip"
 scrolls import google-takeout "$DEMO/takeout.zip"       # idempotent
+scrolls import bookmarks "$DEMO/bookmarks.html"
+scrolls import bookmarks "$DEMO/bookmarks.html"         # idempotent
 scrolls add https://arxiv.org/abs/1706.03762
 scrolls status                                    # populated counts now
 scrolls list

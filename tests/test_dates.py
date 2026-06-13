@@ -6,7 +6,7 @@ through `to_utc_iso`, so the field is one vocabulary: UTC ISO 8601 at
 seconds precision, or an honest None.
 """
 
-from scrolls.dates import to_utc_iso
+from scrolls.dates import epoch_to_utc_iso, to_utc_iso
 
 
 def test_rfc3339_z_suffix_becomes_utc_offset():
@@ -42,3 +42,23 @@ def test_garbage_is_an_honest_none():
 def test_absent_input_is_none():
     assert to_utc_iso(None) is None
     assert to_utc_iso("   ") is None
+
+
+def test_epoch_seconds_become_utc_iso():
+    assert epoch_to_utc_iso("1614556800") == "2021-03-01T00:00:00+00:00"
+
+
+def test_epoch_milli_and_microseconds_are_normalized():
+    # bookmark exporters disagree on the unit; same instant either way
+    assert epoch_to_utc_iso("1614556800000") == "2021-03-01T00:00:00+00:00"
+    assert epoch_to_utc_iso("1614556800000000") == "2021-03-01T00:00:00+00:00"
+
+
+def test_epoch_garbage_is_an_honest_none():
+    assert epoch_to_utc_iso("yesterday") is None
+    assert epoch_to_utc_iso("0") is None
+    assert epoch_to_utc_iso("-5") is None
+    assert epoch_to_utc_iso(None) is None
+    assert epoch_to_utc_iso("  ") is None
+    assert epoch_to_utc_iso("inf") is None  # float-parseable, not a date
+    assert epoch_to_utc_iso("nan") is None

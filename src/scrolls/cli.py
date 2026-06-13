@@ -14,6 +14,8 @@ from pathlib import Path
 
 from scrolls import __version__
 from scrolls.agents import install_agent_docs
+from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
+from scrolls.bookmarks import load_bookmark_export
 from scrolls.classify import classify_item
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
@@ -169,6 +171,15 @@ def build_parser() -> argparse.ArgumentParser:
         "import", help="Bulk-import a local archive (JSON output)"
     )
     import_sub = import_parser.add_subparsers(dest="import_command", required=True)
+    bookmarks_parser = import_sub.add_parser(
+        "bookmarks",
+        help="Import a browser bookmarks HTML export (JSON output)",
+    )
+    bookmarks_parser.add_argument(
+        "path",
+        help="exported bookmarks .html file (Netscape format: Chrome, "
+        "Firefox, Safari, Edge)",
+    )
     fieldtheory_parser = import_sub.add_parser(
         "fieldtheory",
         help="Import X bookmarks from a local Field Theory archive (JSON output)",
@@ -342,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "import":
+        if args.import_command == "bookmarks":
+            return _cmd_import_bookmarks(args.path)
         if args.import_command == "google-takeout":
             return _cmd_import_takeout(args.path)
         return _cmd_import_fieldtheory(args.root)
@@ -517,6 +530,30 @@ def _cmd_import_fieldtheory(root: str | None) -> int:
     # entries are omitted; only line-level failures are detailed
     print(json.dumps({**counts, "failures": failures}))
     return 1 if counts["failed"] else 0
+
+
+def _cmd_import_bookmarks(path: str) -> int:
+    try:
+        imported_items, stats = load_bookmark_export(Path(path).expanduser())
+    except BookmarksSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for item in imported_items:
+        # INSERT OR IGNORE: an existing item (earlier import, or a manual
+        # `add`/user edit) is never overwritten — re-imports stay cheap
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    # ignored entries (bookmarklets, place: smart folders) are normal
+    # in real exports, so they never fail the run
+    print(json.dumps({**counts, **stats}))
+    return 0
 
 
 def _cmd_import_takeout(path: str) -> int:

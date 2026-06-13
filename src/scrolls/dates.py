@@ -11,8 +11,36 @@ source date degrades to the fallback instead of storing garbage.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+
+
+def epoch_to_utc_iso(text: str | None) -> str | None:
+    """A Unix-epoch string as UTC ISO 8601, or None when absent/unparseable.
+
+    Bookmark exporters disagree on the unit — Netscape-format ADD_DATE
+    is epoch seconds in modern browsers, but milli- and microsecond
+    variants exist in the wild — so values too large to be seconds are
+    divided down until they are. Zero and negative values are treated
+    as absent: exporters write them for "no date", never for 1970.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0:  # "inf" would loop below
+        return None
+    while value > 1e11:  # beyond year 5138 in seconds: a smaller unit
+        value /= 1000
+    try:
+        stamp = datetime.fromtimestamp(value, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return stamp.isoformat(timespec="seconds")
 
 
 def to_utc_iso(text: str | None) -> str | None:

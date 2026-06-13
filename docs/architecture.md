@@ -22,7 +22,8 @@ each command moves items between stages or derives artifacts from them.
 
  URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
                   │ ▲                   ▲                  │
-                  │ └ import google-takeout                │
+                  │ ├ import google-takeout                │
+                  │ └ import bookmarks                     │
                   │   import fieldtheory┘                  ▼
                   │            classify (stage-neutral, sets category)
                   │            media    (stage-neutral, downloads media refs)
@@ -55,6 +56,10 @@ each command moves items between stages or derives artifacts from them.
   stage `detected` — Takeout is a spine with no content, so the export's
   title/channel/watch-time seed items the way feed entries do and
   `scrolls fetch` enriches them (`src/scrolls/takeout.py`, ADR 0029).
+- `scrolls import bookmarks` bulk-inserts a browser bookmarks HTML
+  export at stage `detected` — another bare spine, but heterogeneous:
+  each URL routes through the same detection as `add`, and folder
+  ancestry becomes `tags` (`src/scrolls/bookmarks.py`, ADR 0030).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

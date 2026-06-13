@@ -84,6 +84,7 @@ uv run scrolls add <url>      # register a URL as an item (stage: detected), as 
 uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
 uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
 uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history from a Takeout export, as JSON
+uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML export, as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -184,6 +185,22 @@ against `scrolls add` and feed sync. `scrolls fetch --limit N` paces
 the enrichment of a large spine: at most N fetch attempts per run,
 oldest saved first, resuming where the last run stopped — cron-able
 and polite to the platform.
+
+`scrolls import bookmarks <path>` bulk-imports a browser bookmarks
+export — the Netscape-format `bookmarks.html` that Chrome, Firefox,
+Safari, and Edge all emit (see
+`docs/adr/0030-browser-bookmarks-import.md`). Like Takeout it is a
+spine-only archive (URL, anchor text, `ADD_DATE`, folder placement),
+so items enter at stage `detected` with the bookmark's `ADD_DATE` as
+`saved_at`, and `scrolls fetch --limit N` paces their enrichment.
+Unlike Takeout the spine is heterogeneous: every http(s) URL routes
+through the same source detection and normalization as `scrolls add`,
+so a bookmarked video becomes a `youtube` item, a repo a `github`
+item, and everything dedupes against the library. Folder ancestry
+becomes `tags` (root containers like "Bookmarks bar" are excluded as
+browser furniture, and Firefox's `TAGS` attribute merges in), a `<DD>`
+note seeds `summary`, and bookmarklets or `place:` smart folders are
+counted as ignored rather than failing the run.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title
@@ -390,7 +407,9 @@ the pre-normalization duplicates ADR 0023 deferred (ADR 0026), and
 out of the library (ADR 0027), with the saved URL usable wherever a
 command takes an item id (ADR 0028), and YouTube watch history
 arriving in bulk via Google Takeout import with `fetch --limit` pacing
-the enrichment (ADR 0029). Next candidate: a Batches transport for
+the enrichment (ADR 0029), plus browser bookmarks — the most universal
+saved-content archive — via `import bookmarks` with folder names
+becoming tags (ADR 0030). Next candidate: a Batches transport for
 concept summaries if libraries outgrow per-call generation (ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

@@ -1426,6 +1426,76 @@ def test_import_google_takeout_missing_export_is_an_error(scrolls_home, tmp_path
     assert "error" in json.loads(captured.err)
 
 
+@pytest.fixture
+def fake_bookmarks_html(tmp_path):
+    """A miniature browser export: one folder, one bookmarklet, one repeat."""
+    export = """\
+<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>
+    <DL><p>
+        <DT><H3>Databases</H3>
+        <DL><p>
+            <DT><A HREF="https://www.youtube.com/watch?v=abc123xyz00" ADD_DATE="1614556800">How SQLite FTS Works</A>
+            <DT><A HREF="https://www.youtube.com/watch?v=abc123xyz00" ADD_DATE="1700000000">same video again</A>
+        </DL><p>
+        <DT><A HREF="javascript:void(0)" ADD_DATE="1610000000">Bookmarklet</A>
+    </DL><p>
+</DL><p>
+"""
+    path = tmp_path / "bookmarks.html"
+    path.write_text(export, encoding="utf-8")
+    return path
+
+
+def test_import_bookmarks_end_to_end(scrolls_home, fake_bookmarks_html, capsys):
+    exit_code = main(["import", "bookmarks", str(fake_bookmarks_html)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "imported": 1,
+        "skipped": 0,
+        "bookmarks": 3,
+        "repeats": 1,
+        "ignored": {"not_http": 1, "no_url": 0},
+    }
+
+    stored = get_item(get_paths().db_path, "youtube:abc123xyz00")
+    assert stored.stage == "detected"
+    assert stored.title == "How SQLite FTS Works"
+    assert stored.tags == ("Databases",)
+    assert stored.saved_at == "2021-03-01T00:00:00+00:00"  # earliest ADD_DATE
+
+
+def test_import_bookmarks_is_idempotent(scrolls_home, fake_bookmarks_html, capsys):
+    main(["import", "bookmarks", str(fake_bookmarks_html)])
+    capsys.readouterr()
+    exit_code = main(["import", "bookmarks", str(fake_bookmarks_html)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 1
+
+
+def test_import_bookmarks_never_overwrites_existing_item(
+    scrolls_home, fake_bookmarks_html, capsys
+):
+    main(["add", "https://www.youtube.com/watch?v=abc123xyz00"])
+    main(["import", "bookmarks", str(fake_bookmarks_html)])
+    # `add` registered the item without a title; import must not touch it
+    assert get_item(get_paths().db_path, "youtube:abc123xyz00").title is None
+
+
+def test_import_bookmarks_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "bookmarks", str(tmp_path / "nowhere.html")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
