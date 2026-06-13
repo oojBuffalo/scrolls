@@ -157,9 +157,18 @@ degrades to the abstract-only scroll — see
 `/Title`-or-filename as title, `/Subject` as the only honest summary,
 and the document itself as a media ref for `scrolls media`; a non-PDF
 payload fails the fetch, while a textless-but-real PDF degrades to a
-metadata-only scroll — see `docs/adr/0013-generic-pdf-adapter.md`).
-Items from sources without an adapter yet (today only `x`) are skipped,
-and per-item failures don't abort the batch.
+metadata-only scroll — see `docs/adr/0013-generic-pdf-adapter.md`), and
+**hackernews** (the keyless Firebase API in one request — see
+`docs/adr/0031-hacker-news-adapter.md`: an Ask HN/Show HN/comment with a
+`text` body contributes it as extracted text with its lead paragraph as
+the summary, while a link story has no body of its own and degrades to a
+metadata-only scroll whose summary is the discussion status — "104
+points, 71 comments" — and whose linked article rides along as a bare
+URL in the Links section, one `scrolls add` away; the comment id tree
+stays in `raw_text` for a later enrichment, and only `news.ycombinator.com/item?id=…`
+pages fetch — the front page and profiles register but have no item to
+fetch). Items from sources without an adapter yet (today only `x`) are
+skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -409,7 +418,11 @@ command takes an item id (ADR 0028), and YouTube watch history
 arriving in bulk via Google Takeout import with `fetch --limit` pacing
 the enrichment (ADR 0029), plus browser bookmarks — the most universal
 saved-content archive — via `import bookmarks` with folder names
-becoming tags (ADR 0030). Next candidate: a Batches transport for
-concept summaries if libraries outgrow per-call generation (ADR 0025).
+becoming tags (ADR 0030), and a keyless Hacker News adapter so a saved
+discussion becomes a clean scroll instead of a scrape of its comment
+page, with link stories degrading to metadata-only and Show HN posts
+classified as projects (ADR 0031). Next candidate: a Batches transport
+for concept summaries if libraries outgrow per-call generation
+(ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

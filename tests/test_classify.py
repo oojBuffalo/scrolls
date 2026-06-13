@@ -59,6 +59,20 @@ def test_opinion_title_pattern():
     assert classify_item(item).category == "opinion"
 
 
+def test_show_hn_title_is_a_project():
+    item = make_item(
+        source="hackernews",
+        title="Show HN: A local-first knowledge library for agents",
+    )
+    assert classify_item(item).category == "project"
+
+
+def test_ask_hn_stays_unclassified():
+    # Ask HN is a question, not a category the rules can honestly name.
+    item = make_item(source="hackernews", title="Ask HN: how do you take notes?")
+    assert classify_item(item).category is None
+
+
 def test_docs_url_is_documentation():
     for url in (
         "https://docs.python.org/3/library/sqlite3.html",

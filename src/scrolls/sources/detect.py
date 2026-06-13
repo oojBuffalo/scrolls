@@ -15,6 +15,7 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtu
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
 GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
+HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 
 # Top-level github.com path segments that are site pages, not user accounts.
 GITHUB_RESERVED = {
@@ -56,6 +57,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in X_HOSTS:
         return DetectedSource("x", _x_status_id(path_parts))
+
+    if host in HACKERNEWS_HOSTS:
+        return DetectedSource("hackernews", _hackernews_id(path_parts, parsed.query))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -108,6 +112,15 @@ def _x_status_id(path_parts: list[str]) -> str | None:
     # /<user>/status/<numeric-id>
     if len(path_parts) >= 3 and path_parts[1] == "status" and path_parts[2].isdigit():
         return path_parts[2]
+    return None
+
+
+def _hackernews_id(path_parts: list[str], query: str) -> str | None:
+    # /item?id=<numeric>; front page, /user, /newest etc. carry no item id
+    if path_parts == ["item"]:
+        item_id = _first_query_value(query, "id")
+        if item_id and item_id.isdigit():
+            return item_id
     return None
 
 

@@ -56,13 +56,20 @@ CASES = [
     ("https://mobile.twitter.com/karpathy/status/99", "x", "99"),
     # profile pages: source known, id unknown
     ("https://x.com/karpathy", "x", None),
+    # --- hacker news ---
+    ("https://news.ycombinator.com/item?id=8863", "hackernews", "8863"),
+    ("https://news.ycombinator.com/item?id=121003&p=2", "hackernews", "121003"),
+    ("https://www.news.ycombinator.com/item?id=1", "hackernews", "1"),
+    # front page, profiles, listings: source known, item id unknown
+    ("https://news.ycombinator.com/", "hackernews", None),
+    ("https://news.ycombinator.com/newest", "hackernews", None),
+    ("https://news.ycombinator.com/user?id=pg", "hackernews", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),
     # --- web fallback ---
     ("https://example.com/blog/post", "web", None),
     ("http://example.com", "web", None),
-    ("https://news.ycombinator.com/item?id=1", "web", None),
 ]
 
 

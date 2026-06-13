@@ -46,6 +46,9 @@ _TITLE_RULES = (
         re.compile(r"\b(why i|i think|opinion|in defense of|hot take)\b", re.IGNORECASE),
         "opinion",
     ),
+    # A "Show HN" post is someone presenting a thing they built (Ask HN,
+    # by contrast, is a question with no honest single category).
+    (re.compile(r"\bShow HN\b", re.IGNORECASE), "project"),
 )
 
 _WEAK_SOURCE_CATEGORIES = {

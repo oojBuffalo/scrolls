@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (535 tests at the time of writing). The docs themselves
+`uv run pytest` (633 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -148,10 +148,10 @@ Two small contracts make every platform the same kind of scroll
 
 1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
-   host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`;
-   `.pdf` paths map to `pdf`; everything else is `web`. A known source
-   with `source_id=None` means the adapter resolves identity at fetch
-   time (`tests/test_detect.py`).
+   host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
+   `hackernews`; `.pdf` paths map to `pdf`; everything else is `web`. A
+   known source with `source_id=None` means the adapter resolves
+   identity at fetch time (`tests/test_detect.py`).
 2. **Fetching** — a function `ScrollItem -> ScrollItem` that fills in
    content and returns the item at stage `fetched`, raising `FetchError`
    on any failure (`src/scrolls/sources/__init__.py`, ADR 0002). The
@@ -169,6 +169,7 @@ Implemented fetch adapters, all keyless:
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`; degrades to abstract-only | 0008, 0010, 0012 |
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
+| hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
