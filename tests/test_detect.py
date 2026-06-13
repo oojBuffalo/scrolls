@@ -64,6 +64,31 @@ CASES = [
     ("https://news.ycombinator.com/", "hackernews", None),
     ("https://news.ycombinator.com/newest", "hackernews", None),
     ("https://news.ycombinator.com/user?id=pg", "hackernews", None),
+    # --- stack exchange network ---
+    ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
+     "stackexchange", "stackoverflow:11227809"),
+    # /q/<id> shortlink, with a fragment that detection ignores
+    ("https://stackoverflow.com/q/11227809#11227902", "stackexchange", "stackoverflow:11227809"),
+    ("https://www.stackoverflow.com/questions/42/x", "stackexchange", "stackoverflow:42"),
+    # *.stackexchange.com subdomains are each their own API site
+    ("https://math.stackexchange.com/questions/9/foo", "stackexchange", "math:9"),
+    ("https://meta.stackexchange.com/questions/7/bar", "stackexchange", "meta:7"),
+    ("https://rpg.meta.stackexchange.com/questions/3/baz", "stackexchange", "rpg.meta:3"),
+    # dedicated-domain sites, including the slug that literally keeps .net
+    ("https://superuser.com/questions/5/y", "stackexchange", "superuser:5"),
+    ("https://serverfault.com/questions/6/z", "stackexchange", "serverfault:6"),
+    ("https://askubuntu.com/questions/8/w", "stackexchange", "askubuntu:8"),
+    ("https://mathoverflow.net/questions/12/q", "stackexchange", "mathoverflow.net:12"),
+    # meta of a dedicated domain -> meta.<slug>
+    ("https://meta.stackoverflow.com/questions/4/v", "stackexchange", "meta.stackoverflow:4"),
+    # tag, user, and listing pages: source known, question id unknown
+    ("https://stackoverflow.com/questions/tagged/python", "stackexchange", None),
+    ("https://stackoverflow.com/users/87234/gmannickg", "stackexchange", None),
+    ("https://stackoverflow.com/", "stackexchange", None),
+    # answer permalinks carry an answer id, not a question id (pinned simplification)
+    ("https://stackoverflow.com/a/11227902", "stackexchange", None),
+    # the bare network portal is not a question host
+    ("https://stackexchange.com/", "web", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

@@ -100,6 +100,14 @@ def test_youtube_defaults_to_media_but_title_wins():
     assert classify_item(howto).category == "tutorial"
 
 
+def test_stackexchange_defaults_to_reference_but_title_wins():
+    question = make_item(source="stackexchange", title="Why is a sorted array faster?")
+    assert classify_item(question).category == "reference"
+
+    howto = make_item(source="stackexchange", title="How to merge two dicts in Python")
+    assert classify_item(howto).category == "tutorial"
+
+
 def test_unmatched_web_item_stays_unclassified():
     item = make_item(title="An ordinary post")
     classified = classify_item(item)

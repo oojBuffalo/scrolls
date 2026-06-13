@@ -168,6 +168,18 @@ points, 71 comments" — and whose linked article rides along as a bare
 URL in the Links section, one `scrolls add` away; the comment id tree
 stays in `raw_text` for a later enrichment, and only `news.ycombinator.com/item?id=…`
 pages fetch — the front page and profiles register but have no item to
+fetch), and **stackexchange** (the keyless Stack Exchange API — see
+`docs/adr/0033-stack-exchange-adapter.md`: one adapter serves the whole
+network, the per-site API slug carried in the item id as
+`stackexchange:<site>:<id>` the way Wikipedia carries its language
+edition, so a Math.SE, Super User, or MathOverflow question enriches
+with no extra code. A saved question's body and its top answers —
+accepted answer first — become the searchable scroll, the question's
+author-applied tags become `concepts` like github repo topics, and the
+answers are an optional second request so a question with none, or a
+failed answers fetch, still produces a question-only scroll; only
+`/questions/<id>` and the `/q/<id>` shortlink fetch, while tag, user,
+and `/a/<id>` answer-permalink pages register but have no question to
 fetch). Items from sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 
@@ -430,7 +442,11 @@ page, with link stories degrading to metadata-only and Show HN posts
 classified as projects (ADR 0031), and the Batches API now halving the
 cost of concept-summary synthesis too via `kb --engine llm --batch`,
 sharing one Message Batches transport with bulk classification in the
-LLM tier's `llm.py` (ADR 0032). Next candidate: a native `x` fetch
+LLM tier's `llm.py` (ADR 0032), and a keyless Stack Exchange adapter so
+a saved Stack Overflow — or any network site's — question becomes a
+clean scroll carrying the question and its accepted-first top answers,
+with the question's tags as concepts and the whole network served by one
+adapter (ADR 0033). Next candidate: a native `x` fetch
 adapter so saved tweets enrich beyond the Field Theory import, or
 two-phase batch submit/collect if a terminal wait ever outgrows the
 library (ADR 0022, ADR 0032).

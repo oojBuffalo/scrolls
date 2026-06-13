@@ -17,6 +17,18 @@ GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 
+# Stack Exchange network sites on dedicated domains, mapped to the API
+# `site` slug. Every *.stackexchange.com subdomain is its own site (the
+# label before .stackexchange.com), handled separately.
+STACKEXCHANGE_DEDICATED = {
+    "stackoverflow.com": "stackoverflow",
+    "superuser.com": "superuser",
+    "serverfault.com": "serverfault",
+    "askubuntu.com": "askubuntu",
+    "mathoverflow.net": "mathoverflow.net",
+    "stackapps.com": "stackapps",
+}
+
 # Top-level github.com path segments that are site pages, not user accounts.
 GITHUB_RESERVED = {
     "about", "collections", "events", "explore", "features", "login",
@@ -60,6 +72,10 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in HACKERNEWS_HOSTS:
         return DetectedSource("hackernews", _hackernews_id(path_parts, parsed.query))
+
+    se_site = _stackexchange_site(host)
+    if se_site is not None:
+        return DetectedSource("stackexchange", _stackexchange_id(se_site, path_parts))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -112,6 +128,40 @@ def _x_status_id(path_parts: list[str]) -> str | None:
     # /<user>/status/<numeric-id>
     if len(path_parts) >= 3 and path_parts[1] == "status" and path_parts[2].isdigit():
         return path_parts[2]
+    return None
+
+
+def _stackexchange_site(host: str) -> str | None:
+    """The Stack Exchange API `site` slug for a host, or None if not the network.
+
+    Dedicated domains map through a table; every *.stackexchange.com host
+    is its own site named by the label before `.stackexchange.com`, so
+    `math.stackexchange.com` -> `math` and `rpg.meta.stackexchange.com` ->
+    `rpg.meta`. Meta sites of dedicated domains (`meta.stackoverflow.com`)
+    map to `meta.<slug>`.
+    """
+    if host.startswith("www."):
+        host = host[4:]
+    if host in STACKEXCHANGE_DEDICATED:
+        return STACKEXCHANGE_DEDICATED[host]
+    if host.endswith(".stackexchange.com"):
+        return host[: -len(".stackexchange.com")] or None
+    if host.startswith("meta."):
+        base = STACKEXCHANGE_DEDICATED.get(host[len("meta."):])
+        if base:
+            return f"meta.{base}"
+    return None
+
+
+def _stackexchange_id(site: str, path_parts: list[str]) -> str | None:
+    """`<site>:<question_id>` for a question URL, else None.
+
+    Question URLs are `/questions/<id>/...` and the `/q/<id>` shortlink;
+    answer permalinks (`/a/<id>`), tag pages, and user pages carry no
+    question id, so they are the source with no fetchable item.
+    """
+    if len(path_parts) >= 2 and path_parts[0] in ("questions", "q") and path_parts[1].isdigit():
+        return f"{site}:{path_parts[1]}"
     return None
 
 

@@ -12,7 +12,7 @@ Precedence (first hit wins):
    their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
-4. weak source defaults (youtube → media).
+4. weak source defaults (youtube → media, stackexchange → reference).
 """
 
 from __future__ import annotations
@@ -53,6 +53,9 @@ _TITLE_RULES = (
 
 _WEAK_SOURCE_CATEGORIES = {
     "youtube": "media",
+    # A Q&A thread is used as a reference answer, but an explicit "how to"
+    # title (a title rule, checked first) is a tutorial, so this stays weak.
+    "stackexchange": "reference",
 }
 
 
