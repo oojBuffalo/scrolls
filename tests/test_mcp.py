@@ -80,6 +80,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == {
         "search_scrolls",
+        "list_scrolls",
         "get_scroll",
         "get_related_scrolls",
         "get_link_graph",
@@ -135,6 +136,45 @@ def test_search_scrolls_honors_facets(scrolls_home, fake_wikipedia_api):
     ] == ["wikipedia:en:SQLite"]
     # the item is classified, so the unclassified pool excludes it
     assert mcp_server.search_scrolls("database", category="") == []
+
+
+def test_list_scrolls_browses_by_facet(scrolls_home):
+    # The enumeration counterpart to search_scrolls (ADR 0060): no query,
+    # filtered by the same facets, bounded by a limit.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:2401.0001", source="arxiv",
+        url="https://arxiv.org/abs/2401.0001", saved_at="2026-06-12T00:00:00+00:00",
+        title="A paper", category="paper", tags=("efficient",), stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="web:abc", source="web", url="https://example.org/post",
+        saved_at="2026-06-12T01:00:00+00:00", title="A post", stage="fetched",
+    ))
+
+    # no facets: every item as a summary, oldest first
+    rows = mcp_server.list_scrolls()
+    assert [r["id"] for r in rows] == ["arxiv:2401.0001", "web:abc"]
+    assert set(rows[0]) == {
+        "id", "source", "url", "title", "category", "stage", "saved_at"
+    }
+
+    # facets AND together, mirroring scrolls list (incl. the tag membership facet)
+    assert [r["id"] for r in mcp_server.list_scrolls(source="arxiv", tag="EFFICIENT")] == [
+        "arxiv:2401.0001"
+    ]
+    # empty-string category selects the unclassified pool
+    assert [r["id"] for r in mcp_server.list_scrolls(category="")] == ["web:abc"]
+    # the limit bounds the result
+    assert len(mcp_server.list_scrolls(limit=1)) == 1
+
+
+def test_list_scrolls_before_init_returns_empty(scrolls_home):
+    assert mcp_server.list_scrolls() == []
 
 
 def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):

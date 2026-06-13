@@ -22,7 +22,7 @@ from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
-from scrolls.items import count_by_source, get_item
+from scrolls.items import count_by_source, get_item, list_items
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
@@ -34,11 +34,15 @@ from scrolls.search import search_items
 
 SERVER_NAME = "scrolls"
 
+DEFAULT_LIST_LIMIT = 50
+
 _INSTRUCTIONS = (
     "Search the user's saved internet artifacts (tweets, papers, videos, "
     "articles, repos) compiled as a local knowledge library. Start with "
     "get_context_bundle for a compact, citable overview of a topic; use "
-    "search_scrolls and get_scroll for depth, get_related_scrolls and "
+    "search_scrolls and get_scroll for depth, list_scrolls to browse the "
+    "library by facet (source, category, tag, concept) without a query, "
+    "get_related_scrolls and "
     "get_concept_page to follow connections, get_link_graph for the whole "
     "library's link structure at once, and ingest_url to save "
     "something new. follow_feed subscribes the library to an RSS/Atom "
@@ -80,6 +84,52 @@ def search_scrolls(
         concept=concept,
     )
     return [dataclasses.asdict(hit) for hit in hits]
+
+
+def list_scrolls(
+    source: str | None = None,
+    stage: str | None = None,
+    category: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+) -> list[dict[str, Any]]:
+    """Browse library items by facet — the enumeration counterpart to search_scrolls.
+
+    Where search_scrolls ranks items by relevance to a query, this lists
+    them with no query at all, filtered by the same facets (they AND
+    together): `source` and `stage` match exactly, `category` exactly except
+    an empty string which selects unclassified items, `tag` by membership
+    (case-insensitive), and `concept` by membership (matched by slug). Items
+    come oldest-saved first, capped at `limit` (default 50) to stay
+    context-friendly — raise it to see more. Each entry is a summary (id,
+    source, url, title, category, stage, saved_at); follow up with get_scroll
+    for the full record. Use it for "what arxiv papers tagged efficient are
+    in the library", which has no natural search query.
+    """
+    paths = get_paths()
+    if not paths.db_path.exists():
+        return []
+    items = list_items(
+        paths.db_path,
+        stage=stage,
+        source=source,
+        category=category,
+        tag=tag,
+        concept=concept,
+    )[:limit]
+    return [
+        {
+            "id": item.id,
+            "source": item.source,
+            "url": item.url,
+            "title": item.title,
+            "category": item.category,
+            "stage": item.stage,
+            "saved_at": item.saved_at,
+        }
+        for item in items
+    ]
 
 
 def get_scroll(item_id: str) -> dict[str, Any]:
@@ -263,6 +313,7 @@ def compile_library() -> dict[str, Any]:
 
 _TOOLS = (
     search_scrolls,
+    list_scrolls,
     get_scroll,
     get_related_scrolls,
     get_link_graph,

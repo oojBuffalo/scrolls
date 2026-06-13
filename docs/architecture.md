@@ -458,7 +458,8 @@ choice (ADRs 0004, 0005).
   over MCP, like doctor (`tests/test_remove.py`).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
   serves the same engines to MCP clients over stdio: plain sync tool
-  functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,
+  functions (`get_context_bundle`, `search_scrolls`, `list_scrolls`,
+  `get_scroll`,
   `get_related_scrolls`, `get_link_graph`, `get_concept_page`,
   `list_sources`,
   `ingest_url`, the feed subscription tools `follow_feed`,

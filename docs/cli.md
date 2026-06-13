@@ -1020,6 +1020,7 @@ The tools wrap the same engines as the CLI commands
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, optionally faceted |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
