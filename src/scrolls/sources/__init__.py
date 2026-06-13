@@ -28,6 +28,7 @@ from scrolls.sources import (  # noqa: E402
     go,
     hackernews,
     huggingface,
+    lemmy,
     lobsters,
     mastodon,
     misskey,
@@ -54,6 +55,9 @@ FETCH_ADAPTERS = {
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,
     "huggingface": huggingface.fetch_item,
+    # Lemmy is the federated link aggregator: Fediverse like mastodon but with
+    # its own `/api/v3` API, so a separate source/adapter (ADR 0052).
+    "lemmy": lemmy.fetch_item,
     "lobsters": lobsters.fetch_item,
     "mastodon": mastodon.fetch_item,
     # Misskey-family is Fediverse like mastodon but speaks its own API, so it

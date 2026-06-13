@@ -504,8 +504,41 @@ content warning leads the body, and a pure renote unwraps to the boosted
 note. The synthesized title and `summary` (lead else alt else "N reactions,
 M renotes, K replies") mirror Bluesky and Mastodon; like them it gets *no*
 category default, and the whole `{note, children}` stays in `raw_text`).
-Items from sources without an adapter yet (today only `x`) are skipped,
-and per-item failures don't abort the batch.
+The first federated *link aggregator* is **lemmy** (the keyless Lemmy API —
+see `docs/adr/0052-lemmy-adapter.md`: Lemmy is the Reddit-shaped,
+community-organized discussion site — the federated cousin of Hacker News
+and Lobsters — and Fediverse software like Mastodon and Misskey, but it
+speaks its own API, so like Misskey it is its own source and adapter, the
+*third* Fediverse split by client API rather than host. It is detected the
+same host-less, shape-only way: a `/post/<id>` permalink on any instance
+becomes `lemmy:<host>/<id>`, the weak `post` literal carrying an all-digits
++ exactly-two-segments guard (Lemmy mints autoincrement integer post ids) —
+so a blog's `/post/<slug>` or a `/post/<id>/<extra>` URL stays a web page,
+and a misdetect degrades to a benign failed fetch. The API is plain GET, so
+the shared `http.get_json` serves it (no `post_json`): a post is fetched
+with `GET /api/v3/post?id=<id>` and its comments with a second GET to
+`/comment/list`, skipped when the post has none and degrading to a
+post-only scroll on failure. The comments arrive as a flat list whose
+`path` (`0.<id>`, `0.<parent>.<id>`) encodes the thread tree, so they are
+sorted into pre-order — a parent right before its replies — and bylined
+with author and score like a Lobsters comment (deleted and mod-removed
+comments skipped). Unlike the social posts, a Lemmy post has a *real* title
+(it is an aggregator entry, like a Hacker News or Lobsters story), and its
+`ap_id` is the canonical URL — pointing at the origin instance even when
+fetched through another. A link post's external `url` becomes a `link` (the
+article), a text post's Markdown `body` is the searchable content, and an
+image post's `url` becomes `photo` media (told apart by `url_content_type`),
+its pict-rs `thumbnail_url` a preview `thumbnail`; outbound URLs in the body
+are scanned and the `cross_posts` — the same submission in other communities
+— become post↔post links by `ap_id`, both wiring through `scrolls
+related`/`graph`. The post's community (`c/rust`, its subreddit-like topical
+home) becomes a `concept` like a github repo topic; the `summary` leads with
+the body else the engagement status ("142 points, 4 comments"). Like Hacker
+News, Lobsters, and the social posts, it gets *no* category default, and the
+whole `{post, comments}` stays in `raw_text`. We target API v3, the
+near-universal backwards-compatible surface; Lemmy 1.0's v4 keeps it
+working). Items from sources without an adapter yet (today only `x`) are
+skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -871,11 +904,22 @@ plus a `/notice/` length floor (ADR 0050), and a keyless Misskey adapter
 reaching the Misskey-family software (Sharkey, Firefish, Foundkey) on its
 `/notes/<id>` shape — which, unlike the mastodon forks, speaks its *own*
 `POST /api/notes/show` API rather than Mastodon's, so the Fediverse is now
-covered by two adapters split by client API not host (ADR 0051). Next
-candidates: a fourth Fediverse API (a Lemmy/PieFed link-aggregator post)
-splitting off the same way; home-instance-canonical Mastodon/Misskey and
+covered by two adapters split by client API not host (ADR 0051), and a
+keyless Lemmy adapter reaching the first federated *link aggregator* — the
+Reddit-shaped cousin of Hacker News and Lobsters — on its `/post/<digits>`
+shape, which like Misskey speaks its own API (`GET /api/v3/post`) rather
+than Mastodon's, the *third* Fediverse split by client API: a post + its
+comment thread are two GETs (the shared `http.get_json`, no `post_json`),
+the flat comments sorted into thread pre-order by their `path` and bylined
+like Lobsters, a *real* title (it is an aggregator entry, not a synthesized
+social post), the link/text/image post handled by `url_content_type`, body
+URLs and `cross_posts` as edges, the community as a concept, classified with
+no category default (ADR 0052). Next candidates: **PieFed** as a fourth
+Fediverse API (it serves an `/api/alpha` namespace, so likely its own
+source/adapter rather than a `lemmy` route — the Misskey-vs-mastodon-forks
+judgment again); home-instance-canonical Mastodon/Misskey/Lemmy and
 DID-canonical Bluesky identity so a post saved through two routes dedupes —
-the fetch-time id rewrite no adapter does yet (ADR 0048–0051); a third DOI
+the fetch-time id rewrite no adapter does yet (ADR 0048–0052); a third DOI
 registration agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or
 two-phase batch submit/collect if a terminal wait ever outgrows the library
 (ADR 0022, ADR 0032). A native `x` fetch adapter

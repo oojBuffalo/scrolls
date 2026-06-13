@@ -151,6 +151,14 @@ def detect_source(url: str) -> DetectedSource:
     if misskey_id is not None:
         return DetectedSource("misskey", misskey_id)
 
+    # Lemmy — the federated link aggregator — is host-less Fediverse too, and
+    # like Misskey speaks its own API (`/api/v3/post`, not Mastodon's), so it is
+    # its own source/adapter detected by URL shape (ADR 0052). Its `/post/<id>`
+    # literal never collides with mastodon's or misskey's shapes.
+    lemmy_id = _lemmy_id(host, path_parts)
+    if lemmy_id is not None:
+        return DetectedSource("lemmy", lemmy_id)
+
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
 
@@ -623,6 +631,38 @@ def _misskey_id(host: str, path_parts: list[str]) -> str | None:
         note_id = path_parts[1]
         if _fullmatch(_MISSKEY_ID, note_id):
             return f"{host}/{note_id}"
+    return None
+
+
+def _lemmy_id(host: str, path_parts: list[str]) -> str | None:
+    """`<host>/<post_id>` for a Lemmy `/post/<digits>` URL, else None.
+
+    Lemmy (and the Lemmy-API link aggregators) is host-less Fediverse software
+    like Misskey, fetched from its own `/api/v3/post` rather than the Mastodon
+    API (ADR 0052), so — like every Fediverse source — a post is recognized by
+    its URL *shape* on whatever instance the saved URL names; this branch runs
+    only after every known-platform host and the other Fediverse shapes have
+    been ruled out.
+
+    The canonical post permalink is `/post/<id>`, where `<id>` is Lemmy's
+    autoincrement integer post id. The `post` literal is weak (countless sites
+    have a `/post/...` path), so — exactly as Pleroma's `/notice/` and Misskey's
+    `/notes/` forms make their id carry the weight (ADR 0050, ADR 0051) — the
+    constraint is strict: an *all-digits* id and exactly two path segments, so a
+    blog's `/post/<slug>` (non-numeric) or `/post/<id>/<extra>` stays a web page.
+    The residual risk — a non-Lemmy `/post/<digits>` URL the user wanted as
+    `web` — degrades to a benign failed fetch (the API call 404s), never a wrong
+    scroll: the conservative, reversible tradeoff a host-less network forces
+    (ADR 0049).
+
+    Identity carries the instance host (a post id is unique only within its
+    instance) and the host is lowercased; the numeric id is kept as written.
+    Comment permalinks (`/comment/<id>`), community (`/c/<name>`), and user
+    (`/u/<name>`) pages carry no post id and resolve to the source with no
+    fetchable item — Hacker News's and Lobsters' pattern (ADR 0031, ADR 0046).
+    """
+    if len(path_parts) == 2 and path_parts[0] == "post" and path_parts[1].isdigit():
+        return f"{host}/{path_parts[1]}"
     return None
 
 

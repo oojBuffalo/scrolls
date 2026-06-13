@@ -175,6 +175,22 @@ CASES = [
     # profile, timeline, and deeper note routes carry no fetchable note id
     ("https://misskey.io/@alice", "web", None),
     ("https://misskey.io/notes/9bf2dbi3p4/reactions", "web", None),
+    # --- lemmy (federated link aggregator: its own API, not Mastodon's — ADR 0052) ---
+    # /post/<digits> on any instance; identity carries the host, id verbatim
+    ("https://lemmy.world/post/27855171", "lemmy", "lemmy.world/27855171"),
+    ("https://programming.dev/post/12345", "lemmy", "programming.dev/12345"),
+    # the host is lowercased (DNS); a fragment/query is ignored by path parsing
+    ("https://Lemmy.World/post/27855171", "lemmy", "lemmy.world/27855171"),
+    ("https://lemmy.ml/post/42?scrollToComments=true", "lemmy", "lemmy.ml/42"),
+    # the all-digits guard keeps a blog's /post/<slug> a web page (the weak
+    # `post` literal can't carry the match on its own — ADR 0052)
+    ("https://blog.example/post/why-rust-2-0-wont-happen", "web", None),
+    # exactly two segments: /post/<id>/<extra> is not the canonical permalink
+    ("https://blog.example/post/12345/comments", "web", None),
+    # comment, community, and user routes carry no fetchable post id
+    ("https://lemmy.world/comment/98765", "web", None),
+    ("https://lemmy.world/c/rust", "web", None),
+    ("https://lemmy.world/u/ferris", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

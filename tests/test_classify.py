@@ -267,6 +267,19 @@ def test_bluesky_tutorial_title_still_wins():
     assert classify_item(item).category == "tutorial"
 
 
+def test_lemmy_stays_unclassified_like_hacker_news():
+    # Lemmy is a federated link aggregator like Hacker News/Lobsters (ADR 0052):
+    # a saved post has no single honest category, so no source default — the
+    # title rules and the LLM engine decide.
+    item = make_item(source="lemmy", title="Rust 2.0 will never happen — and that's fine")
+    assert classify_item(item).category is None
+
+
+def test_lemmy_tutorial_title_still_wins():
+    item = make_item(source="lemmy", title="A guide to self-hosting your own Lemmy instance")
+    assert classify_item(item).category == "tutorial"
+
+
 def test_unmatched_web_item_stays_unclassified():
     item = make_item(title="An ordinary post")
     classified = classify_item(item)
