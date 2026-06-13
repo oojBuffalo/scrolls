@@ -329,7 +329,12 @@ choice (ADRs 0004, 0005).
   (`tests/test_overrides.py`).
 - **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
   over body. Query tokens are quoted and AND-ed, so arbitrary agent
-  input never hits FTS5 syntax errors (`tests/test_search.py`).
+  input never hits FTS5 syntax errors. Optional `source`/`category`/`stage`
+  facets scope the ranked match — they AND with the FTS match and leave
+  the BM25 order untouched, mirroring `scrolls list`'s filters (`""`
+  category selects unclassified), so a search can ask "papers about X" over
+  30+ heterogeneous sources, not just "anything mentioning X" (ADR 0058,
+  `tests/test_search.py`).
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
   no LLM: link connections in either direction (resolved through source
   detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv

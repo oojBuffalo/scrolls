@@ -115,6 +115,114 @@ def test_search_respects_limit(db_path):
     assert len(search_items(db_path, "databases", limit=3)) == 3
 
 
+def test_search_filters_by_source(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", source="wikipedia",
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.", source="arxiv",
+    ))
+
+    hits = search_items(db_path, "database", source="arxiv")
+    assert [hit.id for hit in hits] == ["arxiv:2401.0001"]
+    # the unfiltered search still returns both, best-first
+    assert {hit.id for hit in search_items(db_path, "database")} == {
+        "wikipedia:en:SQLite", "arxiv:2401.0001"
+    }
+
+
+def test_search_filters_by_category(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", category="reference",
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.", category="paper",
+    ))
+
+    hits = search_items(db_path, "database", category="paper")
+    assert [hit.id for hit in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_empty_category_selects_unclassified(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", category="reference",
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post",
+        "Some database thoughts.", source="web", category=None,
+    ))
+
+    hits = search_items(db_path, "database", category="")
+    assert [hit.id for hit in hits] == ["web:abc"]
+
+
+def test_search_filters_by_stage(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite database",
+        "SQLite is a database engine.", stage="rendered",
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "Another database page",
+        "More database notes.", source="web", stage="fetched",
+    ))
+
+    hits = search_items(db_path, "database", stage="rendered")
+    assert [hit.id for hit in hits] == ["wikipedia:en:SQLite"]
+
+
+def test_search_filters_combine_with_and(db_path):
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        source="arxiv", category="paper",
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0002", "Another database paper",
+        "Another database study.",
+        source="arxiv", category="reference",
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post",
+        "Some database thoughts.", source="web", category="paper",
+    ))
+
+    hits = search_items(db_path, "database", source="arxiv", category="paper")
+    assert [hit.id for hit in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_filters_can_exclude_every_hit(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", source="wikipedia",
+    ))
+    assert search_items(db_path, "database", source="arxiv") == []
+
+
+def test_search_filters_compose_with_limit(db_path):
+    for index in range(5):
+        insert_item(db_path, make_item(
+            f"arxiv:2401.000{index}", f"Paper {index}",
+            "Every paper mentions databases.", source="arxiv",
+        ))
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post",
+        "Databases everywhere.", source="web",
+    ))
+    hits = search_items(db_path, "databases", source="arxiv", limit=3)
+    assert len(hits) == 3
+    assert all(hit.source == "arxiv" for hit in hits)
+
+
+def test_search_blank_query_still_rejected_with_filters(db_path):
+    with pytest.raises(ValueError):
+        search_items(db_path, "   ", source="arxiv")
+
+
 def test_migration_backfills_fts_for_existing_rows(tmp_path):
     """A v2 library (items, no FTS) gains a searchable index on upgrade."""
     db_file = tmp_path / "db.sqlite"

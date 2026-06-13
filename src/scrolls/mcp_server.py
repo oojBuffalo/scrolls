@@ -47,13 +47,27 @@ _INSTRUCTIONS = (
 )
 
 
-def search_scrolls(query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict[str, Any]]:
+def search_scrolls(
+    query: str,
+    limit: int = DEFAULT_SEARCH_LIMIT,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
-    `score` is SQLite bm25(): more negative means a stronger match.
+    `score` is SQLite bm25(): more negative means a stronger match. The
+    optional facets scope the ranked match (they AND together): `source`
+    limits to one source (e.g. arxiv, github, web), `category` to one
+    category (an empty string selects unclassified items), and `stage` to
+    one pipeline stage (detected, fetched, rendered). Use them to ask, e.g.,
+    what *papers* the library knows about a topic, not just what mentions it.
     """
     paths = get_paths()
-    return [dataclasses.asdict(hit) for hit in search_items(paths.db_path, query, limit=limit)]
+    hits = search_items(
+        paths.db_path, query, limit=limit, source=source, category=category, stage=stage
+    )
+    return [dataclasses.asdict(hit) for hit in hits]
 
 
 def get_scroll(item_id: str) -> dict[str, Any]:

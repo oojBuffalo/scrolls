@@ -538,6 +538,37 @@ def test_search_respects_limit_flag(scrolls_home, fake_wikipedia_api, capsys):
     assert json.loads(capsys.readouterr().out) == []
 
 
+def test_search_filters_by_source_and_category(
+    scrolls_home, fake_wikipedia_api, fake_github_api, capsys
+):
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])  # category: reference
+    main(["ingest", "https://github.com/oojBuffalo/scrolls"])  # category: project
+    capsys.readouterr()
+
+    # both scrolls mention SQLite, so an unfiltered search returns both
+    main(["search", "SQLite"])
+    assert {hit["id"] for hit in json.loads(capsys.readouterr().out)} == {
+        "wikipedia:en:SQLite",
+        "github:oojBuffalo/scrolls",
+    }
+
+    # --source scopes the ranked match to one source
+    exit_code = main(["search", "SQLite", "--source", "github"])
+    assert exit_code == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["github:oojBuffalo/scrolls"]
+
+    # --category scopes to one category (the github default is "project")
+    main(["search", "SQLite", "--category", "reference"])
+    hits = json.loads(capsys.readouterr().out)
+    assert [hit["id"] for hit in hits] == ["wikipedia:en:SQLite"]
+
+    # a filter that matches nothing is an empty result, not an error
+    exit_code = main(["search", "SQLite", "--source", "arxiv"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     main(["fetch"])

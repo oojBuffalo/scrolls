@@ -123,6 +123,20 @@ def test_search_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.search_scrolls("anything") == []
 
 
+def test_search_scrolls_honors_facets(scrolls_home, fake_wikipedia_api):
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # category: reference
+
+    assert [h["id"] for h in mcp_server.search_scrolls("database", source="wikipedia")] == [
+        "wikipedia:en:SQLite"
+    ]
+    assert mcp_server.search_scrolls("database", source="arxiv") == []
+    assert [
+        h["id"] for h in mcp_server.search_scrolls("database", category="reference")
+    ] == ["wikipedia:en:SQLite"]
+    # the item is classified, so the unclassified pool excludes it
+    assert mcp_server.search_scrolls("database", category="") == []
+
+
 def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     item = mcp_server.get_scroll("wikipedia:en:SQLite")

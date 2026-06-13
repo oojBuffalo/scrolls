@@ -783,7 +783,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -793,12 +793,25 @@ errors. `score` is SQLite's `bm25()`: results are ordered best-first and
 (`test_search_respects_limit_flag`). No matches prints `[]`; a blank
 query is an error (`test_search_blank_query_is_an_error`).
 
+`--source`, `--category`, and `--stage` scope the ranked match
+(`test_search_filters_by_source_and_category`, ADR 0058): they AND with
+the FTS match and with each other and leave the BM25 order untouched.
+`--source` and `--stage` match exactly (`--stage` choices:
+`detected`/`fetched`/`rendered`); `--category` matches exactly too,
+except an empty value (`--category ""`), which selects unclassified
+items — the same convention `scrolls list`/`scrolls set` use. A facet
+that excludes every hit prints `[]`, not an error.
+
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
 (matches bracketed, `…` for elided context).
 
 ```console
 $ scrolls search "sqlite fts5"
 [{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search."}]
+[exit 0]
+
+$ scrolls search "sqlite fts5" --source arxiv
+[]
 [exit 0]
 
 $ scrolls search "   "
@@ -984,7 +997,7 @@ The tools wrap the same engines as the CLI commands
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8)` | `scrolls context` | Markdown bundle |
-| `search_scrolls(query, limit=20)` | `scrolls search` | hit list with snippets |
+| `search_scrolls(query, limit=20, source=None, category=None, stage=None)` | `scrolls search` | hit list with snippets, optionally faceted |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

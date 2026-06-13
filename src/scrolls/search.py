@@ -5,6 +5,13 @@ summary above the body, so items *about* a topic beat items that merely
 mention it. User queries are quoted token-by-token (implicit AND) instead
 of being passed as raw FTS5 syntax: agents send arbitrary strings, and
 robustness beats phrase/NEAR operators for now.
+
+Optional `source`/`category`/`stage` facets narrow the ranked match the way
+`scrolls list` filters the full item set (ADR 0058): with 30+ heterogeneous
+sources in one library, "what *papers* does my library know about X" needs
+to scope a search, not just a flat listing. Filters AND with the FTS match
+and never reorder it; the empty-string `category` selects the unclassified
+pool, mirroring `list_items`/`scrolls set`.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ SELECT items.id, items.source, items.title, items.url, items.stage,
        snippet(items_fts, -1, '[', ']', '…', {_SNIPPET_TOKENS}) AS snippet
 FROM items_fts
 JOIN items ON items.rowid = items_fts.rowid
-WHERE items_fts MATCH ?
+WHERE items_fts MATCH ?{{filters}}
 ORDER BY bm25(items_fts, {_BM25_WEIGHTS})
 LIMIT ?
 """
@@ -42,8 +49,21 @@ class SearchHit:
     snippet: str
 
 
-def search_items(db_path: Path, query: str, limit: int = DEFAULT_LIMIT) -> list[SearchHit]:
+def search_items(
+    db_path: Path,
+    query: str,
+    limit: int = DEFAULT_LIMIT,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
+
+    `source` and `stage` match exactly; `category` matches exactly too,
+    except the empty string, which selects items *without* a category — the
+    unclassified pool, mirroring `list_items`/`scrolls set`. `None` never
+    filters. Filters AND with the full-text match and leave the ranking
+    untouched.
 
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
@@ -51,12 +71,34 @@ def search_items(db_path: Path, query: str, limit: int = DEFAULT_LIMIT) -> list[
     match = _escape_query(query)
     if not db_path.exists():
         return []
+    clauses, params = _filters(source, category, stage)
+    sql = _QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))
     conn = sqlite3.connect(db_path)
     try:
-        rows = conn.execute(_QUERY, (match, limit)).fetchall()
+        rows = conn.execute(sql, (match, *params, limit)).fetchall()
     finally:
         conn.close()
     return [SearchHit(*row) for row in rows]
+
+
+def _filters(
+    source: str | None, category: str | None, stage: str | None
+) -> tuple[list[str], list[str]]:
+    """SQL clauses and their params for the optional facets, in column order."""
+    clauses: list[str] = []
+    params: list[str] = []
+    if source is not None:
+        clauses.append("items.source = ?")
+        params.append(source)
+    if category == "":
+        clauses.append("items.category IS NULL")
+    elif category is not None:
+        clauses.append("items.category = ?")
+        params.append(category)
+    if stage is not None:
+        clauses.append("items.stage = ?")
+        params.append(stage)
+    return clauses, params
 
 
 def _escape_query(query: str) -> str:

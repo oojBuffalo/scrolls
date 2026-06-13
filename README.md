@@ -104,6 +104,7 @@ uv run scrolls classify --engine llm --batch  # same LLM pass via the Batches AP
 uv run scrolls set <id> category=tool tags=a,b  # set classification fields by hand; empty value clears
 uv run scrolls rm <id-or-url> [...]  # remove items and the files they own, as JSON
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
+uv run scrolls search <query> --source arxiv --category paper  # scope the ranked match; filters AND, "" = unclassified
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
@@ -723,7 +724,15 @@ allows re-capture — the media tree is cache, not canon (see
 `scrolls search` runs SQLite FTS5 over title, summary, and extracted text
 (BM25-ranked, title weighted highest) and returns hits with snippets; the
 index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
-so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
+so arbitrary agent input never hits FTS5 syntax errors. Optional
+`--source`, `--category`, and `--stage` facets scope the ranked match
+(see `docs/adr/0058-faceted-search.md`): with 30+ heterogeneous sources
+in one library, they answer "what *papers* does my library know about
+transformers" (`--source arxiv` or `--category paper`) or "which
+*unclassified* items mention SQLite" (`--category ""`) — the filters AND
+with the match and with each other, leaving the BM25 order untouched, and
+mirror `scrolls list`'s exactly (`""` selects unclassified). The MCP
+`search_scrolls` tool takes the same three facets. `scrolls show <id>`
 prints the full stored item. Every command that takes an item id also
 accepts the item's URL — `scrolls show https://example.com/post`
 resolves through the same normalization and detection as `add` (see

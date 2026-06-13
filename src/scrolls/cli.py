@@ -312,6 +312,21 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--limit", type=int, default=20, help="Maximum hits to return (default 20)"
     )
+    search_parser.add_argument(
+        "--source", default=None, help="Only hits from one source, e.g. web, arxiv"
+    )
+    search_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only hits with this category; an empty value selects "
+        "unclassified items",
+    )
+    search_parser.add_argument(
+        "--stage",
+        choices=("detected", "fetched", "rendered"),
+        default=None,
+        help="Only hits at one pipeline stage",
+    )
 
     set_parser = subparsers.add_parser(
         "set", help="Set classification fields on one item by hand (JSON output)"
@@ -399,7 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rm":
         return _cmd_rm(args.refs)
     if args.command == "search":
-        return _cmd_search(args.query, args.limit)
+        return _cmd_search(
+            args.query, args.limit, args.source, args.category, args.stage
+        )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
     if args.command == "show":
@@ -1060,10 +1077,23 @@ def _cmd_rm(refs: list[str]) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_search(query: str, limit: int) -> int:
+def _cmd_search(
+    query: str,
+    limit: int,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> int:
     paths = get_paths()
     try:
-        hits = search_items(paths.db_path, query, limit=limit)
+        hits = search_items(
+            paths.db_path,
+            query,
+            limit=limit,
+            source=source,
+            category=category,
+            stage=stage,
+        )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
