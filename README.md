@@ -281,7 +281,35 @@ so the gem's description becomes the `summary` that FTS indexes. The SPDX
 URIs become `links`, the source URI resolving to the gem's github repo in
 `scrolls related` even when it points at a tagged tree. A gem classifies
 as `tool` like the other packages; the gems list and search register but
-have no gem to fetch).
+have no gem to fetch), and **huggingface** (the keyless Hugging Face Hub
+API — see `docs/adr/0041-huggingface-hub-adapter.md`: a saved
+`huggingface.co/<org>/<name>` model page or
+`huggingface.co/datasets/<...>` dataset page becomes a clean scroll from
+the Hub's structured metadata instead of a `trafilatura` scrape of a
+JS-rendered page, the ML-artifact sibling of the package-registry
+adapters. One adapter serves both repo kinds the way the Stack Exchange
+adapter serves a whole network: the *kind* rides in the item id as
+`huggingface:model:<org>/<name>` or `huggingface:dataset:<...>`, picked
+off the URL so the fetch routes to `/api/models` or `/api/datasets`. Repo
+ids are kept verbatim — the Hub is case-sensitive, npm's rule rather than
+PyPI's fold — and a `/tree/main` or `/blob/...` subpage dedupes to the
+two-segment repo. The model/dataset card (`README.md`, its YAML
+frontmatter stripped) is the searchable content, its lead paragraph the
+summary — cleaner than a dataset's `description` field, which the Hub
+derives crudely from the card. The Hub flattens every tag into one noisy
+array (frameworks, `region:us`, file formats), so concepts come from the
+*structured* fields instead — the task (`pipeline_tag` for models,
+`task_categories` for datasets) and the author's `cardData.tags`, the
+github-topics parallel — while `library_name` and the license fill the
+`tags` facet slot. The flat array is read only for its cross-reference
+prefixes: an `arxiv:<id>` tag becomes an `arxiv.org/abs/<id>` link that
+`scrolls related` resolves to the saved arXiv paper (the model↔paper
+edge, kin to ADR 0038's preprint↔published edge — a saved model wires to
+the paper that introduced it), and a `dataset:<name>` tag becomes the
+dataset's Hub page (the model↔dataset edge). A model classifies as `tool`
+like a package, a dataset as `dataset` — the IDEAS.md §8 vocabulary term;
+a repo with no card degrades to a metadata-only scroll, and site routes,
+`spaces`, and bare profiles register but have no repo to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -573,12 +601,24 @@ publisher paywall, classified as `paper` alongside arXiv so Scrolls now
 spans both preprints and the published literature (ADR 0037), and the
 arXiv adapter learning to record a preprint's published `arxiv:doi` as a
 `doi.org` link so `scrolls related` wires a saved preprint to its
-published paper, the literature loop closed both ways (ADR 0038). Next
+published paper, the literature loop closed both ways (ADR 0038), and
+keyless Packagist (ADR 0039) and RubyGems (ADR 0040) adapters extending
+the package-registry family to PHP/Composer and Ruby — both honestly
+metadata-only (neither API ships a README), Packagist ranking its
+`versions` map for the highest stable release with no comparator
+dependency and RubyGems the simplest of the family (the latest version
+inline), and a keyless Hugging Face Hub adapter so a saved model or
+dataset page becomes a clean scroll from the Hub's structured metadata —
+one adapter for both repo kinds (the kind in the item id), the card
+README as searchable text, the task and card tags as concepts (not the
+Hub's noisy flat tag soup), and the `arxiv:` tag wired to the saved arXiv
+paper that introduced the model (the model↔paper edge, ADR 0041). Next
 candidates: a native `x` fetch adapter so saved tweets enrich beyond the
 Field Theory import; a DataCite adapter on the same `doi.org` detection
-for dataset DOIs Crossref doesn't hold; more package registries
-(RubyGems, Packagist, Go modules) following the PyPI/npm/crates pattern;
-or two-phase batch submit/collect if a terminal wait ever outgrows the
+for dataset DOIs Crossref doesn't hold; Go modules — the last obvious
+package registry on the JSON-metadata pattern (the `proxy.golang.org`
+endpoints); a Hugging Face Spaces sub-adapter on the same host; or
+two-phase batch submit/collect if a terminal wait ever outgrows the
 library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

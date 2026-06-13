@@ -176,6 +176,35 @@ CASES = [
     ("https://doi.org/", "crossref", None),
     ("https://doi.org/about", "crossref", None),
     ("https://doi.org/not-a-doi", "crossref", None),
+    # --- huggingface ---
+    # a model repo is <org>/<name>; the repo type rides in source_id so one
+    # adapter serves both the /api/models and /api/datasets endpoints
+    ("https://huggingface.co/google-bert/bert-base-uncased", "huggingface",
+     "model:google-bert/bert-base-uncased"),
+    # repo subpages (tree/blob/commits/discussions) dedupe to the repo:
+    # identity is the first two path segments, like a pypi version page
+    ("https://huggingface.co/google-bert/bert-base-uncased/tree/main", "huggingface",
+     "model:google-bert/bert-base-uncased"),
+    # repo ids are case-sensitive — preserved verbatim (the npm/github rule),
+    # so a mixed-case org or name is never folded into a fetch miss
+    ("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct", "huggingface",
+     "model:Qwen/Qwen2.5-7B-Instruct"),
+    # datasets carry the datasets/ prefix; org/name or a legacy single name
+    ("https://huggingface.co/datasets/rajpurkar/squad", "huggingface",
+     "dataset:rajpurkar/squad"),
+    ("https://huggingface.co/datasets/squad", "huggingface", "dataset:squad"),
+    # the short hf.co host resolves to the same repo
+    ("https://hf.co/google-bert/bert-base-uncased", "huggingface",
+     "model:google-bert/bert-base-uncased"),
+    # site pages, listings, docs, blog, a bare profile, and spaces:
+    # source known, repo unknown (no fetchable item)
+    ("https://huggingface.co/", "huggingface", None),
+    ("https://huggingface.co/models", "huggingface", None),
+    ("https://huggingface.co/datasets", "huggingface", None),
+    ("https://huggingface.co/docs/transformers/index", "huggingface", None),
+    ("https://huggingface.co/blog/llama3", "huggingface", None),
+    ("https://huggingface.co/google-bert", "huggingface", None),
+    ("https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat", "huggingface", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

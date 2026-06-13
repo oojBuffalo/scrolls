@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (883 tests at the time of writing). The docs themselves
+`uv run pytest` (927 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -161,9 +161,15 @@ Two small contracts make every platform the same kind of scroll
    lowercase as `source_id` since Composer names are case-insensitive, a
    trailing `.json` and deeper subpages stripped),
    `rubygems` (gem pages, the gem name verbatim as `source_id` since
-   RubyGems is case-sensitive like npm, version pages included), and
+   RubyGems is case-sensitive like npm, version pages included),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
-   lowercase as `source_id` since DOIs are case-insensitive); `.pdf`
+   lowercase as `source_id` since DOIs are case-insensitive), and
+   `huggingface` (model and dataset repo pages on `huggingface.co`/`hf.co`,
+   the repo *kind* in the `source_id` as `model:<org>/<name>` or
+   `dataset:<...>` so one adapter serves both API endpoints — the Stack
+   Exchange shape — the id kept verbatim since the Hub is case-sensitive,
+   subpages deduped to the two-segment repo, site routes and `spaces`
+   carrying no fetchable repo); `.pdf`
    paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -192,6 +198,7 @@ Implemented fetch adapters, all keyless:
 | crossref | `sources/crossref.py` | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
+| huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets (kind in `source_id`); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; `library_name`+license → `tags`; `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`→Hub `link` (model↔dataset edge); `model → tool`, `dataset → dataset`; degrades to metadata-only | 0041 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -261,9 +268,10 @@ choice (ADRs 0004, 0005).
   input never hits FTS5 syntax errors (`tests/test_search.py`).
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
   no LLM: link connections in either direction (resolved through source
-  detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, and an arXiv
+  detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv
   preprint's published `doi.org` link finds its `crossref:<doi>` paper —
-  ADR 0038), shared concepts
+  ADR 0038 — and a Hugging Face model's `arxiv:` tag finds the
+  `arxiv:<id>` paper it introduced — ADR 0041), shared concepts
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).

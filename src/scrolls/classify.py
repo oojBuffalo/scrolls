@@ -9,8 +9,8 @@ getting a guessed label; a future LLM engine can pick them up.
 Precedence (first hit wins):
 
 1. curated-platform defaults — wikipedia/arxiv/crossref/github/pypi/npm/
-   crates/packagist/rubygems items are what their platform makes them,
-   whatever the title says;
+   crates/packagist/rubygems/huggingface items are what their platform
+   makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -88,7 +88,7 @@ def classify_item(item: ScrollItem) -> ScrollItem:
 
 
 def _category(item: ScrollItem) -> str | None:
-    curated = _CURATED_SOURCE_CATEGORIES.get(item.source)
+    curated = _curated_category(item)
     if curated:
         return curated
 
@@ -101,6 +101,26 @@ def _category(item: ScrollItem) -> str | None:
         return "documentation"
 
     return _WEAK_SOURCE_CATEGORIES.get(item.source)
+
+
+def _curated_category(item: ScrollItem) -> str | None:
+    """The platform-inherent category, or None.
+
+    Hugging Face serves two repo kinds under one source (ADR 0041), so the
+    category is read off the source id's prefix: a `model:` repo is a `tool`
+    (a published artifact you use, like a package), a `dataset:` repo is a
+    `dataset` (the IDEAS.md §8 vocabulary term). A huggingface item that is
+    neither — a profile or listing page registered but never fetched — has
+    no inherent category and falls through.
+    """
+    if item.source == "huggingface":
+        source_id = item.source_id or ""
+        if source_id.startswith("dataset:"):
+            return "dataset"
+        if source_id.startswith("model:"):
+            return "tool"
+        return None
+    return _CURATED_SOURCE_CATEGORIES.get(item.source)
 
 
 def _is_documentation_url(url: str) -> bool:

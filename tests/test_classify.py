@@ -74,6 +74,37 @@ def test_rubygems_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_huggingface_model_is_a_tool():
+    # A Hugging Face model is a published artifact you install and use,
+    # like a package; the repo kind rides in the source id.
+    item = make_item(
+        source="huggingface",
+        source_id="model:google-bert/bert-base-uncased",
+        title="google-bert/bert-base-uncased",
+    )
+    assert classify_item(item).category == "tool"
+
+
+def test_huggingface_dataset_is_a_dataset():
+    # A Hugging Face dataset is exactly the IDEAS.md §8 `dataset` category.
+    item = make_item(
+        source="huggingface",
+        source_id="dataset:rajpurkar/squad",
+        title="SQuAD",
+    )
+    assert classify_item(item).category == "dataset"
+
+
+def test_huggingface_repo_kind_beats_title_pattern():
+    # A model card titled like a tutorial is still a tool, not a tutorial.
+    item = make_item(
+        source="huggingface",
+        source_id="model:org/getting-started-with-llms",
+        title="Getting Started with LLMs",
+    )
+    assert classify_item(item).category == "tool"
+
+
 def test_curated_platform_default_beats_title_pattern():
     # A wikipedia page titled like a tutorial is still an encyclopedia entry.
     item = make_item(source="wikipedia", title="How to Solve It")

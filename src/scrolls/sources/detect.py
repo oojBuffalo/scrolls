@@ -22,6 +22,9 @@ NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
 PACKAGIST_HOSTS = {"packagist.org", "www.packagist.org"}
 RUBYGEMS_HOSTS = {"rubygems.org", "www.rubygems.org"}
+# hf.co is Hugging Face's short domain; it redirects to huggingface.co, but
+# the fetch adapter uses the repo id, not the host, so both resolve alike.
+HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -43,6 +46,16 @@ GITHUB_RESERVED = {
     "about", "collections", "events", "explore", "features", "login",
     "marketplace", "orgs", "pricing", "settings", "sponsors", "topics",
     "trending",
+}
+
+# Top-level huggingface.co path segments that are site pages, not model repos.
+# `datasets` and `spaces` are handled by dedicated branches before this set is
+# consulted; the rest are routes that can never be a model's `<org>/<name>`.
+HUGGINGFACE_RESERVED = {
+    "datasets", "spaces", "docs", "blog", "models", "tasks", "pricing",
+    "settings", "login", "join", "organizations", "posts", "papers",
+    "collections", "new", "notifications", "search", "chat", "learn",
+    "enterprise", "api", "support", "welcome", "changelog", "metrics",
 }
 
 
@@ -100,6 +113,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in RUBYGEMS_HOSTS:
         return DetectedSource("rubygems", _rubygems_id(path_parts))
+
+    if host in HUGGINGFACE_HOSTS:
+        return DetectedSource("huggingface", _huggingface_id(path_parts))
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
@@ -314,6 +330,43 @@ def _rubygems_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip()
     return name or None
+
+
+def _huggingface_id(path_parts: list[str]) -> str | None:
+    """`<kind>:<repo_id>` for a model or dataset repo URL, else None.
+
+    The fetch adapter serves both the `/api/models` and `/api/datasets`
+    endpoints, so the repo *kind* rides in the source id the way the Stack
+    Exchange site does: a model is `model:<org>/<name>`, a dataset is
+    `dataset:<org>/<name>` (or a legacy single-segment `dataset:<name>`).
+
+    A model repo is exactly `<org>/<name>` — the github rule — so a
+    repo subpage (`/tree/main`, `/blob/...`, `/discussions`) dedupes to
+    the repo by taking only the first two path segments, and a bare
+    `<org>` (a profile, ambiguous with legacy un-namespaced models) is
+    not fetchable. Site routes (`docs`, `blog`, `models`, …) and `spaces`
+    carry no model repo. Repo ids are case-sensitive, so they are kept
+    verbatim (the npm/github rule), not folded like a PyPI name.
+    """
+    if not path_parts:
+        return None
+    head = path_parts[0]
+    if head == "datasets":
+        return _hf_repo("dataset", path_parts[1:])
+    if head in HUGGINGFACE_RESERVED:  # includes `spaces`, which has no adapter
+        return None
+    if len(path_parts) >= 2:
+        return f"model:{path_parts[0]}/{path_parts[1]}"
+    return None
+
+
+def _hf_repo(kind: str, rest: list[str]) -> str | None:
+    """`<kind>:<org>/<name>`, or `<kind>:<name>` for a legacy single name."""
+    if not rest:
+        return None
+    name = f"{rest[0]}/{rest[1]}" if len(rest) >= 2 else rest[0]
+    name = name.strip()
+    return f"{kind}:{name}" if name else None
 
 
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")
