@@ -288,24 +288,11 @@ def list_items(
     convention. `tag` and `concept` are membership facets over the JSON
     array columns (ADR 0059): `tag` matches case-insensitively, `concept`
     by slug, each the way `scrolls related` compares them. `None` never
-    filters.
+    filters. Shares the one clause builder (`item_filters`) with `search`
+    and `facets`; its `items.`-qualified clauses run unchanged against this
+    single-table `SELECT`.
     """
-    clauses = []
-    params: list[str] = []
-    if stage is not None:
-        clauses.append("stage = ?")
-        params.append(stage)
-    if source is not None:
-        clauses.append("source = ?")
-        params.append(source)
-    if category == "":
-        clauses.append("category IS NULL")
-    elif category is not None:
-        clauses.append("category = ?")
-        params.append(category)
-    membership_clauses, membership_params = tag_concept_filters(tag, concept)
-    clauses += membership_clauses
-    params += membership_params
+    clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
     if clauses:
         query += " WHERE " + " AND ".join(clauses)

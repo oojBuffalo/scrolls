@@ -422,8 +422,8 @@ choice (ADRs 0004, 0005).
   — so the filtering stays in SQL and `search`'s `LIMIT` is still correct
   (ADR 0059). The membership-clause builder (`items.tag_concept_filters`)
   and the full scalar+membership filter builder (`items.item_filters`,
-  promoted from `search` so `search` and `facets` share one) keep the
-  facets identical across the surfaces.
+  promoted from `search` so `search`, `list`, and `facets` share one)
+  keep the facets identical across the surfaces.
 - **Facets** (`facets.py`) — the browse half of the search/browse pair:
   `scrolls facets [field]` enumerates the *filterable vocabulary* — the
   `sources`, `categories`, `tags`, and `concepts` an agent can pass to the

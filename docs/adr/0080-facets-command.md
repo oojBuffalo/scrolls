@@ -67,10 +67,11 @@ JSON, agent-native complement to the KB's static facet pages.
 
 - **One filter builder.** The scalar+membership filter clause builder, formerly
   `search._filters`, is promoted to a public `items.item_filters` and shared by
-  `search` and `facets` — the `items.`-qualified clauses correlate equally in a
-  bare `FROM items` query and the FTS join. `list_items`' own inline copy is
-  left untouched (independently tested, unqualified) and noted as a future
-  consolidation rather than churned in this slice.
+  `search`, `list`, and `facets` — the `items.`-qualified clauses correlate
+  equally in a bare `FROM items` query and the FTS join, so `list_items`' own
+  inline copy collapses into the same call (its `SELECT * FROM items` accepts
+  the qualified clauses unchanged). One filter definition now backs every
+  faceted surface; the facets can no longer drift apart between commands.
 
 - **An uninitialized library is honest, not an error.** Every dimension reports
   `[]` with a stable shape (the `list`/`status` posture), exit 0.
@@ -90,9 +91,8 @@ over MCP as `list_facets` for the same reason `list_scrolls` exists beside
 both. The category breakdown `status` lacked is now available; `list_sources`
 on MCP is subsumed by the richer `list_facets` but kept for compatibility.
 
-Deferred: a `--stage` dimension (the enum is already discoverable); per-value
-example items (that is what a scoped `list` is for); and the `list_items` filter
-consolidation (a mechanical refactor better done on its own).
+Deferred: a `--stage` dimension (the enum is already discoverable) and
+per-value example items (that is what a scoped `list` is for).
 
 ## Alternatives considered
 
