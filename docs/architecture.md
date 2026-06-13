@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (633 tests at the time of writing). The docs themselves
+`uv run pytest` (649 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -218,8 +218,10 @@ choice (ADRs 0004, 0005).
   the full IDEAS.md §8 vocabulary, plus `domain` and model `concepts`
   merged after the platform-curated ones. `--batch` (ADR 0022) sends
   the same requests as one Message Batches submission at half the
-  per-token price, polled until it ends; both transports share one
-  validation path. The completers are injectable,
+  per-token price, polled until it ends on the shared transport
+  (`llm.anthropic_complete_batch`, now also the concept engine's batch
+  path — ADR 0032); both per-item and batch share one validation path.
+  The completers are injectable,
   so tests stay offline (`tests/test_classify_llm.py`); the SDK is
   imported lazily, and missing credentials abort the batch
   (`LLMAuthError`) while per-item API failures don't. `config.toml`'s
@@ -254,10 +256,17 @@ choice (ADRs 0004, 0005).
   concept with 2+ member scrolls shows up across them, writing the
   store the compiler reads. Incremental by members fingerprint —
   unchanged concepts cost nothing on re-run, summaries for dissolved
-  concepts are pruned. Failure semantics mirror classification:
-  per-concept failures still compile, missing credentials abort but
-  keep what's saved (`tests/test_kb_llm.py`). Both LLM engines share
-  one transport (`llm.py`): the structured-output call, credential
+  concepts are pruned. `--batch` (ADR 0032) synthesizes every concept
+  needing (re)generation in one Message Batches submission at half the
+  per-token price — identical eligibility, skipping, pruning, result
+  shape, and per-concept failure isolation, sharing one validation
+  (`_parse_summary`) and save path with the per-call transport. Failure
+  semantics mirror classification: per-concept failures still compile,
+  missing credentials abort but keep what's saved (`tests/test_kb_llm.py`,
+  `tests/test_kb.py`). Both LLM engines share one transport (`llm.py`):
+  the structured-output call (`anthropic_complete`), its Message Batches
+  twin (`anthropic_complete_batch`, the shared poll loop both `--batch`
+  paths bind their schema onto — ADR 0022, ADR 0032), credential
   handling, the `LLMError`/`LLMAuthError` hierarchy, and the tier's
   model choice (`$SCROLLS_LLM_MODEL` > `[classify] llm_model` >
   default).
@@ -364,6 +373,10 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **Batched concept summaries** — the concept engine (ADR 0025)
-  generates per-call; if libraries outgrow that, the Message Batches
-  transport (ADR 0022) has an obvious home in the shared `llm.py`.
+- **A native `x` fetch adapter** — `x` items arrive only through
+  `import fieldtheory` (ADR 0009); a fetch adapter would let a pasted or
+  synced tweet URL enrich on its own, like every other source.
+- **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
+  ADR 0032) block and poll until the batch ends. If a real batch ever
+  outgrows a terminal wait, the persisted-batch-id design those ADRs
+  weighed and deferred has an obvious home in the shared `llm.py`.

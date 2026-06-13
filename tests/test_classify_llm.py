@@ -375,6 +375,7 @@ def test_real_batch_submits_polls_and_collects_results(monkeypatch):
     import anthropic
 
     import scrolls.classify_llm as classify_llm
+    import scrolls.llm as llm
 
     client = _FakeBatchClient(
         entries=[
@@ -387,7 +388,9 @@ def test_real_batch_submits_polls_and_collects_results(monkeypatch):
     )
     sleeps = []
     monkeypatch.setattr(anthropic, "Anthropic", lambda: client)
-    monkeypatch.setattr(classify_llm, "_sleep", sleeps.append)
+    # the submission, poll loop, and result mapping now live in scrolls.llm;
+    # the classify wrapper binds the schema and re-tags per-request errors
+    monkeypatch.setattr(llm, "_sleep", sleeps.append)
 
     outcomes = classify_llm._anthropic_complete_batch(
         SYSTEM_PROMPT, [("item-0", "card 0"), ("item-1", "card 1")], "claude-opus-4-8"

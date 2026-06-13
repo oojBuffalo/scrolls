@@ -38,10 +38,12 @@ from scrolls.kb import (
 from scrolls.llm import (
     DEFAULT_MODEL,
     MODEL_ENV,
+    BatchCompleter,
     Completer,
     LLMAuthError,
     LLMError,
     anthropic_complete,
+    anthropic_complete_batch,
 )
 
 ENGINE = "kb-llm-v1"
@@ -121,6 +123,16 @@ def summarize_concept_llm(
         complete = _anthropic_complete
 
     raw = complete(SYSTEM_PROMPT, concept_card(display, items), model)
+    return _parse_summary(raw)
+
+
+def _parse_summary(raw: str) -> str:
+    """Validate one raw model response into a usable summary string.
+
+    Shared by the per-call and batch transports so a schema or validation
+    change lands in both (the same posture as classification's
+    `_classified`, ADR 0022). Raises LLMError when the response is unusable.
+    """
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -178,30 +190,138 @@ def generate_concept_summaries(
                  "status": "failed", "error": str(exc)}
             )
             continue
-        save_concept_summary(
-            db_path,
-            ConceptSummary(
-                slug=slug,
-                display=entry["display"],
-                summary=text,
-                members_hash=digest,
-                engine=ENGINE,
-                model=model,
-                generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            ),
-        )
+        _store_summary(db_path, slug, entry["display"], text, digest, model)
         counts["generated"] += 1
         results.append({"slug": slug, "concept": entry["display"], "status": "generated"})
 
+    _prune_orphans(db_path, stored, eligible, counts, results)
+    return counts, results
+
+
+def generate_concept_summaries_batch(
+    db_path: Path,
+    *,
+    complete_batch: BatchCompleter | None = None,
+    model: str | None = None,
+) -> tuple[dict[str, int], list[dict]]:
+    """Bring the summary store up to date with one Message Batches run.
+
+    The batch transport of `generate_concept_summaries` (ADR 0022, 0032):
+    every concept that needs (re)generation is sent in one submission at
+    half the per-token price, instead of one API call each. Eligibility,
+    incremental skipping, pruning, the JSON result shape, and per-concept
+    failure isolation are identical — only the transport differs. A
+    whole-batch failure (no credentials, the submission itself rejected)
+    raises, since every concept would fail identically; summaries already
+    saved stay saved.
+    """
+    model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
+    if complete_batch is None:
+        complete_batch = _anthropic_complete_batch
+    items = [item for item in list_items(db_path) if item.markdown_path]
+    eligible = {
+        slug: entry
+        for slug, entry in group_concepts(items).items()
+        if len(entry["items"]) >= MIN_MEMBERS
+    }
+    stored = load_concept_summaries(db_path)
+
+    # One pass in page order (sorted slug) settles which concepts are
+    # current and which need a request; positional custom_ids key the
+    # batch because a concept slug can run to 80 chars (render._MAX_SLUG_LENGTH)
+    # while a Batches custom_id must be <=64 — and positions decouple the
+    # keying from the slug charset, the same reason classification uses them.
+    plan: list[tuple[str, dict, str, str | None]] = []
+    requests: list[tuple[str, str]] = []
+    for slug in sorted(eligible):
+        entry = eligible[slug]
+        digest = members_hash(entry["items"])
+        prior = stored.get(slug)
+        if prior and prior.members_hash == digest and prior.engine == ENGINE:
+            plan.append((slug, entry, digest, None))
+        else:
+            custom_id = f"concept-{len(requests)}"
+            requests.append((custom_id, concept_card(entry["display"], entry["items"])))
+            plan.append((slug, entry, digest, custom_id))
+
+    raw_by_id = complete_batch(SYSTEM_PROMPT, requests, model) if requests else {}
+
+    counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
+    results: list[dict] = []
+    for slug, entry, digest, custom_id in plan:
+        if custom_id is None:
+            counts["current"] += 1
+            results.append({"slug": slug, "concept": entry["display"], "status": "current"})
+            continue
+        raw = raw_by_id.get(custom_id)
+        error = None
+        if raw is None:
+            error = "batch returned no result for this concept"
+        elif isinstance(raw, LLMError):
+            error = str(raw)
+        else:
+            try:
+                text = _parse_summary(raw)
+            except LLMError as exc:
+                error = str(exc)
+        if error is not None:
+            counts["failed"] += 1
+            results.append(
+                {"slug": slug, "concept": entry["display"],
+                 "status": "failed", "error": error}
+            )
+            continue
+        _store_summary(db_path, slug, entry["display"], text, digest, model)
+        counts["generated"] += 1
+        results.append({"slug": slug, "concept": entry["display"], "status": "generated"})
+
+    _prune_orphans(db_path, stored, eligible, counts, results)
+    return counts, results
+
+
+def _store_summary(
+    db_path: Path, slug: str, display: str, text: str, digest: str, model: str
+) -> None:
+    """Persist one synthesized summary; shared by both transports."""
+    save_concept_summary(
+        db_path,
+        ConceptSummary(
+            slug=slug,
+            display=display,
+            summary=text,
+            members_hash=digest,
+            engine=ENGINE,
+            model=model,
+            generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        ),
+    )
+
+
+def _prune_orphans(
+    db_path: Path,
+    stored: dict,
+    eligible: dict,
+    counts: dict[str, int],
+    results: list[dict],
+) -> None:
+    """Drop summaries whose concept no longer qualifies; record the count."""
     orphans = sorted(set(stored) - set(eligible))
     delete_concept_summaries(db_path, orphans)
     counts["pruned"] = len(orphans)
     results += [{"slug": slug, "status": "pruned"} for slug in orphans]
-    return counts, results
 
 
 def _anthropic_complete(system: str, user: str, model: str) -> str:
     """The real completer: this engine's schema on the shared transport."""
     return anthropic_complete(
         system, user, model, schema=RESPONSE_SCHEMA, max_tokens=_MAX_TOKENS
+    )
+
+
+def _anthropic_complete_batch(
+    system: str, requests: list[tuple[str, str]], model: str
+) -> dict[str, str | LLMError]:
+    """This engine's schema on the shared batch transport (ADR 0022, 0032)."""
+    return anthropic_complete_batch(
+        system, requests, model, schema=RESPONSE_SCHEMA, max_tokens=_MAX_TOKENS
     )

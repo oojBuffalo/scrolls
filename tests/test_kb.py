@@ -421,3 +421,122 @@ def test_kb_llm_engine_rejects_invalid_config(scrolls_home, fake_summary_llm, ca
     assert exit_code == 1
     assert "invalid TOML" in json.loads(capsys.readouterr().err)["error"]
     assert fake_summary_llm == []
+
+
+# --- scrolls kb --engine llm --batch (ADR 0032) ---------------------------
+
+
+@pytest.fixture
+def fake_summary_llm_batch(monkeypatch):
+    """Replace the concept engine's Batches transport with a canned summary."""
+    import scrolls.kb_llm as kb_llm
+
+    calls = []
+
+    def complete_batch(system, requests, model):
+        calls.append({"system": system, "requests": list(requests), "model": model})
+        return {
+            cid: json.dumps({"summary": "BM25 threads through search-ranking scrolls."})
+            for cid, _ in requests
+        }
+
+    monkeypatch.setattr(kb_llm, "_anthropic_complete_batch", complete_batch)
+    return calls
+
+
+def test_kb_llm_batch_flag_submits_one_batch(
+    scrolls_home, fake_summary_llm, fake_summary_llm_batch, capsys
+):
+    main(["init"])
+    seed_bm25_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--engine", "llm", "--batch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["generated"] == 1
+    assert payload["summaries"] == 1
+    assert len(fake_summary_llm_batch) == 1  # one Batches submission...
+    assert fake_summary_llm == []  # ...and no per-concept calls
+
+    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    assert "BM25 threads through search-ranking scrolls." in page
+
+
+def test_kb_batch_flag_requires_the_llm_engine(scrolls_home, capsys):
+    exit_code = main(["kb", "--batch"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "llm" in json.loads(captured.err)["error"]
+
+
+def test_kb_llm_batch_without_credentials_aborts_before_compiling(
+    scrolls_home, monkeypatch, capsys
+):
+    import scrolls.kb_llm as kb_llm
+    from scrolls.llm import LLMAuthError
+
+    def no_auth(system, requests, model):
+        raise LLMAuthError("llm engine needs Anthropic credentials")
+
+    monkeypatch.setattr(kb_llm, "_anthropic_complete_batch", no_auth)
+    main(["init"])
+    seed_bm25_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--engine", "llm", "--batch"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "credentials" in json.loads(captured.err)["error"]
+    assert not (scrolls_home / "library" / "index.md").exists()
+
+
+def test_kb_llm_batch_rejected_submission_aborts_before_compiling(
+    scrolls_home, monkeypatch, capsys
+):
+    # A rejected submission raises the shared transport's base LLMError
+    # (not the auth subclass); the CLI's widened catch must still abort.
+    import scrolls.kb_llm as kb_llm
+    from scrolls.llm import LLMError
+
+    def rejected(system, requests, model):
+        raise LLMError("Anthropic API error: batch submission rejected")
+
+    monkeypatch.setattr(kb_llm, "_anthropic_complete_batch", rejected)
+    main(["init"])
+    seed_bm25_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--engine", "llm", "--batch"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "rejected" in json.loads(captured.err)["error"]
+    assert not (scrolls_home / "library" / "index.md").exists()
+
+
+def test_kb_llm_batch_per_concept_failure_compiles_and_exits_1(
+    scrolls_home, monkeypatch, capsys
+):
+    # A per-concept batch failure is reported, the library still compiles,
+    # and the run exits 1 — the batch path's exit-code wiring.
+    import scrolls.kb_llm as kb_llm
+    from scrolls.llm import LLMError
+
+    def one_failure(system, requests, model):
+        return {cid: LLMError("batch request expired") for cid, _ in requests}
+
+    monkeypatch.setattr(kb_llm, "_anthropic_complete_batch", one_failure)
+    main(["init"])
+    seed_bm25_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--engine", "llm", "--batch"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert payload["summaries"] == 0
+    assert (scrolls_home / "library" / "index.md").exists()  # compile still ran

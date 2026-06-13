@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import replace
 from typing import Callable
 
@@ -32,14 +31,15 @@ from scrolls.items import ScrollItem
 
 # DEFAULT_MODEL, MODEL_ENV, and LLMAuthError are deliberate re-exports:
 # they predate the shared transport and remain part of this engine's
-# import surface.
+# import surface (callers and tests use `classify_llm.LLMAuthError`).
 from scrolls.llm import (
     DEFAULT_MODEL,
     MODEL_ENV,
     Completer,
-    LLMAuthError,
+    LLMAuthError,  # noqa: F401  (re-export, see above)
     LLMError,
     anthropic_complete,
+    anthropic_complete_batch,
 )
 
 ENGINE = "llm-v1"
@@ -114,9 +114,6 @@ BatchCompleter = Callable[
     [str, "list[tuple[str, str]]", str], "dict[str, str | LLMClassifyError]"
 ]
 
-_POLL_INITIAL_SECONDS = 5.0
-_POLL_MAX_SECONDS = 60.0
-
 
 class LLMClassifyError(LLMError):
     """The model call or its response could not produce a classification."""
@@ -179,10 +176,11 @@ def classify_items_llm_batch(
 
     Returns one (item, outcome) pair per input item in input order, where
     the outcome is the classified item or the LLMClassifyError that item
-    hit — per-item failures never abort the batch. Raises LLMAuthError or
-    LLMClassifyError only for whole-batch failures (no credentials, the
-    submission itself rejected). Items with no classifiable content fail
-    locally without being submitted.
+    hit — per-item failures never abort the batch. Raises only for
+    whole-batch failures: LLMAuthError when no credentials resolve, or the
+    shared transport's LLMError when the submission itself is rejected
+    (the CLI catches the base class either way). Items with no
+    classifiable content fail locally without being submitted.
     """
     model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
     if complete_batch is None:
@@ -255,80 +253,21 @@ def _anthropic_complete(system: str, user: str, model: str) -> str:
     )
 
 
-_sleep = time.sleep  # module-level so tests can observe the poll loop
-
-
 def _anthropic_complete_batch(
     system: str, requests: list[tuple[str, str]], model: str
 ) -> dict[str, str | LLMClassifyError]:
-    """The real batch completer: one Message Batches submission, polled.
+    """This engine's schema on the shared batch transport (ADR 0022).
 
-    Each request carries exactly the params of `_anthropic_complete`'s
-    call, so the model sees identical prompts and the same structured
-    output schema — the Batches API just halves the per-token price.
-    Polling blocks until the batch ends (typically minutes, bounded by
-    the API at 24h); Ctrl-C loses only the mapping, and re-running
-    resubmits. Per-request failures map to LLMClassifyError values;
-    whole-batch failures raise, with the same auth handling as the
-    per-item completer.
+    The Message Batches submission, polling, and result mapping live in
+    `scrolls.llm`; here we bind this engine's schema and token cap and
+    re-tag the shared transport's per-request `LLMError`s as
+    `LLMClassifyError`, so callers keep one error type.
     """
-    import anthropic  # lazy: only `classify --engine llm --batch` pays the import
-
-    try:
-        client = anthropic.Anthropic()
-        batch = client.messages.batches.create(
-            requests=[
-                {
-                    "custom_id": custom_id,
-                    "params": {
-                        "model": model,
-                        "max_tokens": _MAX_TOKENS,
-                        "system": system,
-                        "output_config": {
-                            "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}
-                        },
-                        "messages": [{"role": "user", "content": user}],
-                    },
-                }
-                for custom_id, user in requests
-            ]
-        )
-        delay = _POLL_INITIAL_SECONDS
-        while batch.processing_status != "ended":
-            _sleep(delay)
-            delay = min(delay * 2, _POLL_MAX_SECONDS)
-            batch = client.messages.batches.retrieve(batch.id)
-        return {
-            entry.custom_id: _batch_entry_outcome(entry)
-            for entry in client.messages.batches.results(batch.id)
-        }
-    except TypeError as exc:
-        # see _anthropic_complete: the SDK's no-credentials TypeError
-        if "authentication" not in str(exc).lower():
-            raise
-        raise LLMAuthError(
-            "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY "
-            f"({exc})"
-        ) from exc
-    except anthropic.AuthenticationError as exc:
-        raise LLMAuthError(f"Anthropic rejected the credentials: {exc}") from exc
-    except anthropic.APIError as exc:
-        raise LLMClassifyError(f"Anthropic API error: {exc}") from exc
-
-
-def _batch_entry_outcome(entry) -> str | LLMClassifyError:
-    """One batch result entry's raw text, or its per-request error."""
-    result = entry.result
-    if result.type == "succeeded":
-        message = result.message
-        if message.stop_reason == "refusal":
-            return LLMClassifyError("model declined to classify this item")
-        text = next((b.text for b in message.content if b.type == "text"), "")
-        if not text:
-            return LLMClassifyError(
-                f"model returned no text (stop_reason: {message.stop_reason})"
-            )
-        return text
-    if result.type == "errored":
-        return LLMClassifyError(f"batch request errored: {result.error}")
-    return LLMClassifyError(f"batch request {result.type}")  # canceled / expired
+    return {
+        custom_id: outcome
+        if isinstance(outcome, str)
+        else LLMClassifyError(str(outcome))
+        for custom_id, outcome in anthropic_complete_batch(
+            system, requests, model, schema=RESPONSE_SCHEMA, max_tokens=_MAX_TOKENS
+        ).items()
+    }

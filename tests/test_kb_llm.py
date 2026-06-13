@@ -20,6 +20,7 @@ from scrolls.kb_llm import (
     SYSTEM_PROMPT,
     concept_card,
     generate_concept_summaries,
+    generate_concept_summaries_batch,
     members_hash,
     summarize_concept_llm,
 )
@@ -308,3 +309,202 @@ def test_generate_on_empty_library_does_nothing(db_path):
     assert counts == {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
     assert results == []
     assert complete.calls == []
+
+
+# --- generate_concept_summaries_batch (ADR 0032) -------------------------
+#
+# The batch transport mirrors the per-call engine above: identical
+# eligibility, incremental skipping, pruning, result shape, and
+# per-concept failure isolation — only the submission differs.
+
+
+def fake_batch_completer(summary="A synthesized concept summary."):
+    """A batch completer answering every request with a fixed summary."""
+    calls = []
+
+    def complete_batch(system, requests, model):
+        calls.append({"system": system, "requests": list(requests), "model": model})
+        return {cid: json.dumps({"summary": summary}) for cid, _ in requests}
+
+    complete_batch.calls = calls
+    return complete_batch
+
+
+def test_batch_summarizes_multi_member_concepts_in_one_submission(db_path):
+    seed_bm25_concept(db_path)
+    insert_item(db_path, make_rendered(
+        "web:solo", "web", "A loner", concepts=("loneliness",)))
+    complete_batch = fake_batch_completer()
+
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts == {"generated": 1, "current": 0, "failed": 0, "pruned": 0}
+    assert results == [{"slug": "bm25", "concept": "BM25", "status": "generated"}]
+
+    assert len(complete_batch.calls) == 1  # one submission for the whole run
+    call = complete_batch.calls[0]
+    assert call["system"] == SYSTEM_PROMPT
+    assert [cid for cid, _ in call["requests"]] == ["concept-0"]  # positional id
+    assert "Okapi BM25" in call["requests"][0][1]
+
+    stored = load_concept_summaries(db_path)
+    assert set(stored) == {"bm25"}
+    assert stored["bm25"].summary == "A synthesized concept summary."
+    assert stored["bm25"].engine == ENGINE
+    assert stored["bm25"].model == DEFAULT_MODEL
+
+
+def test_batch_model_env_override(db_path, monkeypatch):
+    monkeypatch.setenv("SCROLLS_LLM_MODEL", "claude-haiku-4-5-20251001")
+    seed_bm25_concept(db_path)
+    complete_batch = fake_batch_completer()
+
+    generate_concept_summaries_batch(db_path, complete_batch=complete_batch)
+    assert complete_batch.calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert load_concept_summaries(db_path)["bm25"].model == "claude-haiku-4-5-20251001"
+
+
+def test_batch_skips_unchanged_concepts_and_submits_nothing(db_path):
+    seed_bm25_concept(db_path)
+    generate_concept_summaries_batch(db_path, complete_batch=fake_batch_completer())
+
+    complete_batch = fake_batch_completer()
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts == {"generated": 0, "current": 1, "failed": 0, "pruned": 0}
+    assert results == [{"slug": "bm25", "concept": "BM25", "status": "current"}]
+    assert complete_batch.calls == []  # nothing to submit
+
+
+def test_batch_isolates_per_concept_failures(db_path):
+    seed_bm25_concept(db_path)
+    insert_item(db_path, make_rendered("web:a", "web", "Post A", concepts=("SQLite",)))
+    insert_item(db_path, make_rendered("web:b", "web", "Post B", concepts=("SQLite",)))
+
+    def complete_batch(system, requests, model):
+        outcomes = {}
+        for cid, card in requests:
+            if "SQLite" in card.splitlines()[0]:
+                outcomes[cid] = LLMError("batch request errored: overloaded")
+            else:
+                outcomes[cid] = json.dumps({"summary": "Fine."})
+        return outcomes
+
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts["generated"] == 1
+    assert counts["failed"] == 1
+    failed = [r for r in results if r["status"] == "failed"]
+    assert failed == [{"slug": "sqlite", "concept": "SQLite",
+                       "status": "failed", "error": "batch request errored: overloaded"}]
+    assert set(load_concept_summaries(db_path)) == {"bm25"}
+
+
+def test_batch_missing_result_is_a_per_concept_error(db_path):
+    seed_bm25_concept(db_path)
+
+    def complete_batch(system, requests, model):
+        return {}  # the batch answered no entry for this request
+
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts["failed"] == 1
+    assert results[0]["status"] == "failed"
+    assert "no result" in results[0]["error"]
+    assert load_concept_summaries(db_path) == {}
+
+
+def test_batch_unparseable_response_is_a_per_concept_error(db_path):
+    seed_bm25_concept(db_path)
+
+    def complete_batch(system, requests, model):
+        return {cid: "not json at all" for cid, _ in requests}
+
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts["failed"] == 1
+    assert results[0]["status"] == "failed"
+    assert load_concept_summaries(db_path) == {}
+
+
+def test_batch_prunes_disqualified_concepts(db_path):
+    seed_bm25_concept(db_path)
+    generate_concept_summaries_batch(db_path, complete_batch=fake_batch_completer())
+
+    lone = make_rendered("web:fts", "web", "FTS in practice", concepts=())
+    update_item(db_path, lone)
+    complete_batch = fake_batch_completer()
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts == {"generated": 0, "current": 0, "failed": 0, "pruned": 1}
+    assert {"slug": "bm25", "status": "pruned"} in results
+    assert load_concept_summaries(db_path) == {}
+    assert complete_batch.calls == []  # nothing eligible to submit
+
+
+def test_batch_on_empty_library_never_submits(db_path):
+    complete_batch = fake_batch_completer()
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch)
+    assert counts == {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
+    assert results == []
+    assert complete_batch.calls == []
+
+
+def test_batch_matches_per_call_results_for_a_mixed_library(tmp_path):
+    # The two transports must produce the same store and result shape from
+    # the same library — the whole point of sharing validation and save.
+    def fresh_db():
+        path = tmp_path / f"db-{len(list(tmp_path.iterdir()))}.sqlite"
+        init_db(path)
+        seed_bm25_concept(path)
+        insert_item(path, make_rendered("web:a", "web", "Post A", concepts=("SQLite",)))
+        insert_item(path, make_rendered("web:b", "web", "Post B", concepts=("SQLite",)))
+        return path
+
+    serial = fresh_db()
+    counts_s, results_s = generate_concept_summaries(
+        serial, complete=fake_completer("X"))
+    batched = fresh_db()
+    counts_b, results_b = generate_concept_summaries_batch(
+        batched, complete_batch=fake_batch_completer("X"))
+
+    assert counts_s == counts_b
+    assert results_s == results_b
+    assert {s: v.summary for s, v in load_concept_summaries(serial).items()} == {
+        s: v.summary for s, v in load_concept_summaries(batched).items()
+    }
+
+
+def test_real_batch_completer_binds_this_engines_schema(monkeypatch):
+    # The thin wrapper passes this engine's schema and token cap into the
+    # shared transport (whose poll loop is covered in test_classify_llm).
+    import scrolls.kb_llm as kb_llm
+
+    captured = {}
+
+    def fake_transport(system, requests, model, *, schema, max_tokens):
+        captured["schema"] = schema
+        captured["max_tokens"] = max_tokens
+        return {cid: json.dumps({"summary": "ok"}) for cid, _ in requests}
+
+    monkeypatch.setattr(kb_llm, "anthropic_complete_batch", fake_transport)
+    out = kb_llm._anthropic_complete_batch(
+        SYSTEM_PROMPT, [("concept-0", "card")], "claude-opus-4-8")
+    assert captured["schema"] == kb_llm.RESPONSE_SCHEMA
+    assert captured["max_tokens"] == kb_llm._MAX_TOKENS
+    assert json.loads(out["concept-0"])["summary"] == "ok"
+
+
+def test_real_batch_completer_maps_missing_credentials_to_auth_error(monkeypatch):
+    import anthropic
+
+    from scrolls.kb_llm import _anthropic_complete_batch
+
+    def no_credentials(*args, **kwargs):
+        raise TypeError("Could not resolve authentication method.")
+
+    monkeypatch.setattr(anthropic, "Anthropic", no_credentials)
+    with pytest.raises(LLMAuthError):
+        _anthropic_complete_batch(
+            SYSTEM_PROMPT, [("concept-0", "card")], "claude-opus-4-8")

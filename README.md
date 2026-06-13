@@ -110,6 +110,7 @@ uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
+uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON
@@ -353,7 +354,12 @@ to re-run, and summaries whose concept dissolved are pruned. Model and
 credentials follow the LLM classification engine (`ANTHROPIC_API_KEY`,
 `[classify] llm_model`, `$SCROLLS_LLM_MODEL`); per-concept API failures
 still compile the library, and a credentials abort keeps everything
-already saved.
+already saved. Adding `--batch` (ADR 0032) synthesizes every concept
+that needs (re)generation in one Message Batches submission at half the
+per-token price — same prompts, schema, validation, and incremental
+skipping, polled until the batch ends — sharing the Batches transport
+with `classify --engine llm --batch` (ADR 0022) in the LLM tier's
+`llm.py`.
 
 `scrolls context <query>` answers "what does my library know about X?"
 with one compact bundle (IDEAS.md §11): BM25-ranked best matches, capped
@@ -421,8 +427,12 @@ saved-content archive — via `import bookmarks` with folder names
 becoming tags (ADR 0030), and a keyless Hacker News adapter so a saved
 discussion becomes a clean scroll instead of a scrape of its comment
 page, with link stories degrading to metadata-only and Show HN posts
-classified as projects (ADR 0031). Next candidate: a Batches transport
-for concept summaries if libraries outgrow per-call generation
-(ADR 0025).
+classified as projects (ADR 0031), and the Batches API now halving the
+cost of concept-summary synthesis too via `kb --engine llm --batch`,
+sharing one Message Batches transport with bulk classification in the
+LLM tier's `llm.py` (ADR 0032). Next candidate: a native `x` fetch
+adapter so saved tweets enrich beyond the Field Theory import, or
+two-phase batch submit/collect if a terminal wait ever outgrows the
+library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

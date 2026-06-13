@@ -219,6 +219,13 @@ def build_parser() -> argparse.ArgumentParser:
         "compile (needs ANTHROPIC_API_KEY; model overridable via "
         "SCROLLS_LLM_MODEL)",
     )
+    kb_parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Synthesize every concept summary in one Message Batches "
+        "submission (--engine llm only): half the per-token price, but the "
+        "command waits for the batch to finish — typically minutes",
+    )
     list_parser = subparsers.add_parser(
         "list", help="List library items (JSON output)"
     )
@@ -363,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init()
     if args.command == "kb":
-        return _cmd_kb(args.engine)
+        return _cmd_kb(args.engine, args.batch)
     if args.command == "list":
         return _cmd_list(args.source, args.stage, args.category)
     if args.command == "mcp":
@@ -883,13 +890,22 @@ def _cmd_agent_install() -> int:
     return 0
 
 
-def _cmd_kb(engine: str = "deterministic") -> int:
+def _cmd_kb(engine: str = "deterministic", batch: bool = False) -> int:
     paths = get_paths()
+    if batch and engine != "llm":
+        print(
+            json.dumps({"error": "--batch requires the llm engine (--engine llm)"}),
+            file=sys.stderr,
+        )
+        return 1
     generation = {}
     if engine == "llm":
         # lazy: only the llm engine pays the import (ADR 0025)
-        from scrolls.kb_llm import generate_concept_summaries
-        from scrolls.llm import LLMAuthError
+        from scrolls.kb_llm import (
+            generate_concept_summaries,
+            generate_concept_summaries_batch,
+        )
+        from scrolls.llm import LLMError
 
         try:
             config = load_config(paths.config_path)
@@ -899,13 +915,19 @@ def _cmd_kb(engine: str = "deterministic") -> int:
         counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
         results: list[dict] = []
         if paths.db_path.exists():  # kb never creates a library
+            generate = (
+                generate_concept_summaries_batch
+                if batch
+                else generate_concept_summaries
+            )
             try:
-                counts, results = generate_concept_summaries(
+                counts, results = generate(
                     paths.db_path, model=resolve_llm_model(config)
                 )
-            except LLMAuthError as exc:
-                # summaries saved before the abort stay saved; the next
-                # run picks up where this one stopped
+            except LLMError as exc:
+                # whole-run failure (no credentials, or — for --batch — a
+                # rejected submission): summaries saved before the abort
+                # stay saved; the next run picks up where this one stopped
                 print(json.dumps({"error": str(exc)}), file=sys.stderr)
                 return 1
         generation = {**counts, "results": results}

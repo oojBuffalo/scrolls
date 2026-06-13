@@ -890,6 +890,23 @@ missing credentials abort before compiling with the standard error
 envelope, keeping any summaries already saved
 (`test_kb_llm_engine_without_credentials_aborts_before_compiling`).
 
+`--batch` (ADR 0032) synthesizes every concept that needs (re)generation
+in one Message Batches submission at half the per-token price, polling
+until the batch ends — typically minutes — instead of one API call per
+concept (`test_kb_llm_batch_flag_submits_one_batch`;
+`test_batch_summarizes_multi_member_concepts_in_one_submission` in
+`tests/test_kb_llm.py` for the engine). Eligibility, incremental skipping,
+pruning, the result shape, and per-concept failure isolation are
+identical to the per-call path — only the transport differs, and both
+share one validation and save path. A concept whose batch request failed
+is reported and the compile still runs
+(`test_batch_isolates_per_concept_failures`); missing credentials still
+abort before compiling
+(`test_kb_llm_batch_without_credentials_aborts_before_compiling`). The
+flag needs the llm engine (`test_kb_batch_flag_requires_the_llm_engine`)
+and shares the Batches transport with `classify --engine llm --batch`
+(`tests/test_classify_llm.py`).
+
 ```console
 $ scrolls kb
 {"items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "pages": 4}
@@ -901,6 +918,10 @@ $ scrolls kb --engine llm     # no 2-scroll concepts yet: a zero run, no key nee
 
 $ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set
 {"error": "llm engine needs Anthropic credentials: set ANTHROPIC_API_KEY (\"Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` headers to be explicitly omitted\")"}
+[exit 1]
+
+$ scrolls kb --batch          # the deterministic engine has nothing to batch
+{"error": "--batch requires the llm engine (--engine llm)"}
 [exit 1]
 ```
 
@@ -1076,6 +1097,7 @@ scrolls show x:1111
 scrolls related x:2222
 scrolls kb
 scrolls kb --engine llm                            # no 2-scroll concepts yet: zero run
+scrolls kb --batch                                 # deterministic engine: guard, exit 1
 scrolls context "local search"
 scrolls agent install
 scrolls follow http://localhost:8943/feed.xml     # local server only
@@ -1091,6 +1113,7 @@ scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
 scrolls set x:1111 usefulness=high                # unknown field: exit 1
 scrolls set x:2222 "concepts=full-text search"    # a 2-scroll concept now exists
 scrolls kb --engine llm                           # without a key: exit 1
+scrolls kb --engine llm --batch                   # batch transport, without a key: exit 1
 scrolls doctor                                    # healthy: exit 0
 
 # plant the legacy state doctor repairs: a pre-ADR-0023 junk-URL row
