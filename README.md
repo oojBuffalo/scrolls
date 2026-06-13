@@ -144,7 +144,13 @@ playlists degrade to metadata-only scrolls — see
 (keyless REST API: repo metadata plus optional README; author-curated
 repo topics become `concepts`, the first producer for the KB's concept
 pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
-`docs/adr/0007-github-adapter-topics-as-concepts.md`), and **arxiv**
+`docs/adr/0007-github-adapter-topics-as-concepts.md`), **gitlab**
+(the second major code host, keyless REST API on gitlab.com — see
+`docs/adr/0055-gitlab-adapter.md`: project metadata plus optional README
+fetched from the project's `/-/raw/` route; `topics` become `concepts`
+like github's, the SPDX license key becomes a `tag`; nested-group project
+paths are URL-encoded whole and folded lowercase; set `GITLAB_TOKEN` to
+lift the rate limit and reach private projects), and **arxiv**
 (keyless Atom export API, stdlib XML: the abstract becomes the
 searchable summary, taxonomy codes become `tags` and their display
 names — "Computation and Language" for `cs.CL`, via a bundled taxonomy

@@ -26,6 +26,7 @@ from scrolls.sources import (  # noqa: E402
     discourse,
     doi,
     github,
+    gitlab,
     go,
     hackernews,
     huggingface,
@@ -59,6 +60,10 @@ FETCH_ADAPTERS = {
     # keyless `.json` view (ADR 0054).
     "discourse": discourse.fetch_item,
     "github": github.fetch_item,
+    # GitLab is the second major code host and the most self-hosted one, but
+    # gitlab.com only here (host-scoped like github), with nested-group paths
+    # URL-encoded whole (ADR 0055).
+    "gitlab": gitlab.fetch_item,
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,
     "huggingface": huggingface.fetch_item,

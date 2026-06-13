@@ -148,7 +148,12 @@ Two small contracts make every platform the same kind of scroll
 
 1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
-   host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
+   host tables map to `youtube`, `wikipedia`, `github`, `gitlab` (a
+   `gitlab.com/<group>/<project>` URL — gitlab.com only, the second code
+   host; the whole `group[/subgroup…]/project` path before any `/-/`
+   sub-resource separator as `source_id`, nested-group-aware, folded
+   lowercase since GitLab forces lowercase slugs, deep links deduping to the
+   project, ADR 0055), `arxiv`, `x`,
    `hackernews`, `lobsters` (a `/s/<short_id>` story URL, the short id
    verbatim), `bluesky` (a `bsky.app/profile/<actor>/post/<rkey>` post URL,
    `<actor>/<rkey>` as `source_id` with the actor folded lowercase — handle
@@ -224,6 +229,7 @@ Implemented fetch adapters, all keyless:
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
+| gitlab | `sources/gitlab.py` | keyless REST API + optional README via the `/-/raw/` route | the second code host (gitlab.com only); nested-group path URL-encoded whole + folded lowercase; `topics` → `concepts`, SPDX `license.key` → `tag`; `GITLAB_TOKEN` (→`PRIVATE-TOKEN`) lifts the rate limit; degrades to metadata-only | 0055 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`, published `arxiv:doi` → `doi.org` `link` (preprint↔published edge, ADR 0038); degrades to abstract-only | 0008, 0010, 0012, 0038 |
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
@@ -510,6 +516,17 @@ Next steps already identified in decision records, in no required order:
   Lemmy-shaped aggregator with a *distinct* URL would detect separately like
   Discourse; one sharing `/post/<digits>` would slot into the `threadiverse`
   dispatcher like PieFed.
+- **More code hosts** — the GitHub adapter (ADR 0007) got a sibling in
+  GitLab (ADR 0055), the second major host and the most self-hosted one.
+  Two natural extensions stay open. *Gitea/Forgejo* (Codeberg, gitea.com)
+  expose a keyless `/api/v1/repos/<owner>/<repo>` that could become its own
+  adapter — and, since the software is self-hosted across many hosts like the
+  Fediverse, a future run could even share one adapter across known Gitea
+  hosts the way Mastodon's forks share one (ADR 0050). *Self-hosted GitLab*
+  (deferred in ADR 0055 because a bare repo root carries no shape tell) would
+  want a configured host allowlist or an explicit source hint, the same
+  problem any host-scoped adapter faces off its canonical domain. Bitbucket
+  (keyless `/2.0/repositories/<workspace>/<repo>`) is the remaining big one.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs

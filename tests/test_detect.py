@@ -44,6 +44,22 @@ CASES = [
     ("https://github.com/trending", "github", None),
     # gist is not the github repo adapter (pinned simplification)
     ("https://gist.github.com/user/abcdef123456", "web", None),
+    # --- gitlab ---
+    ("https://gitlab.com/inkscape/inkscape", "gitlab", "inkscape/inkscape"),
+    # nested groups: the whole path before any /-/ is the project
+    ("https://gitlab.com/group/subgroup/project", "gitlab", "group/subgroup/project"),
+    # sub-resources hang off the reserved /-/ separator and dedupe to the project
+    ("https://gitlab.com/gitlab-org/gitlab/-/issues/1", "gitlab", "gitlab-org/gitlab"),
+    ("https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md", "gitlab",
+     "gitlab-org/gitlab"),
+    ("https://www.gitlab.com/gitlab-org/gitlab", "gitlab", "gitlab-org/gitlab"),
+    # paths fold lowercase (GitLab forces lowercase slugs, routes case-insensitively)
+    ("https://gitlab.com/Group/Project", "gitlab", "group/project"),
+    # group/user pages and reserved routes: source known, id unknown
+    ("https://gitlab.com/gitlab-org", "gitlab", None),
+    ("https://gitlab.com/explore", "gitlab", None),
+    ("https://gitlab.com/explore/projects/trending", "gitlab", None),
+    ("https://gitlab.com/-/snippets/2716", "gitlab", None),
     # --- arxiv ---
     ("https://arxiv.org/abs/2406.01234", "arxiv", "2406.01234"),
     ("https://arxiv.org/abs/2406.01234v2", "arxiv", "2406.01234v2"),

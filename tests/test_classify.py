@@ -38,6 +38,11 @@ def test_github_is_project():
     assert classify_item(item).category == "project"
 
 
+def test_gitlab_is_project():
+    item = make_item(source="gitlab", title="inkscape/inkscape")
+    assert classify_item(item).category == "project"
+
+
 def test_crossref_is_paper():
     # A Crossref work is a published paper, arXiv's preprint sibling.
     item = make_item(source="crossref", title="node2vec: Scalable Feature Learning")

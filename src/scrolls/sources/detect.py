@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
 GITHUB_HOSTS = {"github.com", "www.github.com"}
+GITLAB_HOSTS = {"gitlab.com", "www.gitlab.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
@@ -55,6 +56,16 @@ GITHUB_RESERVED = {
     "trending",
 }
 
+# Top-level gitlab.com path segments that are site pages or platform routes,
+# never the first segment of a project's group/project path. GitLab reserves
+# these names so no group can claim them, so excluding them can't shadow a
+# real project.
+GITLAB_RESERVED = {
+    "admin", "api", "dashboard", "explore", "groups", "help", "import",
+    "profile", "projects", "public", "register", "s", "search", "sign_in",
+    "snippets", "users",
+}
+
 # Top-level huggingface.co path segments that are site pages, not model repos.
 # `datasets` and `spaces` are handled by dedicated branches before this set is
 # consulted; the rest are routes that can never be a model's `<org>/<name>`.
@@ -92,6 +103,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in GITHUB_HOSTS:
         return DetectedSource("github", _github_id(path_parts))
+
+    if host in GITLAB_HOSTS:
+        return DetectedSource("gitlab", _gitlab_id(path_parts))
 
     if host in ARXIV_HOSTS:
         return DetectedSource("arxiv", _arxiv_id(path_parts))
@@ -205,6 +219,41 @@ def _github_id(path_parts: list[str]) -> str | None:
     if len(path_parts) < 2 or path_parts[0] in GITHUB_RESERVED:
         return None
     return f"{path_parts[0]}/{path_parts[1]}"
+
+
+def _gitlab_id(path_parts: list[str]) -> str | None:
+    """The `group[/subgroup…]/project` path for a gitlab.com project URL, else None.
+
+    GitLab supports nested groups, so a project lives at a multi-segment path
+    (`group/project`, `group/subgroup/project`), not GitHub's flat
+    `owner/repo`. Every sub-resource hangs off a reserved `/-/` separator
+    (`/-/issues`, `/-/blob/...`, `/-/tree/...`), so everything before the `-`
+    segment is the project path and a deep-linked URL still dedupes to its
+    project. The API takes that whole path URL-encoded, so the adapter keeps
+    it joined rather than splitting on `/` (the github rule can't apply).
+
+    From the URL alone a path like `group/subgroup` is ambiguous — a project
+    in `group`, or a subgroup — exactly the Go-module ambiguity (ADR 0042);
+    detection mints the path as a candidate and the fetch resolves it (a
+    non-project 404s, a benign failed fetch). A single segment is a group or
+    user page, and the reserved top-level routes (`explore`, `help`, …) carry
+    no project, so both resolve to the source with no fetchable item.
+
+    The path is folded lowercase: GitLab forces lowercase path slugs and routes
+    case-insensitively, so `/Group/Project` and `/group/project` dedupe to one
+    item (the crates/Packagist case-fold, ADR 0036/0039) — unlike github's
+    case-preserving `owner/repo`. Segments are *not* percent-decoded (unlike
+    the registry parsers, whose package names legitimately appear encoded —
+    npm's `@scope%2Fname`): a GitLab slug is constrained to ASCII
+    `[a-z0-9._-]` and is never percent-encoded in practice, the github rule;
+    the fetch adapter re-encodes the whole path for the API, so a stray
+    encoded segment would simply 404 rather than mis-resolve.
+    """
+    if "-" in path_parts:
+        path_parts = path_parts[: path_parts.index("-")]
+    if len(path_parts) < 2 or path_parts[0].lower() in GITLAB_RESERVED:
+        return None
+    return "/".join(p.lower() for p in path_parts) or None
 
 
 def _arxiv_id(path_parts: list[str]) -> str | None:
