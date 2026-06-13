@@ -142,6 +142,15 @@ CASES = [
     ("https://blog.example/notice/cookie-policy", "web", None),
     # /@<user>/statuses/<id> with an empty id is not a status either
     ("https://gts.example/@user/statuses/", "web", None),
+    # boundary: the /notice/ floor is 16 base62 chars — exactly 16 matches,
+    # 15 falls through to web (pins the length claim against silent drift)
+    ("https://pleroma.example/notice/Ab3Cd4Ef5Gh6Jk7M",
+     "mastodon", "pleroma.example/Ab3Cd4Ef5Gh6Jk7M"),
+    ("https://blog.example/notice/Ab3Cd4Ef5Gh6Jk7", "web", None),
+    # the statuses-bearing forms admit any base62 id, but a non-base62 id (a
+    # hyphen or a dot) is not a status — the charset guard, on both forms
+    ("https://gts.example/@user/statuses/not-a-valid-id", "web", None),
+    ("https://gts.example/users/user/statuses/has.dots", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),
