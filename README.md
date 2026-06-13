@@ -688,7 +688,38 @@ a `thumbnail`. Like Hacker News, Lobsters, and the social posts, a heterogeneous
 dev.to article gets *no* category default — the title rules and the LLM engine
 decide; self-hosted Forem instances have no shape tell and are deferred like
 self-hosted GitLab, and bare profiles and reserved site routes register but have
-no article to fetch). Items from
+no article to fetch), and **rfc** (the keyless RFC Editor JSON view — see
+`docs/adr/0066-rfc-adapter.md`: IETF **RFCs** are technical standards — the
+normative protocol specs an agent cites constantly (HTTP's RFC 9110, TLS's
+RFC 8446, JSON's RFC 8259, OAuth's RFC 6749) — a content type with no prior
+first-class home, so a saved RFC link fell through to `web`, a concept-poor
+unlinked island. One keyless `GET rfc-editor.org/rfc/rfc<N>.json` returns the
+whole bibliographic record. Detection is host-restricted shape matching across the
+RFC Editor and IETF hosts (`rfc-editor.org`, `datatracker.ietf.org`,
+`tools.ietf.org`, `ietf.org`): only the `rfc<digits>` path shape is claimed, so an
+Internet-Draft (`/doc/draft-…`), a working-group page, or the org site on those
+same hosts falls through to `web` — the shared-NCBI-host posture (ADR 0065), not a
+wholesale host claim. Identity is the integer RFC number with leading zeros
+stripped, so `rfc0020` and `rfc20` dedupe to `rfc:20`, and the number leads the
+title (`RFC 9110: HTTP Semantics`) and the scroll slug because an RFC's canonical
+name *is* its number. The RFC Editor's curated `keywords` become `concepts` — the
+controlled subject vocabulary that joins github topics, arXiv taxonomy, and MeSH
+in the KB concept graph, with the whitespace-only placeholder older RFCs store
+dropped — and the maturity `status` (`Internet Standard`, `Proposed Standard`,
+`Informational`, …) is title-cased into the one `tag`, the controlled facet
+Crossref's `type` fills. The abstract becomes a plain `summary` with no
+`extracted_text` (the RFC body is published separately — the Crossref/PubMed
+metadata-only shape). Two cross-document edges: the RFC's own DOI
+(`10.17487/RFC<N>`, Crossref-registered) becomes a `doi.org` `link` resolving to
+its `crossref:<doi>` scroll — the RFC↔Crossref edge, ADR 0038's analog — and each
+`obsoletes`/`updates` target becomes an `rfc-editor.org/rfc/rfc<M>` `link`
+resolving to that RFC's scroll, the RFC↔RFC standards-lineage edge (the inverse
+`obsoleted_by`/`updated_by` relations are not re-emitted, since the graph resolves
+edges in both directions). Publication dates are `Month Year`, padded to the first
+of the month. An RFC classifies as `reference` — a normative spec to consult, like
+a Wikipedia article, not a paper to cite; a record with no abstract is an honest
+metadata-only scroll, and STD/BCP sub-series and Internet-Drafts are deferred).
+Items from
 sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 

@@ -208,7 +208,13 @@ Two small contracts make every platform the same kind of scroll
    PMID as the first path segment, while the legacy
    `ncbi.nlm.nih.gov/pubmed/<pmid>` form is *shape-matched* because that
    host also serves PMC/Gene/Nucleotide — those fall through to `web` —
-   ADR 0065). Two
+   ADR 0065), and `rfc` (IETF technical standards via the RFC Editor's JSON
+   view; **host-restricted shape matching** across `rfc-editor.org`,
+   `datatracker.ietf.org`, `tools.ietf.org`, and `ietf.org` — only the
+   `rfc<digits>` path shape is claimed, the integer number with leading zeros
+   stripped so `rfc0020` and `rfc20` dedupe to `rfc:20`, while Internet-Drafts,
+   working-group, and org pages on those shared hosts fall through to `web` —
+   the legacy-NCBI-host posture, ADR 0066). Two
    *shape-only* branches then run on any host not already claimed, because
    the Fediverse is federated with no host set: `mastodon` matches a
    Mastodon-API status URL (`/@<user>/<digits>`, GoToSocial's
@@ -265,6 +271,7 @@ Implemented fetch adapters, all keyless:
 | crossref (`doi.org`, Crossref agency) | `sources/crossref.py` via `sources/doi.py` dispatch | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
 | crossref (`doi.org`, DataCite agency) | `sources/datacite.py` via `sources/doi.py` dispatch | keyless DataCite DOI metadata API, stdlib only | fetch-time fallback when Crossref 404s a DOI (datasets/software/etc.); JSON:API `attributes` → titles+subtitle, creators "Given Family", `Abstract` description → `summary` (no full text), `subjects` → `concepts`, DataCite date precedence, `resourceTypeGeneral`+`resourceType`+publisher → `tags`, landing + container-DOI `links` (cross-source edge); `resourceTypeGeneral` → `provenance.resource_type` drives classification (`Dataset → dataset`, `Software`/`Model` → `tool`, text types → `paper`, `Image`/`Sound` → `media`); source stays `crossref`, `provenance.adapter="datacite"` is honest; degrades to metadata-only | 0045 |
 | pubmed | `sources/pubmed.py` | keyless NCBI E-utilities efetch API, stdlib ElementTree, one request | the biomedical literature, the arXiv/Crossref paper sibling (PMID identity); MeSH `DescriptorName`s → `concepts` (the curated controlled vocabulary, github-topics/arXiv-taxonomy role; qualifiers dropped), author `Keyword`s the fallback for not-yet-MEDLINE-indexed records; structured abstract → `summary` (no full text, so no `extracted_text`, the Crossref shape); publication types + journal venue → `tags`; date precedence electronic `ArticleDate` → journal `PubDate` (month-name/year-only/`MedlineDate` parsed) → history; article DOI → `doi.org` `link` (PubMed↔Crossref paper edge, ADR 0038's biomedical analog); `pubmed → paper`; degrades to metadata-only | 0065 |
+| rfc | `sources/rfc.py` | keyless RFC Editor JSON view (`rfc-editor.org/rfc/rfc<N>.json`), stdlib only, one request | IETF technical standards, a content type with no prior home; host-restricted shape detection (RFC Editor + `datatracker`/`tools`/`ietf`, only `rfc<digits>` claimed, drafts/WG/org → `web`); integer-number identity, leading zeros stripped; `keywords` → `concepts` (github-topics/MeSH role; whitespace placeholder dropped), maturity `status` title-cased → the one `tag`; abstract → `summary`, **no `extracted_text`** (body published separately, the Crossref/PubMed shape); DOI `10.17487/RFC<N>` → `doi.org` `link` (RFC↔Crossref edge), `obsoletes`/`updates` → `rfc-editor.org/rfc/rfc<M>` `link`s (RFC↔RFC lineage; inverse relations not re-emitted); number leads the title; `Month Year` dates padded to first-of-month; `rfc → reference`; degrades to metadata-only | 0066 |
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
@@ -366,7 +373,9 @@ choice (ADRs 0004, 0005).
   dataset finds the Crossref paper it is part of through its container DOI
   — ADR 0045, and a PubMed record's article `doi.org` link finds its
   `crossref:<doi>` paper — ADR 0065, the biomedical analog of the
-  arXiv preprint↔published edge), shared concepts
+  arXiv preprint↔published edge — while an RFC's DOI link finds its
+  `crossref:<doi>` paper and its `obsoletes`/`updates` links find the RFCs it
+  supersedes — ADR 0066, the standards-lineage analog), shared concepts
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).

@@ -57,6 +57,16 @@ DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
 # than claimed wholesale (ADR 0065).
 PUBMED_HOSTS = {"pubmed.ncbi.nlm.nih.gov", "www.pubmed.ncbi.nlm.nih.gov"}
 NCBI_HOSTS = {"ncbi.nlm.nih.gov", "www.ncbi.nlm.nih.gov"}
+# IETF RFC hosts. These also serve Internet-Drafts, working-group pages, and the
+# org site, so — like the shared NCBI host (ADR 0065) — only the `rfc<N>` shape is
+# claimed and every other path falls through to `web`. The fetch adapter reads the
+# RFC Editor's JSON view regardless of which host the saved URL named.
+RFC_HOSTS = {
+    "rfc-editor.org", "www.rfc-editor.org",
+    "datatracker.ietf.org", "www.datatracker.ietf.org",
+    "tools.ietf.org", "www.tools.ietf.org",
+    "ietf.org", "www.ietf.org",
+}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -218,6 +228,13 @@ def detect_source(url: str) -> DetectedSource:
     ncbi_pmid = _ncbi_pubmed_id(host, path_parts)
     if ncbi_pmid is not None:
         return DetectedSource("pubmed", ncbi_pmid)
+
+    # IETF RFCs live across several hosts that also serve drafts and org pages, so
+    # — like the shared NCBI host above — only the `rfc<digits>` shape is claimed
+    # and every other path on those hosts falls through to `web` (ADR 0066).
+    rfc_id = _rfc_id(host, path_parts)
+    if rfc_id is not None:
+        return DetectedSource("rfc", rfc_id)
 
     # Mastodon/Fediverse has no shared host, so it is matched by URL shape on
     # whatever instance the URL names — after every known-host branch above,
@@ -695,6 +712,38 @@ def _ncbi_pubmed_id(host: str, path_parts: list[str]) -> str | None:
         and path_parts[1].isdigit()
     ):
         return path_parts[1]
+    return None
+
+
+# An RFC path segment is `rfc<number>`, optionally zero-padded (`rfc0020`) and
+# optionally carrying a format extension (`rfc9110.txt`/`.html`/`.json`).
+_RFC_SEGMENT = re.compile(r"rfc0*(\d+)", re.IGNORECASE)
+
+
+def _rfc_id(host: str, path_parts: list[str]) -> str | None:
+    """The integer RFC number for an `rfc<N>` URL on a known IETF host, else None.
+
+    RFCs are reachable at several shapes across the RFC Editor and IETF hosts —
+    `rfc-editor.org/rfc/rfc9110[.txt]`, `rfc-editor.org/info/rfc9110`,
+    `datatracker.ietf.org/doc/rfc9110/`, `datatracker.ietf.org/doc/html/rfc9110`,
+    the legacy `tools.ietf.org/html/rfc9110`, `ietf.org/rfc/rfc9110.txt` — all of
+    which carry an `rfc<digits>` path segment. The number is taken from the first
+    such segment with leading zeros stripped, so `rfc0020` and `rfc20` dedupe to
+    `rfc:20`.
+
+    Because these hosts also serve Internet-Drafts (`draft-…`), working-group
+    pages, and the org site, only the `rfc<digits>` shape is claimed: a URL with
+    no such segment returns None and falls through to `web` — the shared-NCBI-host
+    posture (ADR 0065), not a wholesale host claim. A `/doc/draft-ietf-quic-…`
+    draft therefore stays a `web` page even on `datatracker.ietf.org`.
+    """
+    if host not in RFC_HOSTS:
+        return None
+    for segment in path_parts:
+        stem = unquote(segment).split(".", 1)[0]
+        match = _RFC_SEGMENT.fullmatch(stem)
+        if match:
+            return str(int(match.group(1)))
     return None
 
 

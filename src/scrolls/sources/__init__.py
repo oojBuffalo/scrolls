@@ -43,6 +43,7 @@ from scrolls.sources import (  # noqa: E402
     piefed,
     pubmed,
     pypi,
+    rfc,
     rubygems,
     stackexchange,
     threadiverse,
@@ -102,6 +103,10 @@ FETCH_ADAPTERS = {
     # scroll (the preprint↔published edge's biomedical analog, ADR 0065).
     "pubmed": pubmed.fetch_item,
     "pypi": pypi.fetch_item,
+    # IETF RFCs are technical standards — a content type with no prior home;
+    # keywords become concepts, the status a tag, and the RFC's DOI and its
+    # obsoletes/updates relations become cross-document edges (ADR 0066).
+    "rfc": rfc.fetch_item,
     "rubygems": rubygems.fetch_item,
     "stackexchange": stackexchange.fetch_item,
     "web": web.fetch_item,

@@ -43,6 +43,15 @@ def test_pubmed_classifies_as_paper():
     assert classify_item(item).category == "paper"
 
 
+def test_rfc_classifies_as_reference():
+    # an RFC is a normative spec used as a reference, like a wikipedia article
+    # (ADR 0066), not a paper to cite
+    item = make_item(
+        source="rfc", source_id="9110", title="RFC 9110: HTTP Semantics"
+    )
+    assert classify_item(item).category == "reference"
+
+
 def test_github_is_project():
     item = make_item(source="github", title="oojBuffalo/scrolls")
     assert classify_item(item).category == "project"

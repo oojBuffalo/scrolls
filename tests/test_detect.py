@@ -444,6 +444,27 @@ CASES = [
     ("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6286148/", "web", None),
     ("https://www.ncbi.nlm.nih.gov/gene/672", "web", None),
     ("https://www.ncbi.nlm.nih.gov/pubmed/", "web", None),
+    # --- rfc (IETF, host-restricted shape match like the legacy NCBI host) ---
+    # the RFC Editor canonical form, with and without a format extension
+    ("https://www.rfc-editor.org/rfc/rfc9110", "rfc", "9110"),
+    ("https://www.rfc-editor.org/rfc/rfc9110.txt", "rfc", "9110"),
+    ("https://www.rfc-editor.org/rfc/rfc9110.html", "rfc", "9110"),
+    ("https://www.rfc-editor.org/info/rfc9110", "rfc", "9110"),
+    # zero-padded low numbers dedupe to the bare integer (rfc0020 == rfc20)
+    ("https://www.rfc-editor.org/rfc/rfc0020", "rfc", "20"),
+    ("https://www.rfc-editor.org/rfc/rfc20", "rfc", "20"),
+    # the IETF datatracker and the legacy tools/ietf hosts and their shapes
+    ("https://datatracker.ietf.org/doc/rfc9110/", "rfc", "9110"),
+    ("https://datatracker.ietf.org/doc/html/rfc9110", "rfc", "9110"),
+    ("https://tools.ietf.org/html/rfc2616", "rfc", "2616"),
+    ("https://www.ietf.org/rfc/rfc2616.txt", "rfc", "2616"),
+    # drafts and org/working-group pages on these hosts are NOT RFCs → web
+    ("https://datatracker.ietf.org/doc/draft-ietf-quic-http/", "web", None),
+    ("https://datatracker.ietf.org/wg/httpbis/about/", "web", None),
+    ("https://www.rfc-editor.org/search/rfc_search.php", "web", None),
+    ("https://www.ietf.org/about/", "web", None),
+    # the rfc<N> shape on an unknown host is not claimed (host-restricted)
+    ("https://example.com/rfc/rfc9110", "web", None),
     # --- huggingface ---
     # a model repo is <org>/<name>; the repo type rides in source_id so one
     # adapter serves both the /api/models and /api/datasets endpoints
