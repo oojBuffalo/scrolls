@@ -141,7 +141,34 @@ title, extracted text, summary, canonical URL, content hash, and
 provenance, and moving the item to stage `fetched`. Adapters so far:
 **wikipedia** (MediaWiki action API, no dependencies — see
 `docs/adr/0002-first-fetch-adapter-wikipedia.md`; visible page categories
-become `concepts`), **web** (readable
+become `concepts`), **wikidata**
+(the structured-knowledge sibling of Wikipedia — see
+`docs/adr/0075-wikidata-adapter.md`: a saved `wikidata.org` entity
+(`Q<digits>`) becomes a clean scroll from the keyless entity-data `.json`
+view instead of a `trafilatura` scrape of a concept-poor JS-rendered page.
+Only **Q items** are claimed (Properties and Lexemes deferred as
+schema/meta entities), the QID taken from the first path segment that is a
+QID so the web permalink `/wiki/Q42`, the RDF concept URI `/entity/Q42`,
+and the canonical `/wiki/Special:EntityData/Q42.json` all detect alike and
+uppercase to one canonical id. The entity's `P31` (instance of) and `P279`
+(subclass of) *type* relations become `concepts` — the ontological "what
+kind of thing is this" signal, the direct analog of the wikipedia
+adapter's page categories — their QID values resolved to labels in one
+batched `wbgetentities` call (the Open Library author-key resolution
+economized into a single request). The label is the `title`, preferring
+the English label then the script-agnostic `mul` label Wikidata now mints
+for names that read alike across languages (so Douglas Adams's name, stored
+under `mul` with no `en`, is still found); the description is the
+searchable `summary` with no `extracted_text` (Wikidata holds structured
+facts, not a prose body — the Crossref/Open Library shape), and `tags` stay
+empty by design. The English Wikipedia sitelink becomes an
+`en.wikipedia.org` `link` — the Wikidata↔Wikipedia edge `scrolls related`
+resolves to the saved article about the same subject — the official website
+(`P856`) an outbound link too, and the representative image (`P18`) a
+Commons `thumbnail`. A Wikidata entity classifies as `reference` like the
+article about it; `raw_text` keeps only the projection the adapter consumed
+since an entity can be hundreds of KB, and Property/Lexeme/portal pages
+register but have no entity to fetch), **web** (readable
 article extraction via `trafilatura`, the project's first per-adapter
 dependency per ADR 0001), **youtube** (keyless oEmbed metadata plus
 optional transcript via `youtube-transcript-api`; caption-less videos and

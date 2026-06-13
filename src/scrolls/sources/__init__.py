@@ -50,6 +50,7 @@ from scrolls.sources import (  # noqa: E402
     stackexchange,
     threadiverse,
     web,
+    wikidata,
     wikipedia,
     youtube,
 )
@@ -124,6 +125,10 @@ FETCH_ADAPTERS = {
     "rubygems": rubygems.fetch_item,
     "stackexchange": stackexchange.fetch_item,
     "web": web.fetch_item,
+    # Wikidata is the structured-knowledge sibling of Wikipedia: an entity's
+    # instance-of/subclass-of types become concepts and its English sitelink links
+    # to the Wikipedia article about it (the Wikidata↔Wikipedia edge, ADR 0075).
+    "wikidata": wikidata.fetch_item,
     "wikipedia": wikipedia.fetch_item,
     "youtube": youtube.fetch_item,
 }

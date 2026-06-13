@@ -61,6 +61,12 @@ HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co
 # with no prior first-class home (the RFC/dev.to gap, ADR 0066/0061). Books live
 # on the one host; the fetch adapter reads the record's `.json` view (ADR 0073).
 OPENLIBRARY_HOSTS = {"openlibrary.org", "www.openlibrary.org"}
+# Wikidata is the structured-knowledge sibling of Wikipedia (ADR 0075): a graph of
+# entities (`Q<digits>`), each with labels, descriptions, type relations, and
+# sitelinks back to the Wikipedia articles about it. One host serves the web UI
+# (`/wiki/Q42`), the RDF concept URI (`/entity/Q42`), and the canonical entity
+# data the adapter reads (`/wiki/Special:EntityData/Q42.json`).
+WIKIDATA_HOSTS = {"wikidata.org", "www.wikidata.org", "m.wikidata.org"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -173,6 +179,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
         return DetectedSource("wikipedia", _wikipedia_id(host, path_parts))
+
+    if host in WIKIDATA_HOSTS:
+        return DetectedSource("wikidata", _wikidata_id(path_parts))
 
     if host in GITHUB_HOSTS:
         return DetectedSource("github", _github_id(path_parts))
@@ -321,6 +330,37 @@ def _wikipedia_id(host: str, path_parts: list[str]) -> str | None:
         return None
     title = unquote("/".join(path_parts[1:]))
     return f"{lang}:{title}" if title else None
+
+
+# A Wikidata item id is `Q` followed by digits (`Q42`). Properties (`P<digits>`)
+# and Lexemes (`L<digits>`) are deferred — they are schema/meta entities, not the
+# "things" a knowledge library saves — so only the Q form is claimed (ADR 0075).
+_WIKIDATA_QID = re.compile(r"Q\d+", re.IGNORECASE)
+
+
+def _wikidata_id(path_parts: list[str]) -> str | None:
+    """The `Q<digits>` item id for a Wikidata entity URL, uppercased, else None.
+
+    An entity is reachable several ways on the one host — the web/UI permalink
+    (`/wiki/Q42`), the RDF concept URI (`/entity/Q42`), and the canonical entity
+    data (`/wiki/Special:EntityData/Q42[.json]`) — so the id is taken from the
+    first path segment that *is* a QID (a trailing `.json`/`.ttl` extension
+    stripped first), which covers every form without enumerating routes. On
+    `wikidata.org` a `/wiki/Q<n>` title is always the entity Q<n> (there are no
+    article pages that merely look like a QID), so this is safe.
+
+    The QID is uppercased to its canonical form — Wikidata routes
+    case-insensitively but displays uppercase, so `/wiki/q42` and `/wiki/Q42`
+    dedupe (the crates/Open Library fold, ADR 0036/0073). A Property
+    (`/wiki/Property:P31`), a Lexeme (`/wiki/Lexeme:L1`), and the project/portal
+    pages (`/wiki/Wikidata:Main_Page`, the home page) carry no Q item and resolve
+    to the source with no fetchable item — github's profile-page pattern.
+    """
+    for segment in path_parts:
+        stem = unquote(segment).split(".", 1)[0]
+        if _WIKIDATA_QID.fullmatch(stem):
+            return stem.upper()
+    return None
 
 
 def _github_id(path_parts: list[str]) -> str | None:

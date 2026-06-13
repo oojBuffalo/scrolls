@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1612 tests at the time of writing). The docs themselves
+`uv run pytest` (1717 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -157,7 +157,13 @@ Two small contracts make every platform the same kind of scroll
 
 1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
-   host tables map to `youtube`, `wikipedia`, `github`, `gitlab` (a
+   host tables map to `youtube`, `wikipedia`, `wikidata` (the
+   structured-knowledge sibling of Wikipedia — a `wikidata.org` entity URL,
+   the `Q<digits>` item id taken from the first path segment that is a QID so
+   `/wiki/Q42`, the RDF concept URI `/entity/Q42`, and the canonical
+   `/wiki/Special:EntityData/Q42.json` all detect alike, uppercased to canonical
+   so `/wiki/q42` dedupes; Properties/Lexemes deferred as schema/meta, ADR 0075),
+   `github`, `gitlab` (a
    `gitlab.com/<group>/<project>` URL — gitlab.com only, the second code
    host; the whole `group[/subgroup…]/project` path before any `/-/`
    sub-resource separator as `source_id`, nested-group-aware, folded
@@ -276,6 +282,7 @@ Implemented fetch adapters, all keyless:
 | Source | Module | Method | Distinctive output | ADR |
 | --- | --- | --- | --- | --- |
 | wikipedia | `sources/wikipedia.py` | MediaWiki action API, stdlib only | page categories → `concepts` | 0002 |
+| wikidata | `sources/wikidata.py` | keyless entity-data `.json` + one batched `wbgetentities` label call, stdlib only | the structured-knowledge sibling of Wikipedia (only `Q<digits>` items, Properties/Lexemes deferred); `P31`/`P279` *type* relations → `concepts` resolved QID→label in one call (the Wikipedia-categories analog, ADR 0002); label → `title` (`en` then the script-agnostic `mul` then any), description → `summary` with **no `extracted_text`** (no prose body — the Crossref/Open Library shape), `tags` empty by design; English sitelink → `en.wikipedia.org` `link` (the **Wikidata↔Wikipedia edge**), `P856` → `link`, `P18` Commons image → `thumbnail`; `wikidata → reference`; `raw_text` is a slim projection since an entity can be hundreds of KB; degrades to metadata-only | 0075 |
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |

@@ -33,6 +33,25 @@ CASES = [
     ("https://en.wikipedia.org/wiki/Kurt_G%C3%B6del", "wikipedia", "en:Kurt_Gödel"),
     # portal/front pages: source known, id unknown
     ("https://www.wikipedia.org/", "wikipedia", None),
+    # --- wikidata (structured-knowledge sibling of wikipedia) ---
+    ("https://www.wikidata.org/wiki/Q42", "wikidata", "Q42"),
+    # a sitelinks/statements fragment is stripped (it is not part of the path)
+    ("https://www.wikidata.org/wiki/Q42#sitelinks-wikipedia", "wikidata", "Q42"),
+    # the RDF concept URI form, including the bare http scheme it uses
+    ("https://www.wikidata.org/entity/Q42", "wikidata", "Q42"),
+    ("http://www.wikidata.org/entity/Q42", "wikidata", "Q42"),
+    # the canonical entity-data URL the adapter itself reads
+    ("https://www.wikidata.org/wiki/Special:EntityData/Q42.json", "wikidata", "Q42"),
+    # routes case-insensitively; the id folds to the uppercase canonical
+    ("https://www.wikidata.org/wiki/q42", "wikidata", "Q42"),
+    ("https://m.wikidata.org/wiki/Q7251", "wikidata", "Q7251"),
+    ("https://wikidata.org/wiki/Q11660", "wikidata", "Q11660"),
+    # Properties and Lexemes are deferred (meta/schema entities, not "things")
+    ("https://www.wikidata.org/wiki/Property:P31", "wikidata", None),
+    ("https://www.wikidata.org/wiki/Lexeme:L1", "wikidata", None),
+    # project/portal/home pages carry no Q item: source known, id unknown
+    ("https://www.wikidata.org/wiki/Wikidata:Main_Page", "wikidata", None),
+    ("https://www.wikidata.org/", "wikidata", None),
     # --- github ---
     ("https://github.com/oojBuffalo/scrolls", "github", "oojBuffalo/scrolls"),
     ("https://github.com/owner/repo/issues/42", "github", "owner/repo"),
