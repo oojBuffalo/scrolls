@@ -401,6 +401,23 @@ choice (ADRs 0004, 0005).
   `graph_over` builds a graph over a *given* item set — both feed the KB's
   `library/graph.md` page (ADR 0062), the browsable form of the same
   structure.
+- **Works** (`works.py`, ADR 0069) — `scrolls works` clusters the items
+  that are *the same scholarly work* (an arXiv preprint, its published
+  Crossref article, a PubMed record, a bioRxiv/medRxiv preprint) keyed by
+  the **DOI that names the work**, so a library holding one work as several
+  near-duplicate `paper` entries can consolidate them. A representation
+  contributes a work's DOI when its `source_id` is itself a DOI
+  (`crossref`, `biorxiv`/`medrxiv` — the `10.1101/<accession>` accession is
+  one) or it carries a `doi.org` link (resolved through the same
+  `detect_source` + `normalize_url` path the graph uses). Where the link
+  graph connects two items only when one's link resolves to an item
+  *already present*, `works` clusters by the shared DOI identity, so two
+  representations bind even when the `crossref` item that would link them is
+  absent — a cluster the graph structurally cannot form. Only 2+-member
+  works are reported by default (`--min N`); the `{works, stats}` payload
+  carries the same node shape and `stats.items` total as `graph`, and
+  `works_over(items)` mirrors `graph_over(items)` so a future KB works page
+  can reuse it (`tests/test_works.py`).
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
   `library/graph.md`, plus per-source, per-category, per-concept, and
   per-tag pages from scratch each run so stale groups can't linger; other
@@ -516,7 +533,8 @@ choice (ADRs 0004, 0005).
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `list_scrolls`,
   `get_scroll`,
-  `get_related_scrolls`, `get_link_graph`, `get_concept_page`,
+  `get_related_scrolls`, `get_link_graph`, `get_works` (ADR 0069 —
+  same-work clusters by DOI), `get_concept_page`,
   `get_tag_page` (ADR 0064 — tag matched case-insensitively, slug
   collisions resolved by the page's `# Tag:` heading),
   `list_sources`,
@@ -653,9 +671,13 @@ Next steps already identified in decision records, in no required order:
   again (ADR 0068) — so the biomedical literature and both major
   preprint servers join the paper graph too, with up to *four*
   representations of one work potentially in the library at once (an arXiv
-  or bioRxiv/medRxiv preprint, a PubMed record, the published DOI). With
-  four paper sources now feeding `doi.org` edges, the
-  concept-level merge so a paper's representations share one KB
-  concept page rather than several near-duplicate `paper` entries is the
-  increasingly-motivated open step — alongside the reverse from richer
-  Crossref `relation` data.
+  or bioRxiv/medRxiv preprint, a PubMed record, the published DOI).
+  `scrolls works` (ADR 0069) now delivers the consolidation view: it
+  clusters those representations by the shared DOI that names the work —
+  catching same-work groups even when the binding Crossref item is absent,
+  which the link graph cannot. The remaining step is the KB-level merge so a
+  work's representations share one browsable page (a `library/works.md`, the
+  `library/graph.md` analog) rather than several near-duplicate `paper`
+  entries on the category/source pages — `works_over(items)` is built to
+  feed it — alongside the reverse enrichment from richer Crossref
+  `relation` data.

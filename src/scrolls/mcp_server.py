@@ -22,6 +22,9 @@ from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
+from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
+from scrolls.works import to_payload as works_payload
+from scrolls.works import works_over
 from scrolls.items import count_by_source, get_item, list_items
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
@@ -171,6 +174,26 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     """
     paths = get_paths()
     return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
+
+
+def get_works(min_representations: int = DEFAULT_MIN_REPRESENTATIONS) -> dict[str, Any]:
+    """Scholarly works the library holds more than one representation of.
+
+    Groups items that are the *same work* — an arXiv preprint, its published
+    Crossref article, a PubMed record, a bioRxiv/medRxiv preprint — keyed by
+    the DOI that names the work. Unlike get_link_graph, which connects items
+    only when one's link resolves to another already in the library, this
+    clusters by shared DOI, so two representations bind into one work even
+    when the Crossref item that links them is absent. Each work carries its
+    `doi`, `url`, and `representations` (the same node shape as the graph).
+    Works with fewer than `min_representations` items are omitted (default 2,
+    so only works actually worth consolidating are returned); `stats.items`
+    is the library total.
+    """
+    paths = get_paths()
+    items = list_items(paths.db_path) if paths.db_path.exists() else []
+    works = works_over(items, min_representations=min_representations)
+    return works_payload(works, len(items))
 
 
 def get_context_bundle(
@@ -344,6 +367,7 @@ _TOOLS = (
     get_scroll,
     get_related_scrolls,
     get_link_graph,
+    get_works,
     get_context_bundle,
     get_concept_page,
     get_tag_page,

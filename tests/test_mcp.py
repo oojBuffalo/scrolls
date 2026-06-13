@@ -85,6 +85,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_scroll",
         "get_related_scrolls",
         "get_link_graph",
+        "get_works",
         "get_context_bundle",
         "get_concept_page",
         "get_tag_page",
@@ -224,6 +225,39 @@ def test_get_link_graph_empty_library(scrolls_home):
     assert mcp_server.get_link_graph() == {
         "nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0, "clusters": 0}
     }
+
+
+def test_get_works_clusters_by_shared_doi(scrolls_home):
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", source_id="1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        stage="fetched",
+    ))
+
+    payload = mcp_server.get_works()
+    assert payload["stats"] == {"items": 2, "works": 1}
+    work = payload["works"][0]
+    assert work["doi"] == "10.5555/3295222"
+    assert [r["id"] for r in work["representations"]] == [
+        "arxiv:1706.03762",
+        "crossref:10.5555/3295222",
+    ]
+
+
+def test_get_works_empty_library(scrolls_home):
+    assert mcp_server.get_works() == {"works": [], "stats": {"items": 0, "works": 0}}
 
 
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):

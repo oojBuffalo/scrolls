@@ -871,6 +871,35 @@ $ scrolls graph
 [exit 0]
 ```
 
+### `scrolls works [--min N]`
+
+Scholarly works the library holds more than one representation of, keyed
+by DOI (ADR 0069, `tests/test_works.py`). One work — an arXiv preprint,
+its published Crossref article, a PubMed record, a bioRxiv/medRxiv
+preprint — can sit in the library as several near-duplicate `paper`
+entries; this groups them. A representation contributes a work's DOI when
+its `source_id` is itself a DOI (`crossref`, `biorxiv`/`medrxiv`) or it
+carries a `doi.org` link (every paper adapter emits the published work's
+DOI as one).
+
+Where `scrolls graph` connects items only when one's link resolves to
+another *already in the library*, `works` clusters by the *shared DOI*, so
+an arXiv preprint and a PubMed record that both name `doi.org/D` are one
+work even when the `crossref:D` item that would link them is absent
+(`test_clusters_without_the_crossref_hub_present`). Each work carries its
+`doi`, canonical `url`, and `representations` (the `id`/`source`/`title`/
+`url`/`stage` node shape `graph`/`related` use), sorted by id; works sort
+by representation count then DOI. `--min N` sets the minimum
+representations per work (default 2 — a single-representation work is just
+a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
+library total. An empty or uninitialized library is no works, exit 0.
+
+```console
+$ scrolls works
+{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched"}]}], "stats": {"items": 2, "works": 1}}
+[exit 0]
+```
+
 ### `scrolls context <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
 The Markdown exception: a compact context bundle — best matches,
@@ -1039,6 +1068,8 @@ The tools wrap the same engines as the CLI commands
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
+| `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
+| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |

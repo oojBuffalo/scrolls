@@ -1,0 +1,206 @@
+"""Scholarly works clustered by shared DOI (ADR 0069).
+
+The library now holds four paper sources that feed `doi.org` edges — arXiv
+preprints (ADR 0038), Crossref/DataCite registered works (ADR 0037/0045),
+PubMed records (ADR 0065), and bioRxiv/medRxiv preprints (ADR 0068) — plus
+RFCs (ADR 0066), each of which carries the DOI of the work it represents.
+So one scholarly work can sit in the library as several near-duplicate
+`paper` entries: a preprint, its published article, an indexing record.
+
+This module groups those representations into *works*, keyed by the DOI
+that names the work. A work is the FRBR sense of the term (Crossref and
+OpenAlex use it the same way): the abstract creation, of which the arXiv
+preprint and the published article are *manifestations*.
+
+Where `scrolls graph` (ADR 0044) clusters by *realized link edges* — two
+items connect only when a link in one resolves to the other's identity, so
+the binding Crossref hub item must itself be in the library — `works`
+clusters by *shared DOI identity*. An arXiv preprint and a PubMed record
+that both name `doi.org/D` are the same work even when no `crossref:D` item
+is present: their links resolve to a URL token no item owns, so the graph
+draws no edge between them, yet the DOI binds them here. When the hub *is*
+present the two views coincide; `works` is the semantically correct lens
+for "the same scholarly work", catching clusters the link graph cannot.
+
+A representation contributes a work DOI in two ways, the same DOI plumbing
+the rest of the system uses:
+
+- its `source_id` is itself a DOI (`10.<registrant>/<suffix>`) — true for
+  `crossref` items (the DOI folded lowercase, ADR 0037) and for
+  `biorxiv`/`medrxiv` items (the `10.1101/<accession>` preprint DOI,
+  ADR 0068), and naturally false for arXiv/PubMed/RFC integer ids; or
+- one of its `links` is a `doi.org` URL — every paper adapter emits the
+  published work's DOI as exactly such a link, and source detection reads
+  the lowercased DOI back off it (`detect_source`, the same resolution
+  `scrolls graph` and `scrolls related` use, ADR 0023).
+
+Only works with two or more representations are reported by default — a
+single-representation work is just a paper, with nothing to consolidate.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from scrolls.items import ScrollItem, list_items
+from scrolls.sources.detect import detect_source
+from scrolls.sources.urls import normalize_url
+
+DOI_RESOLVER = "https://doi.org"
+
+# A single-representation "work" is just a paper; the default only reports
+# works actually worth consolidating (2+ representations).
+DEFAULT_MIN_REPRESENTATIONS = 2
+
+# A DOI is `10.<registrant>/<suffix>`; the registrant is 4+ digits and the
+# suffix is non-empty (the DOI Handbook §2.2). The same shape `detect.py`
+# uses to read a DOI off a doi.org URL — kept here as a local copy so a
+# work key never depends on the detector's internal regex.
+_DOI_RE = re.compile(r"^10\.\d{4,}/.+$")
+
+
+@dataclass(frozen=True)
+class Representation:
+    """One item that represents a work — the node shape graph/related use."""
+
+    id: str
+    source: str
+    title: str | None
+    url: str
+    stage: str
+
+
+@dataclass(frozen=True)
+class Work:
+    """A scholarly work and the saved items that represent it.
+
+    `doi` is the lowercased DOI that names the work and `url` its canonical
+    `https://doi.org/<doi>` resolver link. `representations` are the items
+    bound to it, sorted by id.
+    """
+
+    doi: str
+    url: str
+    representations: tuple[Representation, ...]
+
+
+def find_works(
+    db_path: Path, *, min_representations: int = DEFAULT_MIN_REPRESENTATIONS
+) -> list[Work]:
+    """Cluster the library's items into works by shared DOI.
+
+    A missing database (uninitialized library) yields no works. Works with
+    fewer than `min_representations` members are dropped — the default of 2
+    keeps only the works actually worth consolidating.
+    """
+    items = list_items(db_path) if db_path.exists() else []
+    return works_over(items, min_representations=min_representations)
+
+
+def works_over(
+    items: list[ScrollItem], *, min_representations: int = DEFAULT_MIN_REPRESENTATIONS
+) -> list[Work]:
+    """Cluster a given set of items into works by shared DOI.
+
+    `find_works` loads the whole library and calls this; a future KB page
+    can pass only its rendered items. Works are ordered by representation
+    count descending, then by DOI, so the output is stable run to run;
+    within a work, representations sort by id.
+    """
+    # doi → {item id: item}, an inner dict so a representation that names a
+    # DOI twice (a duplicate link) counts once, in first-seen (oldest) order.
+    by_doi: dict[str, dict[str, ScrollItem]] = {}
+    for item in items:
+        for doi in _item_dois(item):
+            by_doi.setdefault(doi, {})[item.id] = item
+
+    works = [
+        Work(
+            doi=doi,
+            url=f"{DOI_RESOLVER}/{doi}",
+            representations=tuple(
+                sorted(
+                    (_representation(item) for item in members.values()),
+                    key=lambda rep: rep.id,
+                )
+            ),
+        )
+        for doi, members in by_doi.items()
+        if len(members) >= min_representations
+    ]
+    works.sort(key=lambda work: (-len(work.representations), work.doi))
+    return works
+
+
+def to_payload(works: list[Work], item_count: int) -> dict:
+    """Works as the JSON object the CLI and MCP tool both emit.
+
+    `stats.items` is the library total (the denominator the works count is
+    against), `stats.works` the number reported — the same `stats` shape
+    `scrolls graph` uses.
+    """
+    return {
+        "works": [
+            {
+                "doi": work.doi,
+                "url": work.url,
+                "representations": [
+                    {
+                        "id": rep.id,
+                        "source": rep.source,
+                        "title": rep.title,
+                        "url": rep.url,
+                        "stage": rep.stage,
+                    }
+                    for rep in work.representations
+                ],
+            }
+            for work in works
+        ],
+        "stats": {"items": item_count, "works": len(works)},
+    }
+
+
+def _item_dois(item: ScrollItem) -> set[str]:
+    """The DOIs that name the work(s) this item represents.
+
+    The item's own `source_id` when it is itself a DOI (crossref,
+    biorxiv/medrxiv), plus the DOI of every `doi.org` link it carries.
+    """
+    dois: set[str] = set()
+    if item.source_id and _DOI_RE.match(item.source_id):
+        dois.add(item.source_id.lower())
+    for link in item.links:
+        doi = _doi_from_link(link)
+        if doi:
+            dois.add(doi)
+    return dois
+
+
+def _doi_from_link(link: str) -> str | None:
+    """The lowercased DOI a `doi.org` link names, or None.
+
+    Resolution goes through `detect_source` — the same normalize-then-detect
+    path `scrolls graph` resolves links with (ADR 0023) — which maps a
+    `doi.org`/`dx.doi.org` URL to a `crossref` source with the DOI, folded
+    lowercase, as its `source_id` (ADR 0037).
+    """
+    try:
+        detected = detect_source(normalize_url(link))
+    except ValueError:
+        return None
+    if detected.source == "crossref" and detected.source_id:
+        return detected.source_id
+    return None
+
+
+def _representation(item: ScrollItem) -> Representation:
+    return Representation(
+        id=item.id,
+        source=item.source,
+        title=item.title,
+        url=item.url,
+        stage=item.stage,
+    )

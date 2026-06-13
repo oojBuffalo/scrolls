@@ -109,6 +109,7 @@ uv run scrolls search <query> --tag rust --concept "full text search"  # members
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
+uv run scrolls works [--min N]  # scholarly works held as 2+ representations, clustered by DOI (ADR 0069)
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
