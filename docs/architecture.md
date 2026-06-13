@@ -416,12 +416,13 @@ choice (ADRs 0004, 0005).
   absent — a cluster the graph structurally cannot form. Only 2+-member
   works are reported by default (`--min N`); the `{works, stats}` payload
   carries the same node shape and `stats.items` total as `graph`, and
-  `works_over(items)` mirrors `graph_over(items)` so a future KB works page
-  can reuse it (`tests/test_works.py`).
+  `works_over(items)` mirrors `graph_over(items)` so the KB works page
+  (`library/works.md`, ADR 0070) reuses it over rendered items
+  (`tests/test_works.py`).
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
-  `library/graph.md`, plus per-source, per-category, per-concept, and
-  per-tag pages from scratch each run so stale groups can't linger; other
-  files under `library/` are left alone. Concept pages merge spellings by
+  `library/graph.md`, `library/works.md`, plus per-source, per-category,
+  per-concept, and per-tag pages from scratch each run so stale groups can't
+  linger; other files under `library/` are left alone. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,
@@ -438,6 +439,12 @@ choice (ADRs 0004, 0005).
   rendered as adjacency lists, with the index linking to it and the compile
   summary reporting a `clusters` count; built over rendered items only so
   every link on the page resolves to a scroll file (`tests/test_kb.py`).
+  `works.md` is the parallel browsable form of `scrolls works`'s DOI
+  clustering (ADR 0070): `works_over(rendered_items)` grouped under each work's
+  DOI, every representation linking to its scroll, the index linking to it and
+  the compile summary reporting a `works` count — the rendered-only scope
+  meaning the page's work count can fall below `scrolls works`'s whole-library
+  count, the same divergence `graph.md` has from `scrolls graph`.
   Each concept page also ends with a **Related Concepts** section
   (`related_concepts`, ADR 0063) — the concepts that co-occur on its member
   scrolls, ranked by shared-scroll count — the deterministic concept-graph
@@ -672,12 +679,12 @@ Next steps already identified in decision records, in no required order:
   preprint servers join the paper graph too, with up to *four*
   representations of one work potentially in the library at once (an arXiv
   or bioRxiv/medRxiv preprint, a PubMed record, the published DOI).
-  `scrolls works` (ADR 0069) now delivers the consolidation view: it
+  `scrolls works` (ADR 0069) delivers the consolidation view: it
   clusters those representations by the shared DOI that names the work —
   catching same-work groups even when the binding Crossref item is absent,
-  which the link graph cannot. The remaining step is the KB-level merge so a
-  work's representations share one browsable page (a `library/works.md`, the
-  `library/graph.md` analog) rather than several near-duplicate `paper`
-  entries on the category/source pages — `works_over(items)` is built to
-  feed it — alongside the reverse enrichment from richer Crossref
-  `relation` data.
+  which the link graph cannot — and `library/works.md` (ADR 0070, the
+  `library/graph.md` analog, fed by the same `works_over(items)`) now makes
+  that clustering a browsable KB page. The remaining step is the deeper
+  KB-level *merge*: collapsing a work's near-duplicate `paper` entries so the
+  category/source pages show one consolidated entry rather than several,
+  alongside the reverse enrichment from richer Crossref `relation` data.
