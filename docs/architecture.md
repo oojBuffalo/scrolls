@@ -164,6 +164,12 @@ Two small contracts make every platform the same kind of scroll
    service, *not* host-in-id like gitea; the flat `<workspace>/<repo>` folded
    lowercase since Bitbucket auto-lowercases slugs and routes
    case-insensitively, deep links deduping to the repo, ADR 0057), `arxiv`,
+   `biorxiv` and `medrxiv` (the `/content/10.1101/<accession>` URL on each
+   server's host, the `10.1101/<accession>` DOI as `source_id` with the `vN`
+   version and `.full`/`.full.pdf`/early-access views stripped so every view
+   dedupes; kept as *two* sources because a medRxiv paper does not live on
+   bioRxiv, even though one fetch adapter serves both off the shared
+   `api.biorxiv.org`, ADR 0068),
    `x`,
    `hackernews`, `lobsters` (a `/s/<short_id>` story URL, the short id
    verbatim), `bluesky` (a `bsky.app/profile/<actor>/post/<rkey>` post URL,
@@ -262,6 +268,7 @@ Implemented fetch adapters, all keyless:
 | gitea (incl. Forgejo) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>` + optional README via the API raw route | the third code host (codeberg.org/gitea.com), and the first to carry the instance host *in the id* (`gitea:<host>/<owner>/<repo>`) because the API is per-host not a single service — one adapter for Gitea + its API-compatible fork Forgejo (the mastodon/forks pattern); inline `topics` → `concepts` like github (no second call), no inline license so `tags` empty; README is README.md-first via the API raw route (the web `download_url` login-gates anonymous gitea.com clients; listing a big root times out) with a root-listing fallback for a non-`.md` README; `GITEA_TOKEN`/`FORGEJO_TOKEN` (→`Authorization: token`) lifts the limit; degrades to metadata-only | 0056 |
 | bitbucket | `sources/bitbucket.py` | keyless `GET /2.0/repositories/<ws>/<repo>` + optional README via the `/src/<branch>` route | the fourth code host; Bitbucket *Cloud* is a single service so it is host-scoped with a fixed API host and a flat `<workspace>/<repo>` identity like github (not host-in-id like gitea; Bitbucket Server/DC deferred), folded lowercase (slugs auto-lowercase, case-insensitive routing — the gitlab fold); **no topics so `concepts` empty by design**, `language` → the one `tag`; README via the `/src/<mainbranch>/<path>` route (no `/readme` endpoint, no `/raw/` route) — README.md-first then a root-listing fallback for a non-`.md` README; `BITBUCKET_TOKEN` (→`Authorization: Bearer`) lifts the limit; degrades to metadata-only | 0057 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`, published `arxiv:doi` → `doi.org` `link` (preprint↔published edge, ADR 0038); degrades to abstract-only | 0008, 0010, 0012, 0038 |
+| biorxiv, medrxiv | `sources/biorxiv.py` | keyless `api.biorxiv.org/details/<server>/<doi>`, stdlib JSON, one request | arXiv's biology/medicine preprint siblings; **two distinct sources, one shared adapter** (it reads `item.source` to pick the `<server>`) — *not* one source with a server qualifier (the huggingface unify is rejected: a medRxiv paper does not live on bioRxiv, so labeling it `biorxiv` would be dishonest — ADR 0045's honesty value), the inverse of the doi/threadiverse one-source-many-adapters shape; identity `10.1101/<accession>`, every `vN`/`.full`/`.full.pdf`/early-access view deduping to it (arXiv `abs`/`pdf` dedupe); the **highest version** in the ascending `collection` is the current preprint; abstract → `summary` with **no `extracted_text`** and **no PDF media** (the `.full.pdf` 403s anonymous clients — the deliberate divergence from arXiv whose PDF serves freely, ADR 0010); subject `category` → the one `concept` (sentence-cased so `HIV/AIDS` survives), study `type` (space-bearing only, so medRxiv's `PUBLISHAHEADOFPRINT` sentinel drops) + `server` venue + recognized CC `license` → `tags`; `published` journal DOI → `doi.org` `link` (preprint↔published edge, arXiv's `arxiv:doi` analog ADR 0038, PubMed's biomedical sibling ADR 0065), unpublished preprints edgeless; `biorxiv`/`medrxiv → paper`; degrades to metadata-only | 0068 |
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
 | stackexchange | `sources/stackexchange.py` | keyless Stack Exchange API, stdlib only; optional second GET for answers | one adapter for the whole network (site in `source_id`); question + accepted-first top answers → `extracted_text`; tags → `concepts`; degrades to question-only | 0033 |
@@ -640,11 +647,15 @@ Next steps already identified in decision records, in no required order:
   DOI-RA pre-lookup (`doi.org/doiRA/<doi>`) would replace the wasted
   Crossref 404 a DataCite fetch currently pays, if that latency matters.
 - **Cross-source `paper` enrichment** — arXiv and its published Crossref
-  version now relate through the `arxiv:doi` link (ADR 0038), and a PubMed
-  record relates to its Crossref DOI the same way (ADR 0065) — so the
-  biomedical literature joins the paper graph too, three representations of
-  one work potentially in the library at once (preprint, PubMed record,
-  published DOI). A natural
-  next step is the reverse from richer Crossref `relation` data, or a
+  version now relate through the `arxiv:doi` link (ADR 0038); a PubMed
+  record relates to its Crossref DOI the same way (ADR 0065); and a
+  bioRxiv/medRxiv preprint relates to its published-journal DOI the same way
+  again (ADR 0068) — so the biomedical literature and both major
+  preprint servers join the paper graph too, with up to *four*
+  representations of one work potentially in the library at once (an arXiv
+  or bioRxiv/medRxiv preprint, a PubMed record, the published DOI). With
+  four paper sources now feeding `doi.org` edges, the
   concept-level merge so a paper's representations share one KB
-  concept page rather than several near-duplicate `paper` entries.
+  concept page rather than several near-duplicate `paper` entries is the
+  increasingly-motivated open step — alongside the reverse from richer
+  Crossref `relation` data.

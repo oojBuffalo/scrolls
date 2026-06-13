@@ -8,9 +8,9 @@ getting a guessed label; a future LLM engine can pick them up.
 
 Precedence (first hit wins):
 
-1. curated-platform defaults — wikipedia/rfc/arxiv/pubmed/crossref/github/gitlab/
-   gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/huggingface items are
-   what their platform makes them, whatever the title says;
+1. curated-platform defaults — wikipedia/rfc/arxiv/biorxiv/medrxiv/pubmed/
+   crossref/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
+   huggingface items are what their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -36,6 +36,10 @@ _CURATED_SOURCE_CATEGORIES = {
     # Wikipedia article rather than a paper to cite (ADR 0066).
     "rfc": "reference",
     "arxiv": "paper",
+    # bioRxiv and medRxiv are preprint servers — arXiv's biology/medicine
+    # siblings, so their preprints are papers too (ADR 0068).
+    "biorxiv": "paper",
+    "medrxiv": "paper",
     # PubMed indexes biomedical papers — the arXiv/Crossref paper sibling
     # (ADR 0065).
     "pubmed": "paper",

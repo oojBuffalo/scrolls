@@ -205,7 +205,20 @@ PDF with `pypdf` into searchable extracted text — any PDF failure
 degrades to the abstract-only scroll — see
 `docs/adr/0008-arxiv-adapter-atom-abstracts.md`,
 `docs/adr/0010-arxiv-pdf-full-text-pypdf.md`, and
-`docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`), and **pdf**
+`docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`), and **biorxiv** and
+**medrxiv** (arXiv's biology and medicine preprint siblings — see
+`docs/adr/0068-biorxiv-medrxiv-adapter.md`: the two servers share one
+operator and one keyless API
+(`api.biorxiv.org/details/<server>/<doi>`, stdlib JSON) so one fetch
+adapter serves both, but they stay two distinct sources because a
+medRxiv paper does not live on bioRxiv; the highest version is the
+scroll, the abstract becomes the searchable summary with no extracted
+text and no PDF media — the `.full.pdf` 403s anonymous clients, unlike
+arXiv's — the subject area becomes the one `concept`, the study type,
+server, and CC license become `tags`, and the published-journal DOI
+becomes a `doi.org` link to its Crossref scroll, the preprint↔published
+edge arXiv and PubMed also carry; degrades to a metadata-only scroll),
+and **pdf**
 (any other `.pdf` URL: text and document metadata via `pypdf`, the
 `/Title`-or-filename as title, `/Subject` as the only honest summary,
 and the document itself as a media ref for `scrolls media`; a non-PDF

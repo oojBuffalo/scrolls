@@ -33,6 +33,17 @@ def test_arxiv_is_paper():
     assert classify_item(item).category == "paper"
 
 
+def test_biorxiv_and_medrxiv_classify_as_paper():
+    # the preprint servers are arXiv's biology/medicine siblings (ADR 0068)
+    for source in ("biorxiv", "medrxiv"):
+        item = make_item(
+            source=source,
+            source_id="10.1101/2020.03.20.001008",
+            title="A SARS-CoV-2 preprint",
+        )
+        assert classify_item(item).category == "paper"
+
+
 def test_pubmed_classifies_as_paper():
     # PubMed indexes biomedical papers — the arXiv/Crossref sibling (ADR 0065)
     item = make_item(

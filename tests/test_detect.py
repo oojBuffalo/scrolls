@@ -426,6 +426,28 @@ CASES = [
     ("https://doi.org/", "crossref", None),
     ("https://doi.org/about", "crossref", None),
     ("https://doi.org/not-a-doi", "crossref", None),
+    # --- biorxiv / medrxiv (sibling preprint servers, two sources, one adapter) ---
+    # the modern content URL carries the DOI accession; version + view drop off
+    ("https://www.biorxiv.org/content/10.1101/2020.03.20.001008v2", "biorxiv",
+     "10.1101/2020.03.20.001008"),
+    ("https://www.biorxiv.org/content/10.1101/2020.03.20.001008v2.full", "biorxiv",
+     "10.1101/2020.03.20.001008"),
+    ("https://www.biorxiv.org/content/10.1101/2020.03.20.001008v2.full.pdf", "biorxiv",
+     "10.1101/2020.03.20.001008"),
+    # a legacy bare-integer accession
+    ("https://biorxiv.org/content/10.1101/339747v4", "biorxiv", "10.1101/339747"),
+    # the legacy early-access path: the accession is the last segment
+    ("https://www.biorxiv.org/content/early/2020/03/21/2020.03.20.001008v1", "biorxiv",
+     "10.1101/2020.03.20.001008"),
+    # medRxiv is its own source (a medRxiv paper does not live on bioRxiv)
+    ("https://www.medrxiv.org/content/10.1101/2020.03.09.20033357v1", "medrxiv",
+     "10.1101/2020.03.09.20033357"),
+    ("https://medrxiv.org/content/10.1101/2020.03.09.20033357v1.full", "medrxiv",
+     "10.1101/2020.03.09.20033357"),
+    # non-content pages carry no accession: source known, item unknown
+    ("https://www.biorxiv.org/", "biorxiv", None),
+    ("https://www.biorxiv.org/collection/microbiology", "biorxiv", None),
+    ("https://www.medrxiv.org/about", "medrxiv", None),
     # --- pubmed ---
     # the dedicated host carries the PMID as the first path segment
     ("https://pubmed.ncbi.nlm.nih.gov/22745249/", "pubmed", "22745249"),

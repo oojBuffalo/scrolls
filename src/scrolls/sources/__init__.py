@@ -19,6 +19,7 @@ class FetchError(Exception):
 # back from this package.
 from scrolls.sources import (  # noqa: E402
     arxiv,
+    biorxiv,
     bitbucket,
     bluesky,
     crates,
@@ -54,6 +55,13 @@ from scrolls.sources import (  # noqa: E402
 
 FETCH_ADAPTERS = {
     "arxiv": arxiv.fetch_item,
+    # bioRxiv (biology) and medRxiv (health sciences) are sibling preprint
+    # servers on one shared API; one adapter serves both, reading `item.source`
+    # to pick the server, but they stay two sources because a medRxiv paper does
+    # not live on bioRxiv. The published-journal DOI links to its Crossref
+    # scroll (arXiv's preprint↔published edge, ADR 0068).
+    "biorxiv": biorxiv.fetch_item,
+    "medrxiv": biorxiv.fetch_item,
     # Bitbucket is the fourth code host; Bitbucket Cloud is a single hosted
     # service, so it is host-scoped with a flat `<workspace>/<repo>` identity
     # like github (not host-in-id like gitea), folded lowercase (ADR 0057).

@@ -27,6 +27,15 @@ GITEA_HOSTS = {"codeberg.org", "www.codeberg.org", "gitea.com", "www.gitea.com"}
 # self-hosted GitLab.
 BITBUCKET_HOSTS = {"bitbucket.org", "www.bitbucket.org"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
+# bioRxiv and medRxiv are sibling preprint servers run by one operator (Cold
+# Spring Harbor Laboratory) on one shared API (`api.biorxiv.org/details/<server>/
+# <doi>`) that differs only by a `[server]` path segment. They are kept as two
+# *distinct* sources, not one (the huggingface kind-in-id pattern), because a
+# medRxiv paper does not live on bioRxiv — labeling it `source=biorxiv` would be
+# dishonest. One fetch adapter serves both, reading `item.source` to pick the
+# server (ADR 0068).
+BIORXIV_HOSTS = {"biorxiv.org", "www.biorxiv.org"}
+MEDRXIV_HOSTS = {"medrxiv.org", "www.medrxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
 # bsky.app is the public web app whose post URLs users save; the fetch
@@ -175,6 +184,12 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in ARXIV_HOSTS:
         return DetectedSource("arxiv", _arxiv_id(path_parts))
+
+    if host in BIORXIV_HOSTS:
+        return DetectedSource("biorxiv", _biorxiv_id(path_parts))
+
+    if host in MEDRXIV_HOSTS:
+        return DetectedSource("medrxiv", _biorxiv_id(path_parts))
 
     if host in X_HOSTS:
         return DetectedSource("x", _x_status_id(path_parts))
@@ -396,6 +411,43 @@ def _arxiv_id(path_parts: list[str]) -> str | None:
     if arxiv_id.lower().endswith(".pdf"):
         arxiv_id = arxiv_id[: -len(".pdf")]
     return arxiv_id or None
+
+
+# A bioRxiv/medRxiv accession is either the modern dotted form
+# `YYYY.MM.DD.<serial>` (bioRxiv's serial is 6 digits, medRxiv's 8) or a legacy
+# bare integer (`339747`); a `vN` version suffix and any format extension
+# (`.full`, `.full.pdf`, `.abstract`) follow it.
+_BIORXIV_ACCESSION = re.compile(r"\d{4}\.\d{2}\.\d{2}\.\d+|\d{4,}")
+
+
+def _biorxiv_id(path_parts: list[str]) -> str | None:
+    """The `10.1101/<accession>` DOI for a bioRxiv/medRxiv content URL, else None.
+
+    A preprint lives at `/content/10.1101/<accession>v<version>[.<ext>]` (the
+    modern canonical form) or the legacy early-access path
+    `/content/early/<YYYY>/<MM>/<DD>/<accession>v<version>`. Either way the
+    identity is the DOI `10.1101/<accession>` — the version suffix and any
+    `.full`/`.full.pdf`/`.abstract` extension are dropped so every version and
+    view of one preprint dedupes to a single item, the arXiv `abs`/`pdf` rule
+    (ADR 0008). The accession is found as the segment after a literal `10.1101`
+    path part, or the last segment of an early-access path.
+
+    The DOI is the lookup key the shared fetch adapter passes to
+    `api.biorxiv.org/details/<server>/<doi>` (ADR 0068). A non-content page
+    (the homepage, a subject collection, an about page) carries no accession and
+    resolves to the source with no fetchable item — github's profile-page
+    pattern.
+    """
+    if not path_parts or path_parts[0] != "content":
+        return None
+    rest = path_parts[1:]
+    if "10.1101" in rest:
+        index = rest.index("10.1101")
+        raw = rest[index + 1] if index + 1 < len(rest) else ""
+    else:
+        raw = rest[-1] if rest else ""
+    match = _BIORXIV_ACCESSION.match(unquote(raw))
+    return f"10.1101/{match.group()}" if match else None
 
 
 def _x_status_id(path_parts: list[str]) -> str | None:
