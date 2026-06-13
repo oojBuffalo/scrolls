@@ -871,7 +871,7 @@ $ scrolls graph
 [exit 0]
 ```
 
-### `scrolls works [--min N]`
+### `scrolls works [ref] [--min N]`
 
 Scholarly works the library holds more than one representation of, keyed
 by DOI (ADR 0069, `tests/test_works.py`). One work — an arXiv preprint,
@@ -894,8 +894,23 @@ representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
 library total. An empty or uninitialized library is no works, exit 0.
 
+With a `ref` (an item id or URL — the saved URL is a valid handle wherever
+an id is, ADR 0028), `works` reports the *per-item* lens instead: the
+work(s) that one item represents, with every saved sibling representation
+(ADR 0072, `test_cli_works_with_ref_reports_only_that_items_work`). This is
+to `scrolls works` what `scrolls related <id>` is to `scrolls graph` — an
+agent that found one form of a work (a search hit, a scroll) learns which
+other forms are in the library. In this form `--min` is ignored and a work
+is reported even with a single representation (just that item), so "no
+sibling saved" is an explicit answer; an item that names no DOI is no
+works, and an unknown item is a JSON error on stderr, exit 1.
+
 ```console
 $ scrolls works
+{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched"}]}], "stats": {"items": 2, "works": 1}}
+[exit 0]
+
+$ scrolls works arxiv:1706.03762
 {"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 ```

@@ -24,11 +24,12 @@ from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
 from scrolls.works import to_payload as works_payload
-from scrolls.works import works_over
+from scrolls.works import works_for_item, works_over
 from scrolls.items import count_by_source, get_item, list_items
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
+from scrolls.pipeline import resolve_item_id
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
 from scrolls.render import slugify
@@ -176,7 +177,10 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
 
 
-def get_works(min_representations: int = DEFAULT_MIN_REPRESENTATIONS) -> dict[str, Any]:
+def get_works(
+    item: str | None = None,
+    min_representations: int = DEFAULT_MIN_REPRESENTATIONS,
+) -> dict[str, Any]:
     """Scholarly works the library holds more than one representation of.
 
     Groups items that are the *same work* — an arXiv preprint, its published
@@ -189,10 +193,20 @@ def get_works(min_representations: int = DEFAULT_MIN_REPRESENTATIONS) -> dict[st
     Works with fewer than `min_representations` items are omitted (default 2,
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.
+
+    Pass `item` (an id or URL) for the *per-item* lens — the work(s) that one
+    item represents, with every saved sibling representation: an item that
+    found one form (a search hit) learns which other forms of the same work
+    are in the library. In this form `min_representations` is ignored and a
+    work is reported even with a single representation (just that item), so
+    "no sibling saved" is an explicit answer; an unknown item is an error.
     """
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
-    works = works_over(items, min_representations=min_representations)
+    if item is not None:
+        works = works_for_item(items, resolve_item_id(item))
+    else:
+        works = works_over(items, min_representations=min_representations)
     return works_payload(works, len(items))
 
 

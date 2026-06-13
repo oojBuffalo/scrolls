@@ -36,7 +36,7 @@ from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.graph import build_graph, to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS as DEFAULT_WORK_MIN
-from scrolls.works import to_payload as works_payload, works_over
+from scrolls.works import to_payload as works_payload, works_for_item, works_over
 from scrolls.items import (
     ScrollItem,
     get_item,
@@ -196,6 +196,13 @@ def build_parser() -> argparse.ArgumentParser:
     works_parser = subparsers.add_parser(
         "works",
         help="Scholarly works clustered by shared DOI (JSON output)",
+    )
+    works_parser.add_argument(
+        "ref",
+        nargs="?",
+        help="An item id or URL — report only the work(s) this item "
+        "represents, with every saved representation (whole library when "
+        "omitted; --min is ignored in this per-item form)",
     )
     works_parser.add_argument(
         "--min",
@@ -447,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "graph":
         return _cmd_graph(args.include_all)
     if args.command == "works":
-        return _cmd_works(args.min_representations)
+        return _cmd_works(args.min_representations, args.ref)
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "import":
@@ -1144,10 +1151,17 @@ def _cmd_graph(include_all: bool) -> int:
     return 0
 
 
-def _cmd_works(min_representations: int) -> int:
+def _cmd_works(min_representations: int, ref: str | None = None) -> int:
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
-    works = works_over(items, min_representations=min_representations)
+    if ref is not None:  # the per-item lens: this item's work(s) and siblings
+        try:
+            works = works_for_item(items, resolve_item_id(ref))
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+    else:
+        works = works_over(items, min_representations=min_representations)
     print(json.dumps(works_payload(works, len(items))))
     return 0
 

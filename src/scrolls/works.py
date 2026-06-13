@@ -134,6 +134,40 @@ def works_over(
     return works
 
 
+def works_for_item(items: list[ScrollItem], item_id: str) -> list[Work]:
+    """The work(s) the item with `item_id` represents, with every representation.
+
+    The per-item lens on the same clustering `works_over` computes for the
+    whole library — `find_related` is to `build_graph` as this is to
+    `works_over`: an agent that found one representation (a search hit, a
+    scroll) asks which work it is and which *sibling* representations are
+    also saved. The work(s) are keyed by the DOIs the item carries (its
+    `source_id` DOI or its `doi.org` links) and clustered over the whole
+    given `items` set with *all* their representations, the target included.
+
+    Unlike `works_over`'s 2+ default, a work is reported even with a single
+    representation — just the target itself — so "what work is this, and what
+    siblings are saved" has an explicit answer ("none") when no other item
+    shares the DOI. An item that names no DOI yields no works. Raises
+    ValueError when no item in `items` has `item_id`, mirroring
+    `find_related` (`tests/test_works.py`).
+    """
+    target = next((item for item in items if item.id == item_id), None)
+    if target is None:
+        raise ValueError(f"no such item: {item_id}")
+    target_dois = _item_dois(target)
+    if not target_dois:
+        return []
+    # cluster over the whole set with no floor (min 1), then keep the works
+    # the target itself contributes a DOI to — every such work includes the
+    # target by construction, in works_over's representation-count-then-DOI order
+    return [
+        work
+        for work in works_over(items, min_representations=1)
+        if work.doi in target_dois
+    ]
+
+
 def to_payload(works: list[Work], item_count: int) -> dict:
     """Works as the JSON object the CLI and MCP tool both emit.
 

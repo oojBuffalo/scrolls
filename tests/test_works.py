@@ -17,7 +17,7 @@ import pytest
 from scrolls.cli import main
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
-from scrolls.works import find_works, works_over
+from scrolls.works import find_works, works_for_item, works_over
 
 
 @pytest.fixture
@@ -287,3 +287,82 @@ def test_cli_works_empty_library(scrolls_home, capsys):
         "works": [],
         "stats": {"items": 0, "works": 0},
     }
+
+
+# --- the per-item lens: works_for_item ------------------------------------
+
+
+def _attention_pair():
+    """A preprint and its published Crossref record — one work, two reps."""
+    preprint = make_item(
+        "arxiv:1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",),
+    )
+    published = make_item(
+        "crossref:10.5555/3295222", url="https://doi.org/10.5555/3295222"
+    )
+    return preprint, published
+
+
+def test_works_for_item_returns_the_items_work_with_every_representation():
+    preprint, published = _attention_pair()
+    works = works_for_item([preprint, published], "arxiv:1706.03762")
+    assert [work.doi for work in works] == ["10.5555/3295222"]
+    # both representations, the target included, sorted by id
+    assert [rep.id for rep in works[0].representations] == [
+        "arxiv:1706.03762",
+        "crossref:10.5555/3295222",
+    ]
+
+
+def test_works_for_item_reports_a_solo_work_when_no_sibling_is_saved():
+    # the item names a DOI but nothing else shares it: an explicit "no
+    # sibling" answer (one representation, just itself), not an empty result
+    preprint, _ = _attention_pair()
+    works = works_for_item([preprint], "arxiv:1706.03762")
+    assert len(works) == 1
+    assert [rep.id for rep in works[0].representations] == ["arxiv:1706.03762"]
+
+
+def test_works_for_item_yields_nothing_for_an_item_that_names_no_doi():
+    plain = make_item("web:abc", links=("https://example.org/elsewhere",))
+    assert works_for_item([plain], "web:abc") == []
+
+
+def test_works_for_item_raises_for_an_unknown_item():
+    preprint, _ = _attention_pair()
+    with pytest.raises(ValueError, match="no such item: web:missing"):
+        works_for_item([preprint], "web:missing")
+
+
+def test_cli_works_with_ref_reports_only_that_items_work(db, capsys):
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+    # an unrelated work that should NOT appear in the per-item view
+    insert_item(db, make_item(
+        "arxiv:9999.0", url="https://arxiv.org/abs/9999.0",
+        links=("https://doi.org/10.5555/other",)))
+    insert_item(db, make_item("crossref:10.5555/other", url="https://doi.org/10.5555/other"))
+
+    assert main(["works", "arxiv:1706.03762"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
+    assert payload["stats"] == {"items": 4, "works": 1}  # items = whole library
+
+
+def test_cli_works_with_url_ref_resolves_the_item(db, capsys):
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+    # the saved URL is a valid handle wherever an id is (ADR 0028)
+    assert main(["works", "https://arxiv.org/abs/1706.03762"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
+
+
+def test_cli_works_with_unknown_ref_errors(db, capsys):
+    assert main(["works", "arxiv:does-not-exist"]) == 1
+    err = json.loads(capsys.readouterr().err)
+    assert err == {"error": "no such item: arxiv:does-not-exist"}

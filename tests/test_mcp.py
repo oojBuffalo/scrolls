@@ -260,6 +260,47 @@ def test_get_works_empty_library(scrolls_home):
     assert mcp_server.get_works() == {"works": [], "stats": {"items": 0, "works": 0}}
 
 
+def test_get_works_item_lens_reports_one_items_work(scrolls_home):
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", source_id="1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        stage="fetched",
+    ))
+    # an unrelated paper that must not appear in the per-item view
+    insert_item(db, ScrollItem(
+        id="arxiv:2010.0", source="arxiv", source_id="2010.0",
+        url="https://arxiv.org/abs/2010.0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Unrelated", stage="fetched",
+    ))
+
+    payload = mcp_server.get_works(item="arxiv:1706.03762")
+    assert payload["stats"] == {"items": 3, "works": 1}  # items = whole library
+    assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
+    # the saved URL resolves the same as the id (ADR 0028)
+    by_url = mcp_server.get_works(item="https://arxiv.org/abs/1706.03762")
+    assert by_url == payload
+
+
+def test_get_works_item_lens_unknown_item_raises(scrolls_home):
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError, match="no such item: arxiv:nope"):
+        mcp_server.get_works(item="arxiv:nope")
+
+
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     bundle = mcp_server.get_context_bundle("database engine")

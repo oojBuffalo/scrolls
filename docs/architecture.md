@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1603 tests at the time of writing). The docs themselves
+`uv run pytest` (1612 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -418,7 +418,13 @@ choice (ADRs 0004, 0005).
   carries the same node shape and `stats.items` total as `graph`, and
   `works_over(items)` mirrors `graph_over(items)` so the KB works page
   (`library/works.md`, ADR 0070) reuses it over rendered items
-  (`tests/test_works.py`).
+  (`tests/test_works.py`). `scrolls works <ref>` is the per-item lens
+  (ADR 0072) — `works_for_item(items, id)` filters `works_over` to the
+  work(s) one item represents, with every saved sibling representation: the
+  `scrolls related`↔`scrolls graph` symmetry applied to DOI clustering. It
+  drops the 2+ floor (a solo work is the explicit "no sibling saved" answer)
+  and raises for an absent item like `find_related`; the same lens backs
+  `get_works(item=...)`.
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
   `library/graph.md`, `library/works.md`, plus per-source, per-category,
   per-concept, and per-tag pages from scratch each run so stale groups can't
@@ -551,7 +557,8 @@ choice (ADRs 0004, 0005).
   functions (`get_context_bundle`, `search_scrolls`, `list_scrolls`,
   `get_scroll`,
   `get_related_scrolls`, `get_link_graph`, `get_works` (ADR 0069 —
-  same-work clusters by DOI), `get_concept_page`,
+  same-work clusters by DOI; `item=` gives the per-item lens of ADR 0072),
+  `get_concept_page`,
   `get_tag_page` (ADR 0064 — tag matched case-insensitively, slug
   collisions resolved by the page's `# Tag:` heading),
   `list_sources`,
