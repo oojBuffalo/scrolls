@@ -215,6 +215,25 @@ def test_model_arxiv_and_dataset_tags_become_links():
     assert "https://huggingface.co/datasets/wikipedia" in links
 
 
+def test_base_model_tag_becomes_a_lineage_link():
+    # a fine-tune declares its base model both bare and with a relation;
+    # both forms resolve to one model<->base-model lineage link
+    doc = json.loads(json.dumps(MODEL_DOC))
+    doc["tags"] += [
+        "base_model:meta-llama/Llama-3.1-8B",
+        "base_model:finetune:meta-llama/Llama-3.1-8B",
+    ]
+    links = fetch_model(doc).links
+    assert links.count("https://huggingface.co/meta-llama/Llama-3.1-8B") == 1
+
+
+def test_base_model_relation_only_fragment_is_dropped():
+    # a malformed base_model: tag with no org/name is not turned into junk
+    doc = json.loads(json.dumps(MODEL_DOC))
+    doc["tags"] += ["base_model:finetune"]
+    assert not any(link.endswith("/finetune") for link in fetch_model(doc).links)
+
+
 def test_model_without_a_readme_degrades_to_metadata_only():
     def no_card(url):
         raise OSError("HTTP Error 404: Not Found")

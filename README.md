@@ -305,8 +305,10 @@ github-topics parallel — while `library_name` and the license fill the
 prefixes: an `arxiv:<id>` tag becomes an `arxiv.org/abs/<id>` link that
 `scrolls related` resolves to the saved arXiv paper (the model↔paper
 edge, kin to ADR 0038's preprint↔published edge — a saved model wires to
-the paper that introduced it), and a `dataset:<name>` tag becomes the
-dataset's Hub page (the model↔dataset edge). A model classifies as `tool`
+the paper that introduced it), a `dataset:<name>` tag becomes the
+dataset's Hub page (the model↔dataset edge), and a `base_model:<id>` tag
+becomes the base model's Hub page (the model↔base-model lineage edge,
+deduped across the bare and `base_model:finetune:` forms). A model classifies as `tool`
 like a package, a dataset as `dataset` — the IDEAS.md §8 vocabulary term;
 a repo with no card degrades to a metadata-only scroll, and site routes,
 `spaces`, and bare profiles register but have no repo to fetch).

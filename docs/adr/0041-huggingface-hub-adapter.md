@@ -91,14 +91,20 @@ keyless adapter (`src/scrolls/sources/huggingface.py`):
   (`transformers`, `diffusers`; models only) and the `cardData.license`
   fill the structured-facet slot PyPI's classifiers and SPDX licenses fill
   elsewhere.
-- **The `arxiv:` tag is a cross-source link — the headline edge.** An
-  `arxiv:<id>` tag becomes a `https://arxiv.org/abs/<id>` link, which
-  `scrolls related` resolves to the saved `arxiv:<id>` item (verified live:
-  `bert-base-uncased` → `arxiv:1810.04805`). This is the model↔paper edge,
-  kin to ADR 0038's arXiv preprint↔published-DOI edge — a saved model
-  wires to the paper that introduced it with no new edge type. A
-  `dataset:<name>` tag becomes the dataset's Hub page (the model↔dataset
-  edge, verified: `bert` → `huggingface:dataset:bookcorpus`).
+- **The flat tag array's cross-reference prefixes become links — the
+  headline edges.** An `arxiv:<id>` tag becomes a
+  `https://arxiv.org/abs/<id>` link, which `scrolls related` resolves to
+  the saved `arxiv:<id>` item (verified live: `bert-base-uncased` →
+  `arxiv:1810.04805`). This is the model↔paper edge, kin to ADR 0038's
+  arXiv preprint↔published-DOI edge — a saved model wires to the paper
+  that introduced it with no new edge type. A `dataset:<name>` tag becomes
+  the dataset's Hub page (the model↔dataset edge, verified: `bert` →
+  `huggingface:dataset:bookcorpus`). And a `base_model:<id>` tag becomes
+  the base model's Hub page (the model↔base-model lineage edge): the Hub
+  emits it both bare and with a relation (`base_model:meta-llama/Llama-3.1-8B`
+  *and* `base_model:finetune:meta-llama/Llama-3.1-8B`), so the id is the
+  segment after the last colon and the deduped link is one — a relation-only
+  fragment with no `<org>/<name>` is dropped.
 - **The card is the content; its lead paragraph is the summary.** The raw
   README with its YAML frontmatter stripped is the `extracted_text`; its
   first prose paragraph (headings, badges, tables, and TOC lists skipped,
@@ -144,8 +150,8 @@ smoke-tested end to end against the live API (`bert-base-uncased`,
   defining judgment: it keeps the concept graph free of `region:us` noise
   at the cost of dropping a few genuine bare tags (`bert`). The full,
   curated metadata subset stays in `raw_text`, so a future enrichment —
-  mining select flat tags, the `base_model:` lineage edge, an HF-minted
-  `doi:` link — can expand a repo without a refetch.
+  mining select flat tags, an HF-minted `doi:` link — can expand a repo
+  without a refetch.
 - `spaces` register but do not fetch: a Space is an app, not a knowledge
   artifact, and its metadata API differs. It is the obvious next slice on
   this host if demand appears.

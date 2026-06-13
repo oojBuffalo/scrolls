@@ -286,9 +286,13 @@ def _tags(kind: str, data: dict[str, Any], card_data: dict[str, Any]) -> tuple[s
 def _links(tags_list: list[Any]) -> tuple[str, ...]:
     """Cross-reference prefixes in the flat tag array, as deduped links.
 
-    `arxiv:<id>` → the paper's abstract page (resolved by `scrolls related`
-    to the saved arXiv item — the model↔paper edge); `dataset:<name>` →
-    the dataset's Hub page (the model↔dataset edge). Order-preserving.
+    Three edges, all resolved by `scrolls related` through source
+    detection (ADR 0041): `arxiv:<id>` → the paper's abstract page (the
+    model↔paper edge); `dataset:<name>` → the dataset's Hub page (the
+    model↔dataset edge); and `base_model:<id>` → the base model's Hub page
+    (the model↔base-model lineage edge). Order-preserving and deduped, so
+    a base model declared both bare and with a relation (`base_model:X`
+    and `base_model:finetune:X`) yields one link.
     """
     links: list[str] = []
     for tag in tags_list:
@@ -302,7 +306,23 @@ def _links(tags_list: list[Any]) -> tuple[str, ...]:
             value = tag[len("dataset:"):].strip()
             if value:
                 links.append(f"{SITE_ROOT}/datasets/{value}")
+        elif tag.startswith("base_model:"):
+            value = _base_model_id(tag[len("base_model:"):])
+            if value:
+                links.append(f"{SITE_ROOT}/{value}")
     return tuple(dict.fromkeys(links))
+
+
+def _base_model_id(rest: str) -> str | None:
+    """The repo id from a `base_model:` tag's payload, or None.
+
+    The payload is either `<org>/<name>` or `<relation>:<org>/<name>` (the
+    relation being `finetune`/`quantized`/`merge`/`adapter`/…), so the id
+    is the segment after the last colon. It must look like a namespaced
+    repo (`<org>/<name>`); a relation-only fragment with no `/` is dropped.
+    """
+    repo_id = rest.rsplit(":", 1)[-1].strip()
+    return repo_id if "/" in repo_id else None
 
 
 def _str_list(value: Any) -> list[str]:
