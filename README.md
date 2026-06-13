@@ -83,6 +83,7 @@ uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSO
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON
 uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
 uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
+uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history from a Takeout export, as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -166,6 +167,19 @@ bookmarks from a local Field Theory archive (IDEAS.md §7 — see
 `category`/`domain` via a frontmatter join on tweet id. Item ids
 (`x:<tweetId>`) match URL detection, so imports and `scrolls add` of a
 tweet URL dedupe against each other; re-imports skip existing items.
+
+`scrolls import google-takeout <path>` bulk-imports YouTube watch
+history from a Google Takeout export (IDEAS.md §13's bulk-archive path
+for YouTube — see `docs/adr/0029-google-takeout-import.md`). `path` is
+the Takeout `.zip`, an extracted directory, or `watch-history.json`
+itself (JSON export format required). Takeout carries only the spine —
+video URL, title, channel, watch time — so unlike the Field Theory
+import, items enter at stage `detected` with the watch time as
+`saved_at`, and `scrolls fetch` enriches them through the youtube
+adapter like any synced feed entry. Repeat watches collapse to one item
+(earliest watch wins), ads and deleted videos are counted as ignored
+rather than failing the run, and item ids (`youtube:<videoId>`) dedupe
+against `scrolls add` and feed sync.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

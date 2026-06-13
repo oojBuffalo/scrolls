@@ -52,6 +52,8 @@ from scrolls.render import write_scroll
 from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
+from scrolls.takeout import ImportSourceError as TakeoutSourceError
+from scrolls.takeout import load_watch_history
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,6 +170,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--root",
         default=None,
         help=f"Field Theory archive root (default {FIELDTHEORY_ROOT})",
+    )
+    takeout_parser = import_sub.add_parser(
+        "google-takeout",
+        help="Import YouTube watch history from a Google Takeout export "
+        "(JSON output)",
+    )
+    takeout_parser.add_argument(
+        "path",
+        help="Takeout .zip, extracted directory, or watch-history.json itself "
+        "(JSON export format required)",
     )
 
     ingest_parser = subparsers.add_parser(
@@ -323,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "import":
+        if args.import_command == "google-takeout":
+            return _cmd_import_takeout(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -496,6 +510,30 @@ def _cmd_import_fieldtheory(root: str | None) -> int:
     # entries are omitted; only line-level failures are detailed
     print(json.dumps({**counts, "failures": failures}))
     return 1 if counts["failed"] else 0
+
+
+def _cmd_import_takeout(path: str) -> int:
+    try:
+        imported_items, stats = load_watch_history(Path(path).expanduser())
+    except TakeoutSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for item in imported_items:
+        # INSERT OR IGNORE: an existing item (earlier import, or a manual
+        # `add`/user edit) is never overwritten — re-imports stay cheap
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    # ignored entries (ads, deleted videos, community posts) are normal
+    # in every watch history, so they never fail the run
+    print(json.dumps({**counts, **stats}))
+    return 0
 
 
 def _find_item(paths: LibraryPaths, ref: str) -> tuple[ScrollItem | None, str]:

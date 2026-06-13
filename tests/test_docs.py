@@ -106,7 +106,7 @@ def _cli_surface() -> set[str]:
 def test_cli_reference_documents_exactly_the_cli_surface():
     """docs/cli.md has one `### scrolls <command>` heading per real command."""
     text = (REPO_ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
-    documented = set(re.findall(r"^### `scrolls ([a-z]+(?: [a-z]+)?)", text, re.M))
+    documented = set(re.findall(r"^### `scrolls ([a-z]+(?: [a-z-]+)?)", text, re.M))
     surface = _cli_surface()
     assert documented == surface, (
         f"docs/cli.md headings out of sync with the parser — "

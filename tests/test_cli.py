@@ -1270,6 +1270,89 @@ def test_import_fieldtheory_missing_archive_is_an_error(scrolls_home, tmp_path, 
     assert "error" in json.loads(captured.err)
 
 
+@pytest.fixture
+def fake_takeout_zip(tmp_path):
+    """A miniature Takeout zip: two watches of one video, plus one ad."""
+    import zipfile
+
+    entries = [
+        {
+            "header": "YouTube",
+            "title": "Watched How SQLite FTS Works",
+            "titleUrl": "https://www.youtube.com/watch?v=abc123xyz00",
+            "subtitles": [{"name": "Some Channel"}],
+            "time": "2025-03-01T09:00:00.000Z",
+        },
+        {
+            "header": "YouTube",
+            "title": "Watched Buy Our Thing",
+            "titleUrl": "https://www.youtube.com/watch?v=advideo0001",
+            "details": [{"name": "From Google Ads"}],
+            "time": "2025-01-02T00:00:00.000Z",
+        },
+        {
+            "header": "YouTube",
+            "title": "Watched How SQLite FTS Works",
+            "titleUrl": "https://www.youtube.com/watch?v=abc123xyz00",
+            "subtitles": [{"name": "Some Channel"}],
+            "time": "2024-10-12T18:23:45.123Z",
+        },
+    ]
+    archive = tmp_path / "takeout.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(
+            "Takeout/YouTube and YouTube Music/history/watch-history.json",
+            json.dumps(entries),
+        )
+    return archive
+
+
+def test_import_google_takeout_end_to_end(scrolls_home, fake_takeout_zip, capsys):
+    exit_code = main(["import", "google-takeout", str(fake_takeout_zip)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "imported": 1,
+        "skipped": 0,
+        "events": 3,
+        "repeats": 1,
+        "ignored": {"ads": 1, "no_url": 0, "not_video": 0},
+    }
+
+    stored = get_item(get_paths().db_path, "youtube:abc123xyz00")
+    assert stored.stage == "detected"
+    assert stored.title == "How SQLite FTS Works"
+    assert stored.author == "Some Channel"
+    assert stored.saved_at == "2024-10-12T18:23:45+00:00"  # earliest watch
+
+
+def test_import_google_takeout_is_idempotent(scrolls_home, fake_takeout_zip, capsys):
+    main(["import", "google-takeout", str(fake_takeout_zip)])
+    capsys.readouterr()
+    exit_code = main(["import", "google-takeout", str(fake_takeout_zip)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 1
+
+
+def test_import_google_takeout_never_overwrites_existing_item(
+    scrolls_home, fake_takeout_zip, capsys
+):
+    main(["add", "https://www.youtube.com/watch?v=abc123xyz00"])
+    main(["import", "google-takeout", str(fake_takeout_zip)])
+    # `add` registered the item without a title; import must not touch it
+    assert get_item(get_paths().db_path, "youtube:abc123xyz00").title is None
+
+
+def test_import_google_takeout_missing_export_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "google-takeout", str(tmp_path / "nowhere")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

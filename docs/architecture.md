@@ -21,9 +21,9 @@ each command moves items between stages or derives artifacts from them.
  feed ── follow ──▶ subscription ── sync ──▶ new entry URLs join at 'detected'
 
  URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
-                  │                     ▲                  │
-                  │   import fieldtheory┘                  │
-                  │                                        ▼
+                  │ ▲                   ▲                  │
+                  │ └ import google-takeout                │
+                  │   import fieldtheory┘                  ▼
                   │            classify (stage-neutral, sets category)
                   │            media    (stage-neutral, downloads media refs)
                   │            kb       (stage-neutral, compiles library/)
@@ -49,6 +49,10 @@ each command moves items between stages or derives artifacts from them.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
   (`src/scrolls/fieldtheory.py`, ADR 0009).
+- `scrolls import google-takeout` bulk-inserts YouTube watch history at
+  stage `detected` — Takeout is a spine with no content, so the export's
+  title/channel/watch-time seed items the way feed entries do and
+  `scrolls fetch` enriches them (`src/scrolls/takeout.py`, ADR 0029).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

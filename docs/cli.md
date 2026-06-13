@@ -275,6 +275,50 @@ $ scrolls import fieldtheory --root /tmp/scrolls-demo.BgrqMO/fieldtheory
 [exit 0]
 ```
 
+### `scrolls import google-takeout <path>`
+
+Bulk-import YouTube watch history from a Google Takeout export
+(ADR 0029). `path` is the Takeout `.zip`, an extracted directory, or
+`watch-history.json` itself — the direct file path is the escape hatch
+for localized exports whose directory names are translated. The JSON
+export format is required (Takeout's default HTML history is not
+parsed); a missing or non-JSON export is an error envelope on stderr
+(`test_import_google_takeout_missing_export_is_an_error`,
+`tests/test_takeout.py`).
+
+Unlike `import fieldtheory`, Takeout carries no content — only video
+URL, title, channel, and watch time — so items enter at stage
+`detected` and `scrolls fetch` enriches them through the youtube
+adapter, exactly like feed-synced entries. The watch time becomes
+`saved_at`; `published_at` stays unset because Takeout doesn't know it
+(`test_import_google_takeout_end_to_end`). Existing items are never
+overwritten (`test_import_google_takeout_is_idempotent`,
+`test_import_google_takeout_never_overwrites_existing_item`).
+
+Per-entry oddities never fail the run — every watch history contains
+ads, deleted videos, and community-post visits, so the command exits 0
+and counts them instead:
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new items inserted |
+| `skipped` | already existed (id collision is the dedupe working) |
+| `events` | total watch events in the export |
+| `repeats` | extra watches of an already-seen video (earliest watch wins `saved_at`) |
+| `ignored.ads` | entries marked "From Google Ads" |
+| `ignored.no_url` | entries with no URL (deleted/private videos) |
+| `ignored.not_video` | YouTube URLs that aren't videos/playlists (posts, channel visits) |
+
+```console
+$ scrolls import google-takeout /tmp/scrolls-demo.BgrqMO/takeout.zip
+{"imported": 1, "skipped": 0, "events": 4, "repeats": 1, "ignored": {"ads": 1, "no_url": 1, "not_video": 0}}
+[exit 0]
+
+$ scrolls import google-takeout /tmp/scrolls-demo.BgrqMO/takeout.zip
+{"imported": 0, "skipped": 1, "events": 4, "repeats": 1, "ignored": {"ads": 1, "no_url": 1, "not_video": 0}}
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any
@@ -881,6 +925,30 @@ domain: databases
 tweet_id: "1111"
 ---
 EOF
+
+python3 - "$DEMO" <<'EOF'
+import json, sys, zipfile
+from pathlib import Path
+entries = [
+    {"header": "YouTube", "title": "Watched How SQLite FTS Works",
+     "titleUrl": "https://www.youtube.com/watch?v=abc123xyz00",
+     "subtitles": [{"name": "Some Channel"}],
+     "time": "2025-03-01T09:00:00.000Z"},
+    {"header": "YouTube", "title": "Watched Buy Our Thing",
+     "titleUrl": "https://www.youtube.com/watch?v=advideo0001",
+     "details": [{"name": "From Google Ads"}],
+     "time": "2025-01-02T00:00:00.000Z"},
+    {"header": "YouTube", "title": "Watched a video that has been removed",
+     "time": "2025-01-03T00:00:00.000Z"},
+    {"header": "YouTube", "title": "Watched How SQLite FTS Works",
+     "titleUrl": "https://www.youtube.com/watch?v=abc123xyz00",
+     "subtitles": [{"name": "Some Channel"}],
+     "time": "2024-10-12T18:23:45.123Z"},
+]
+with zipfile.ZipFile(Path(sys.argv[1]) / "takeout.zip", "w") as zf:
+    zf.writestr("Takeout/YouTube and YouTube Music/history/watch-history.json",
+                json.dumps(entries))
+EOF
 ```
 
 Then, in order (`uv run scrolls …` when running from a source checkout):
@@ -896,6 +964,8 @@ scrolls fetch                                      # skips the x item
 scrolls fetch x:3333                               # by-id: fails, exit 1
 scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
+scrolls import google-takeout "$DEMO/takeout.zip"
+scrolls import google-takeout "$DEMO/takeout.zip"       # idempotent
 scrolls add https://arxiv.org/abs/1706.03762
 scrolls status                                    # populated counts now
 scrolls list
