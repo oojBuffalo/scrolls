@@ -114,6 +114,7 @@ uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
+uv run scrolls context <query> --source arxiv  # scope the bundle (same --source/--category/--stage facets as search)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON
 uv run scrolls doctor --fix   # repair what is safe offline: merge dupes, rewrite scrolls, rebuild FTS
@@ -860,7 +861,11 @@ arXiv paper, source repo, or parent dataset that keyword search alone
 would miss — each naming the match and direction that pulled it in, so
 the cross-source edges the adapters built (model↔paper, package↔repo,
 dataset↔parent-work) surface in the bundle itself, not only in
-`scrolls related`/`scrolls graph`.
+`scrolls related`/`scrolls graph`. The same `--source`, `--category`, and
+`--stage` facets `scrolls search` takes (ADR 0058) scope the bundle —
+`scrolls context "attention" --source arxiv` answers "what do the *papers*
+say about X" — and a scoped bundle names its facets in the title so it
+stays self-documenting once dropped into context.
 
 `scrolls agent install` writes instruction files for coding agents under
 `<root>/agents/` — `claude/SKILL.md`, `codex/AGENTS.md`,

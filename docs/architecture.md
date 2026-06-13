@@ -418,7 +418,12 @@ choice (ADRs 0004, 0005).
   (concept/tag signal deferred), ranked by centrality, capped at the
   match count, and omitted when nothing connects; the MCP
   `get_context_bundle` inherits it through `build_context`
-  (`tests/test_context.py`).
+  (`tests/test_context.py`). The bundle takes the same
+  `source`/`category`/`stage` facets as search (ADR 0058): they narrow the
+  underlying ranked match — and so the connected-scrolls graph — so a
+  bundle can cover "what the *papers* say about X"; a scoped bundle names
+  its facets in the title (`category=unclassified` for the empty-string
+  pool) to stay self-documenting once dropped into context.
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`).

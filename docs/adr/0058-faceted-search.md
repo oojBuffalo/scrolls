@@ -42,12 +42,19 @@ library.
    clauses append to the existing `WHERE items_fts MATCH ?` with their
    params ordered between the match and the `LIMIT`. The FTS index stays
    text-only — facets are structured metadata, not tokens.
-4. **Wire the facets through both agent surfaces.** The CLI `search`
+4. **Wire the facets through every search surface.** The CLI `search`
    command gains `--source`/`--category`/`--stage` (stage with the same
    `detected`/`fetched`/`rendered` choices `list` offers), and the MCP
    `search_scrolls` tool gains the three optional parameters so a
    protocol agent can scope a search the same way — the primary payoff,
-   since agents are the intended consumer of a scoped ranked match.
+   since agents are the intended consumer of a scoped ranked match. The
+   context bundle (`scrolls context`/`get_context_bundle`) builds on the
+   same `search_items`, so it takes the identical facets and threads them
+   straight through: scoping the bundle's ranked match also scopes the
+   connected-scrolls graph that hangs off it. A scoped bundle names its
+   active facets in the title (`category=unclassified` for the empty-string
+   pool) so it stays self-documenting once dropped into model context —
+   the one piece of presentation the bundle adds over the JSON `search`.
 5. **No `tags`/`concepts` facets yet.** Those are JSON multi-value
    columns, a different (membership) query than the single-column
    equality the three facets share; deferred until a concrete need,
@@ -81,4 +88,10 @@ library.
 `test_search_blank_query_still_rejected_with_filters`), the CLI path in
 `tests/test_cli.py` (`test_search_filters_by_source_and_category`), and
 the MCP tool in `tests/test_mcp.py`
-(`test_search_scrolls_honors_facets`). 1384 passing.
+(`test_search_scrolls_honors_facets`). The context bundle inherits the
+facets in `tests/test_context.py`
+(`test_context_facets_scope_the_bundle`,
+`test_context_unclassified_facet_uses_a_clear_scope_note`,
+`test_context_facet_with_no_matches_keeps_the_scope_note`) and over MCP in
+`tests/test_mcp.py` (`test_get_context_bundle_honors_facets`). 1388
+passing.

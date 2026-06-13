@@ -191,6 +191,18 @@ def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     assert "wikipedia:en:SQLite" in bundle
 
 
+def test_get_context_bundle_honors_facets(scrolls_home, fake_wikipedia_api):
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # category: reference
+
+    bundle = mcp_server.get_context_bundle("database", source="wikipedia")
+    assert bundle.startswith("# Scrolls Context Bundle: database (source=wikipedia)")
+    assert "wikipedia:en:SQLite" in bundle
+    # a facet that excludes everything still yields a valid, self-documenting bundle
+    empty = mcp_server.get_context_bundle("database", source="arxiv")
+    assert empty.startswith("# Scrolls Context Bundle: database (source=arxiv)")
+    assert "No matching scrolls." in empty
+
+
 def test_get_context_bundle_surfaces_connected_scrolls(scrolls_home):
     # The CLI's link-graph enrichment (ADR 0047) reaches MCP clients through
     # the same build_context — no MCP-side code, so it must be locked here.

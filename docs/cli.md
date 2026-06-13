@@ -858,7 +858,7 @@ $ scrolls graph
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N]`
+### `scrolls context <query> [--limit N] [--source S] [--category C] [--stage ST]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -872,6 +872,16 @@ match and direction that pulled it in
 (`test_context_surfaces_connected_scrolls`). It is omitted when there are
 no such connections. Default limit 8. Errors are still JSON on stderr
 (blank query, as with `search`).
+
+`--source`, `--category`, and `--stage` scope the bundle exactly as they
+scope `scrolls search` (ADR 0058,
+`test_context_facets_scope_the_bundle`): they narrow the underlying
+ranked match (and so the connected-scrolls graph). When any facet is set
+the title carries a scope note — `# Scrolls Context Bundle: <query>
+(source=arxiv)` — so a scoped bundle stays self-documenting; an empty
+`--category ""` selects unclassified items and reads as
+`category=unclassified`. A facet that excludes everything still yields a
+valid `No matching scrolls.` bundle, with the scope note intact.
 
 ```console
 $ scrolls context "local search"
@@ -996,7 +1006,7 @@ The tools wrap the same engines as the CLI commands
 
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
-| `get_context_bundle(query, limit=8)` | `scrolls context` | Markdown bundle |
+| `get_context_bundle(query, limit=8, source=None, category=None, stage=None)` | `scrolls context` | Markdown bundle, optionally faceted |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None)` | `scrolls search` | hit list with snippets, optionally faceted |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |

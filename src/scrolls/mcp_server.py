@@ -110,13 +110,27 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
 
 
-def get_context_bundle(query: str, limit: int = DEFAULT_CONTEXT_LIMIT) -> str:
+def get_context_bundle(
+    query: str,
+    limit: int = DEFAULT_CONTEXT_LIMIT,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
 
-    The bundle is designed to be dropped directly into model context.
+    The bundle is designed to be dropped directly into model context. The
+    optional facets scope it the same way they scope search_scrolls (they
+    AND together): `source` limits to one source (e.g. arxiv, github),
+    `category` to one category (an empty string selects unclassified items),
+    and `stage` to one pipeline stage — so the bundle can cover, e.g., what
+    the *papers* say about a topic. A scoped bundle names its facets in the
+    title.
     """
     paths = get_paths()
-    return build_context(paths.db_path, query, limit=limit)
+    return build_context(
+        paths.db_path, query, limit=limit, source=source, category=category, stage=stage
+    )
 
 
 def get_concept_page(concept: str) -> str:

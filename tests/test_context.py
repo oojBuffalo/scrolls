@@ -65,6 +65,61 @@ def test_context_outputs_markdown_bundle(scrolls_home, capsys):
     assert "- [SQLite](https://example.org/wikipedia:en:SQLite)" in out
 
 
+def test_context_facets_scope_the_bundle(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", category="reference",
+    ))
+    insert_item(db, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        source="arxiv", category="paper",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--source", "arxiv")
+    # the title is self-documenting about the scope
+    assert out.startswith("# Scrolls Context Bundle: database (source=arxiv)\n")
+    assert "arxiv:2401.0001" in out
+    assert "wikipedia:en:SQLite" not in out
+
+
+def test_context_unclassified_facet_uses_a_clear_scope_note(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", category="reference",
+    ))
+    insert_item(db, make_item(
+        "web:abc", "A database blog post",
+        "Some database thoughts.", source="web", category=None,
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--category", "")
+    assert out.startswith(
+        "# Scrolls Context Bundle: database (category=unclassified)\n"
+    )
+    assert "web:abc" in out
+    assert "wikipedia:en:SQLite" not in out
+
+
+def test_context_facet_with_no_matches_keeps_the_scope_note(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--source", "arxiv")
+    assert out.startswith("# Scrolls Context Bundle: database (source=arxiv)\n")
+    assert "No matching scrolls." in out
+
+
 def test_context_ranks_title_matches_first(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path

@@ -34,16 +34,37 @@ _EXCERPT_CHARS = 700
 DEFAULT_LIMIT = 8
 
 
-def build_context(db_path: Path, query: str, limit: int = DEFAULT_LIMIT) -> str:
+def build_context(
+    db_path: Path,
+    query: str,
+    limit: int = DEFAULT_LIMIT,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
+
+    The optional `source`/`category`/`stage` facets scope the bundle the
+    same way they scope `scrolls search` (ADR 0058) — they narrow the
+    underlying ranked match (and so the connected-scrolls graph that hangs
+    off it), letting an agent ask "what do the *papers* say about X" rather
+    than "anything about X". When any facet is set the title carries a scope
+    note so the bundle is self-documenting; the empty-string `category`
+    selects the unclassified pool and reads as `category=unclassified`.
 
     No matches (or no library yet) still yields a valid bundle saying so,
     because agents shouldn't crash on an empty library.
     """
-    hits = search_items(db_path, query, limit=limit)
+    hits = search_items(
+        db_path, query, limit=limit, source=source, category=category, stage=stage
+    )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
 
-    lines = [f"# Scrolls Context Bundle: {query}", ""]
+    title = f"# Scrolls Context Bundle: {query}"
+    scope = _scope_note(source, category, stage)
+    if scope:
+        title += f" ({scope})"
+    lines = [title, ""]
     if not items:
         lines.append("No matching scrolls.")
         return "\n".join(lines) + "\n"
@@ -72,6 +93,23 @@ def build_context(db_path: Path, query: str, limit: int = DEFAULT_LIMIT) -> str:
         for item in items
     ]
     return "\n".join(lines) + "\n"
+
+
+def _scope_note(source: str | None, category: str | None, stage: str | None) -> str:
+    """A `source=…, category=…, stage=…` summary of the active facets, else ''.
+
+    The empty-string `category` (the unclassified pool, mirroring `scrolls
+    search`/`list`) reads as `category=unclassified` so the title is honest
+    about what an empty value selects.
+    """
+    parts = []
+    if source is not None:
+        parts.append(f"source={source}")
+    if category is not None:
+        parts.append(f"category={category or 'unclassified'}")
+    if stage is not None:
+        parts.append(f"stage={stage}")
+    return ", ".join(parts)
 
 
 def _connected_lines(db_path: Path, ranked_ids: list[str]) -> list[str]:

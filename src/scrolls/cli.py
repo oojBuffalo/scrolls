@@ -123,6 +123,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CONTEXT_LIMIT,
         help=f"Maximum scrolls in the bundle (default {DEFAULT_CONTEXT_LIMIT})",
     )
+    context_parser.add_argument(
+        "--source", default=None, help="Only scrolls from one source, e.g. web, arxiv"
+    )
+    context_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only scrolls with this category; an empty value selects "
+        "unclassified items",
+    )
+    context_parser.add_argument(
+        "--stage",
+        choices=("detected", "fetched", "rendered"),
+        default=None,
+        help="Only scrolls at one pipeline stage",
+    )
 
     detect_parser = subparsers.add_parser(
         "detect", help="Detect which source adapter handles a URL (JSON output)"
@@ -376,7 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "classify":
         return _cmd_classify(args.id, args.engine, args.batch)
     if args.command == "context":
-        return _cmd_context(args.query, args.limit)
+        return _cmd_context(
+            args.query, args.limit, args.source, args.category, args.stage
+        )
     if args.command == "detect":
         return _cmd_detect(args.url)
     if args.command == "doctor":
@@ -1013,10 +1030,23 @@ def _cmd_paths() -> int:
     return 0
 
 
-def _cmd_context(query: str, limit: int) -> int:
+def _cmd_context(
+    query: str,
+    limit: int,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+) -> int:
     paths = get_paths()
     try:
-        bundle = build_context(paths.db_path, query, limit=limit)
+        bundle = build_context(
+            paths.db_path,
+            query,
+            limit=limit,
+            source=source,
+            category=category,
+            stage=stage,
+        )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
