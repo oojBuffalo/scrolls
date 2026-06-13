@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1455 tests at the time of writing). The docs themselves
+`uv run pytest` (1458 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -492,6 +492,8 @@ choice (ADRs 0004, 0005).
   functions (`get_context_bundle`, `search_scrolls`, `list_scrolls`,
   `get_scroll`,
   `get_related_scrolls`, `get_link_graph`, `get_concept_page`,
+  `get_tag_page` (ADR 0064 — tag matched case-insensitively, slug
+  collisions resolved by the page's `# Tag:` heading),
   `list_sources`,
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus

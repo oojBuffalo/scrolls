@@ -1040,6 +1040,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
+| `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
 | `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |
 | `follow_feed(url)` | `scrolls follow <url>` | the subscription plus `created` (ADR 0020) |

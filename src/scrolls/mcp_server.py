@@ -43,11 +43,12 @@ _INSTRUCTIONS = (
     "search_scrolls and get_scroll for depth, list_scrolls to browse the "
     "library by facet (source, category, tag, concept) without a query, "
     "get_related_scrolls and "
-    "get_concept_page to follow connections, get_link_graph for the whole "
+    "get_concept_page (or get_tag_page) to follow connections, get_link_graph "
+    "for the whole "
     "library's link structure at once, and ingest_url to save "
     "something new. follow_feed subscribes the library to an RSS/Atom "
     "feed and sync_feeds registers its new entries. compile_library "
-    "rebuilds the knowledge-base pages get_concept_page serves."
+    "rebuilds the knowledge-base pages get_concept_page and get_tag_page serve."
 )
 
 
@@ -220,6 +221,32 @@ def get_concept_page(concept: str) -> str:
     return page.read_text(encoding="utf-8")
 
 
+def get_tag_page(tag: str) -> str:
+    """The compiled knowledge-base page for one tag, as Markdown (ADR 0064).
+
+    Tags are matched case-insensitively ("MIT" and "mit" are the same page),
+    the way the `--tag` facet matches. Tag pages share a slug when distinct
+    tags fold to it (`C++` and `C#` both slugify to "c"), so the page is found
+    among the slug's candidate files by its `# Tag: <display>` heading rather
+    than by filename alone.
+    """
+    paths = get_paths()
+    base = slugify(tag) or "untitled"
+    tags_dir = paths.library_dir / "tags"
+    wanted = tag.casefold()
+    if tags_dir.is_dir():
+        candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
+        for page in candidates:
+            text = page.read_text(encoding="utf-8")
+            heading = text.split("\n", 1)[0]
+            if heading.startswith("# Tag: ") and heading[len("# Tag: "):].casefold() == wanted:
+                return text
+    raise ValueError(
+        f"no tag page for {tag!r} — compile the library first "
+        "(the compile_library tool, or `scrolls kb`)"
+    )
+
+
 def list_sources() -> dict[str, int]:
     """Item counts per source (wikipedia, arxiv, x, ...) in the library."""
     paths = get_paths()
@@ -319,6 +346,7 @@ _TOOLS = (
     get_link_graph,
     get_context_bundle,
     get_concept_page,
+    get_tag_page,
     list_sources,
     ingest_url,
     follow_feed,

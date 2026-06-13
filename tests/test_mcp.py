@@ -12,6 +12,7 @@ import pytest
 
 import scrolls.sources.wikipedia as wikipedia
 from scrolls import mcp_server
+from scrolls.cli import main
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 
@@ -86,6 +87,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_link_graph",
         "get_context_bundle",
         "get_concept_page",
+        "get_tag_page",
         "list_sources",
         "ingest_url",
         "follow_feed",
@@ -325,6 +327,43 @@ def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikip
 def test_get_concept_page_missing_raises_with_remedy(scrolls_home):
     with pytest.raises(ValueError, match="scrolls kb"):
         mcp_server.get_concept_page("nonexistent concept")
+
+
+def _insert_rendered(db, iid, source, title, *, tags=()):
+    from scrolls.items import ScrollItem, insert_item
+    slug = title.lower().replace(" ", "-")
+    insert_item(db, ScrollItem(
+        id=iid, source=source, url=f"https://e.org/{iid}",
+        saved_at="2026-06-01T00:00:00+00:00", title=title, tags=tuple(tags),
+        markdown_path=f"scrolls/{source}/{slug}.md", stage="rendered"))
+
+
+def test_get_tag_page_round_trips_spelling_case_insensitively(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    _insert_rendered(db, "pypi:flask", "pypi", "Flask", tags=("MIT",))
+    _insert_rendered(db, "npm:express", "npm", "express", tags=("mit",))
+    compile_kb(get_paths())
+    # requested with a different case than the stored display spelling
+    page = mcp_server.get_tag_page("mit")
+    assert "# Tag: MIT" in page  # MIT/mit merged; smallest spelling displayed
+    assert "Flask" in page and "express" in page
+
+
+def test_get_tag_page_disambiguates_slug_collisions_by_heading(scrolls_home):
+    """C++ and C# share the slug "c"; get_tag_page returns the right file."""
+    main(["init"])
+    db = get_paths().db_path
+    _insert_rendered(db, "bitbucket:o/cpp", "bitbucket", "cpp", tags=("C++",))
+    _insert_rendered(db, "bitbucket:o/cs", "bitbucket", "csharp", tags=("C#",))
+    compile_kb(get_paths())
+    assert "# Tag: C++" in mcp_server.get_tag_page("c++")
+    assert "# Tag: C#" in mcp_server.get_tag_page("C#")
+
+
+def test_get_tag_page_missing_raises_with_remedy(scrolls_home):
+    with pytest.raises(ValueError, match="scrolls kb"):
+        mcp_server.get_tag_page("nonexistent tag")
 
 
 def test_list_sources_counts_items(scrolls_home, fake_wikipedia_api):

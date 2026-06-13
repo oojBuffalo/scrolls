@@ -948,7 +948,7 @@ library ended fully consistent (see `docs/adr/0026-doctor-command.md`).
 `scrolls mcp` serves the same engines to MCP clients over stdio
 (IDEAS.md §10's second phase — see `docs/adr/0014-mcp-server.md`):
 `get_context_bundle`, `search_scrolls`, `get_scroll`,
-`get_related_scrolls`, `get_concept_page`, `list_sources`,
+`get_related_scrolls`, `get_concept_page`, `get_tag_page`, `list_sources`,
 `ingest_url`, the feed subscription tools `follow_feed`,
 `unfollow_feed`, `list_feed_subscriptions`, and `sync_feeds`
 (ADR 0020), and `compile_library` — the deterministic `scrolls kb`,

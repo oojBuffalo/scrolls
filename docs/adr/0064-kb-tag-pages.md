@@ -67,10 +67,13 @@ index section and a per-page `## Related Tags` co-occurrence list.
 - The library is now browsable along every grouping its data carries: source,
   category, concept, **tag**, and the link graph. The `--tag` query facet and the
   `tags/` pages share one notion of a tag (case-fold), so an agent that filters by
-  a tag and one that browses to its page see the same membership. The MCP
-  `get_concept_page` tool reads concept pages; a tag page is just a file under
-  `library/tags/`, reachable by any consumer that walks the tree, with no new tool
-  needed this slice (a `get_tag_page` tool is the obvious follow-up).
+  a tag and one that browses to its page see the same membership. The MCP server
+  gains a `get_tag_page` tool beside `get_concept_page`, completing the
+  tag↔concept symmetry on the agent surface too. Because tag pages share a slug
+  when distinct tags fold to it, the tool can't resolve `tags/<slug>.md` directly
+  the way `get_concept_page` does — it matches the requested tag (case-insensitively)
+  against the candidate files' `# Tag: <display>` headings, so the case-fold
+  filename scheme stays an internal detail an agent never has to reproduce.
 
 - It is deterministic and offline — a rollup of `tags` the pipeline already
   stored, like every other plain `scrolls kb` page; the compiler still never calls
