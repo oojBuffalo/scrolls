@@ -15,6 +15,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
 GITHUB_HOSTS = {"github.com", "www.github.com"}
+# Gists live on a distinct host with a distinct API (`/gists/<id>`, not
+# `/repos/<owner>/<repo>`) and content (code snippets, not repo metadata), so
+# they are their own source rather than a github repo shape (ADR 0078).
+GIST_HOSTS = {"gist.github.com", "www.gist.github.com"}
 GITLAB_HOSTS = {"gitlab.com", "www.gitlab.com"}
 # Gitea/Forgejo is self-hosted across many hosts, but only the two big public
 # instances are recognized for now (host-scoped like github/gitlab; a bare
@@ -106,6 +110,9 @@ GITHUB_RESERVED = {
     "trending",
 }
 
+# Top-level gist.github.com path segments that are site routes, not gist owners.
+GIST_RESERVED = {"discover", "starred", "search", "mine", "auth"}
+
 # Top-level gitlab.com path segments that are site pages or platform routes,
 # never the first segment of a project's group/project path. GitLab reserves
 # these names so no group can claim them, so excluding them can't shadow a
@@ -185,6 +192,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in GITHUB_HOSTS:
         return DetectedSource("github", _github_id(path_parts))
+
+    if host in GIST_HOSTS:
+        return DetectedSource("gist", _gist_id(path_parts))
 
     if host in GITLAB_HOSTS:
         return DetectedSource("gitlab", _gitlab_id(path_parts))
@@ -367,6 +377,41 @@ def _github_id(path_parts: list[str]) -> str | None:
     if len(path_parts) < 2 or path_parts[0] in GITHUB_RESERVED:
         return None
     return f"{path_parts[0]}/{path_parts[1]}"
+
+
+# A gist id is a hexadecimal hash — modern gists use 32 hex chars, older ones
+# can be shorter or all-digits. Folded lowercase to canonical (hex is
+# case-insensitive in the API), like the crates/Open Library id fold.
+_GIST_ID = re.compile(r"[0-9a-f]+", re.IGNORECASE)
+
+
+def _gist_id(path_parts: list[str]) -> str | None:
+    """The gist id for a gist.github.com URL, lowercased, else None.
+
+    The owner login that may precede the id is decorative: the API is keyed by
+    the gist id alone (`GET /gists/<id>`), which resolves the owner itself, so
+    identity drops the login and `/<owner>/<id>`, a bare `/<id>`, and a
+    `/<owner>/<id>/<revision-sha>` URL all dedupe to one item (the slug-dropped
+    Discourse pattern, ADR 0054).
+
+    A bare `gist.github.com/<owner>` is a user's gist-list page and the reserved
+    site routes (`/discover`, `/starred`, …) carry no gist, so both resolve to
+    the source with no fetchable item — github's profile-page pattern.
+    """
+    if not path_parts or path_parts[0] in GIST_RESERVED:
+        return None
+    # `/<owner>/<gist_id>[/<revision>…]` — the owner disambiguates, so any hex
+    # id is safe to claim from the second segment.
+    if len(path_parts) >= 2 and _GIST_ID.fullmatch(path_parts[1]):
+        return path_parts[1].lower()
+    # `/<gist_id>` — a bare/anonymous gist with no owner segment. A hex-looking
+    # username would be ambiguous with that owner's gist-list page, so claim it
+    # only at the full modern-id length; a shorter bare legacy id is left to the
+    # owner-qualified form (a rare, documented miss).
+    only = path_parts[0]
+    if len(only) >= 20 and _GIST_ID.fullmatch(only):
+        return only.lower()
+    return None
 
 
 def _gitlab_id(path_parts: list[str]) -> str | None:

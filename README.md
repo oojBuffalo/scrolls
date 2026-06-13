@@ -179,7 +179,28 @@ playlists degrade to metadata-only scrolls — see
 (keyless REST API: repo metadata plus optional README; author-curated
 repo topics become `concepts`, the first producer for the KB's concept
 pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
-`docs/adr/0007-github-adapter-topics-as-concepts.md`), **gitlab**
+`docs/adr/0007-github-adapter-topics-as-concepts.md`), **gist**
+(the developer code-snippet sibling of the repo adapter, its own source
+since `gist.github.com`'s host, API, and content all differ — see
+`docs/adr/0078-github-gist-adapter.md`: one keyless `GET /gists/<id>`
+returns the whole gist with each file's content inlined (the Lobsters
+one-request economy), so a saved gist becomes a clean scroll instead of a
+JS-rendered DOM scrape. Identity is the gist id alone (`gist:<id>`) — the
+owner login in the URL is decorative, the API is keyed by the id and
+resolves the owner, so `gist.github.com/<owner>/<id>`, a bare
+`gist.github.com/<id>`, and a revision permalink all dedupe, the hex id
+folded lowercase; a bare one-segment id is claimed only at full
+modern-id length so a username's gist-list page isn't mistaken for a gist.
+Each file becomes a sorted `### <filename>` fenced section in the
+searchable `extracted_text`, the distinct file languages become `tags`
+(the bitbucket `language`→tag facet) while `concepts` stay empty by design
+(a gist has no topic facet), the `title` is the gist description else the
+first filename, and the `summary` is a `"N files: …"` manifest. A gist
+gets *no* category default — a snippet is heterogeneous (a config, a
+script, a repro), so it stays unclassified like a Hacker News post until a
+title rule or the LLM engine names it; the same `GITHUB_TOKEN`/`GH_TOKEN`
+lifts its rate limit, and a gist whose files are all empty degrades to a
+metadata-only scroll), **gitlab**
 (the second major code host, keyless REST API on gitlab.com — see
 `docs/adr/0055-gitlab-adapter.md`: project metadata plus optional README
 fetched from the project's `/-/raw/` route; `topics` become `concepts`

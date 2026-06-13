@@ -28,6 +28,7 @@ from scrolls.sources import (  # noqa: E402
     devto,
     discourse,
     doi,
+    gist,
     gitea,
     github,
     gitlab,
@@ -82,6 +83,10 @@ FETCH_ADAPTERS = {
     # by its `/t/<slug>/<id>` topic shape and fetched from that instance's
     # keyless `.json` view (ADR 0054).
     "discourse": discourse.fetch_item,
+    # A gist is the developer code-snippet content type the repo adapter
+    # doesn't reach; one keyless `GET /gists/<id>` returns the whole gist —
+    # files inlined — and the file languages become tags (ADR 0078).
+    "gist": gist.fetch_item,
     # Gitea/Forgejo is the third code host; one adapter serves both the
     # original and its API-compatible fork (codeberg.org runs Forgejo,
     # gitea.com runs Gitea), the host riding in the id since the API lives on

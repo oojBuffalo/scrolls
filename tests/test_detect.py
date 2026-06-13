@@ -3,7 +3,6 @@
 Known simplifications, pinned deliberately for the first slice:
 - GitHub sub-resources (issues, PRs) collapse to `owner/repo`; richer IDs
   are a future adapter concern.
-- gist.github.com falls back to `web` until a gist adapter exists.
 - Playlist IDs share the `youtube` namespace with video IDs.
 """
 
@@ -61,8 +60,24 @@ CASES = [
     ("https://github.com/oojBuffalo", "github", None),
     ("https://github.com/orgs/anthropics/repositories", "github", None),
     ("https://github.com/trending", "github", None),
-    # gist is not the github repo adapter (pinned simplification)
-    ("https://gist.github.com/user/abcdef123456", "web", None),
+    # --- gist (its own source/host, ADR 0078) ---
+    # `/<owner>/<gist_id>` — the owner is decorative, identity is the id alone
+    ("https://gist.github.com/oojBuffalo/0123456789abcdef0123456789abcdef",
+     "gist", "0123456789abcdef0123456789abcdef"),
+    # a bare/anonymous `/<gist_id>` (full-length hex) dedupes to the same id
+    ("https://gist.github.com/0123456789abcdef0123456789abcdef",
+     "gist", "0123456789abcdef0123456789abcdef"),
+    # a revision sha after the id dedupes to the gist (deep-link rule)
+    ("https://gist.github.com/oojBuffalo/0123456789abcdef0123456789abcdef/a1b2c3d4",
+     "gist", "0123456789abcdef0123456789abcdef"),
+    # routes case-insensitively; the hex id folds to its lowercase canonical
+    ("https://gist.github.com/User/0123456789ABCDEF0123456789ABCDEF",
+     "gist", "0123456789abcdef0123456789abcdef"),
+    # a user's gist-list page (one short segment) carries no fetchable gist
+    ("https://gist.github.com/octocat", "gist", None),
+    # site routes and the gist home carry no gist
+    ("https://gist.github.com/discover", "gist", None),
+    ("https://gist.github.com/", "gist", None),
     # --- gitlab ---
     ("https://gitlab.com/inkscape/inkscape", "gitlab", "inkscape/inkscape"),
     # nested groups: the whole path before any /-/ is the project

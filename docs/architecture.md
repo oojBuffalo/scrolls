@@ -178,7 +178,14 @@ Two small contracts make every platform the same kind of scroll
    `/wiki/Q42`, the RDF concept URI `/entity/Q42`, and the canonical
    `/wiki/Special:EntityData/Q42.json` all detect alike, uppercased to canonical
    so `/wiki/q42` dedupes; Properties/Lexemes deferred as schema/meta, ADR 0075),
-   `github`, `gitlab` (a
+   `github`, `gist` (a `gist.github.com` URL — the developer code-snippet type,
+   its own source since the host/API/content differ from a repo; the gist id
+   alone is the `source_id` (`gist:<id>`) because the API is keyed by it and the
+   owner login is decorative, so `/<owner>/<id>`, a bare `/<id>`, and a revision
+   URL all dedupe, the hex id folded lowercase; a bare one-segment id is claimed
+   only at full modern-id length so a username's gist-list page isn't stolen,
+   ADR 0078),
+   `gitlab` (a
    `gitlab.com/<group>/<project>` URL — gitlab.com only, the second code
    host; the whole `group[/subgroup…]/project` path before any `/-/`
    sub-resource separator as `source_id`, nested-group-aware, folded
@@ -301,6 +308,7 @@ Implemented fetch adapters, all keyless:
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
+| gist | `sources/gist.py` | keyless `GET /gists/<id>`, files inlined in one request | the developer code-snippet content type the repo adapter doesn't reach; identity is the gist id alone (`gist:<id>` — the owner login is decorative, the API resolves it, so `/<owner>/<id>`, bare `/<id>`, and revision URLs dedupe), hex id folded lowercase; one keyless GET returns the whole gist with each file's `content` inlined (Lobsters' economy, ADR 0046) → each file a sorted `### <filename>` fenced section in `extracted_text`; distinct file `language`s → `tags` (the bitbucket `language`→tag facet, ADR 0057), **`concepts` empty by design** (no topic facet); `title` = description else first filename, `summary` = a `"N files: …"` manifest, `author` = `owner.login`; **no category default** (a snippet is heterogeneous — the HN posture, ADR 0031); github's `GITHUB_TOKEN`/`GH_TOKEN` posture, all-blank-files → metadata-only | 0078 |
 | gitlab | `sources/gitlab.py` | keyless REST API + optional README via the `/-/raw/` route | the second code host (gitlab.com only); nested-group path URL-encoded whole + folded lowercase; `topics` → `concepts`, SPDX `license.key` → `tag`; `GITLAB_TOKEN` (→`PRIVATE-TOKEN`) lifts the rate limit; degrades to metadata-only | 0055 |
 | gitea (incl. Forgejo) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>` + optional README via the API raw route | the third code host (codeberg.org/gitea.com), and the first to carry the instance host *in the id* (`gitea:<host>/<owner>/<repo>`) because the API is per-host not a single service — one adapter for Gitea + its API-compatible fork Forgejo (the mastodon/forks pattern); inline `topics` → `concepts` like github (no second call), no inline license so `tags` empty; README is README.md-first via the API raw route (the web `download_url` login-gates anonymous gitea.com clients; listing a big root times out) with a root-listing fallback for a non-`.md` README; `GITEA_TOKEN`/`FORGEJO_TOKEN` (→`Authorization: token`) lifts the limit; degrades to metadata-only | 0056 |
 | bitbucket | `sources/bitbucket.py` | keyless `GET /2.0/repositories/<ws>/<repo>` + optional README via the `/src/<branch>` route | the fourth code host; Bitbucket *Cloud* is a single service so it is host-scoped with a fixed API host and a flat `<workspace>/<repo>` identity like github (not host-in-id like gitea; Bitbucket Server/DC deferred), folded lowercase (slugs auto-lowercase, case-insensitive routing — the gitlab fold); **no topics so `concepts` empty by design**, `language` → the one `tag`; README via the `/src/<mainbranch>/<path>` route (no `/readme` endpoint, no `/raw/` route) — README.md-first then a root-listing fallback for a non-`.md` README; `BITBUCKET_TOKEN` (→`Authorization: Bearer`) lifts the limit; degrades to metadata-only | 0057 |
