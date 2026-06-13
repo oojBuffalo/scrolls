@@ -481,6 +481,29 @@ form carries a 16-char length floor a real FlakeId clears but a
 Identity stays `<host>/<status_id>` (web and AP forms still dedupe), and
 `provenance.adapter` stays `mastodon` — the adapter that served it, the
 specific fork unknowable from the URL.
+The third open social network is **misskey** (the keyless Misskey API —
+see `docs/adr/0051-misskey-adapter.md`: Misskey and its forks Sharkey,
+Firefish/Calckey, and Foundkey are Fediverse software like Mastodon, but
+they do *not* speak the Mastodon API, so — unlike GoToSocial and
+Pleroma/Akkoma — Misskey is its own source and adapter, not another
+mastodon URL shape. It is still detected the same host-less, shape-only
+way: a `/notes/<id>` permalink on any instance becomes `misskey:<host>/<id>`,
+the weak `notes` literal carrying a base62 + length floor of 10 — Misskey's
+shortest id format, `aid` — so a `/notes/getting-started` slug or a
+sub-floor word stays a web page and a misdetect degrades to a benign failed
+fetch. A note is fetched with `POST /api/notes/show` (a JSON request body —
+the first adapter to need the shared transport's new `post_json`) and its
+replies with a second POST to `notes/children`, skipped when the note has
+none and degrading to a note-only scroll on failure. The note `text` is MFM
+(Misskey Flavored Markdown), already plain, so no HTML parser is needed
+(Lobsters' economy); outbound links are scanned straight from the text and a
+quote-renote's note becomes a post↔post link, both wiring through `scrolls
+related`/`graph`; drive `files` become `photo`/video-thumbnail media (their
+`comment` alt text searchable), bare-string `tags` become `concepts`, a `cw`
+content warning leads the body, and a pure renote unwraps to the boosted
+note. The synthesized title and `summary` (lead else alt else "N reactions,
+M renotes, K replies") mirror Bluesky and Mastodon; like them it gets *no*
+category default, and the whole `{note, children}` stays in `raw_text`).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -844,15 +867,18 @@ identical `/api/v1/statuses` surface and return Mastodon-shaped JSON, so
 only detection learns their routes (GoToSocial's `/@<user>/statuses/<ULID>`,
 Pleroma's `/notice/<FlakeId>`, the shared AP `/users/<user>/statuses/<id>`)
 and non-numeric ids, the all-digits safety generalizing to a literal anchor
-plus a `/notice/` length floor (ADR 0050). Next
-candidates: still more Fediverse software on the same shape-only pattern
-(Misskey's `/notes/<id>`, each a new anchor-and-id row, not a rewrite);
-home-instance-canonical Mastodon and DID-canonical Bluesky identity so a
-post saved through two routes dedupes — the fetch-time id rewrite no adapter
-does yet (ADR 0048, ADR 0049, ADR 0050); a third DOI registration agency
-(mEDRA, JaLC) joining the same `doi.py` dispatch; or two-phase batch
-submit/collect if a terminal wait ever outgrows the library (ADR 0022,
-ADR 0032). A native `x` fetch adapter
+plus a `/notice/` length floor (ADR 0050), and a keyless Misskey adapter
+reaching the Misskey-family software (Sharkey, Firefish, Foundkey) on its
+`/notes/<id>` shape — which, unlike the mastodon forks, speaks its *own*
+`POST /api/notes/show` API rather than Mastodon's, so the Fediverse is now
+covered by two adapters split by client API not host (ADR 0051). Next
+candidates: a fourth Fediverse API (a Lemmy/PieFed link-aggregator post)
+splitting off the same way; home-instance-canonical Mastodon/Misskey and
+DID-canonical Bluesky identity so a post saved through two routes dedupes —
+the fetch-time id rewrite no adapter does yet (ADR 0048–0051); a third DOI
+registration agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or
+two-phase batch submit/collect if a terminal wait ever outgrows the library
+(ADR 0022, ADR 0032). A native `x` fetch adapter
 remains out of reach while X's read API stays paywalled; `x` enriches only
 through the Field Theory import (ADR 0009).
 

@@ -151,6 +151,30 @@ CASES = [
     # hyphen or a dot) is not a status — the charset guard, on both forms
     ("https://gts.example/@user/statuses/not-a-valid-id", "web", None),
     ("https://gts.example/users/user/statuses/has.dots", "web", None),
+    # --- misskey-family (its own API, not Mastodon's — ADR 0051) ---
+    # Misskey web/AP permalink: /notes/<id>. The shared shape across Misskey,
+    # Sharkey, Firefish/Calckey, and Foundkey; identity carries the host.
+    ("https://misskey.io/notes/9bf2dbi3p4", "misskey", "misskey.io/9bf2dbi3p4"),
+    # any instance host, with a trailing slash tolerated
+    ("https://example.social/notes/9g8h7f6e5d4c3b2a/", "misskey",
+     "example.social/9g8h7f6e5d4c3b2a"),
+    # the host is lowercased (DNS), the id kept verbatim (aidx/ulid are
+    # case-sensitive); a 26-char Crockford-base32 ULID id is accepted
+    ("https://Misskey.IO/notes/01HQ3W8M4PXP5VZ9R7K2N6", "misskey",
+     "misskey.io/01HQ3W8M4PXP5VZ9R7K2N6"),
+    # a /notes/<slug> with a separator (hyphen) is a note-taking page, not a
+    # Misskey note — the charset guard keeps it a web page
+    ("https://blog.example/notes/getting-started", "web", None),
+    # boundary: the /notes/ floor is 10 base62 chars (the `aid` length) —
+    # exactly 10 matches, 9 falls through to web (pins the floor against drift)
+    ("https://misskey.example/notes/Ab3Cd4Ef5G", "misskey",
+     "misskey.example/Ab3Cd4Ef5G"),
+    ("https://blog.example/notes/Ab3Cd4Ef5", "web", None),
+    # a short dictionary-word /notes/<word> is below the floor -> web
+    ("https://blog.example/notes/welcome", "web", None),
+    # profile, timeline, and deeper note routes carry no fetchable note id
+    ("https://misskey.io/@alice", "web", None),
+    ("https://misskey.io/notes/9bf2dbi3p4/reactions", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

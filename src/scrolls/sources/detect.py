@@ -143,6 +143,14 @@ def detect_source(url: str) -> DetectedSource:
     if mastodon_id is not None:
         return DetectedSource("mastodon", mastodon_id)
 
+    # Misskey-family software is *also* host-less Fediverse, but it does not
+    # speak the Mastodon API (it has its own `/api/notes/show`), so it is its
+    # own source and adapter rather than a mastodon shape — yet detected the
+    # same shape-only way, after mastodon (their literals never collide).
+    misskey_id = _misskey_id(host, path_parts)
+    if misskey_id is not None:
+        return DetectedSource("misskey", misskey_id)
+
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
 
@@ -571,6 +579,50 @@ def _fediverse_status_id(path_parts: list[str]) -> str | None:
     # literal anchors it, so the id needs the length floor.
     if n == 2 and path_parts[0] == "notice":
         return path_parts[1] if _fullmatch(_NOTICE_ID, path_parts[1]) else None
+    return None
+
+
+# A Misskey note id is one of four configurable formats — `aid` (10 base36
+# chars, the shortest and the eldest default), `aidx` (16), `objectid` (24
+# hex), or `ulid` (26 Crockford base32) — each a separator-free base62 run.
+# Like Pleroma's bare `/notice/`, the `/notes/` literal is weak (many sites
+# use it), so the id carries a charset + length floor; the floor is 10, the
+# `aid` length, the lowest that still admits the eldest default rather than
+# the 16 a `/notice/` FlakeId clears.
+_MISSKEY_ID = re.compile(r"[A-Za-z0-9]{10,}")
+
+
+def _misskey_id(host: str, path_parts: list[str]) -> str | None:
+    """`<host>/<note_id>` for a Misskey-family `/notes/<id>` URL, else None.
+
+    Misskey and its forks (Sharkey, Firefish/Calckey, Foundkey) are Fediverse
+    software that does *not* implement the Mastodon API — a saved note is
+    fetched from `/api/notes/show`, not `/api/v1/statuses/<id>` — so they get
+    their own `misskey` source and adapter, unlike GoToSocial and Pleroma,
+    which ride mastodon's because they are Mastodon-API-compatible (ADR 0050).
+    Detection is still shape-only, because the Misskey ecosystem is as host-less
+    as the rest of the Fediverse: the whole family shares the `/notes/<id>` web
+    and ActivityPub permalink.
+
+    The `notes` literal is a weak anchor (plenty of non-Fediverse sites have a
+    `/notes/<slug>` path), so the id constraint carries the weight, exactly as
+    Pleroma's `/notice/` form does: a base62 run (no `-`/`.`/`_`, which a slug
+    would have) at least 10 chars long (the shortest Misskey id format, `aid`).
+    A `/notes/getting-started` or `/notes/welcome` falls through to `web`. The
+    residual risk — a non-Misskey `/notes/<10+ base62 chars>` URL the user
+    wanted as `web` — degrades to a benign failed fetch (the API call 404s),
+    never a wrong scroll: the conservative, reversible tradeoff a host-less
+    network forces, the same one ADR 0049 accepts for mastodon.
+
+    Identity carries the instance host (a note id is unique only within its
+    instance) and the host is lowercased; the id is kept verbatim (`aidx`/
+    `objectid`/`ulid` are case-sensitive). Profiles, timelines, and other
+    routes carry no note id and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) == 2 and path_parts[0] == "notes":
+        note_id = path_parts[1]
+        if _fullmatch(_MISSKEY_ID, note_id):
+            return f"{host}/{note_id}"
     return None
 
 

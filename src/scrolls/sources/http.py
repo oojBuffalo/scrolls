@@ -66,6 +66,35 @@ def get_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
     return json.loads(get_text(url, headers))
 
 
+def post_json(
+    url: str, payload: Any, headers: dict[str, str] | None = None
+) -> Any:
+    """POST a JSON body and parse the JSON response.
+
+    For APIs that take a JSON request body rather than query params — Misskey's
+    `/api/notes/show` (ADR 0051) is the first. The payload is JSON-encoded with
+    a `Content-Type: application/json` header and the shared descriptive
+    User-Agent; transport and HTTP errors propagate as urllib raises them
+    (HTTPError is an OSError, so adapters catch them the same way as a GET).
+    The response may be an object or an array (Misskey's `notes/children`),
+    so the return type is the parsed JSON as-is.
+    """
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            **(headers or {}),
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+
 def get_conditional(
     url: str, etag: str | None = None, last_modified: str | None = None
 ) -> ConditionalText:

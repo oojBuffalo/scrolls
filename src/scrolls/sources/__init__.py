@@ -30,6 +30,7 @@ from scrolls.sources import (  # noqa: E402
     huggingface,
     lobsters,
     mastodon,
+    misskey,
     npm,
     packagist,
     pdf,
@@ -55,6 +56,9 @@ FETCH_ADAPTERS = {
     "huggingface": huggingface.fetch_item,
     "lobsters": lobsters.fetch_item,
     "mastodon": mastodon.fetch_item,
+    # Misskey-family is Fediverse like mastodon but speaks its own API, so it
+    # is a separate source/adapter, not a mastodon URL shape (ADR 0051).
+    "misskey": misskey.fetch_item,
     "npm": npm.fetch_item,
     "packagist": packagist.fetch_item,
     "pdf": pdf.fetch_item,

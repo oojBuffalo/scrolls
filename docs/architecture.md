@@ -180,7 +180,16 @@ Two small contracts make every platform the same kind of scroll
    `model:<org>/<name>`, `dataset:<...>`, or `space:<...>` so one adapter
    serves all three API endpoints — the Stack Exchange shape — the id kept
    verbatim since the Hub is case-sensitive, subpages deduped to the
-   two-segment repo, site routes carrying no fetchable repo); `.pdf`
+   two-segment repo, site routes carrying no fetchable repo). Two
+   *shape-only* branches then run on any host not already claimed, because
+   the Fediverse is federated with no host set: `mastodon` matches a
+   Mastodon-API status URL (`/@<user>/<digits>`, GoToSocial's
+   `/@<user>/statuses/<id>`, Pleroma's `/notice/<id>`, the shared AP
+   `/users/<user>/statuses/<id>`) and `misskey` matches the Misskey-family
+   `/notes/<id>` — both folding the instance host into the id
+   (`<host>/<id>`, instance-local), each id constrained as strictly as its
+   anchoring literal is weak, a misdetect degrading to a benign failed
+   fetch (ADRs 0049–0051). Finally `.pdf`
    paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -219,6 +228,8 @@ Implemented fetch adapters, all keyless:
 | lobsters | `sources/lobsters.py` | keyless `lobste.rs/s/<id>.json`, stdlib only, one request | story + tags + the *entire* comment thread in one GET (HN defers comments, SE spends a second GET); `description_plain`/`comment_plain` already plain, no HTML grammar; body + bylined comments (deleted/moderated skipped, all kept) → searchable `extracted_text`; link submission's article → bare `links` (HN pattern), `summary` = body lead else "N points, M comments"; tags → `concepts`; **no category default — unclassified like HN**; degrades to metadata-only | 0046 |
 | go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
 | bluesky | `sources/bluesky.py` | keyless AppView (`public.api.bsky.app`), stdlib only; `resolveHandle` GET for a handle URL, then one `getPostThread` | the open social-post source X couldn't be (IDEAS.md §6 deferred X; its API is now paywalled); a handle URL resolves to the DID the AT-URI needs (a `did:` URL skips it), then one call returns the post + its reply tree; post text + bylined replies (deleted/blocked/empty skipped) → `extracted_text`, image alt text the body of a textless post; external card / quoted post / inline `#link` facets → `links` (post↔post + cross-source edges), images → `photo` media, `#hashtag` facets → `concepts`; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default — unclassified like HN/Lobsters**; degrades to metadata-only | 0048 |
+| mastodon (incl. GoToSocial, Pleroma/Akkoma) | `sources/mastodon.py` | keyless Mastodon REST API, stdlib only; `GET /api/v1/statuses/<id>` then optional `.../context` | the Fediverse Mastodon-API family on one adapter, matched by URL *shape* not host (no shared host to key on); HTML `content` → text via stdlib `HTMLParser` (no trafilatura), flat `descendants` → bylined replies; card + body links → `links` (mentions/hashtags excluded), images → `photo`/videos → `thumbnail` media, `tags[].name` → `concepts`; `spoiler_text` content warning leads the body, a boost unwraps; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default**; degrades to metadata-only | 0049, 0050 |
+| misskey (incl. Sharkey, Firefish, Foundkey) | `sources/misskey.py` | keyless Misskey API, stdlib only; `POST /api/notes/show` (JSON body) then optional `notes/children` | the Fediverse Misskey-API family — *not* Mastodon-compatible, so its own source/adapter; the first POST-bodied adapter (new `http.post_json`); MFM `text` is already plain (no HTML parser, Lobsters' economy), links scanned from the text + a quote-renote's note → `links` (post↔post + cross-source edges), `files` → `photo`/video-`thumbnail` media (`comment` alt searchable), bare-string `tags` → `concepts`, `cw` content warning leads the body, a pure renote unwraps; synthesized title, `summary` = lead else alt else engagement status; **no category default**; degrades to metadata-only | 0051 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -449,21 +460,27 @@ the compiled KB with context bundles and agent install.
 Next steps already identified in decision records, in no required order:
 
 - **Social posts** — the Bluesky adapter (ADR 0048) reaches the keyless
-  social-post source IDEAS.md §6 deferred X for, on the open network, and
-  the Mastodon adapter (ADR 0049) reaches the federated Fediverse by URL
+  social-post source IDEAS.md §6 deferred X for, on the open network; the
+  Mastodon adapter (ADR 0049) reaches the federated Fediverse by URL
   *shape* rather than host — now serving its API-compatible forks
   GoToSocial and Pleroma/Akkoma on the same source and fetch adapter, since
   they expose the identical `/api/v1/statuses` surface and only their URL
-  routes and id formats differ (ADR 0050). `x`
+  routes and id formats differ (ADR 0050); and the Misskey adapter
+  (ADR 0051) reaches the Misskey-family software (Sharkey, Firefish,
+  Foundkey) on its `/notes/<id>` shape. Misskey corrected the earlier
+  assumption that it would be one more mastodon shape: it speaks its own
+  `POST /api/notes/show` API, not Mastodon's, so the Fediverse is now
+  covered by *two* adapters split by client API, not host — and a future
+  Fediverse software with a third API (a Lemmy/PieFed post) would split off
+  the same way. `x`
   itself still arrives only through `import fieldtheory` (ADR 0009): a
   native `x` fetch adapter would let a pasted or synced tweet URL enrich
   on its own, but X's read API is now paywalled, so it cannot be keyless
-  like every other adapter. Two tightenings remain: more Fediverse software
-  on the shape-only pattern (Misskey's `/notes/<id>`, each a new
-  anchor-and-id rule), and DID-canonical Bluesky / home-instance-canonical
-  Mastodon identity (resolve a post's true id at fetch time so it dedupes
-  across the routes that reach it — ADRs 0048, 0049, and 0050 all defer it
-  as the only fetch-time id rewrite any adapter would do).
+  like every other adapter. The remaining tightening is DID-canonical
+  Bluesky / home-instance-canonical Mastodon/Misskey identity (resolve a
+  post's true id at fetch time so it dedupes across the routes that reach
+  it — ADRs 0048–0051 all defer it as the only fetch-time id rewrite any
+  adapter would do).
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs
