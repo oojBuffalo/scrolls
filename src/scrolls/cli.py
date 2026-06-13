@@ -19,6 +19,7 @@ from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import read_schema_version
+from scrolls.doctor import run_doctor
 from scrolls.feeds import (
     FeedError,
     follow_feed,
@@ -114,6 +115,18 @@ def build_parser() -> argparse.ArgumentParser:
         "detect", help="Detect which source adapter handles a URL (JSON output)"
     )
     detect_parser.add_argument("url", help="URL to inspect")
+
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Check library integrity, repair drift with --fix (JSON output)"
+    )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Repair what is safe offline: merge duplicate items, rewrite "
+        "missing scrolls from the index, rebuild the search index. "
+        "Missing media files (run `scrolls media`) and orphan scroll "
+        "files are reported but never touched",
+    )
 
     fetch_parser = subparsers.add_parser(
         "fetch", help="Fetch content for detected items (JSON output)"
@@ -267,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_context(args.query, args.limit)
     if args.command == "detect":
         return _cmd_detect(args.url)
+    if args.command == "doctor":
+        return _cmd_doctor(args.fix)
     if args.command == "fetch":
         return _cmd_fetch(args.id)
     if args.command == "follow":
@@ -342,6 +357,14 @@ def _cmd_ingest(url: str) -> int:
         return 1
     print(json.dumps(payload))
     return 1 if "error" in payload else 0
+
+
+def _cmd_doctor(fix: bool) -> int:
+    paths = get_paths()
+    payload = run_doctor(paths, fix=fix)
+    print(json.dumps(payload))
+    # healthy or fully repaired → 0; any drift left behind → 1
+    return 1 if payload["issues"] > payload["fixed"] else 0
 
 
 def _cmd_mcp() -> int:

@@ -92,6 +92,30 @@ def update_item(db_path: Path, item: ScrollItem) -> bool:
         conn.close()
 
 
+def replace_items(db_path: Path, remove_ids: list[str], item: ScrollItem) -> None:
+    """Atomically delete `remove_ids` and insert `item` in their place.
+
+    The doctor's duplicate merge (ADR 0026): one transaction, so an
+    interruption can never lose the group's rows without storing the
+    merged survivor. `item.id` may be one of the removed ids.
+    """
+    row = _to_row(item)
+    columns = ", ".join(_FIELD_NAMES)
+    placeholders = ", ".join("?" for _ in _FIELD_NAMES)
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                "DELETE FROM items WHERE id = ?", [(item_id,) for item_id in remove_ids]
+            )
+            conn.execute(
+                f"INSERT INTO items ({columns}) VALUES ({placeholders})",
+                tuple(row[name] for name in _FIELD_NAMES),
+            )
+    finally:
+        conn.close()
+
+
 def get_item(db_path: Path, item_id: str) -> ScrollItem | None:
     """Fetch one item by id, or None if absent."""
     conn = sqlite3.connect(db_path)

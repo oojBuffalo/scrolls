@@ -11,6 +11,7 @@ from scrolls.items import (
     insert_item,
     list_items,
     make_item_id,
+    replace_items,
     update_item,
 )
 
@@ -139,3 +140,27 @@ def test_list_items_orders_by_saved_at(db_path):
                   url="https://a.example", saved_at="2026-06-11T01:00:00+00:00"),
     )
     assert [item.id for item in list_items(db_path)] == ["web:a", "web:b"]
+
+
+def test_replace_items_swaps_rows_atomically(db_path):
+    insert_item(db_path, make_item(id="web:junk", source="web", source_id=None,
+                                   url="https://example.com/post?utm_source=x"))
+    insert_item(db_path, make_item(id="web:clean", source="web", source_id=None,
+                                   url="https://example.com/post"))
+    merged = make_item(id="web:clean", source="web", source_id=None,
+                       url="https://example.com/post", title="Merged")
+
+    replace_items(db_path, ["web:junk", "web:clean"], merged)
+
+    assert [item.id for item in list_items(db_path)] == ["web:clean"]
+    assert get_item(db_path, "web:clean").title == "Merged"
+    assert get_item(db_path, "web:junk") is None
+
+
+def test_replace_items_may_reuse_a_removed_id(db_path):
+    insert_item(db_path, make_item(id="web:only", source="web", source_id=None,
+                                   url="https://example.com/post"))
+    merged = make_item(id="web:only", source="web", source_id=None,
+                       url="https://example.com/post", title="Rewritten")
+    replace_items(db_path, ["web:only"], merged)
+    assert get_item(db_path, "web:only").title == "Rewritten"

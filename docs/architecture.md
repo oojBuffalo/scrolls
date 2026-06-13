@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (504 tests at the time of writing). The docs themselves
+`uv run pytest` (532 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -278,6 +278,17 @@ choice (ADRs 0004, 0005).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`).
+- **Doctor** (`doctor.py`, ADR 0026) — `scrolls doctor` diagnoses drift
+  between the index and the file tree: duplicate url-hash items left by
+  pre-normalization URLs (ADR 0023's deferred debt), recorded scroll
+  files missing on disk, captured media files gone, orphan scroll files,
+  FTS desync. `--fix` repairs only what is safe offline — merges each
+  duplicate group atomically into the id a clean re-add would mint
+  (`items.replace_items`), rewrites missing scrolls from the index,
+  rebuilds FTS — and exits 0 only when the library ends fully
+  consistent, so it works as a cron-able health probe. Missing media
+  stays `scrolls media`'s job; orphan files are never deleted
+  (`tests/test_doctor.py`).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,
@@ -327,9 +338,6 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **Doctor-style dedupe** — pre-normalization libraries can hold a
-  junk-URL item that a clean re-add would duplicate; a repair command
-  is the remedy if real libraries ever surface this (ADR 0023).
 - **Batched concept summaries** — the concept engine (ADR 0025)
   generates per-call; if libraries outgrow that, the Message Batches
   transport (ADR 0022) has an obvious home in the shared `llm.py`.

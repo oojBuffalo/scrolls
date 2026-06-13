@@ -107,6 +107,8 @@ uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
 uv run scrolls agent install  # write agent instruction files, as JSON
+uv run scrolls doctor         # check index/file-tree integrity, as JSON
+uv run scrolls doctor --fix   # repair what is safe offline: merge dupes, rewrite scrolls, rebuild FTS
 uv run scrolls mcp            # serve the library to MCP clients over stdio
 uv run pytest                 # test suite
 ```
@@ -305,6 +307,18 @@ can follow up with `scrolls show <id>` or read the full scroll.
 tools' config trees; copy or symlink the files where your tool expects
 them (see `docs/adr/0006-agent-install-stays-in-library-root.md`).
 
+`scrolls doctor` checks the integrity the other commands assume: items
+whose URLs normalize to the same resource (duplicates a pre-ADR-0023
+library can hold), recorded scroll files missing on disk, captured media
+files gone, orphan scrolls no item owns, and an FTS index out of sync
+with the items table. `scrolls doctor --fix` repairs exactly what is
+safe offline — merges each duplicate group into the id a clean re-add
+would mint (content from the most advanced member, earliest save date,
+classification merged), rewrites missing scrolls from the index, and
+rebuilds the FTS index — while missing media stays `scrolls media`'s
+job and orphan files are reported, never deleted. Exit 0 means the
+library ended fully consistent (see `docs/adr/0026-doctor-command.md`).
+
 `scrolls mcp` serves the same engines to MCP clients over stdio
 (IDEAS.md §10's second phase — see `docs/adr/0014-mcp-server.md`):
 `get_context_bundle`, `search_scrolls`, `get_scroll`,
@@ -332,10 +346,10 @@ Batches API halving bulk classification cost (ADR 0022), item
 identity robust to tracking-param junk (ADR 0023), `published_at`
 one uniform UTC ISO 8601 vocabulary from every writer (ADR 0024), and
 both halves of IDEAS.md §9 — the deterministic KB compiler and the
-LLM concept engine behind `kb --engine llm` (ADR 0025). Next
-candidates: a doctor-style dedupe/repair command if pre-normalization
-libraries surface duplicate items (ADR 0023), or a Batches transport
-for concept summaries if libraries outgrow per-call generation
-(ADR 0025).
+LLM concept engine behind `kb --engine llm` (ADR 0025) — and
+`scrolls doctor` to find and repair index/file-tree drift, including
+the pre-normalization duplicates ADR 0023 deferred (ADR 0026). Next
+candidate: a Batches transport for concept summaries if libraries
+outgrow per-call generation (ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

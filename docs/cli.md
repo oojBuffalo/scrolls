@@ -91,6 +91,59 @@ $ scrolls paths
 [exit 0]
 ```
 
+### `scrolls doctor [--fix]`
+
+Check integrity between the SQLite index and the file tree, offline
+(ADR 0026; all cited tests in `tests/test_doctor.py`). Five checks,
+each a top-level key:
+
+| Key | Finding | With `--fix` |
+| --- | --- | --- |
+| `duplicates` | url-hash items (no source-local id) whose URLs normalize to the same resource — the pre-normalization legacy ADR 0023 left in place | merged (`test_fix_merges_duplicates_into_canonical_id`) |
+| `missing_scrolls` | items whose recorded scroll file is gone | rewritten from the index (`test_fix_rewrites_missing_scroll_from_the_index`) |
+| `missing_media` | captured media files gone from disk | report-only; `scrolls media` re-downloads (`test_fix_leaves_missing_media_to_scrolls_media`) |
+| `orphan_scrolls` | `.md` files under `scrolls/` no item owns | report-only; never deleted (`test_fix_never_deletes_orphan_scrolls`) |
+| `fts` | search index out of sync with the items table | rebuilt (`test_fix_rebuilds_drifted_fts`) |
+
+A duplicate merge keeps the most advanced member's content under the id
+a clean re-add of the URL would mint (so the duplicate cannot recur —
+`test_merged_duplicates_do_not_recur`), keeps the earliest `saved_at`,
+fills `category`/`domain` from any member, unions `tags`/`concepts`,
+deletes the losing rows and scroll files, and re-renders the survivor's
+scroll (`test_fix_merges_classification_across_members`,
+`test_fix_deletes_the_losing_duplicates_scroll_file`).
+
+Exit semantics differ from the batch commands: exit 0 only when the
+library ends fully consistent — already healthy, or every finding
+repaired (`issues == fixed`); any drift left behind exits 1, including
+the report-only kinds
+(`test_doctor_fix_exits_one_when_unfixable_drift_remains`). Without
+`--fix` nothing is mutated (`test_doctor_reports_issues_and_exits_one`),
+and doctor never creates a library
+(`test_doctor_before_init_exits_zero`). A repair the filesystem refuses
+marks its finding `failed` (with `error`) and never aborts the rest; a
+failed merge mutates nothing
+(`test_fix_reports_a_scroll_it_cannot_rewrite`,
+`test_fix_reports_a_merge_it_cannot_complete`).
+
+```console
+$ scrolls doctor        # healthy library
+{"issues": 0, "fixed": 0, "duplicates": [], "missing_scrolls": [], "missing_media": [], "orphan_scrolls": [], "fts": {"in_sync": true, "status": "ok"}}
+[exit 0]
+
+$ scrolls doctor        # a planted pre-ADR-0023 duplicate + a deleted scroll file
+{"issues": 2, "fixed": 0, "duplicates": [{"source": "web", "url": "https://blog.example/post", "ids": ["web:5e1a18c8f0f3", "web:af2e70e87b6d"], "status": "found"}], "missing_scrolls": [{"id": "x:1111", "path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "status": "found"}], "missing_media": [], "orphan_scrolls": [], "fts": {"in_sync": true, "status": "ok"}}
+[exit 1]
+
+$ scrolls doctor --fix
+{"issues": 2, "fixed": 2, "duplicates": [{"source": "web", "url": "https://blog.example/post", "ids": ["web:5e1a18c8f0f3", "web:af2e70e87b6d"], "status": "merged", "merged_id": "web:af2e70e87b6d"}], "missing_scrolls": [{"id": "x:1111", "path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "status": "rewritten"}], "missing_media": [], "orphan_scrolls": [], "fts": {"in_sync": true, "status": "ok"}}
+[exit 0]
+```
+
+`fts.status` is `ok`, `found`, `rebuilt`, `unsupported` (SQLite older
+than 3.42 cannot verify the index against the table —
+`test_fts_check_degrades_on_old_sqlite`), or `skipped` (no database).
+
 ## Getting items in
 
 ### `scrolls detect <url>`
@@ -792,6 +845,22 @@ scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
 scrolls set x:1111 usefulness=high                # unknown field: exit 1
 scrolls set x:2222 "concepts=full-text search"    # a 2-scroll concept now exists
 scrolls kb --engine llm                           # without a key: exit 1
+scrolls doctor                                    # healthy: exit 0
+
+# plant the legacy state doctor repairs: a pre-ADR-0023 junk-URL row
+# (today's `add` normalizes, so only an old library can hold one) ...
+python3 -c "
+from scrolls.paths import get_paths
+from scrolls.items import ScrollItem, insert_item, make_item_id
+url = 'https://blog.example/post?utm_source=newsletter'
+insert_item(get_paths().db_path, ScrollItem(id=make_item_id('web', None, url),
+    source='web', url=url, saved_at='2026-06-01T00:00:00+00:00'))
+"
+scrolls add https://blog.example/post             # ... its clean twin ...
+rm "$SCROLLS_HOME"/scrolls/x/karpathy-*.md        # ... and a lost scroll file
+scrolls doctor                                    # 2 findings: exit 1
+scrolls doctor --fix                              # merged + rewritten: exit 0
+scrolls doctor                                    # healthy again
 ```
 
 (Stop the feed server with `kill %1` when done.)
