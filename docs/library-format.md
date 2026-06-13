@@ -151,9 +151,10 @@ The dominant sequence transduction models are based on complex recurrent or conv
 
 `scrolls kb` (ADR [0005](adr/0005-deterministic-kb-compiler.md))
 rebuilds a generated tree — `library/index.md`, `library/graph.md`,
-`library/sources/`, `library/categories/`, `library/concepts/` — from
-scratch on every run, so a stale group page can't linger; anything *else*
-under `library/` is preserved, so hand-written notes can live alongside
+`library/sources/`, `library/categories/`, `library/concepts/`,
+`library/tags/` — from scratch on every run, so a stale group page can't
+linger; anything *else* under `library/` is preserved, so hand-written
+notes can live alongside
 (`test_kb_recompile_removes_stale_pages_but_keeps_user_files`). Only
 rendered items appear: KB pages link to scroll files, and an unrendered
 item has nothing to link to.
@@ -164,8 +165,9 @@ moved, mounted, or committed wholesale without breaking navigation.
 
 ### Group pages
 
-`sources/<slug>.md`, `categories/<slug>.md`, `concepts/<slug>.md` share
-one shape (`test_kb_compiles_index_source_and_category_pages`):
+`sources/<slug>.md`, `categories/<slug>.md`, `concepts/<slug>.md`, and
+`tags/<slug>.md` share one shape
+(`test_kb_compiles_index_source_and_category_pages`):
 
 ```markdown
 # Source: wikipedia
@@ -175,15 +177,23 @@ one shape (`test_kb_compiles_index_source_and_category_pages`):
 - [SQLite](../../scrolls/wikipedia/sqlite.md) — reference
 ```
 
-- The H1 is `Source: <name>`, `Category: <name>`, or
-  `Concept: <display spelling>`.
+- The H1 is `Source: <name>`, `Category: <name>`,
+  `Concept: <display spelling>`, or `Tag: <display spelling>`.
 - One bullet per member — the title as a Markdown link to its scroll
   file — sorted by case-folded title with the item id as tiebreak. The
   ` — note` suffix is the item's category on source pages, and its
-  source on category and concept pages.
+  source on category, concept, and tag pages.
 - Concept pages merge spellings that slugify identically (`RAG` and
   `rag` are one page) and display the lexically smallest spelling
   (`test_kb_groups_concepts_across_spellings`).
+- Tag pages merge **case-insensitively** — the `--tag` facet's rule
+  (ADR [0059](adr/0059-tag-concept-facets.md)), not concepts' coarser
+  slug merge — so `MIT` and `mit` are one page while `C++` and `C#` stay
+  distinct, even though both slugify to `c`. When distinct tags collide
+  on a slug, the page filenames disambiguate with a numeric suffix
+  (`c.md`, `c-2.md`) assigned in sorted-key order; KB page filenames are
+  regenerated each run and linked relatively, so they are addressable but
+  not globally stable (`test_kb_groups_tags_case_insensitively_but_keeps_distinct_folds`).
 - A concept page *may* lead with a synthesized summary paragraph
   between the H1 and the count line, when the LLM concept engine
   (ADR [0025](adr/0025-llm-concept-summaries.md)) has stored one for
@@ -210,22 +220,31 @@ one shape (`test_kb_compiles_index_source_and_category_pages`):
   treat it as optional and non-exhaustive
   (`test_kb_concept_page_lists_related_concepts`,
   `test_kb_concept_page_without_co_occurrence_omits_related_section`).
+- A tag page likewise *may* end with a `## Related Tags` section
+  (ADR [0064](adr/0064-kb-tag-pages.md)) — the tags that **co-occur** on
+  its member scrolls, the same co-occurrence rollup as Related Concepts,
+  capped and omit-when-empty the same way. Each bullet links the
+  co-occurring tag's sibling page (the bare collision-free `<name>.md`)
+  and notes how many scrolls carry both
+  (`test_kb_tag_page_lists_related_tags`,
+  `test_kb_tag_page_without_co_occurrence_omits_related_section`).
 
 ### The index
 
 `library/index.md` is the entry point: a count line, then a one-line link
 to the link-graph page (`graph.md`) summarising connectivity, then
-`## Sources`, `## Categories`, and `## Concepts` lists linking to group
-pages (the categories list ends with an unlinked `- unclassified — N
-scrolls` line when any rendered item lacks a category,
+`## Sources`, `## Categories`, `## Concepts`, and `## Tags` lists linking
+to group pages (the categories list ends with an unlinked
+`- unclassified — N scrolls` line when any rendered item lacks a category,
 `test_kb_counts_unclassified_items_in_index`), then `## Recent` linking
 the 10 newest scrolls, newest first
 (`test_kb_index_links_recent_scrolls_newest_first`). Sections with
 nothing to list are omitted.
 
-Compiled from the example item above plus one rendered Wikipedia item
-(title `SQLite`, category `reference`, concept `Database software` —
-the second fixture in `tests/test_docs.py`,
+Compiled from the example item above (its `cs.CL`/`cs.LG` taxonomy codes
+are `tags`) plus one rendered Wikipedia item (title `SQLite`, category
+`reference`, concept `Database software` — the second fixture in
+`tests/test_docs.py`,
 `test_library_format_kb_index_example_matches_compiler_output`); neither
 links to the other, so the graph line reports nothing connected:
 
@@ -249,6 +268,11 @@ links to the other, so the graph line reports nothing connected:
 ## Concepts
 
 - [Database software](concepts/database-software.md) — 1 scroll
+
+## Tags
+
+- [cs.CL](tags/cs-cl.md) — 1 scroll
+- [cs.LG](tags/cs-lg.md) — 1 scroll
 
 ## Recent
 

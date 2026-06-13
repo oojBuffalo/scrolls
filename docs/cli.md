@@ -935,10 +935,16 @@ written one — the default compile includes them without any model call
 | Key | Meaning |
 | --- | --- |
 | `items` | rendered scrolls included |
-| `sources` / `categories` / `concepts` | group pages written per kind |
+| `sources` / `categories` / `concepts` / `tags` | group pages written per kind |
 | `summaries` | concept pages that carried a stored synthesized summary |
 | `clusters` | connected components in the link-graph page `graph.md` (ADR 0062) |
 | `pages` | total files written, including `index.md` and `graph.md` |
+
+Tag pages (`tags/<name>.md`, ADR 0064) mirror concept pages — the
+library's items grouped by each `tag`, case-insensitively (`MIT` and `mit`
+are one page, the `--tag` facet's rule), with a `## Related Tags`
+co-occurrence section — so the `--tag` facet you can search by is now also
+browsable (`test_kb_compiles_tag_pages`).
 
 `graph.md` is the browsable form of `scrolls graph`'s link structure: the
 rendered scrolls that link to one another grouped into clusters, largest
@@ -983,11 +989,11 @@ and shares the Batches transport with `classify --engine llm --batch`
 
 ```console
 $ scrolls kb
-{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 5}
+{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 5}
 [exit 0]
 
 $ scrolls kb --engine llm     # no 2-scroll concepts yet: a zero run, no key needed
-{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 5}
+{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 5}
 [exit 0]
 
 $ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set

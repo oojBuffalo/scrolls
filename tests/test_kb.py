@@ -18,8 +18,8 @@ def scrolls_home(monkeypatch, tmp_path):
     return root
 
 
-def make_rendered(item_id, source, title, *, category=None, concepts=(), links=(),
-                  saved_at="2026-06-01T00:00:00+00:00", markdown_path=None):
+def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=(),
+                  links=(), saved_at="2026-06-01T00:00:00+00:00", markdown_path=None):
     slug = title.lower().replace(" ", "-")
     return ScrollItem(
         id=item_id,
@@ -29,6 +29,7 @@ def make_rendered(item_id, source, title, *, category=None, concepts=(), links=(
         title=title,
         category=category,
         concepts=tuple(concepts),
+        tags=tuple(tags),
         links=tuple(links),
         markdown_path=markdown_path or f"scrolls/{source}/{slug}.md",
         stage="rendered",
@@ -43,7 +44,7 @@ def run_kb(capsys):
 
 def test_kb_before_init_reports_zero_pages(scrolls_home, capsys):
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 0}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 0}
     assert not scrolls_home.exists()  # kb never creates a library
 
 
@@ -68,7 +69,7 @@ def test_kb_compiles_index_source_and_category_pages(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 6}
+    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 6}
 
     library = scrolls_home / "library"
     index = (library / "index.md").read_text(encoding="utf-8")
@@ -113,7 +114,7 @@ def test_kb_counts_unclassified_items_in_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 3}
+    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 3}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "- unclassified — 1 scroll" in index
     assert not (scrolls_home / "library" / "categories").exists()
@@ -200,6 +201,112 @@ def test_related_concepts_merges_spellings_and_caps(scrolls_home):
     assert rag[0] == ("topic-00", "Topic 00", 2)
 
 
+def test_kb_compiles_tag_pages(scrolls_home, capsys):
+    """Tags get browsable pages and an index section, like concepts (ADR 0064)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "arxiv:1706.03762", "arxiv", "Attention Is All You Need",
+        category="paper", tags=("cs.CL", "cs.LG")))
+    insert_item(db, make_rendered(
+        "arxiv:1409.0473", "arxiv", "Neural Machine Translation",
+        category="paper", tags=("cs.CL",)))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["tags"] == 2
+
+    library = scrolls_home / "library"
+    tag_page = (library / "tags" / "cs-cl.md").read_text(encoding="utf-8")
+    assert "# Tag: cs.CL" in tag_page
+    assert "2 scrolls." in tag_page
+    assert "- [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv" in tag_page
+    assert "- [Neural Machine Translation](../../scrolls/arxiv/neural-machine-translation.md) — arxiv" in tag_page
+
+    index = (library / "index.md").read_text(encoding="utf-8")
+    assert "- [cs.CL](tags/cs-cl.md) — 2 scrolls" in index
+    assert "- [cs.LG](tags/cs-lg.md) — 1 scroll" in index
+
+
+def test_kb_groups_tags_case_insensitively_but_keeps_distinct_folds(scrolls_home, capsys):
+    """`MIT`/`mit` merge to one page; `C++`/`C#` share a slug yet stay separate."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("pypi:flask", "pypi", "Flask", tags=("MIT",)))
+    insert_item(db, make_rendered("npm:express", "npm", "express", tags=("mit",)))
+    insert_item(db, make_rendered("bitbucket:o/cpp", "bitbucket", "cpp repo", tags=("C++",)))
+    insert_item(db, make_rendered("bitbucket:o/csharp", "bitbucket", "csharp repo", tags=("C#",)))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    # MIT+mit merge → one tag; C++ and C# both slugify to "c" but are distinct folds → two tags
+    assert payload["tags"] == 3
+
+    library = scrolls_home / "library"
+    mit_page = (library / "tags" / "mit.md").read_text(encoding="utf-8")
+    assert "# Tag: MIT" in mit_page  # smallest spelling is the display form
+    assert "2 scrolls." in mit_page
+
+    # the two C-family tags collide on slug "c"; the second sorted key gets "-2"
+    tag_files = sorted(p.name for p in (library / "tags").glob("*.md"))
+    assert "c.md" in tag_files and "c-2.md" in tag_files
+    index = (library / "index.md").read_text(encoding="utf-8")
+    assert "- [C#](tags/c.md) — 1 scroll" in index   # "c#" sorts before "c++"
+    assert "- [C++](tags/c-2.md) — 1 scroll" in index
+
+
+def test_kb_tag_page_lists_related_tags(scrolls_home, capsys):
+    """A tag page names the tags that co-occur on its member scrolls (ADR 0064)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "pypi:a", "pypi", "Package A", tags=("MIT", "Python", "CLI")))
+    insert_item(db, make_rendered(
+        "pypi:b", "pypi", "Package B", tags=("MIT", "Python")))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "tags" / "mit.md").read_text(encoding="utf-8")
+    assert "## Related Tags" in page
+    related = page.split("## Related Tags\n")[1].strip().splitlines()
+    assert related == [
+        "- [Python](python.md) — 2 shared scrolls",
+        "- [CLI](cli.md) — 1 shared scroll",
+    ]
+
+
+def test_kb_tag_page_without_co_occurrence_omits_related_section(scrolls_home, capsys):
+    """A tag whose member scrolls carry no other tag gets no Related Tags section."""
+    main(["init"])
+    insert_item(get_paths().db_path, make_rendered(
+        "pypi:solo", "pypi", "Lonely package", tags=("Unlicense",)))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "tags" / "unlicense.md").read_text(encoding="utf-8")
+    assert "## Related Tags" not in page
+
+
+def test_related_tags_co_occurrence_folds_case_and_caps(scrolls_home):
+    """The pure tag co-occurrence map merges by case-fold, counts scrolls, and caps."""
+    from scrolls.kb import group_tags, related_tags
+
+    items = [
+        make_rendered(f"pypi:n{i:02d}", "pypi", f"Pkg {i:02d}", tags=("Python", f"lib{i:02d}"))
+        for i in range(12)
+    ]
+    # a case variant of Python that must merge, not self-relate
+    items.append(make_rendered("pypi:variant", "pypi", "py variant", tags=("python", "lib00")))
+
+    by_tag = group_tags(items)
+    related = related_tags(by_tag, limit=10)
+
+    python = related["python"]
+    assert len(python) == 10  # capped from 12 neighbours
+    assert all(key != "python" for key, _display, _shared in python)  # never self-relates
+    assert python[0] == ("lib00", "lib00", 2)  # lib00 co-occurs on two Python scrolls
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -225,7 +332,7 @@ def test_kb_empty_initialized_library_writes_empty_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 2}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "pages": 2}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "0 scrolls from 0 sources." in index
     assert "## Sources" not in index

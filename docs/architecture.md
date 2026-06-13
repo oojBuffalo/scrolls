@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1445 tests at the time of writing). The docs themselves
+`uv run pytest` (1455 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -377,12 +377,19 @@ choice (ADRs 0004, 0005).
   `library/graph.md` page (ADR 0062), the browsable form of the same
   structure.
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
-  `library/graph.md`, plus per-source, per-category, and per-concept pages
-  from scratch each run so stale groups can't linger; other files under
-  `library/` are left alone. Concept pages merge spellings by slug, and
-  lead with a stored synthesized summary when the LLM concept engine has
-  written one — the store (`concept_summaries`) lives on the compiler's side
-  so a plain `scrolls kb` includes summaries with no model, key, or network.
+  `library/graph.md`, plus per-source, per-category, per-concept, and
+  per-tag pages from scratch each run so stale groups can't linger; other
+  files under `library/` are left alone. Concept pages merge spellings by
+  slug, and lead with a stored synthesized summary when the LLM concept
+  engine has written one — the store (`concept_summaries`) lives on the
+  compiler's side so a plain `scrolls kb` includes summaries with no model,
+  key, or network. Tag pages (`group_tags`, ADR 0064) are the browsable
+  complement to the `--tag` query facet (ADR 0059), grouping items by tag
+  **case-insensitively** (the facet's rule, not concepts' slug merge — so
+  `MIT`/`mit` are one page, `C++`/`C#` two despite a shared slug, the page
+  filenames disambiguated by a numeric suffix); they carry a **Related
+  Tags** co-occurrence section sharing the extracted `_co_occurring` core
+  with Related Concepts, and a `tags` count joins the compile summary.
   `graph.md` is the browsable form of `scrolls graph`'s link structure
   (ADR 0062): the rendered scrolls that link to one another, grouped into
   clusters (`graph.connected_components(graph_over(rendered_items))`) and

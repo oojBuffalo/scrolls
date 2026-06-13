@@ -1,7 +1,7 @@
 """Compiled library pages (IDEAS.md §9, §14 Pass 5; ADR 0005, ADR 0025).
 
 The KB compiler is deterministic: it rolls rendered scrolls up into an
-index plus per-source, per-category, and per-concept pages under
+index plus per-source, per-category, per-concept, and per-tag pages under
 `library/`, linking back to scroll files with relative Markdown links.
 Pages are honest rollups of data the pipeline already produced — the
 compiler itself never calls a model. Concept pages additionally lead
@@ -9,9 +9,9 @@ with a stored synthesized summary when the LLM concept engine
 (`kb_llm.py`, ADR 0025) has written one; the store lives here so the
 compiler reads it without importing the engine.
 
-The generated tree (`index.md`, `sources/`, `categories/`, `concepts/`)
-is rebuilt from scratch on every run so stale pages can't linger;
-anything else under `library/` is left alone. Compiling is a
+The generated tree (`index.md`, `graph.md`, `sources/`, `categories/`,
+`concepts/`, `tags/`) is rebuilt from scratch on every run so stale pages
+can't linger; anything else under `library/` is left alone. Compiling is a
 library-level operation like the FTS index, so it never changes item
 stages.
 """
@@ -29,10 +29,11 @@ from scrolls.items import ScrollItem, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
 
-_GENERATED_DIRS = ("sources", "categories", "concepts")
+_GENERATED_DIRS = ("sources", "categories", "concepts", "tags")
 _GENERATED_FILES = ("index.md", "graph.md")
 _RECENT_LIMIT = 10
 _RELATED_CONCEPTS_LIMIT = 10
+_RELATED_TAGS_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class KbResult:
     sources: int
     categories: int
     concepts: int
+    tags: int
     summaries: int
     clusters: int
     pages: int
@@ -78,39 +80,77 @@ def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
     return by_concept
 
 
+def group_tags(items: list[ScrollItem]) -> dict[str, dict]:
+    """Tag case-fold key → {"display", "items"} over the given rendered items.
+
+    Tags merge **case-insensitively** — the `--tag` membership facet's rule
+    (ADR 0059), not concepts' coarser slug merge — so `MIT` and `mit` are one
+    group while `C++` and `C#` stay distinct (they share a slug but not a fold).
+    The smallest spelling is the display form, as with concepts.
+    """
+    by_tag: dict[str, dict] = {}
+    for item in items:
+        for tag in dict.fromkeys(item.tags):
+            key = tag.lower()
+            if not key:
+                continue
+            entry = by_tag.setdefault(key, {"display": tag, "items": []})
+            entry["display"] = min(entry["display"], tag)
+            entry["items"].append(item)
+    return by_tag
+
+
+def _co_occurring(
+    by_group: dict[str, dict], limit: int
+) -> dict[str, list[tuple[str, str, int]]]:
+    """For each group key, the other groups that co-occur on its member scrolls.
+
+    Two groups are *related* when at least one rendered scroll belongs to both;
+    the strength is how many scrolls belong to both. Returns, per key, a list of
+    `(other_key, other_display, shared_count)` ordered by shared count
+    descending, then the other group's display (case-folded), then its key,
+    capped at `limit`. A group whose members share no scroll with another maps
+    to an empty list. Shared by the concept and tag co-occurrence maps.
+    """
+    members = {
+        key: {item.id for item in entry["items"]} for key, entry in by_group.items()
+    }
+    related: dict[str, list[tuple[str, str, int]]] = {}
+    for key, ids in members.items():
+        scored = [
+            (other, by_group[other]["display"], len(ids & other_ids))
+            for other, other_ids in members.items()
+            if other != key and (ids & other_ids)
+        ]
+        scored.sort(key=lambda row: (-row[2], row[1].casefold(), row[0]))
+        related[key] = scored[:limit]
+    return related
+
+
 def related_concepts(
     by_concept: dict[str, dict], limit: int = _RELATED_CONCEPTS_LIMIT
 ) -> dict[str, list[tuple[str, str, int]]]:
     """For each concept slug, the concepts that co-occur on its member scrolls.
 
-    Two concepts are *related* when at least one rendered scroll carries both;
-    the strength is how many scrolls carry both. Returns, per slug, a list of
-    `(other_slug, other_display, shared_count)` ordered by shared count
-    descending, then the other concept's display (case-folded), then its slug,
-    capped at `limit`. A concept whose members carry no other concept maps to an
-    empty list.
-
-    This is the deterministic concept-graph complement to the link graph
-    (`graph.py`): IDEAS.md §9's "Related Concepts". It is computed here, on the
-    concept pages, rather than as edges in `scrolls graph`, because concept
-    co-occurrence forms dense cliques — every pair of concepts on one scroll is
-    an edge — that would swamp the sparse, high-signal *link* edges the adapters
-    build (ADR 0044/0047 deferred concept edges in the link graph for exactly
-    this reason).
+    The deterministic concept-graph complement to the link graph (`graph.py`):
+    IDEAS.md §9's "Related Concepts". Computed here, on the concept pages,
+    rather than as edges in `scrolls graph`, because concept co-occurrence forms
+    dense cliques — every pair of concepts on one scroll is an edge — that would
+    swamp the sparse, high-signal *link* edges the adapters build (ADR 0044/0047
+    deferred concept edges in the link graph for exactly this reason).
     """
-    members = {
-        slug: {item.id for item in entry["items"]} for slug, entry in by_concept.items()
-    }
-    related: dict[str, list[tuple[str, str, int]]] = {}
-    for slug, ids in members.items():
-        scored = [
-            (other, by_concept[other]["display"], len(ids & other_ids))
-            for other, other_ids in members.items()
-            if other != slug and (ids & other_ids)
-        ]
-        scored.sort(key=lambda row: (-row[2], row[1].casefold(), row[0]))
-        related[slug] = scored[:limit]
-    return related
+    return _co_occurring(by_concept, limit)
+
+
+def related_tags(
+    by_tag: dict[str, dict], limit: int = _RELATED_TAGS_LIMIT
+) -> dict[str, list[tuple[str, str, int]]]:
+    """For each tag, the tags that co-occur on its member scrolls (ADR 0064).
+
+    The tag-facet analog of `related_concepts`: a co-occurrence list living on
+    each tag page rather than as link-graph edges, for the same density reason.
+    """
+    return _co_occurring(by_tag, limit)
 
 
 def compile_kb(paths: LibraryPaths) -> KbResult:
@@ -121,7 +161,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     database means an uninitialized library: nothing is written.
     """
     if not paths.db_path.exists():
-        return KbResult(0, 0, 0, 0, 0, 0, 0)
+        return KbResult(0, 0, 0, 0, 0, 0, 0, 0)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
 
     by_source: dict[str, list[ScrollItem]] = {}
@@ -132,6 +172,9 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             by_category.setdefault(item.category, []).append(item)
     by_concept = group_concepts(items)
     related = related_concepts(by_concept)
+    by_tag = group_tags(items)
+    related_tag_map = related_tags(by_tag)
+    tag_filenames = _tag_filenames(by_tag)
     summaries = load_concept_summaries(paths.db_path)
     # the link graph over the rendered items only, so every edge it shows
     # resolves to a scroll file the page can link (graph_over drops links to
@@ -162,25 +205,42 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
             lead=stored.summary if stored else None,
-            trailer=_related_concepts_lines(related.get(slug, [])),
+            trailer=_related_lines(
+                "Related Concepts", related.get(slug, []), lambda key: key
+            ),
+        )
+        pages += 1
+    for key, entry in by_tag.items():
+        _write_page(
+            paths, f"tags/{tag_filenames[key]}.md",
+            f"Tag: {entry['display']}", entry["items"], note=lambda i: i.source,
+            trailer=_related_lines(
+                "Related Tags", related_tag_map.get(key, []),
+                lambda other: tag_filenames[other],
+            ),
         )
         pages += 1
     _write_graph_page(paths, components, {item.id: item for item in items})
     pages += 1
-    _write_index(paths, items, by_source, by_category, by_concept, components)
+    _write_index(
+        paths, items, by_source, by_category, by_concept, by_tag, tag_filenames, components
+    )
 
     return KbResult(
         items=len(items),
         sources=len(by_source),
         categories=len(by_category),
         concepts=len(by_concept),
+        tags=len(by_tag),
         summaries=summarized,
         clusters=len(components),
         pages=pages,
     )
 
 
-def _write_index(paths, items, by_source, by_category, by_concept, components) -> None:
+def _write_index(
+    paths, items, by_source, by_category, by_concept, by_tag, tag_filenames, components
+) -> None:
     lines = [
         "# Scrolls Library",
         "",
@@ -212,6 +272,13 @@ def _write_index(paths, items, by_source, by_category, by_concept, components) -
             lines.append(
                 f"- [{entry['display']}](concepts/{slug}.md) — {_count(len(entry['items']))}"
             )
+    if by_tag:
+        lines += ["", "## Tags", ""]
+        for key in sorted(by_tag):
+            entry = by_tag[key]
+            lines.append(
+                f"- [{entry['display']}](tags/{tag_filenames[key]}.md) — {_count(len(entry['items']))}"
+            )
     if items:
         # list_items returns oldest first, so newest is the reversed head
         lines += ["", "## Recent", ""]
@@ -237,20 +304,41 @@ def _write_page(paths: LibraryPaths, relpath: str, title: str,
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _related_concepts_lines(related: list[tuple[str, str, int]]) -> list[str]:
-    """The `## Related Concepts` trailer for a concept page, or [] when none.
+def _related_lines(heading: str, related: list[tuple[str, str, int]], name_for) -> list[str]:
+    """A `## <heading>` co-occurrence trailer (Related Concepts/Tags), or [] when none.
 
-    Each line links a co-occurring concept's page (a sibling under
-    `concepts/`, so the link is the bare `<slug>.md`) and notes how many
-    scrolls carry both (ADR 0063).
+    Each line links a co-occurring group's sibling page in the same directory
+    (so the link is the bare `<name>.md`, resolved by `name_for(key)`) and notes
+    how many scrolls belong to both. Shared by concept pages (ADR 0063) and tag
+    pages (ADR 0064); for concepts the key *is* the page name, for tags
+    `name_for` maps the case-fold key through the collision-free filename map.
     """
     if not related:
         return []
-    lines = ["", "## Related Concepts", ""]
-    for slug, display, shared in related:
+    lines = ["", f"## {heading}", ""]
+    for key, display, shared in related:
         scrolls = f"{shared} shared scroll{'' if shared == 1 else 's'}"
-        lines.append(f"- [{display}]({slug}.md) — {scrolls}")
+        lines.append(f"- [{display}]({name_for(key)}.md) — {scrolls}")
     return lines
+
+
+def _tag_filenames(by_tag: dict[str, dict]) -> dict[str, str]:
+    """Collision-free `tags/<name>.md` stems, one per tag group (ADR 0064).
+
+    Tags group by case-fold (`group_tags`), so distinct groups can share a slug
+    (`C++`, `C#`, and `C` all slugify to `c`) where concepts — grouped *by* slug
+    — never do. KB pages are rebuilt from scratch each run and link relatively,
+    so colliding slugs get a deterministic numeric suffix in sorted-key order
+    rather than a globally stable name.
+    """
+    used: dict[str, int] = {}
+    names: dict[str, str] = {}
+    for key in sorted(by_tag):
+        base = slugify(key) or "untitled"
+        count = used.get(base, 0) + 1
+        used[base] = count
+        names[key] = base if count == 1 else f"{base}-{count}"
+    return names
 
 
 def _write_graph_page(
