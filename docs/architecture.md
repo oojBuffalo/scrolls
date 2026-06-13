@@ -449,16 +449,21 @@ the compiled KB with context bundles and agent install.
 Next steps already identified in decision records, in no required order:
 
 - **Social posts** — the Bluesky adapter (ADR 0048) reaches the keyless
-  social-post source IDEAS.md §6 deferred X for, on the open network. `x`
+  social-post source IDEAS.md §6 deferred X for, on the open network, and
+  the Mastodon adapter (ADR 0049) reaches the federated Fediverse by URL
+  *shape* rather than host — now serving its API-compatible forks
+  GoToSocial and Pleroma/Akkoma on the same source and fetch adapter, since
+  they expose the identical `/api/v1/statuses` surface and only their URL
+  routes and id formats differ (ADR 0050). `x`
   itself still arrives only through `import fieldtheory` (ADR 0009): a
   native `x` fetch adapter would let a pasted or synced tweet URL enrich
   on its own, but X's read API is now paywalled, so it cannot be keyless
-  like every other adapter. A natural Bluesky tightening is
-  DID-canonical identity (resolve a handle id to its DID at fetch time, so
-  a post saved under both spellings dedupes — ADR 0048 deferred it as the
-  only fetch-time id rewrite any adapter would do); other open networks on
-  documented public APIs (Mastodon's per-instance API, the Fediverse) fit
-  the same shape.
+  like every other adapter. Two tightenings remain: more Fediverse software
+  on the shape-only pattern (Misskey's `/notes/<id>`, each a new
+  anchor-and-id rule), and DID-canonical Bluesky / home-instance-canonical
+  Mastodon identity (resolve a post's true id at fetch time so it dedupes
+  across the routes that reach it — ADRs 0048, 0049, and 0050 all defer it
+  as the only fetch-time id rewrite any adapter would do).
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs

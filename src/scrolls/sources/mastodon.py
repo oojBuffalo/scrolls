@@ -1,4 +1,4 @@
-"""Mastodon fetch adapter (IDEAS.md §6, ADR 0049).
+"""Mastodon fetch adapter (IDEAS.md §6, ADR 0049, ADR 0050).
 
 The open-network social-post sibling of the Bluesky adapter (ADR 0048).
 Where Bluesky is one network behind one AppView host, Mastodon is the
@@ -7,6 +7,14 @@ Where Bluesky is one network behind one AppView host, Mastodon is the
 saved `https://<instance>/@<user>/<id>` status becomes a clean scroll from
 `<instance>/api/v1/statuses/<id>` — no login, no token — instead of a
 `trafilatura` scrape of a JS-rendered page.
+
+This one adapter also serves the Mastodon-API-compatible forks —
+GoToSocial and Pleroma/Akkoma — because they expose the identical
+`/api/v1/statuses/<id>` (+ `/context`) endpoints and return
+Mastodon-shaped status JSON. Only `detect.py` learned their extra URL
+shapes (ADR 0050); the fetch path below is unchanged. Their status ids
+are non-numeric (a GoToSocial ULID, a Pleroma FlakeId), which the id
+plumbing already tolerates — the id is opaque to the adapter.
 
 Two facts shape the design:
 
@@ -119,8 +127,9 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
 def _split_source_id(item: ScrollItem) -> tuple[str, str]:
     """The `<host>/<status_id>` source id into its two halves.
 
-    The host is a single dotted hostname and the status id a run of digits,
-    so neither contains a slash and one rsplit is exact.
+    The host is a single dotted hostname and the status id an opaque token
+    (a Mastodon snowflake, a GoToSocial ULID, or a Pleroma FlakeId) with no
+    slash of its own, so one rsplit on the last slash is exact.
     """
     source_id = item.source_id or ""
     if "/" not in source_id:

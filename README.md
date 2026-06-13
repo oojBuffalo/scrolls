@@ -463,7 +463,24 @@ boosts, and the synthesized title and `summary` (lead else alt else card
 title else "N favourites, M boosts, K replies") mirror Bluesky. Like
 Bluesky, Hacker News, and Lobsters, a heterogeneous social post gets *no*
 category default; the whole `{status, context}` stays in `raw_text`, and
-profile, timeline, and tag routes carry no status id to fetch).
+profile, timeline, and tag routes carry no status id to fetch). The same
+`mastodon` source and adapter now also serve its API-compatible forks —
+**GoToSocial** and **Pleroma/Akkoma** (see
+`docs/adr/0050-fediverse-forks-mastodon-api.md`): they expose the identical
+keyless `/api/v1/statuses/<id>` + `/context` endpoints and return
+Mastodon-shaped JSON, so only detection learns their extra routes —
+GoToSocial's `/@<user>/statuses/<ULID>`, Pleroma/Akkoma's `/notice/<FlakeId>`,
+and the shared ActivityPub `/users/<user>/statuses/<id>` — and their
+non-numeric ids (a ULID, a FlakeId). The all-digits safety generalizes to
+"a distinctive literal anchors the shape, the id constraint as strict as
+that anchor is weak": the `statuses`-bearing forms admit any base62 id
+because the `statuses` literal is unambiguous, while the weak `/notice/`
+form carries a 16-char length floor a real FlakeId clears but a
+`/notice/privacy` legal page does not; a Pleroma AP *Object* URL
+(`/objects/<uuid>`) is left to `web` since its uuid is not a status id.
+Identity stays `<host>/<status_id>` (web and AP forms still dedupe), and
+`provenance.adapter` stays `mastodon` — the adapter that served it, the
+specific fork unknowable from the URL.
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -820,15 +837,22 @@ content reduced to text by a stdlib parser (no `trafilatura`), the flat
 `descendants` rendered as bylined replies in one pass, the card and body
 links as edges, images and video previews as media, hashtags as concepts,
 a content warning leading the body, a boost unwrapped, classified like
-Bluesky and Hacker News with no category default (ADR 0049). Next
-candidates: other Fediverse software on the same shape-only detection
-pattern (Pleroma/Akkoma and GoToSocial expose the `/api/v1/statuses`
-surface but mint non-numeric ids on different routes — each a new shape
-branch, not a rewrite); home-instance-canonical Mastodon and DID-canonical
-Bluesky identity so a post saved through two routes dedupes (ADR 0048,
-ADR 0049); a third DOI registration agency (mEDRA, JaLC) joining the same
-`doi.py` dispatch; or two-phase batch submit/collect if a terminal wait
-ever outgrows the library (ADR 0022, ADR 0032). A native `x` fetch adapter
+Bluesky and Hacker News with no category default (ADR 0049), now also
+serving the Mastodon-API-compatible forks **GoToSocial** and
+**Pleroma/Akkoma** on the same source and fetch adapter — they expose the
+identical `/api/v1/statuses` surface and return Mastodon-shaped JSON, so
+only detection learns their routes (GoToSocial's `/@<user>/statuses/<ULID>`,
+Pleroma's `/notice/<FlakeId>`, the shared AP `/users/<user>/statuses/<id>`)
+and non-numeric ids, the all-digits safety generalizing to a literal anchor
+plus a `/notice/` length floor (ADR 0050). Next
+candidates: still more Fediverse software on the same shape-only pattern
+(Misskey's `/notes/<id>`, each a new anchor-and-id row, not a rewrite);
+home-instance-canonical Mastodon and DID-canonical Bluesky identity so a
+post saved through two routes dedupes — the fetch-time id rewrite no adapter
+does yet (ADR 0048, ADR 0049, ADR 0050); a third DOI registration agency
+(mEDRA, JaLC) joining the same `doi.py` dispatch; or two-phase batch
+submit/collect if a terminal wait ever outgrows the library (ADR 0022,
+ADR 0032). A native `x` fetch adapter
 remains out of reach while X's read API stays paywalled; `x` enriches only
 through the Field Theory import (ADR 0009).
 

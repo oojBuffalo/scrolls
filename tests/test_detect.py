@@ -114,6 +114,34 @@ CASES = [
     ("https://mastodon.social/@Gargron", "web", None),
     ("https://mastodon.social/public", "web", None),
     ("https://mastodon.social/tags/introductions", "web", None),
+    # --- fediverse forks on the same Mastodon API (ADR 0050) ---
+    # GoToSocial web permalink: /@<user>/statuses/<ULID>. The literal
+    # `statuses` segment is the guard, so the non-numeric ULID is accepted
+    # and kept verbatim (ULIDs are uppercase Crockford base32).
+    ("https://gts.example/@user/statuses/01HQ3W8M4PXP5VZ9R7K2N6T0YB",
+     "mastodon", "gts.example/01HQ3W8M4PXP5VZ9R7K2N6T0YB"),
+    # its ActivityPub object URL collapses to the same host/<id> identity
+    ("https://gts.example/users/user/statuses/01HQ3W8M4PXP5VZ9R7K2N6T0YB",
+     "mastodon", "gts.example/01HQ3W8M4PXP5VZ9R7K2N6T0YB"),
+    # Pleroma/Akkoma web permalink: /notice/<FlakeId> (a base62 run)
+    ("https://pleroma.example/notice/A1mZ9pQr7sT4uV2wXy",
+     "mastodon", "pleroma.example/A1mZ9pQr7sT4uV2wXy"),
+    # its ActivityPub object URL (a non-numeric id on the AP form) dedupes too
+    ("https://pleroma.example/users/nick/statuses/A1mZ9pQr7sT4uV2wXy",
+     "mastodon", "pleroma.example/A1mZ9pQr7sT4uV2wXy"),
+    # host lowercased, trailing slash tolerated, the id's case preserved
+    ("https://GTS.Example/@user/statuses/01HQ3W8M4PXP5VZ9R7K2N6T0YB/",
+     "mastodon", "gts.example/01HQ3W8M4PXP5VZ9R7K2N6T0YB"),
+    # a Pleroma AP *Object* URL (/objects/<uuid>) is NOT a /api/v1/statuses
+    # id, so it is left to the web adapter rather than misrouted to mastodon
+    ("https://pleroma.example/objects/abc12345-6789-def0-1234-56789abcdef0",
+     "web", None),
+    # the /notice/<id> length floor (16) keeps short word paths out: a
+    # /notice/privacy or hyphenated /notice/cookie-policy stays a web page
+    ("https://blog.example/notice/privacy", "web", None),
+    ("https://blog.example/notice/cookie-policy", "web", None),
+    # /@<user>/statuses/<id> with an empty id is not a status either
+    ("https://gts.example/@user/statuses/", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

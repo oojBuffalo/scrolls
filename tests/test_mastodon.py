@@ -391,3 +391,113 @@ def test_api_request_failure_raises():
 
 def test_registered_in_fetch_adapters():
     assert FETCH_ADAPTERS["mastodon"] is fetch_item
+
+
+# --- fediverse forks: GoToSocial + Pleroma/Akkoma on the same Mastodon API
+# (ADR 0050). Detection (test_detect.py) recognizes their extra URL shapes;
+# the fetch adapter is unchanged because the forks serve Mastodon-shaped
+# JSON, so these prove a non-numeric status id round-trips and fork-specific
+# response quirks don't break it. ---
+
+GTS_HOST = "gts.example"
+GTS_ID = "01HQ3W8M4PXP5VZ9R7K2N6T0YB"  # a ULID: 26 uppercase Crockford base32
+GTS_STATUS = {
+    "id": GTS_ID,
+    "created_at": "2026-05-01T10:00:00.000Z",
+    "url": f"https://{GTS_HOST}/@dev/statuses/{GTS_ID}",
+    "uri": f"https://{GTS_HOST}/users/dev/statuses/{GTS_ID}",
+    "content": "<p>Shipped a keyless Fediverse adapter today.</p>",
+    "spoiler_text": "",
+    "account": {
+        "username": "dev",
+        "acct": "dev",
+        "display_name": "Dev",
+        "url": f"https://{GTS_HOST}/@dev",
+    },
+    "tags": [{"name": "gotosocial", "url": f"https://{GTS_HOST}/tags/gotosocial"}],
+    "media_attachments": [],
+    "card": None,
+    "favourites_count": 4,
+    "reblogs_count": 1,
+    "replies_count": 0,
+    "reblog": None,
+}
+
+PLEROMA_HOST = "pleroma.example"
+PLEROMA_ID = "A1mZ9pQr7sT4uV2wXy"  # a FlakeId: a base62 run (18 chars)
+PLEROMA_STATUS = {
+    "id": PLEROMA_ID,
+    "created_at": "2026-05-02T12:30:00.000Z",
+    "url": f"https://{PLEROMA_HOST}/notice/{PLEROMA_ID}",
+    "uri": f"https://{PLEROMA_HOST}/objects/abc12345-6789-def0-1234-56789abcdef0",
+    "content": "<p>Spoiler ahead.</p>",
+    "spoiler_text": "CW test",
+    "account": {
+        "username": "nick",
+        "acct": "nick",
+        "display_name": "Nick",
+        "url": f"https://{PLEROMA_HOST}/users/nick",
+        "pleroma": {"is_admin": False},  # a Pleroma extension key; must be ignored
+    },
+    "tags": [],
+    "media_attachments": [],
+    "card": None,
+    "favourites_count": 0,
+    "reblogs_count": 0,
+    "replies_count": 0,
+    "reblog": None,
+    # Pleroma decorates the status with its own extension object; the adapter
+    # reads only the Mastodon-standard fields, so this is inert.
+    "pleroma": {"content": {"text/plain": "Spoiler ahead."}, "local": True},
+}
+
+
+def fork_get_json(status, calls):
+    """A get_json that records each requested URL and returns one fork status."""
+
+    def get_json(url):
+        calls.append(url)
+        if url.endswith("/context"):
+            return {"ancestors": [], "descendants": []}
+        if "/api/v1/statuses/" in url:
+            return status
+        raise AssertionError(f"unexpected URL: {url}")
+
+    return get_json
+
+
+def test_gotosocial_ulid_status_fetches_through_the_same_adapter():
+    calls = []
+    item = make_item(
+        id=f"mastodon:{GTS_HOST}/{GTS_ID}",
+        source_id=f"{GTS_HOST}/{GTS_ID}",
+        url=f"https://{GTS_HOST}/@dev/statuses/{GTS_ID}",
+    )
+    fetched = fetch_item(item, get_json=fork_get_json(GTS_STATUS, calls))
+    # the ULID id is used verbatim (case preserved, not lowercased), and
+    # replies_count==0 skips the context request
+    assert calls == [f"https://{GTS_HOST}/api/v1/statuses/{GTS_ID}"]
+    assert fetched.source == "mastodon"
+    assert fetched.provenance["adapter"] == "mastodon"
+    assert fetched.author == "Dev"
+    assert fetched.concepts == ("gotosocial",)
+    assert fetched.extracted_text == "Shipped a keyless Fediverse adapter today."
+    assert fetched.canonical_url == f"https://{GTS_HOST}/@dev/statuses/{GTS_ID}"
+    assert fetched.stage == "fetched"
+
+
+def test_pleroma_flakeid_status_with_extension_keys_and_cw():
+    calls = []
+    item = make_item(
+        id=f"mastodon:{PLEROMA_HOST}/{PLEROMA_ID}",
+        source_id=f"{PLEROMA_HOST}/{PLEROMA_ID}",
+        url=f"https://{PLEROMA_HOST}/notice/{PLEROMA_ID}",
+    )
+    fetched = fetch_item(item, get_json=fork_get_json(PLEROMA_STATUS, calls))
+    # the FlakeId is used verbatim; the Pleroma extension keys are inert; the
+    # content warning leads the searchable body
+    assert calls == [f"https://{PLEROMA_HOST}/api/v1/statuses/{PLEROMA_ID}"]
+    assert fetched.extracted_text.startswith("CW: CW test")
+    assert "Spoiler ahead." in fetched.extracted_text
+    assert fetched.provenance["adapter"] == "mastodon"
+    assert fetched.stage == "fetched"

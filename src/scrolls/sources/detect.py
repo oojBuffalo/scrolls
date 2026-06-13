@@ -495,42 +495,82 @@ def _bluesky_id(path_parts: list[str]) -> str | None:
     return None
 
 
+# A Fediverse status id is a snowflake integer (Mastodon), a ULID
+# (GoToSocial), or a base62 FlakeId (Pleroma/Akkoma) — every form is a run of
+# base62 with no separators, so this already excludes a hyphenated slug.
+_FEDIVERSE_ID = re.compile(r"[A-Za-z0-9]+")
+# The bare `/notice/<id>` shape (Pleroma/Akkoma) is anchored only by the weak
+# `notice` literal on a host we don't otherwise know, so its id carries a
+# length floor a real FlakeId clears (~18 chars) but a word path does not.
+_NOTICE_ID = re.compile(r"[A-Za-z0-9]{16,}")
+
+
 def _mastodon_id(host: str, path_parts: list[str]) -> str | None:
-    """`<host>/<status_id>` for a Mastodon status URL on any instance, else None.
+    """`<host>/<status_id>` for a Fediverse status URL on any instance, else None.
 
-    Mastodon is federated across thousands of independent instances with no
-    shared host, so unlike every other adapter a status is recognized by its
-    URL *shape* on whatever host the saved URL carries — this branch runs
-    only after every known-platform host has already been ruled out. Two
-    canonical forms are matched:
+    The Fediverse is federated across thousands of independent instances with
+    no shared host, so unlike every other adapter a status is recognized by
+    its URL *shape* on whatever host the saved URL carries — this branch runs
+    only after every known-platform host has already been ruled out. The
+    source name stays `mastodon`, but the shapes cover the whole
+    Mastodon-API-compatible family — Mastodon (and Hometown/glitch-soc),
+    GoToSocial, and Pleroma/Akkoma — because all of them serve the same
+    keyless `/api/v1/statuses/<id>` endpoint the adapter fetches (ADR 0050).
+    Four canonical forms are matched:
 
-        /@<user>/<status_id>                  — the web/UI permalink
+        /@<user>/<status_id>                  — Mastodon web/UI permalink
+        /@<user>/statuses/<status_id>         — GoToSocial web permalink
         /users/<user>/statuses/<status_id>    — the ActivityPub object URL
+        /notice/<status_id>                   — Pleroma/Akkoma web permalink
 
-    The status id must be all digits: Mastodon and its API-compatible forks
-    (Hometown, glitch-soc) mint snowflake integer ids, and the numeric
-    constraint is what keeps the host-agnostic heuristic from stealing
-    lookalike paths — a Medium `/@user/<slug>` post (non-numeric), a
-    Threads/TikTok `/@user/<kind>/<id>` (three segments). A misdetected
-    non-Mastodon URL degrades to a failed fetch (the adapter's API call
-    404s), never a wrong scroll — the conservative, reversible tradeoff a
-    federated network with no host list forces (ADR 0049).
+    Safety is host-agnostic, so the id constraint is what keeps the heuristic
+    from stealing lookalike paths. The Mastodon `/@<user>/<id>` form keeps the
+    strict all-digits rule (Mastodon mints snowflake integers), so a Medium
+    `/@user/<slug>` (non-numeric) stays a web page. The two `statuses`-bearing
+    forms are anchored by that distinctive literal — no mainstream platform
+    uses `/@user/statuses/<id>` or `/users/<user>/statuses/<id>` — so their id
+    may be any base62 run (a ULID or FlakeId, both non-numeric). The bare
+    `/notice/<id>` form has only the weak `notice` literal, so its id carries
+    a length floor (16+ base62 chars) that a real FlakeId clears while a
+    `/notice/privacy` or `/notice/cookie-policy` does not. A Pleroma AP
+    *Object* URL (`/objects/<uuid>`) is deliberately *not* matched — its uuid
+    is not a `/api/v1/statuses` id — and any residual misdetection degrades to
+    a failed fetch (the adapter's API call 404s), never a wrong scroll: the
+    conservative, reversible tradeoff a federated network with no host list
+    forces (ADR 0049).
 
     Identity carries the instance host because a status id is unique only
-    within its instance, and the two URL forms collapse to the same
-    `<host>/<status_id>` so a status saved either way dedupes. The host is
-    lowercased (DNS is case-insensitive); the `<user>` segment is not part
-    of identity. Profile pages, timelines, tag pages, and API/media routes
-    carry no status id and resolve to the source with no fetchable item —
-    Bluesky's and Lobsters' pattern (ADR 0048, ADR 0046).
+    within its instance, and every form collapses to the same
+    `<host>/<status_id>` so a status saved any way dedupes. The host is
+    lowercased (DNS is case-insensitive); the non-numeric ids are kept
+    verbatim (ULIDs are uppercase, FlakeIds case-sensitive), and the `<user>`
+    segment is not part of identity. Profiles, timelines, tag pages, and
+    API/media routes carry no status id and resolve to the source with no
+    fetchable item — Bluesky's and Lobsters' pattern (ADR 0048, ADR 0046).
     """
-    status_id: str | None = None
-    if len(path_parts) == 2 and path_parts[0].startswith("@"):
-        status_id = path_parts[1]
-    elif len(path_parts) == 4 and path_parts[0] == "users" and path_parts[2] == "statuses":
-        status_id = path_parts[3]
-    if status_id and status_id.isdigit():
-        return f"{host}/{status_id}"
+    status_id = _fediverse_status_id(path_parts)
+    return f"{host}/{status_id}" if status_id else None
+
+
+def _fediverse_status_id(path_parts: list[str]) -> str | None:
+    """The status id from a Mastodon/GoToSocial/Pleroma status URL shape, else None."""
+    n = len(path_parts)
+    # Mastodon web permalink: /@<user>/<digits>. The id stays strict digits so
+    # a Medium /@author/<slug> stays a web page.
+    if n == 2 and path_parts[0].startswith("@") and path_parts[1].isdigit():
+        return path_parts[1]
+    # GoToSocial web permalink: /@<user>/statuses/<ULID>. The `statuses`
+    # literal is the guard, so the id may be any base62 run.
+    if n == 3 and path_parts[0].startswith("@") and path_parts[1] == "statuses":
+        return path_parts[2] if _fullmatch(_FEDIVERSE_ID, path_parts[2]) else None
+    # ActivityPub object URL: /users/<user>/statuses/<id> (Mastodon,
+    # GoToSocial, Pleroma alike). The two literals anchor it.
+    if n == 4 and path_parts[0] == "users" and path_parts[2] == "statuses":
+        return path_parts[3] if _fullmatch(_FEDIVERSE_ID, path_parts[3]) else None
+    # Pleroma/Akkoma web permalink: /notice/<FlakeId>. Only the weak `notice`
+    # literal anchors it, so the id needs the length floor.
+    if n == 2 and path_parts[0] == "notice":
+        return path_parts[1] if _fullmatch(_NOTICE_ID, path_parts[1]) else None
     return None
 
 
