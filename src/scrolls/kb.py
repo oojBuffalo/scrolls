@@ -185,6 +185,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     # scholarly works clustered by shared DOI (ADR 0069), over the same
     # rendered items so every representation links to a scroll file
     works = works_over(items)
+    items_by_id = {item.id: item for item in items}
 
     _clear_generated(paths.library_dir)
     paths.library_dir.mkdir(parents=True, exist_ok=True)
@@ -197,9 +198,14 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         )
         pages += 1
     for category, members in by_category.items():
+        # category pages collapse a work's near-duplicate representations into
+        # one consolidated entry (ADR 0071) — the one page where a paper's
+        # arxiv/crossref/pubmed manifestations co-occur, since they share a
+        # category but not a source
         _write_page(
             paths, f"categories/{slugify(category) or 'untitled'}.md",
             f"Category: {category}", members, note=lambda i: i.source,
+            consolidate_works=items_by_id,
         )
         pages += 1
     summarized = 0
@@ -225,7 +231,6 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             ),
         )
         pages += 1
-    items_by_id = {item.id: item for item in items}
     _write_graph_page(paths, components, items_by_id)
     pages += 1
     _write_works_page(paths, works, items_by_id)
@@ -301,19 +306,87 @@ def _write_index(
 
 def _write_page(paths: LibraryPaths, relpath: str, title: str,
                 members: list[ScrollItem], note, lead: str | None = None,
-                trailer: list[str] | None = None) -> None:
+                trailer: list[str] | None = None,
+                consolidate_works: dict[str, ScrollItem] | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
-    ordered = sorted(members, key=lambda i: ((i.title or i.id).casefold(), i.id))
     lines = [f"# {title}", ""]
     if lead:  # synthesized concept summary (ADR 0025) leads the page
         lines += [lead, ""]
     lines += [f"{_count(len(members))}.", ""]
-    lines += [_item_line(item, page_dir, note(item)) for item in ordered]
+    if consolidate_works is not None:  # category pages collapse works (ADR 0071)
+        lines += _consolidated_body(members, page_dir, note, consolidate_works)
+    else:
+        ordered = sorted(members, key=_entry_sort_key)
+        lines += [_item_line(item, page_dir, note(item)) for item in ordered]
     if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
         lines += trailer
     target = paths.library_dir / relpath
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# Paper-source precedence for picking a work's *canonical* representation —
+# the one whose title heads a consolidated entry. The registered published
+# work (crossref) ranks first, then the indexed published record (pubmed),
+# then the preprint servers (biorxiv/medrxiv/arxiv), then standards (rfc):
+# published over pre-publication. The exact order rarely matters since a
+# work's representations usually share a title; the point is a deterministic
+# choice. Sources outside this map rank last, ties broken by id.
+_PAPER_SOURCE_RANK = {
+    "crossref": 0,
+    "pubmed": 1,
+    "biorxiv": 2,
+    "medrxiv": 3,
+    "arxiv": 4,
+    "rfc": 5,
+}
+_RANK_OTHER = len(_PAPER_SOURCE_RANK)
+
+
+def _entry_sort_key(item: ScrollItem) -> tuple[str, str]:
+    """A group page's bullet order: case-folded title, item id as tiebreak."""
+    return ((item.title or item.id).casefold(), item.id)
+
+
+def _consolidated_body(
+    members: list[ScrollItem], page_dir: str, note,
+    items_by_id: dict[str, ScrollItem],
+) -> list[str]:
+    """A category page's body with same-work representations collapsed (ADR 0071).
+
+    Items that are 2+ representations of one scholarly work *on this page*
+    (`works_over`, ADR 0069) render as a single consolidated entry — a bold
+    work heading carrying the DOI resolver link and a representation count,
+    then each representation as a nested bullet linking to its scroll —
+    instead of N near-duplicate top-level bullets. Items in no
+    multi-representation work on this page render as ordinary bullets, exactly
+    as the other group pages do. Works and singletons interleave in one
+    case-folded title order; a work sorts by its *canonical* representation's
+    title (`_PAPER_SOURCE_RANK`), so the published record's title heads it.
+    """
+    works = works_over(members)
+    consolidated_ids = {rep.id for work in works for rep in work.representations}
+    entries: list[tuple[tuple[str, str], list[str]]] = []
+    for work in works:
+        reps = [items_by_id[rep.id] for rep in work.representations]
+        canonical = min(
+            reps,
+            key=lambda item: (_PAPER_SOURCE_RANK.get(item.source, _RANK_OTHER), item.id),
+        )
+        block = [
+            f"- **{canonical.title or canonical.id}** — "
+            f"{_representation_count(len(reps))} "
+            f"([doi.org/{work.doi}]({work.url}))"
+        ]
+        # representations already sorted by id (works_over), nested beneath
+        block += [f"  {_item_line(item, page_dir, note(item))}" for item in reps]
+        entries.append((_entry_sort_key(canonical), block))
+    for item in members:
+        if item.id in consolidated_ids:
+            continue
+        entries.append((_entry_sort_key(item), [_item_line(item, page_dir, note(item))]))
+    entries.sort(key=lambda entry: entry[0])
+    return [line for _, block in entries for line in block]
 
 
 def _related_lines(heading: str, related: list[tuple[str, str, int]], name_for) -> list[str]:

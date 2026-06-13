@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1498 tests at the time of writing). The docs themselves
+`uv run pytest` (1603 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -422,7 +422,17 @@ choice (ADRs 0004, 0005).
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
   `library/graph.md`, `library/works.md`, plus per-source, per-category,
   per-concept, and per-tag pages from scratch each run so stale groups can't
-  linger; other files under `library/` are left alone. Concept pages merge spellings by
+  linger; other files under `library/` are left alone. **Category pages
+  consolidate works** (ADR 0071): a category page is the one group page where
+  a scholarly work's near-duplicate representations co-occur (they share a
+  category like `paper` but span sources), so each 2+-representation work
+  among the page's members — `works_over(members)`, the same DOI clustering
+  `scrolls works` and `works.md` use — collapses into one consolidated entry
+  (a bold work heading with the `doi.org` link, its canonical
+  representation's title, then each representation as a nested bullet linking
+  to its scroll) instead of several flat bullets; source pages stay flat
+  (single-source, no cross-source reps co-occur) and the count line still
+  counts scrolls. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,
@@ -682,9 +692,16 @@ Next steps already identified in decision records, in no required order:
   `scrolls works` (ADR 0069) delivers the consolidation view: it
   clusters those representations by the shared DOI that names the work —
   catching same-work groups even when the binding Crossref item is absent,
-  which the link graph cannot — and `library/works.md` (ADR 0070, the
-  `library/graph.md` analog, fed by the same `works_over(items)`) now makes
-  that clustering a browsable KB page. The remaining step is the deeper
-  KB-level *merge*: collapsing a work's near-duplicate `paper` entries so the
-  category/source pages show one consolidated entry rather than several,
-  alongside the reverse enrichment from richer Crossref `relation` data.
+  which the link graph cannot — `library/works.md` (ADR 0070, the
+  `library/graph.md` analog, fed by the same `works_over(items)`) makes
+  that clustering a browsable KB page, and **category pages now consolidate
+  a work's representations** (ADR 0071): the same `works_over` clustering,
+  scoped to each category page's members, collapses a work's near-duplicate
+  `paper` entries into one consolidated entry on the page where they
+  co-occur — the *presentation* form of the long-flagged merge. The
+  remaining step is the deeper merge of the **scrolls themselves**:
+  collapsing a work's per-representation scroll files and index rows into one
+  canonical item (so `search`, `list`, and the source pages also see one
+  entry, not several), alongside the reverse enrichment from richer Crossref
+  `relation` data that would let that one item carry every representation's
+  metadata.

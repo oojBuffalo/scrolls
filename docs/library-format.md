@@ -230,6 +230,44 @@ moved, mounted, or committed wholesale without breaking navigation.
   (`test_kb_tag_page_lists_related_tags`,
   `test_kb_tag_page_without_co_occurrence_omits_related_section`).
 
+#### Consolidated works on category pages
+
+A **category page** is the one group page where a scholarly work's
+near-duplicate representations co-occur: an arXiv preprint, its published
+Crossref article, and a PubMed record all classify as `paper`, so a flat
+list would show the same work several times. So a category page collapses
+each multi-representation work (ADR [0071](adr/0071-kb-category-work-consolidation.md))
+into one consolidated entry — a **bold work heading** carrying the
+`doi.org` resolver link and a representation count, then each
+representation as a **nested** bullet linking to its own scroll:
+
+<!-- pinned: example-category-consolidation -->
+```markdown
+# Category: paper
+
+2 scrolls.
+
+- **Attention Is All You Need** — 2 representations ([doi.org/10.5555/3295222](https://doi.org/10.5555/3295222))
+  - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv
+  - [Attention Is All You Need](../../scrolls/crossref/attention-is-all-you-need.md) — crossref
+```
+
+The clustering is `works.works_over` over *this page's* members — the same
+DOI identity `scrolls works` (ADR [0069](adr/0069-works-by-doi.md)) and
+`library/works.md` (ADR [0070](adr/0070-kb-works-page.md)) use — so a work
+consolidates only when **two or more** of its representations are rendered
+**in this category**; a lone representation on the page stays an ordinary
+bullet. The heading's title is the work's *canonical* representation (the
+published record outranks the preprint), and consolidated works interleave
+with ordinary bullets in the same case-folded title order. The count line
+still counts **scrolls** (every representation is one), not entries, so it
+can exceed the number of top-level bullets. The other group pages —
+`sources/`, `concepts/`, `tags/` — are **not** consolidated: a source page
+is single-source, so a work's cross-source representations never co-occur
+there (`test_kb_category_page_consolidates_work_representations`,
+`test_kb_category_page_uses_canonical_title_and_interleaves`,
+`test_kb_source_pages_do_not_consolidate`).
+
 ### The index
 
 `library/index.md` is the entry point: a count line, then one-line links

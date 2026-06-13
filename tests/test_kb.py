@@ -429,11 +429,11 @@ def test_kb_recompile_clears_a_stale_graph_cluster(scrolls_home, capsys):
 # --- the works page library/works.md (ADR 0070) --------------------------
 
 
-def _crossref_rep(doi, title):
+def _crossref_rep(doi, title, *, category=None):
     """A rendered crossref representation whose source_id is the work's DOI."""
     return make_rendered(
         f"crossref:{doi}", "crossref", title,
-        source_id=doi, url=f"https://doi.org/{doi}")
+        source_id=doi, url=f"https://doi.org/{doi}", category=category)
 
 
 def test_kb_works_page_clusters_representations_by_shared_doi(scrolls_home, capsys):
@@ -529,6 +529,110 @@ def test_kb_recompile_clears_a_stale_work(scrolls_home, capsys):
     run_kb(capsys)
     works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
     assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
+
+
+def _category_bullets(scrolls_home, slug):
+    """The top-level (column-0) bullets of a compiled category page."""
+    page = (scrolls_home / "library" / "categories" / f"{slug}.md").read_text(
+        encoding="utf-8"
+    )
+    return [line for line in page.splitlines() if line.startswith("- ")]
+
+
+def test_kb_category_page_consolidates_work_representations(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    doi = "10.5555/3295222"
+    # two paper representations of one work, both classified `paper`: a preprint
+    # naming the published DOI and the crossref record whose source_id is it
+    insert_item(db, make_rendered(
+        "arxiv:1706.03762", "arxiv", "Attention Is All You Need",
+        category="paper", links=(f"https://doi.org/{doi}",)))
+    insert_item(db, _crossref_rep(doi, "Attention Is All You Need", category="paper"))
+    # a standalone paper that is part of no multi-representation work
+    insert_item(db, make_rendered(
+        "arxiv:2000.00001", "arxiv", "Another Paper", category="paper"))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "categories" / "paper.md").read_text(encoding="utf-8")
+    # the work renders as one consolidated entry: a bold heading with its DOI
+    # resolver link, then each representation nested beneath
+    assert (
+        f"- **Attention Is All You Need** — 2 representations "
+        f"([doi.org/{doi}](https://doi.org/{doi}))"
+    ) in page
+    assert (
+        "  - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv"
+    ) in page
+    assert (
+        "  - [Attention Is All You Need](../../scrolls/crossref/attention-is-all-you-need.md) — crossref"
+    ) in page
+    # the duplicated work never appears as two separate top-level bullets
+    assert "\n- [Attention Is All You Need](" not in page
+    # the standalone paper stays an ordinary top-level bullet
+    assert "- [Another Paper](../../scrolls/arxiv/another-paper.md) — arxiv" in page
+    # the count line still counts scrolls, not entries — every representation
+    # is still a scroll on the page
+    assert "3 scrolls." in page
+
+
+def test_kb_category_page_uses_canonical_title_and_interleaves(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    doi = "10.5555/zeta"
+    # crossref (published) outranks arxiv (preprint), so its title heads the work
+    insert_item(db, make_rendered(
+        "arxiv:5", "arxiv", "Zeta Preprint Title", category="paper",
+        links=(f"https://doi.org/{doi}",)))
+    insert_item(db, _crossref_rep(doi, "Zeta Published Title", category="paper"))
+    # a singleton that sorts before the work's canonical title
+    insert_item(db, make_rendered("web:apex", "web", "Apex Paper", category="paper"))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    bullets = _category_bullets(scrolls_home, "paper")
+    # the singleton 'Apex Paper' sorts before the work header 'Zeta Published Title'
+    assert bullets[0] == "- [Apex Paper](../../scrolls/web/apex-paper.md) — web"
+    # the canonical (crossref) title heads the consolidated work, not the preprint's
+    assert bullets[1].startswith("- **Zeta Published Title** — 2 representations")
+    assert "Zeta Preprint Title" not in bullets[1]
+
+
+def test_kb_category_page_leaves_single_representation_uncollapsed(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    doi = "10.5555/solo"
+    # only one representation of the work is on this page (the published DOI is
+    # not in the library), so there is nothing to consolidate — a flat bullet
+    insert_item(db, make_rendered(
+        "arxiv:7", "arxiv", "Solo Preprint", category="paper",
+        links=(f"https://doi.org/{doi}",)))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    bullets = _category_bullets(scrolls_home, "paper")
+    assert bullets == ["- [Solo Preprint](../../scrolls/arxiv/solo-preprint.md) — arxiv"]
+
+
+def test_kb_source_pages_do_not_consolidate(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    doi = "10.5555/same-source"
+    # two same-source representations of one work would consolidate on a category
+    # page, but source pages are single-source and list each scroll flatly
+    insert_item(db, make_rendered(
+        "arxiv:8", "arxiv", "Source Page Preprint", category="paper",
+        links=(f"https://doi.org/{doi}",)))
+    insert_item(db, make_rendered(
+        "arxiv:9", "arxiv", "Source Page Other", category="paper", source_id=doi,
+        url=f"https://example.org/arxiv:9"))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    source_page = (scrolls_home / "library" / "sources" / "arxiv.md").read_text(encoding="utf-8")
+    assert "**" not in source_page  # no consolidated work heading
+    assert "representations" not in source_page
 
 
 def make_summary(slug, display, text, members_hash="abc123"):

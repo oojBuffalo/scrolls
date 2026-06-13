@@ -289,6 +289,22 @@ def test_library_format_works_page_example_matches_compiler_output(tmp_path):
     )
 
 
+def test_library_format_category_consolidation_example_matches_compiler_output(tmp_path):
+    paths = get_paths(tmp_path / "home")
+    paths.root.mkdir(parents=True)
+    init_db(paths.db_path)
+    # the same two paper representations of one work, both classified `paper`,
+    # so the category page collapses them into one consolidated entry (ADR 0071)
+    insert_item(paths.db_path, _EXAMPLE_WORK_PREPRINT)
+    insert_item(paths.db_path, _EXAMPLE_WORK_PUBLISHED)
+    compile_kb(paths)
+    page = (paths.library_dir / "categories" / "paper.md").read_text(encoding="utf-8")
+    assert page == _pinned_block("example-category-consolidation"), (
+        "docs/library-format.md's example consolidated category page no longer "
+        "matches compile_kb() output for the documented fixture items"
+    )
+
+
 def test_library_format_names_every_generated_artifact():
     """Generated KB dirs/files and agent install paths must appear in the doc."""
     text = _LIBRARY_FORMAT.read_text(encoding="utf-8")
