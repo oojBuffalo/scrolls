@@ -82,6 +82,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
     assert {tool.name for tool in tools} == {
         "search_scrolls",
         "list_scrolls",
+        "list_facets",
         "get_scroll",
         "get_related_scrolls",
         "get_link_graph",
@@ -178,6 +179,51 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
 
 def test_list_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.list_scrolls() == []
+
+
+def test_list_facets_enumerates_the_filterable_vocabulary(scrolls_home):
+    # The discovery counterpart to search_scrolls/list_scrolls (ADR 0080):
+    # which values can the same facets be filtered by?
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:2401.0001", source="arxiv",
+        url="https://arxiv.org/abs/2401.0001", saved_at="2026-06-12T00:00:00+00:00",
+        title="A paper", category="paper", concepts=("Machine Learning",),
+        stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="web:abc", source="web", url="https://example.org/post",
+        saved_at="2026-06-12T01:00:00+00:00", title="A post", tags=("loose",),
+        stage="fetched",
+    ))
+
+    payload = mcp_server.list_facets()
+    assert payload["facets"]["sources"] == [
+        {"value": "arxiv", "count": 1},
+        {"value": "web", "count": 1},
+    ]
+    # the unclassified web item is the "" category, round-trippable to category=""
+    assert {"value": "", "count": 1} in payload["facets"]["categories"]
+
+    # a field narrows to one dimension, and the scoping facets apply
+    scoped = mcp_server.list_facets("concepts", source="arxiv")
+    assert scoped == {
+        "facets": {
+            "concepts": [
+                {"value": "Machine Learning", "slug": "machine-learning", "count": 1}
+            ]
+        }
+    }
+
+
+def test_list_facets_before_init_is_empty_but_well_shaped(scrolls_home):
+    assert mcp_server.list_facets() == {
+        "facets": {"sources": [], "categories": [], "tags": [], "concepts": []}
+    }
 
 
 def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):

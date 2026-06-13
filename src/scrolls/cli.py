@@ -22,6 +22,9 @@ from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import read_schema_version
 from scrolls.doctor import run_doctor
+from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
+from scrolls.facets import FIELDS as FACET_FIELDS
+from scrolls.facets import compute_facets
 from scrolls.feeds import (
     FeedError,
     follow_feed,
@@ -169,6 +172,48 @@ def build_parser() -> argparse.ArgumentParser:
         "missing scrolls from the index, rebuild the search index. "
         "Missing media files (run `scrolls media`) and orphan scroll "
         "files are reported but never touched",
+    )
+
+    facets_parser = subparsers.add_parser(
+        "facets",
+        help="Enumerate the filterable vocabulary with item counts (JSON output)",
+    )
+    facets_parser.add_argument(
+        "field",
+        nargs="?",
+        choices=FACET_FIELDS,
+        default=None,
+        help="Report only this dimension; default reports "
+        f"{', '.join(FACET_FIELDS)}",
+    )
+    facets_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_FACETS_LIMIT,
+        help=f"Maximum values per dimension (default {DEFAULT_FACETS_LIMIT})",
+    )
+    facets_parser.add_argument(
+        "--source", default=None, help="Only count items from one source, e.g. web, arxiv"
+    )
+    facets_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only count items with this category; an empty value selects "
+        "unclassified items",
+    )
+    facets_parser.add_argument(
+        "--stage",
+        choices=("detected", "fetched", "rendered"),
+        default=None,
+        help="Only count items at one pipeline stage",
+    )
+    facets_parser.add_argument(
+        "--tag", default=None, help="Only count items carrying this tag (case-insensitive)"
+    )
+    facets_parser.add_argument(
+        "--concept",
+        default=None,
+        help="Only count items carrying this concept (matched by slug)",
     )
 
     fetch_parser = subparsers.add_parser(
@@ -497,6 +542,16 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_detect(args.url)
     if args.command == "doctor":
         return _cmd_doctor(args.fix)
+    if args.command == "facets":
+        return _cmd_facets(
+            args.field,
+            args.limit,
+            args.source,
+            args.category,
+            args.stage,
+            args.tag,
+            args.concept,
+        )
     if args.command == "fetch":
         return _cmd_fetch(args.id, args.limit)
     if args.command == "graph":
@@ -1213,6 +1268,30 @@ def _cmd_list(
             ]
         )
     )
+    return 0
+
+
+def _cmd_facets(
+    field: str | None,
+    limit: int,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+) -> int:
+    paths = get_paths()
+    payload = compute_facets(
+        paths.db_path,
+        field=field,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
+        limit=limit,
+    )
+    print(json.dumps(payload))
     return 0
 
 

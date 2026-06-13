@@ -956,6 +956,55 @@ $ scrolls list --source x --category technique
 *(in the first call, array entries after the first are elided here for
 width — every entry has the same seven keys)*
 
+### `scrolls facets [field] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+
+The filterable vocabulary with item counts — the browse half of the
+search/browse pair (ADR 0080). `list`/`search`/`context` *narrow* by
+`--source`/`--category`/`--tag`/`--concept`; `facets` *enumerates* what
+those values can be, so an agent learns the library's real categories,
+tags, and concept slugs before filtering. Output is
+`{"facets": {dimension: [{"value", "count", …}, …]}}`; with no `field`,
+every dimension (`sources`, `categories`, `tags`, `concepts`) is
+reported, in that order, and a `field` narrows the payload to that one
+(`test_facets_reports_every_dimension`,
+`test_facets_single_field_returns_only_that_dimension`). An empty or
+uninitialized library reports every dimension as `[]`
+(`test_facets_uninitialized_library_is_empty_but_well_shaped`); an
+unknown `field` is a usage error, exit 2
+(`test_facets_rejects_an_unknown_field`).
+
+Each list is ranked by count descending, then value ascending, and
+capped at `--limit` (default 20) per dimension
+(`test_facets_limit_caps_each_dimension`). Sources and categories are
+the scalar columns; the unclassified pool surfaces as the `""` category
+value, round-trippable to `--category ""`
+(`test_categories_report_unclassified_pool_as_empty_string`). Tags and
+concepts are grouped exactly as the `--tag`/`--concept` filters and the
+KB pages group them — tags case-folded, concepts by slug, the smallest
+spelling the display form
+(`test_tags_merge_case_insensitively_with_smallest_spelling`,
+`test_concepts_merge_by_slug_and_expose_the_slug`); a concept also
+carries the `slug` you would pass to `--concept`, and two spellings of
+one concept on one item count it once
+(`test_repeated_spellings_on_one_item_count_it_once`). The same optional
+facets that scope `search` scope the counts here, so
+`scrolls facets concepts --source arxiv` answers "which concepts do my
+arXiv papers carry?".
+
+```console
+$ scrolls facets
+{"facets": {"sources": [{"value": "x", "count": 3}, {"value": "arxiv", "count": 1}, {"value": "web", "count": 1}, {"value": "wikipedia", "count": 1}, {"value": "youtube", "count": 1}], "categories": [{"value": "", "count": 3}, {"value": "paper", "count": 1}, {"value": "reference", "count": 1}, {"value": "technique", "count": 1}, {"value": "tutorial", "count": 1}], "tags": [{"value": "Databases", "count": 2}, {"value": "Reading", "count": 1}, {"value": "cs.CL", "count": 1}, {"value": "cs.LG", "count": 1}, {"value": "fts", "count": 1}, {"value": "sqlite", "count": 1}], "concepts": [{"value": "full-text search", "count": 2, "slug": "full-text-search"}, {"value": "Computation and Language", "count": 1, "slug": "computation-and-language"}, {"value": "Database engines", "count": 1, "slug": "database-engines"}, {"value": "Machine Learning", "count": 1, "slug": "machine-learning"}, ...]}}
+[exit 0]
+
+$ scrolls facets concepts --source arxiv
+{"facets": {"concepts": [{"value": "Computation and Language", "count": 1, "slug": "computation-and-language"}, {"value": "Machine Learning", "count": 1, "slug": "machine-learning"}]}}
+[exit 0]
+```
+
+*(the first call's `concepts` list is elided for width — the unclassified
+`x:3333`/`youtube`/`web` items and the `""` category show the pool a
+batch `classify` would pick up)*
+
 ### `scrolls show <id>`
 
 One item in full: every `ScrollItem` field
@@ -1283,6 +1332,7 @@ The tools wrap the same engines as the CLI commands
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, optionally faceted |
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
+| `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
@@ -1442,6 +1492,8 @@ scrolls unfollow ea77c1d5239e                     # already gone: exit 1
 scrolls set x:1111 tags=sqlite,fts "concepts=full-text search"
 scrolls set x:1111 usefulness=high                # unknown field: exit 1
 scrolls set x:2222 "concepts=full-text search"    # a 2-scroll concept now exists
+scrolls facets                                    # the filterable vocabulary, with counts
+scrolls facets concepts --source arxiv            # concepts scoped to one source
 scrolls kb --engine llm                           # without a key: exit 1
 scrolls kb --engine llm --batch                   # batch transport, without a key: exit 1
 scrolls doctor                                    # healthy: exit 0

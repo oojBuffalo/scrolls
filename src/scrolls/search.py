@@ -20,7 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.items import register_facet_functions, tag_concept_filters
+from scrolls.items import item_filters, register_facet_functions
 
 _BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
 _SNIPPET_TOKENS = 12
@@ -77,7 +77,7 @@ def search_items(
     match = _escape_query(query)
     if not db_path.exists():
         return []
-    clauses, params = _filters(source, category, stage, tag, concept)
+    clauses, params = item_filters(source, category, stage, tag, concept)
     sql = _QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))
     conn = sqlite3.connect(db_path)
     register_facet_functions(conn)
@@ -86,33 +86,6 @@ def search_items(
     finally:
         conn.close()
     return [SearchHit(*row) for row in rows]
-
-
-def _filters(
-    source: str | None,
-    category: str | None,
-    stage: str | None,
-    tag: str | None,
-    concept: str | None,
-) -> tuple[list[str], list[str]]:
-    """SQL clauses and their params for the optional facets, in column order."""
-    clauses: list[str] = []
-    params: list[str] = []
-    if source is not None:
-        clauses.append("items.source = ?")
-        params.append(source)
-    if category == "":
-        clauses.append("items.category IS NULL")
-    elif category is not None:
-        clauses.append("items.category = ?")
-        params.append(category)
-    if stage is not None:
-        clauses.append("items.stage = ?")
-        params.append(stage)
-    membership_clauses, membership_params = tag_concept_filters(tag, concept)
-    clauses += membership_clauses
-    params += membership_params
-    return clauses, params
 
 
 def _escape_query(query: str) -> str:

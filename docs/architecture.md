@@ -420,8 +420,23 @@ choice (ADRs 0004, 0005).
   `concept` slugified — the `scrolls related` comparisons, via two SQL
   functions registered on the connection (`items.register_facet_functions`)
   — so the filtering stays in SQL and `search`'s `LIMIT` is still correct
-  (ADR 0059). The clause builder (`items.tag_concept_filters`) is shared by
-  `search_items` and `list_items`.
+  (ADR 0059). The membership-clause builder (`items.tag_concept_filters`)
+  and the full scalar+membership filter builder (`items.item_filters`,
+  promoted from `search` so `search` and `facets` share one) keep the
+  facets identical across the surfaces.
+- **Facets** (`facets.py`) — the browse half of the search/browse pair:
+  `scrolls facets [field]` enumerates the *filterable vocabulary* — the
+  `sources`, `categories`, `tags`, and `concepts` an agent can pass to the
+  search/list facets — with per-value item counts, so "what can I filter
+  by?" has a live JSON answer instead of only the static KB facet pages
+  (ADR 0080, `tests/test_facets.py`). Sources and categories are scalar
+  `GROUP BY` counts (the unclassified pool surfaces as `""`,
+  round-trippable to `--category ""`); tags and concepts reuse the KB's
+  `group_tags`/`group_concepts` so the enumerated values group exactly as
+  the `--tag`/`--concept` filters key on them (case-fold, slug), each
+  counted by distinct item. The same optional facets scope the counts
+  (`scrolls facets concepts --source arxiv`), and the dimension reuses
+  `items.item_filters`.
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
   no LLM: link connections in either direction (resolved through source
   detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv
@@ -607,7 +622,8 @@ choice (ADRs 0004, 0005).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `list_scrolls`,
-  `get_scroll`,
+  `list_facets` (ADR 0080 — the filterable vocabulary with counts, the
+  discovery counterpart to `list_scrolls`), `get_scroll`,
   `get_related_scrolls`, `get_link_graph`, `get_works` (ADR 0069 —
   same-work clusters by DOI; `item=` gives the per-item lens of ADR 0072),
   `get_concept_page`,

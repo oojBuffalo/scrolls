@@ -236,6 +236,42 @@ def tag_concept_filters(
     return clauses, params
 
 
+def item_filters(
+    source: str | None,
+    category: str | None,
+    stage: str | None,
+    tag: str | None,
+    concept: str | None,
+) -> tuple[list[str], list[str]]:
+    """SQL clauses and their params for the optional facets, in column order.
+
+    The clauses are `items.`-qualified so they correlate equally in a bare
+    `SELECT ... FROM items` query and in `search_items`' FTS join — shared by
+    `search` (the ranked match) and `facets` (the vocabulary enumeration).
+    `category == ""` selects the unclassified pool (`category IS NULL`), the
+    `scrolls set` empty-clears convention; `tag`/`concept` are the membership
+    facets (`tag_concept_filters`), so the connection must have run
+    `register_facet_functions`. `None` never filters.
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if source is not None:
+        clauses.append("items.source = ?")
+        params.append(source)
+    if category == "":
+        clauses.append("items.category IS NULL")
+    elif category is not None:
+        clauses.append("items.category = ?")
+        params.append(category)
+    if stage is not None:
+        clauses.append("items.stage = ?")
+        params.append(stage)
+    membership_clauses, membership_params = tag_concept_filters(tag, concept)
+    clauses += membership_clauses
+    params += membership_params
+    return clauses, params
+
+
 def list_items(
     db_path: Path,
     stage: str | None = None,

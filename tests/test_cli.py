@@ -1844,6 +1844,117 @@ def test_list_rejects_an_unknown_stage(scrolls_home):
     assert excinfo.value.code == 2
 
 
+# --- scrolls facets (ADR 0080) ---
+
+
+def _seed_facet_items():
+    """Insert a small classified library; library must already exist."""
+    db = get_paths().db_path
+    rows = [
+        ScrollItem(
+            id="arxiv:1",
+            source="arxiv",
+            url="https://arxiv.org/abs/1",
+            saved_at="2026-01-01T00:00:00+00:00",
+            category="paper",
+            tags=("cs.CL",),
+            concepts=("Machine Learning",),
+        ),
+        ScrollItem(
+            id="arxiv:2",
+            source="arxiv",
+            url="https://arxiv.org/abs/2",
+            saved_at="2026-01-02T00:00:00+00:00",
+            category="paper",
+            tags=("cs.LG",),
+            concepts=("machine learning",),
+        ),
+        ScrollItem(
+            id="web:1",
+            source="web",
+            url="https://example.com/a",
+            saved_at="2026-01-03T00:00:00+00:00",
+            tags=("Rust",),
+            concepts=("Cooking",),
+        ),
+    ]
+    for item in rows:
+        insert_item(db, item)
+
+
+def test_facets_uninitialized_library_is_empty_but_well_shaped(scrolls_home, capsys):
+    exit_code = main(["facets"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "facets": {"sources": [], "categories": [], "tags": [], "concepts": []}
+    }
+
+
+def test_facets_reports_every_dimension(scrolls_home, capsys):
+    main(["init"])
+    _seed_facet_items()
+    capsys.readouterr()
+
+    main(["facets"])
+    facets = json.loads(capsys.readouterr().out)["facets"]
+    assert facets["sources"] == [
+        {"value": "arxiv", "count": 2},
+        {"value": "web", "count": 1},
+    ]
+    # the unclassified web item surfaces as the "" category, round-trippable
+    # to `--category ""`
+    assert facets["categories"] == [
+        {"value": "paper", "count": 2},
+        {"value": "", "count": 1},
+    ]
+    # the two spellings of "machine learning" merge by slug, smallest spelling
+    # the display form, counting two distinct items
+    assert facets["concepts"][0] == {
+        "value": "Machine Learning",
+        "slug": "machine-learning",
+        "count": 2,
+    }
+
+
+def test_facets_single_field_returns_only_that_dimension(scrolls_home, capsys):
+    main(["init"])
+    _seed_facet_items()
+    capsys.readouterr()
+
+    main(["facets", "concepts"])
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["facets"]) == {"concepts"}
+
+
+def test_facets_scopes_to_a_source(scrolls_home, capsys):
+    main(["init"])
+    _seed_facet_items()
+    capsys.readouterr()
+
+    main(["facets", "concepts", "--source", "arxiv"])
+    concepts = json.loads(capsys.readouterr().out)["facets"]["concepts"]
+    assert concepts == [
+        {"value": "Machine Learning", "slug": "machine-learning", "count": 2},
+    ]
+
+
+def test_facets_limit_caps_each_dimension(scrolls_home, capsys):
+    main(["init"])
+    _seed_facet_items()
+    capsys.readouterr()
+
+    main(["facets", "concepts", "--limit", "1"])
+    concepts = json.loads(capsys.readouterr().out)["facets"]["concepts"]
+    assert len(concepts) == 1
+
+
+def test_facets_rejects_an_unknown_field(scrolls_home):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["facets", "bogus"])
+    assert excinfo.value.code == 2
+
+
 # --- scrolls media (ADR 0011) ---
 
 

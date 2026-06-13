@@ -118,6 +118,8 @@ uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; with a
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
+uv run scrolls facets         # the filterable vocabulary (sources/categories/tags/concepts) with counts, as JSON
+uv run scrolls facets concepts --source arxiv  # one dimension, scoped by the same facets as search (ADR 0080)
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price

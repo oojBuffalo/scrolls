@@ -20,6 +20,8 @@ from typing import Any
 from scrolls import feeds
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
+from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
+from scrolls.facets import compute_facets
 from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
@@ -46,6 +48,7 @@ _INSTRUCTIONS = (
     "get_context_bundle for a compact, citable overview of a topic; use "
     "search_scrolls and get_scroll for depth, list_scrolls to browse the "
     "library by facet (source, category, tag, concept) without a query, "
+    "list_facets to discover which facet values exist before filtering, "
     "get_related_scrolls and "
     "get_concept_page (or get_tag_page) to follow connections, get_link_graph "
     "for the whole "
@@ -135,6 +138,41 @@ def list_scrolls(
         }
         for item in items
     ]
+
+
+def list_facets(
+    field: str | None = None,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+    limit: int = DEFAULT_FACETS_LIMIT,
+) -> dict[str, Any]:
+    """Enumerate the library's filterable vocabulary with item counts.
+
+    The discovery counterpart to search_scrolls/list_scrolls: it answers
+    "what can I filter by?" before you filter. With no `field`, reports every
+    dimension — `sources`, `categories`, `tags`, `concepts` — as
+    `{"facets": {dimension: [{"value", "count", ...}, ...]}}`; pass a `field`
+    to narrow to one. Each list is ranked by count then value and capped at
+    `limit` (default 20). Categories report the unclassified pool as the empty
+    string ""; concepts carry the `slug` you would pass as the `concept` facet.
+    The same optional facets that scope search_scrolls scope these counts, so
+    `list_facets("concepts", source="arxiv")` asks which concepts the saved
+    arXiv papers carry. Use it to learn the real category, tag, and concept
+    values before calling search_scrolls/list_scrolls with one.
+    """
+    return compute_facets(
+        get_paths().db_path,
+        field=field,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
+        limit=limit,
+    )
 
 
 def get_scroll(item_id: str) -> dict[str, Any]:
@@ -378,6 +416,7 @@ def compile_library() -> dict[str, Any]:
 _TOOLS = (
     search_scrolls,
     list_scrolls,
+    list_facets,
     get_scroll,
     get_related_scrolls,
     get_link_graph,
