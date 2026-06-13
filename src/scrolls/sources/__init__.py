@@ -41,6 +41,7 @@ from scrolls.sources import (  # noqa: E402
     packagist,
     pdf,
     piefed,
+    pubmed,
     pypi,
     rubygems,
     stackexchange,
@@ -96,6 +97,10 @@ FETCH_ADAPTERS = {
     "npm": npm.fetch_item,
     "packagist": packagist.fetch_item,
     "pdf": pdf.fetch_item,
+    # PubMed indexes the biomedical literature, the arXiv/Crossref paper sibling;
+    # MeSH descriptors become concepts and the article DOI links to its Crossref
+    # scroll (the preprint↔published edge's biomedical analog, ADR 0065).
+    "pubmed": pubmed.fetch_item,
     "pypi": pypi.fetch_item,
     "rubygems": rubygems.fetch_item,
     "stackexchange": stackexchange.fetch_item,

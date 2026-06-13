@@ -51,6 +51,12 @@ HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
+# PubMed has its own dedicated host where the first path segment is the PMID;
+# the legacy `ncbi.nlm.nih.gov/pubmed/<pmid>` form rides the shared NCBI host
+# that also serves PMC, Gene, Nucleotide, …, so it is matched by *shape* rather
+# than claimed wholesale (ADR 0065).
+PUBMED_HOSTS = {"pubmed.ncbi.nlm.nih.gov", "www.pubmed.ncbi.nlm.nih.gov"}
+NCBI_HOSTS = {"ncbi.nlm.nih.gov", "www.ncbi.nlm.nih.gov"}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -202,6 +208,16 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
+
+    if host in PUBMED_HOSTS:
+        return DetectedSource("pubmed", _pubmed_id(path_parts))
+
+    # The legacy `ncbi.nlm.nih.gov/pubmed/<pmid>` form lives on a host that
+    # serves many NCBI databases, so it is shape-matched (returns None → falls
+    # through for PMC/Gene/… paths), not host-claimed like the dedicated host.
+    ncbi_pmid = _ncbi_pubmed_id(host, path_parts)
+    if ncbi_pmid is not None:
+        return DetectedSource("pubmed", ncbi_pmid)
 
     # Mastodon/Fediverse has no shared host, so it is matched by URL shape on
     # whatever instance the URL names — after every known-host branch above,
@@ -644,6 +660,42 @@ def _crossref_id(path_parts: list[str]) -> str | None:
         return None
     doi = unquote("/".join(path_parts)).strip().lower()
     return doi if _DOI_RE.match(doi) else None
+
+
+def _pubmed_id(path_parts: list[str]) -> str | None:
+    """The PMID for a `pubmed.ncbi.nlm.nih.gov/<pmid>` URL, else None.
+
+    PubMed permalinks are `pubmed.ncbi.nlm.nih.gov/<pmid>/`, where the PMID is
+    the integer accession the efetch API takes. A record subpage
+    (`/<pmid>/citedby/`) dedupes to the record by taking only the first segment.
+    The PMID is digits-only, so the search, advanced-query, and home pages
+    (a non-numeric or empty first segment) carry no record and resolve to the
+    source with no fetchable item — github's profile-page pattern.
+    """
+    if path_parts and path_parts[0].isdigit():
+        return path_parts[0]
+    return None
+
+
+def _ncbi_pubmed_id(host: str, path_parts: list[str]) -> str | None:
+    """The PMID for a legacy `ncbi.nlm.nih.gov/pubmed/<pmid>` URL, else None.
+
+    Before PubMed moved to its own host, records lived at
+    `www.ncbi.nlm.nih.gov/pubmed/<pmid>` (NCBI now redirects this to the
+    dedicated host). That host still serves many other NCBI databases — PMC
+    (`/pmc/...`), Gene, Nucleotide — so, unlike the dedicated host, it is not
+    claimed wholesale: only the `/pubmed/<digits>` shape matches, and every
+    other NCBI path falls through to `web`. The PMID is taken verbatim, so a
+    legacy and a modern link to the same record dedupe to one `pubmed:<pmid>`.
+    """
+    if (
+        host in NCBI_HOSTS
+        and len(path_parts) >= 2
+        and path_parts[0] == "pubmed"
+        and path_parts[1].isdigit()
+    ):
+        return path_parts[1]
+    return None
 
 
 def _hackernews_id(path_parts: list[str], query: str) -> str | None:

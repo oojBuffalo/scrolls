@@ -340,6 +340,28 @@ titles joined with a subtitle, creators as "Given Family", the
 as `tags`, and the landing page plus the parent work's container DOI as
 `links` — that container DOI resolving through `scrolls related`/`graph`
 to a saved Crossref paper, a DataCite-output↔parent-work edge),
+**pubmed** (the keyless NCBI E-utilities efetch API — see
+`docs/adr/0065-pubmed-adapter.md`: a saved `pubmed.ncbi.nlm.nih.gov/<pmid>`
+link becomes a clean scroll for the biomedical literature, the
+life-sciences sibling of the arXiv and Crossref paper adapters, instead
+of a `trafilatura` scrape of the abstract page that drops the record's
+structure. Identity is the integer PMID; the dedicated host is claimed
+wholesale (the PMID is the first path segment, subpages dedupe) while the
+legacy `ncbi.nlm.nih.gov/pubmed/<pmid>` form is shape-matched so the
+shared host's other databases — PMC, Gene, Nucleotide — fall through to
+`web`. One efetch GET returns the record as XML, parsed with stdlib
+ElementTree. The curated **MeSH** descriptors become `concepts` — the
+controlled subject vocabulary that joins github topics and arXiv taxonomy
+names in the KB concept graph — with author keywords the fallback for a
+not-yet-MEDLINE-indexed article; the abstract (structured sections kept)
+becomes a plain `summary` with no `extracted_text` (PubMed has no full
+text, the Crossref shape); publication types and the journal venue become
+`tags`; `published_at` prefers the electronic article date, then the
+journal issue date, then the PubMed history; and the article DOI becomes a
+`doi.org` `link` that resolves to its `crossref:<doi>` scroll — the
+PubMed↔Crossref paper edge, the biomedical analog of the
+arXiv preprint↔published edge. A PubMed record classifies as `paper`; a
+record with no abstract is an honest metadata-only scroll),
 and **packagist** (the keyless Packagist JSON API — see
 `docs/adr/0039-packagist-adapter.md`: a saved
 `packagist.org/packages/<vendor>/<name>` page becomes a clean scroll from

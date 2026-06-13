@@ -33,6 +33,16 @@ def test_arxiv_is_paper():
     assert classify_item(item).category == "paper"
 
 
+def test_pubmed_classifies_as_paper():
+    # PubMed indexes biomedical papers — the arXiv/Crossref sibling (ADR 0065)
+    item = make_item(
+        source="pubmed",
+        source_id="22745249",
+        title="A programmable dual-RNA-guided DNA endonuclease",
+    )
+    assert classify_item(item).category == "paper"
+
+
 def test_github_is_project():
     item = make_item(source="github", title="oojBuffalo/scrolls")
     assert classify_item(item).category == "project"

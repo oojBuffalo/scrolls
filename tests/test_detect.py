@@ -426,6 +426,24 @@ CASES = [
     ("https://doi.org/", "crossref", None),
     ("https://doi.org/about", "crossref", None),
     ("https://doi.org/not-a-doi", "crossref", None),
+    # --- pubmed ---
+    # the dedicated host carries the PMID as the first path segment
+    ("https://pubmed.ncbi.nlm.nih.gov/22745249/", "pubmed", "22745249"),
+    ("https://pubmed.ncbi.nlm.nih.gov/22745249", "pubmed", "22745249"),
+    ("https://www.pubmed.ncbi.nlm.nih.gov/34265844/", "pubmed", "34265844"),
+    # a record subpage dedupes to the PMID (the first segment)
+    ("https://pubmed.ncbi.nlm.nih.gov/22745249/citedby/", "pubmed", "22745249"),
+    # search/advanced/home pages carry no record: source known, item unknown
+    ("https://pubmed.ncbi.nlm.nih.gov/", "pubmed", None),
+    ("https://pubmed.ncbi.nlm.nih.gov/advanced/", "pubmed", None),
+    ("https://pubmed.ncbi.nlm.nih.gov/?term=crispr", "pubmed", None),
+    # the legacy ncbi.nlm.nih.gov/pubmed/<pmid> form is shape-matched
+    ("https://www.ncbi.nlm.nih.gov/pubmed/22745249", "pubmed", "22745249"),
+    ("https://www.ncbi.nlm.nih.gov/pubmed/22745249/", "pubmed", "22745249"),
+    # other NCBI databases on the shared host fall through to web (not claimed)
+    ("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6286148/", "web", None),
+    ("https://www.ncbi.nlm.nih.gov/gene/672", "web", None),
+    ("https://www.ncbi.nlm.nih.gov/pubmed/", "web", None),
     # --- huggingface ---
     # a model repo is <org>/<name>; the repo type rides in source_id so one
     # adapter serves both the /api/models and /api/datasets endpoints
