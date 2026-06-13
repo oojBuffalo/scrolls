@@ -44,6 +44,54 @@ def test_crossref_is_paper():
     assert classify_item(item).category == "paper"
 
 
+def _datacite_item(resource_type, **overrides):
+    # A `doi.org` item the DataCite adapter answered: source stays `crossref`,
+    # the resource type rides in provenance (ADR 0045).
+    provenance = {"adapter": "datacite", "resource_type": resource_type}
+    return make_item(source="crossref", provenance=provenance, **overrides)
+
+
+def test_datacite_dataset_is_a_dataset():
+    # A DataCite dataset is exactly the IDEAS.md §8 `dataset` category — not a
+    # paper, unlike its Crossref sibling.
+    item = _datacite_item("Dataset", title="Global Coastal Biodiversity Survey")
+    assert classify_item(item).category == "dataset"
+
+
+def test_datacite_software_is_a_tool():
+    item = _datacite_item("Software", title="scrolls")
+    assert classify_item(item).category == "tool"
+
+
+def test_datacite_text_is_a_paper():
+    item = _datacite_item("Text", title="A taxonomic treatment")
+    assert classify_item(item).category == "paper"
+
+
+def test_datacite_image_is_media():
+    item = _datacite_item("Image", title="Specimen photograph")
+    assert classify_item(item).category == "media"
+
+
+def test_datacite_unmapped_type_stays_unclassified():
+    # An ambiguous type (Collection, Other, …) is not guessed.
+    item = _datacite_item("Collection", title="A grab bag")
+    assert classify_item(item).category is None
+
+
+def test_datacite_missing_resource_type_stays_unclassified():
+    # A DataCite record with no resourceTypeGeneral (the adapter writes "")
+    # has no honest category to assign.
+    item = _datacite_item("", title="A typeless deposit")
+    assert classify_item(item).category is None
+
+
+def test_datacite_resource_type_beats_title_pattern():
+    # A dataset whose title reads like a tutorial is still a dataset.
+    item = _datacite_item("Dataset", title="A Practical Guide to Coral Reefs")
+    assert classify_item(item).category == "dataset"
+
+
 def test_pypi_is_a_tool():
     # A published package is something you install and use, not a repo to read.
     item = make_item(source="pypi", title="rich")

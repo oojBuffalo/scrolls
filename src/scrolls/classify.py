@@ -26,13 +26,13 @@ from scrolls.items import ScrollItem
 
 ENGINE = "rules-v1"
 
-# Platforms whose category is inherent to the platform itself.
+# Platforms whose category is inherent to the platform itself. A `doi.org`
+# link (the `crossref` source) is handled separately in `_curated_category`:
+# a Crossref work is a paper, but a DataCite output's category depends on its
+# resource type (ADR 0045).
 _CURATED_SOURCE_CATEGORIES = {
     "wikipedia": "reference",
     "arxiv": "paper",
-    # A Crossref work is a published paper (journal article, conference
-    # paper, book chapter) — arXiv's preprint sibling, the same category.
-    "crossref": "paper",
     "github": "project",
     # A published package is something you install and use — distinct from a
     # github repo (a "project" to read). PyPI, npm, crates.io, Packagist,
@@ -69,6 +69,35 @@ _WEAK_SOURCE_CATEGORIES = {
     # A Q&A thread is used as a reference answer, but an explicit "how to"
     # title (a title rule, checked first) is a tutorial, so this stays weak.
     "stackexchange": "reference",
+}
+
+# DataCite `resourceTypeGeneral` (lowercased) → category. A DataCite DOI is
+# not always a paper (unlike Crossref): a dataset is the IDEAS.md §8 `dataset`
+# term, software and other runnable/usable artifacts are tools, the textual
+# literature types are papers, and audiovisual outputs are media. A type not
+# listed here (`Collection`, `Event`, `Other`, …) is genuinely ambiguous and
+# stays unclassified rather than guessed — the engine's standing rule.
+_DATACITE_CATEGORIES = {
+    "dataset": "dataset",
+    "software": "tool",
+    "computationalnotebook": "tool",
+    "workflow": "tool",
+    "model": "tool",
+    "service": "tool",
+    "text": "paper",
+    "book": "paper",
+    "bookchapter": "paper",
+    "journalarticle": "paper",
+    "conferencepaper": "paper",
+    "dissertation": "paper",
+    "report": "paper",
+    "preprint": "paper",
+    "datapaper": "paper",
+    "peerreview": "paper",
+    "standard": "paper",
+    "audiovisual": "media",
+    "image": "media",
+    "sound": "media",
 }
 
 
@@ -114,6 +143,9 @@ def _curated_category(item: ScrollItem) -> str | None:
     IDEAS.md §8 vocabulary term). A huggingface item that is none of these
     — a profile or listing page registered but never fetched — has no
     inherent category and falls through.
+
+    A `doi.org` link (the `crossref` source) is likewise type-dependent
+    (ADR 0045) and handled by `_doi_category`.
     """
     if item.source == "huggingface":
         source_id = item.source_id or ""
@@ -122,7 +154,26 @@ def _curated_category(item: ScrollItem) -> str | None:
         if source_id.startswith(("model:", "space:")):
             return "tool"
         return None
+    if item.source == "crossref":
+        return _doi_category(item)
     return _CURATED_SOURCE_CATEGORIES.get(item.source)
+
+
+def _doi_category(item: ScrollItem) -> str | None:
+    """The category of a `doi.org` item, by which agency served it (ADR 0045).
+
+    A Crossref work is always a published `paper` (arXiv's preprint sibling).
+    A DataCite output's category depends on its resource type, which the
+    DataCite adapter records in `provenance.resource_type` because it can only
+    be known at fetch time — the same fetch-time fact the source name can't
+    carry. An unmapped or absent DataCite type stays unclassified; a DOI not
+    yet fetched (no adapter provenance) defaults to `paper`, the common case.
+    """
+    provenance = item.provenance or {}
+    if provenance.get("adapter") == "datacite":
+        resource_type = (provenance.get("resource_type") or "").lower()
+        return _DATACITE_CATEGORIES.get(resource_type)
+    return "paper"
 
 
 def _is_documentation_url(url: str) -> bool:

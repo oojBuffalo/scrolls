@@ -239,5 +239,11 @@ def test_wraps_api_errors():
         fetch_item(make_item(), get_json=boom)
 
 
-def test_crossref_adapter_is_registered():
-    assert FETCH_ADAPTERS["crossref"] is fetch_item
+def test_crossref_routes_through_the_doi_dispatcher():
+    # `crossref` is detected for any `doi.org` link, but the registered
+    # adapter is the doi dispatcher (Crossref first, DataCite fallback —
+    # ADR 0045), not the bare Crossref adapter.
+    from scrolls.sources import doi
+
+    assert FETCH_ADAPTERS["crossref"] is doi.fetch_item
+    assert doi._crossref_fetch is fetch_item

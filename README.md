@@ -247,6 +247,25 @@ not turned into links. `published_at` follows Crossref's date precedence
 (`issued` first, `created` last). A Crossref work classifies as `paper`
 like an arXiv preprint, so Scrolls covers both halves of the literature;
 the bare resolver and non-DOI paths register but have no work to fetch),
+with a **datacite** fallback on the same `doi.org` detection (see
+`docs/adr/0045-datacite-doi-fallback.md`: a DOI's registration agency —
+Crossref for the published literature, DataCite for datasets, software,
+and other repository outputs — can't be read off the URL, and the
+`crossref:<doi>` identity is fixed at `add` time, so the `doi.py`
+dispatcher resolves it at fetch time — Crossref first, DataCite when
+Crossref 404s the DOI. A DataCite output keeps `source="crossref"` but
+records `provenance.adapter="datacite"`, and its
+`types.resourceTypeGeneral` rides in `provenance.resource_type` so the
+rules engine classifies it by *what it is* — a dataset as `dataset`,
+software as `tool`, the textual literature as `paper`, audiovisual as
+`media`, an ambiguous type left unclassified — instead of forcing every
+DOI to `paper`. The DataCite `attributes` map like Crossref's analogs:
+titles joined with a subtitle, creators as "Given Family", the
+`Abstract`-typed description as the searchable `summary` (no full text),
+`subjects` as `concepts`, `resourceTypeGeneral`/`resourceType`/publisher
+as `tags`, and the landing page plus the parent work's container DOI as
+`links` — that container DOI resolving through `scrolls related`/`graph`
+to a saved Crossref paper, a DataCite-output↔parent-work edge),
 and **packagist** (the keyless Packagist JSON API — see
 `docs/adr/0039-packagist-adapter.md`: a saved
 `packagist.org/packages/<vendor>/<name>` page becomes a clean scroll from
@@ -344,7 +363,18 @@ path's repo (`golang.org/x/tools` → `go.googlesource.com/tools`) — else
 derived from the module path for the well-known VCS hosts, resolving
 through `scrolls related` to a saved github repo (the package↔repo edge).
 A Go module classifies as `tool` like the other packages; the standard
-library, search, and site routes register but have no module to fetch).
+library, search, and site routes register but have no module to fetch),
+and **datacite** (the keyless DataCite JSON:API — see
+`docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a
+fetch-time fallback behind `crossref`'s `doi.org` detection, the second
+DOI registration agency. The `doi.py` dispatcher tries Crossref first and
+DataCite when Crossref 404s the DOI, so a dataset, software, or other
+repository output deposited in Zenodo/Dryad/figshare becomes a clean
+scroll classified by `types.resourceTypeGeneral` — `Dataset → dataset`,
+`Software`/`Model` → `tool`, text types → `paper`, `Image`/`Sound` →
+`media` — instead of falling to a `web` scrape; the source stays
+`crossref` because identity is fixed at `add` time before the agency is
+knowable, with `provenance.adapter="datacite"` recording the truth).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -664,10 +694,16 @@ six languages — a saved `pkg.go.dev` module becomes a clean scroll from
 the `proxy.golang.org` proxy, the go.mod manifest as searchable content
 and the source repo (from `Origin` or the module path) as the package↔repo
 edge, the sparsest of the family with no description, keywords, or license
-facet to offer (ADR 0042). Next candidates: a native `x` fetch adapter so
-saved tweets enrich beyond the Field Theory import; a DataCite adapter on
-the same `doi.org` detection for dataset DOIs Crossref doesn't hold; or
-two-phase batch submit/collect if a terminal wait ever outgrows the
-library (ADR 0022, ADR 0032).
+facet to offer (ADR 0042), and a keyless DataCite adapter reached by a
+fetch-time fallback behind `crossref`'s `doi.org` detection, so a dataset,
+software, or other repository-deposited DOI Crossref doesn't hold becomes
+a clean scroll classified by its resource type — the first time two fetch
+adapters serve one detected source through the `doi.py` dispatcher, with
+the source name held to `crossref` because identity is minted before the
+registration agency is knowable (ADR 0045). Next candidates: a native `x`
+fetch adapter so saved tweets enrich beyond the Field Theory import; a
+third DOI registration agency (mEDRA, JaLC) joining the same `doi.py`
+dispatch; or two-phase batch submit/collect if a terminal wait ever
+outgrows the library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

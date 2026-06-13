@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (976 tests at the time of writing). The docs themselves
+`uv run pytest` (1044 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -167,7 +167,9 @@ Two small contracts make every platform the same kind of scroll
    domain first segment so stdlib and site routes carry no fetchable
    module),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
-   lowercase as `source_id` since DOIs are case-insensitive), and
+   lowercase as `source_id` since DOIs are case-insensitive — the DOI's
+   *registration agency*, Crossref or DataCite, is resolved at fetch
+   time, not detection, ADR 0045), and
    `huggingface` (model, dataset, and Space repo pages on
    `huggingface.co`/`hf.co`, the repo *kind* in the `source_id` as
    `model:<org>/<name>`, `dataset:<...>`, or `space:<...>` so one adapter
@@ -182,7 +184,12 @@ Two small contracts make every platform the same kind of scroll
    on any failure (`src/scrolls/sources/__init__.py`, ADR 0002). The
    `FETCH_ADAPTERS` dict maps source names to these functions. A source
    with no entry (today only `x`) is still registered by `scrolls add`
-   but skipped by `scrolls fetch` until its adapter lands.
+   but skipped by `scrolls fetch` until its adapter lands. One source can
+   map to a *dispatch* over several adapters: `crossref` points at the
+   `doi.py` dispatcher, which tries the Crossref adapter and falls back to
+   the DataCite one for a DOI Crossref doesn't hold (ADR 0045) — the
+   registration agency can't be read off a `doi.org` URL, so it is
+   resolved at fetch time, not detection.
 
 Implemented fetch adapters, all keyless:
 
@@ -199,7 +206,8 @@ Implemented fetch adapters, all keyless:
 | pypi | `sources/pypi.py` | keyless PyPI JSON API, stdlib only | latest-release metadata; description (README) → searchable text; keywords → `concepts`, classifiers → `tags`, project URLs → `links` (package↔repo edge); `pypi → tool`; degrades to metadata-only | 0034 |
 | npm | `sources/npm.py` | keyless registry JSON, stdlib only; capped `dist.tarball` GET when the packument has no README | latest-release metadata; README from packument or, when empty (common for high-traffic packages), its tarball → searchable text; keywords → `concepts` (no classifier analog, `tags` empty); homepage + normalized repository → `links` (package↔repo edge); `npm → tool`; degrades to metadata-only | 0035 |
 | crates | `sources/crates.py` | keyless crates.io JSON API + capped `.crate` tarball GET for the README | displayed-version metadata; raw README from the `.crate` tarball → searchable text; keywords → `concepts`, curated category taxonomy → `tags`; homepage/docs/normalized repository → `links` (crate↔repo edge); `crates → tool`; degrades to metadata-only | 0036 |
-| crossref | `sources/crossref.py` | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
+| crossref (`doi.org`, Crossref agency) | `sources/crossref.py` via `sources/doi.py` dispatch | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
+| crossref (`doi.org`, DataCite agency) | `sources/datacite.py` via `sources/doi.py` dispatch | keyless DataCite DOI metadata API, stdlib only | fetch-time fallback when Crossref 404s a DOI (datasets/software/etc.); JSON:API `attributes` → titles+subtitle, creators "Given Family", `Abstract` description → `summary` (no full text), `subjects` → `concepts`, DataCite date precedence, `resourceTypeGeneral`+`resourceType`+publisher → `tags`, landing + container-DOI `links` (cross-source edge); `resourceTypeGeneral` → `provenance.resource_type` drives classification (`Dataset → dataset`, `Software`/`Model` → `tool`, text types → `paper`, `Image`/`Sound` → `media`); source stays `crossref`, `provenance.adapter="datacite"` is honest; degrades to metadata-only | 0045 |
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
@@ -277,7 +285,9 @@ choice (ADRs 0004, 0005).
   preprint's published `doi.org` link finds its `crossref:<doi>` paper —
   ADR 0038 — and a Hugging Face model's `arxiv:` tag finds the
   `arxiv:<id>` paper it introduced — ADR 0041 — while a Space finds the
-  model it serves and the dataset it draws on — ADR 0043), shared concepts
+  model it serves and the dataset it draws on — ADR 0043, and a DataCite
+  dataset finds the Crossref paper it is part of through its container DOI
+  — ADR 0045), shared concepts
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).
@@ -439,11 +449,13 @@ Next steps already identified in decision records, in no required order:
   stable `version_normalized`" selection (ADR 0039) and Go's request
   case-encoding (`X`→`!x`, ADR 0042) are the techniques a future
   JSON-metadata registry can reuse.
-- **A DataCite DOI adapter** — Crossref (ADR 0037) covers the published
-  literature behind a `doi.org` link, but dataset and software DOIs are
-  registered with DataCite and 404 against Crossref. A DataCite adapter
-  on the same `doi.org` detection, chosen by a fetch-time fallback, would
-  extend DOI coverage to those without a new URL shape.
+- **More DOI registration agencies** — Crossref (ADR 0037) and DataCite
+  (ADR 0045) now share the `doi.org` detection through the `doi.py`
+  fetch-time dispatch (Crossref first, DataCite fallback). A smaller
+  agency (mEDRA, JaLC, the Korea/China RAs) that publishes keyless
+  metadata could join the same dispatch without a new URL shape — and a
+  DOI-RA pre-lookup (`doi.org/doiRA/<doi>`) would replace the wasted
+  Crossref 404 a DataCite fetch currently pays, if that latency matters.
 - **Cross-source `paper` enrichment** — arXiv and its published Crossref
   version now relate through the `arxiv:doi` link (ADR 0038). A natural
   next step is the reverse from richer Crossref `relation` data, or a

@@ -21,6 +21,8 @@ from scrolls.sources import (  # noqa: E402
     arxiv,
     crates,
     crossref,
+    datacite,
+    doi,
     github,
     go,
     hackernews,
@@ -39,7 +41,10 @@ from scrolls.sources import (  # noqa: E402
 FETCH_ADAPTERS = {
     "arxiv": arxiv.fetch_item,
     "crates": crates.fetch_item,
-    "crossref": crossref.fetch_item,
+    # A `doi.org` link is detected as `crossref`, but its registration agency
+    # (Crossref or DataCite) is resolved at fetch time by the doi dispatcher
+    # (ADR 0045): Crossref first, DataCite fallback.
+    "crossref": doi.fetch_item,
     "github": github.fetch_item,
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,
