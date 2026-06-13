@@ -125,6 +125,17 @@ def test_text_urls_become_links():
     assert fetch().links == ("https://arxiv.org/abs/1706.03762",)
 
 
+def test_remote_note_canonical_url_is_the_origin_uri():
+    # a federated note rendered on this instance carries the origin's url/uri
+    # (its ActivityPub id); canonical points there, not the local /notes/<id>
+    note = {**NOTE, "repliesCount": 0, "url": "https://origin.example/notes/9origin"}
+    fetched = fetch(note=note)
+    assert fetched.canonical_url == "https://origin.example/notes/9origin"
+    # uri is the fallback when url is absent (Misskey sets one or the other)
+    note = {**NOTE, "repliesCount": 0, "url": None, "uri": "https://origin.example/notes/9origin"}
+    assert fetch(note=note).canonical_url == "https://origin.example/notes/9origin"
+
+
 def test_replies_are_bylined_and_flattened():
     text = fetch().extracted_text
     assert "### Replies" in text
