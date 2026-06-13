@@ -1727,6 +1727,47 @@ def test_export_opml_empty_library_is_valid(scrolls_home, capsys):
     assert '<opml version="2.0">' in out  # a valid, empty OPML document
 
 
+def test_export_bookmarks_emits_items(scrolls_home, fake_bookmarks_html, capsys):
+    main(["import", "bookmarks", str(fake_bookmarks_html)])
+    capsys.readouterr()
+    exit_code = main(["export", "bookmarks"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # the bookmark file is emitted raw on stdout (not JSON), the DOCTYPE first
+    assert out.startswith("<!DOCTYPE NETSCAPE-Bookmark-file-1>")
+    assert 'HREF="https://www.youtube.com/watch?v=abc123xyz00"' in out
+    assert ">How SQLite FTS Works</A>" in out
+    assert 'TAGS="Databases"' in out  # the import's folder tag rides back out
+
+
+def test_export_bookmarks_round_trips_through_import(
+    scrolls_home, fake_bookmarks_html, tmp_path, capsys
+):
+    main(["import", "bookmarks", str(fake_bookmarks_html)])
+    capsys.readouterr()
+    main(["export", "bookmarks"])
+    exported = capsys.readouterr().out
+
+    # re-importing the export reproduces the same item: skipped, not new
+    out_path = tmp_path / "round-trip.html"
+    out_path.write_text(exported, encoding="utf-8")
+    exit_code = main(["import", "bookmarks", str(out_path)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 1
+
+
+def test_export_bookmarks_empty_library_is_valid(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["export", "bookmarks"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "<!DOCTYPE NETSCAPE-Bookmark-file-1>" in out  # a valid, empty document
+    assert "<DT>" not in out
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

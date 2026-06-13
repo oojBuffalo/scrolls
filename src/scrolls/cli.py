@@ -15,7 +15,7 @@ from pathlib import Path
 from scrolls import __version__
 from scrolls.agents import install_agent_docs
 from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
-from scrolls.bookmarks import load_bookmark_export
+from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.classify import classify_item
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
@@ -286,6 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
         "opml",
         help="Export feed subscriptions as an OPML document (to stdout)",
     )
+    export_sub.add_parser(
+        "bookmarks",
+        help="Export items as a Netscape bookmark file (to stdout)",
+    )
 
     ingest_parser = subparsers.add_parser(
         "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
@@ -500,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_opml(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
+        if args.export_command == "bookmarks":
+            return _cmd_export_bookmarks()
         return _cmd_export_opml()
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -789,6 +795,15 @@ def _cmd_export_opml() -> int:
     # the OPML document *is* the artifact (the `context`/scroll exception to the
     # JSON-on-stdout rule), so it prints raw — `scrolls export opml > feeds.opml`
     sys.stdout.write(dump_opml_export(subscriptions))
+    return 0
+
+
+def _cmd_export_bookmarks() -> int:
+    paths = get_paths()
+    items = list_items(paths.db_path) if paths.db_path.exists() else []
+    # the bookmark file *is* the artifact, like `export opml`, so it prints raw —
+    # `scrolls export bookmarks > bookmarks.html` (the shell owns redirection)
+    sys.stdout.write(dump_bookmark_export(items))
     return 0
 
 

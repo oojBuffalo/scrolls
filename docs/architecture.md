@@ -62,6 +62,12 @@ each command moves items between stages or derives artifacts from them.
   export at stage `detected` — another bare spine, but heterogeneous:
   each URL routes through the same detection as `add`, and folder
   ancestry becomes `tags` (`src/scrolls/bookmarks.py`, ADR 0030).
+  `scrolls export bookmarks` is the inverse: `bookmarks.dump_bookmark_export`
+  serializes the library's items back to a Netscape bookmark file on stdout
+  (the artifact-is-the-output convention), carrying the item spine — URL,
+  title, `saved_at` → `ADD_DATE`, `tags` → a flat `TAGS` attribute — so a
+  curated library moves back into any browser or read-later tool, the
+  round-trip that makes the import a way-station rather than a sink (ADR 0079).
 - `scrolls import pocket` bulk-inserts a Pocket CSV data export
   (`title,url,time_added,tags,status`; a `.zip` of `part_*.csv`, a
   directory, or one `.csv`) at stage `detected` — the read-later spine,
@@ -626,7 +632,8 @@ recurring rules:
 
 - **JSON on stdout** for every data command; errors as JSON on stderr
   with exit 1. The deliberate exceptions emit the artifact itself: `context`
-  emits a Markdown bundle, `export opml` an OPML document (ADR 0077), and the
+  emits a Markdown bundle, `export opml` an OPML document (ADR 0077),
+  `export bookmarks` a Netscape bookmark file (ADR 0079), and the
   scroll/KB files are Markdown — in each the output *is* the thing the
   command produces, not a report about it.
 - **CLI is one module** (`cli.py`): argparse subcommands, each a thin

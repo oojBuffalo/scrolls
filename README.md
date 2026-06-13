@@ -88,6 +88,7 @@ uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML e
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
+uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -883,6 +884,18 @@ becomes `tags` (root containers like "Bookmarks bar" are excluded as
 browser furniture, and Firefox's `TAGS` attribute merges in), a `<DD>`
 note seeds `summary`, and bookmarklets or `place:` smart folders are
 counted as ignored rather than failing the run.
+
+`scrolls export bookmarks` is the inverse (see
+`docs/adr/0079-bookmarks-export.md`): it serializes the library's items
+back to a Netscape bookmark file on stdout, so a curated Scrolls library
+can move into any browser or read-later tool, or be backed up —
+`scrolls export bookmarks > bookmarks.html`. The export carries each
+item's spine — URL, title, `saved_at` as `ADD_DATE`, and `tags` as a flat
+`TAGS` attribute (a browser ignores the attribute but keeps the bookmark;
+Pinboard-style tools read it) — while the extracted content stays in the
+Markdown scrolls. An item with no title labels itself by its URL, and the
+round-trip is the contract: an export re-imports to the same items. With
+import and export, `import bookmarks` is a way-station rather than a sink.
 
 `scrolls import pocket <path>` bulk-imports a Pocket data export — the
 CSV (`title,url,time_added,tags,status`) Mozilla mailed users when

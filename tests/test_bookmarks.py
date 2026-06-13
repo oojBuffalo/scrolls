@@ -2,8 +2,12 @@
 
 import pytest
 
-from scrolls.bookmarks import ImportSourceError, load_bookmark_export
-from scrolls.items import make_item_id
+from scrolls.bookmarks import (
+    ImportSourceError,
+    dump_bookmark_export,
+    load_bookmark_export,
+)
+from scrolls.items import ScrollItem, make_item_id
 
 # A realistic Chrome/Firefox-style export: Netscape bookmark file format,
 # unclosed <DT>/<DD> tags and all. ADD_DATE values are epoch seconds.
@@ -281,3 +285,85 @@ def test_non_bookmark_html_raises(tmp_path):
     path = _write_export(tmp_path, "<html><body><a href='https://x.com'>hi</a></body></html>")
     with pytest.raises(ImportSourceError, match="NETSCAPE-Bookmark-file"):
         load_bookmark_export(path)
+
+
+# --- export (ADR 0079) ---------------------------------------------------
+
+
+def _item(url, *, title=None, saved_at="2021-03-01T00:00:00+00:00", tags=()):
+    return ScrollItem(
+        id=make_item_id("web", None, url),
+        source="web",
+        url=url,
+        saved_at=saved_at,
+        title=title,
+        tags=tuple(tags),
+    )
+
+
+def test_export_emits_a_netscape_document():
+    doc = dump_bookmark_export(
+        [_item("https://example.com/a", title="A", tags=("db", "search"))]
+    )
+    # the DOCTYPE marker the importer keys on, then a flat <DL> of <DT><A> rows
+    assert doc.startswith("<!DOCTYPE NETSCAPE-Bookmark-file-1>")
+    assert '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">' in doc
+    assert '<DT><A HREF="https://example.com/a"' in doc
+    assert 'ADD_DATE="1614556800"' in doc
+    assert 'TAGS="db,search"' in doc
+    assert ">A</A>" in doc
+
+
+def test_export_labels_a_titleless_item_by_its_url():
+    # a bookmark needs anchor text; like the OPML export, the URL is the label
+    doc = dump_bookmark_export([_item("https://example.com/x")])
+    assert ">https://example.com/x</A>" in doc
+
+
+def test_export_omits_tags_attribute_when_there_are_none():
+    doc = dump_bookmark_export([_item("https://example.com/a", title="A")])
+    assert "TAGS=" not in doc
+
+
+def test_export_escapes_text_and_attributes():
+    doc = dump_bookmark_export(
+        [_item("https://example.com/q?a=1&b=2", title="Tom & <Jerry>")]
+    )
+    assert "https://example.com/q?a=1&amp;b=2" in doc
+    assert "Tom &amp; &lt;Jerry&gt;</A>" in doc
+    assert "<Jerry>" not in doc  # the raw angle brackets never leak
+
+
+def test_empty_library_is_a_valid_empty_document():
+    doc = dump_bookmark_export([])
+    assert "<!DOCTYPE NETSCAPE-Bookmark-file-1>" in doc
+    assert "<DL><p>" in doc and "</DL><p>" in doc
+    # re-importing the empty document yields nothing, without error
+    assert "<DT>" not in doc
+
+
+def test_export_round_trips_through_import(tmp_path):
+    items = [
+        _item(
+            "https://example.com/sqlite",
+            title="SQLite & FTS",
+            saved_at="2021-03-01T00:00:00+00:00",
+            tags=("db", "search"),
+        ),
+        _item(
+            "https://www.youtube.com/watch?v=abc123xyz00",
+            title="How SQLite FTS Works",
+            saved_at="2026-06-13T12:30:45+00:00",
+        ),
+    ]
+    path = _write_export(tmp_path, dump_bookmark_export(items))
+    reloaded, stats = load_bookmark_export(path)
+
+    # URL, title, save date, and tags survive a full export → import cycle
+    assert [i.url for i in reloaded] == [i.url for i in items]
+    assert [i.title for i in reloaded] == [i.title for i in items]
+    assert [i.saved_at for i in reloaded] == [i.saved_at for i in items]
+    assert reloaded[0].tags == ("db", "search")
+    assert stats["ignored"] == {"not_http": 0, "no_url": 0}
+    # the same id `add` would mint, so a re-import dedupes against the library
+    assert reloaded[1].id == "youtube:abc123xyz00"

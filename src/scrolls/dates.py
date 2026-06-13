@@ -43,6 +43,29 @@ def epoch_to_utc_iso(text: str | None) -> str | None:
     return stamp.isoformat(timespec="seconds")
 
 
+def iso_to_epoch(text: str | None) -> str | None:
+    """A UTC ISO 8601 timestamp as a Unix-epoch-seconds string — `epoch_to_utc_iso`'s
+    inverse, for writing a bookmark export's `ADD_DATE` from a stored `saved_at`.
+
+    Returns the whole-second epoch as a string (the Netscape format's unit;
+    fractional seconds are truncated, matching the seconds-precision the
+    library stores) or None when the input is absent or unparseable, so a
+    caller composes `iso_to_epoch(saved_at)` and simply omits the attribute on
+    None. A naive timestamp is assumed UTC, mirroring `to_utc_iso`. Round-trips
+    with `epoch_to_utc_iso` for any seconds-precision UTC timestamp.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return str(int(parsed.timestamp()))
+
+
 def to_utc_iso(text: str | None) -> str | None:
     """`text` as a UTC ISO 8601 timestamp, or None when absent/unparseable.
 

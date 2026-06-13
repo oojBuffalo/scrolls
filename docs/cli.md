@@ -516,6 +516,48 @@ $ scrolls export opml
 [exit 0]
 ```
 
+### `scrolls export bookmarks`
+
+Export the library's items as a Netscape-format bookmark file (ADR 0079)
+— the inverse of `scrolls import bookmarks`, so a curated Scrolls library
+can move back into a browser, a read-later tool, or a backup. The bookmark
+file **is** the artifact, so it prints raw on stdout (the same exception
+`scrolls export opml` makes to the JSON-on-stdout rule) — redirect or pipe
+it: `scrolls export bookmarks > bookmarks.html`. There is no path argument;
+the shell owns redirection.
+
+The export carries each item's *spine* — URL, title, save date, and tags —
+because that is all a bookmark file holds; the extracted content stays in
+the Markdown scrolls. Each item is one `<DT><A HREF=… ADD_DATE=… TAGS=…>`:
+`saved_at` becomes the `ADD_DATE` epoch (via `dates.iso_to_epoch`, the
+inverse of the importer's epoch reader), `tags` become a comma-joined
+`TAGS` attribute (flat, not a folder tree — a browser ignores it but keeps
+the bookmark, and Pinboard-style tools read it), and an item with no title
+labels itself by its URL (a bookmark needs anchor text, the same rule
+`export opml` uses). Items export in `scrolls list` order (oldest save
+first), all of them. Text and attribute values are HTML-escaped, so a title
+with `<`/`&` or a URL with `&` survives a re-import. The round-trip is the
+contract: an export re-imports to the same items (the import skips them as
+already-registered —
+`test_export_bookmarks_round_trips_through_import` in `tests/test_cli.py`,
+`test_export_round_trips_through_import` in `tests/test_bookmarks.py`). An
+empty library produces a valid empty document, not an error
+(`test_export_bookmarks_empty_library_is_valid`).
+
+```console
+$ scrolls export bookmarks
+<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<!-- This is an automatically generated file. DO NOT EDIT! -->
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Scrolls bookmarks</TITLE>
+<H1>Scrolls bookmarks</H1>
+<DL><p>
+    <DT><A HREF="https://en.wikipedia.org/wiki/SQLite" ADD_DATE="1781254800" TAGS="databases">SQLite</A>
+    <DT><A HREF="https://www.youtube.com/watch?v=abc123xyz00" ADD_DATE="1781260200" TAGS="databases,search">How SQLite FTS Works</A>
+</DL><p>
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any

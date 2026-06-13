@@ -6,7 +6,7 @@ through `to_utc_iso`, so the field is one vocabulary: UTC ISO 8601 at
 seconds precision, or an honest None.
 """
 
-from scrolls.dates import epoch_to_utc_iso, to_utc_iso
+from scrolls.dates import epoch_to_utc_iso, iso_to_epoch, to_utc_iso
 
 
 def test_rfc3339_z_suffix_becomes_utc_offset():
@@ -62,3 +62,27 @@ def test_epoch_garbage_is_an_honest_none():
     assert epoch_to_utc_iso("  ") is None
     assert epoch_to_utc_iso("inf") is None  # float-parseable, not a date
     assert epoch_to_utc_iso("nan") is None
+
+
+def test_iso_to_epoch_is_the_inverse_of_epoch_to_utc_iso():
+    # the bookmark export writes ADD_DATE from saved_at; a stored
+    # seconds-precision UTC timestamp survives the round-trip exactly
+    assert iso_to_epoch("2021-03-01T00:00:00+00:00") == "1614556800"
+    assert epoch_to_utc_iso(iso_to_epoch("2026-06-13T12:30:45+00:00")) == (
+        "2026-06-13T12:30:45+00:00"
+    )
+
+
+def test_iso_to_epoch_naive_timestamp_is_assumed_utc():
+    # mirrors to_utc_iso: a tz-less timestamp is read as UTC, not local
+    assert iso_to_epoch("2021-03-01T00:00:00") == "1614556800"
+
+
+def test_iso_to_epoch_non_utc_offset_is_honored():
+    assert iso_to_epoch("2021-03-01T05:00:00+05:00") == "1614556800"
+
+
+def test_iso_to_epoch_absent_or_garbage_is_none():
+    assert iso_to_epoch(None) is None
+    assert iso_to_epoch("   ") is None
+    assert iso_to_epoch("circa 2020") is None

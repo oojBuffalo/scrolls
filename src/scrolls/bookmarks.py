@@ -16,21 +16,35 @@ free-form like `scrolls set` (root containers such as "Bookmarks bar"
 are browser furniture, not curation, and are excluded). The format is
 famously malformed HTML (unclosed <DT>/<DD>), so parsing is a stdlib
 HTMLParser token stream, never a tree.
+
+`scrolls export bookmarks` (ADR 0079) is the inverse: `dump_bookmark_export`
+serializes the library's items back to a Netscape bookmark file, the one URL-
+list format every browser and read-later tool imports, so a curated Scrolls
+library can leave the way it came in (ADR 0077's import-is-a-way-station, not a
+roach motel). The export carries the item *spine* — URL, title, save date, and
+tags — because that is all a bookmark file holds; the extracted content stays in
+the Markdown scrolls. Tags ride the `TAGS` attribute (flat, like the OPML
+export's flat body) rather than a reconstructed folder tree, which round-trips
+through this importer's attribute-tag path; a browser ignores the attribute but
+keeps the bookmark, and Pinboard-style tools read it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 
-from scrolls.dates import epoch_to_utc_iso
+from scrolls.dates import epoch_to_utc_iso, iso_to_epoch
 from scrolls.items import ScrollItem, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
 
 _FORMAT_MARKER = "NETSCAPE-Bookmark-file"
+_HEAD_TITLE = "Scrolls bookmarks"
 
 # Container folders every browser invents around the user's own folders.
 _ROOT_CONTAINERS = {
@@ -118,6 +132,50 @@ def load_bookmark_export(path: Path) -> tuple[list[ScrollItem], dict]:
         "ignored": ignored,
     }
     return items, stats
+
+
+def dump_bookmark_export(items: Iterable[ScrollItem]) -> str:
+    """Serialize items to a Netscape-format bookmark file — the import inverse.
+
+    Returns a complete `bookmarks.html` document: the format's DOCTYPE marker
+    (so the output re-imports through `load_bookmark_export`, which keys on it),
+    a charset META and title, then a **flat** `<DL>` of one
+    `<DT><A HREF=… ADD_DATE=… TAGS=…>title</A>` per item, in the given order.
+    Each field is the spine the format holds: `url` → `HREF`; `saved_at` →
+    `ADD_DATE` epoch seconds (omitted only if unparseable — `saved_at` is always
+    set, so in practice always present); `tags` → a comma-joined `TAGS`
+    attribute (omitted when empty); and `title`, falling back to the URL when an
+    item has none — the same "label by URL" rule the OPML export uses, since a
+    bookmark needs anchor text. Tags are flat rather than a folder tree because
+    folders would duplicate a multi-tag item and a browser reconstructs nothing
+    from them anyway; the `TAGS` attribute round-trips through the importer's
+    attribute-tag path. Text and attribute values are HTML-escaped, so a title
+    with `<`/`&` or a URL with `&` survives a re-import. An empty library
+    produces a valid empty document, not an error.
+    """
+    lines = [
+        "<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+        "<!-- This is an automatically generated file. DO NOT EDIT! -->",
+        '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+        f"<TITLE>{escape(_HEAD_TITLE)}</TITLE>",
+        f"<H1>{escape(_HEAD_TITLE)}</H1>",
+        "<DL><p>",
+        *(_bookmark_line(item) for item in items),
+        "</DL><p>",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _bookmark_line(item: ScrollItem) -> str:
+    """One indented `<DT><A …>` row: HREF, optional ADD_DATE/TAGS, anchor text."""
+    attrs = [f'HREF="{escape(item.url, quote=True)}"']
+    add_date = iso_to_epoch(item.saved_at)
+    if add_date:
+        attrs.append(f'ADD_DATE="{add_date}"')
+    if item.tags:
+        attrs.append(f'TAGS="{escape(",".join(item.tags), quote=True)}"')
+    label = escape(item.title or item.url)
+    return f"    <DT><A {' '.join(attrs)}>{label}</A>"
 
 
 @dataclass
