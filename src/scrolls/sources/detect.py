@@ -8,6 +8,7 @@ with `source_id=None` means the adapter must resolve identity at fetch time.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -16,6 +17,7 @@ X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitt
 GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
+PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -76,6 +78,9 @@ def detect_source(url: str) -> DetectedSource:
     se_site = _stackexchange_site(host)
     if se_site is not None:
         return DetectedSource("stackexchange", _stackexchange_id(se_site, path_parts))
+
+    if host in PYPI_HOSTS:
+        return DetectedSource("pypi", _pypi_id(path_parts))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -163,6 +168,25 @@ def _stackexchange_id(site: str, path_parts: list[str]) -> str | None:
     if len(path_parts) >= 2 and path_parts[0] in ("questions", "q") and path_parts[1].isdigit():
         return f"{site}:{path_parts[1]}"
     return None
+
+
+def _pypi_id(path_parts: list[str]) -> str | None:
+    """The PEP 503-normalized project name for a `/project/<name>[/<version>]` URL.
+
+    Identity is the project name only: `Flask`, `flask`, and the versioned
+    page `/project/flask/3.0.0/` are the same package, so the trailing
+    version segment is ignored. Search, user, and help pages carry no
+    project name and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "project":
+        return None
+    return _normalize_project_name(path_parts[1])
+
+
+def _normalize_project_name(name: str) -> str | None:
+    """Canonical PyPI project name (PEP 503): case-folded, `[-_.]` runs to one `-`."""
+    normalized = re.sub(r"[-_.]+", "-", unquote(name)).strip("-").lower()
+    return normalized or None
 
 
 def _hackernews_id(path_parts: list[str], query: str) -> str | None:

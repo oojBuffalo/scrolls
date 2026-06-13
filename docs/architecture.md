@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (690 tests at the time of writing). The docs themselves
+`uv run pytest` (717 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -149,8 +149,10 @@ Two small contracts make every platform the same kind of scroll
 1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
    host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
-   `hackernews`, and the `stackexchange` network (every site's question
-   URL, the per-site API slug carried in `source_id`); `.pdf` paths map
+   `hackernews`, the `stackexchange` network (every site's question
+   URL, the per-site API slug carried in `source_id`), and `pypi`
+   (project pages, the PEP 503-normalized package name as `source_id` so
+   a versioned page dedupes to the package); `.pdf` paths map
    to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -173,6 +175,7 @@ Implemented fetch adapters, all keyless:
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
 | stackexchange | `sources/stackexchange.py` | keyless Stack Exchange API, stdlib only; optional second GET for answers | one adapter for the whole network (site in `source_id`); question + accepted-first top answers → `extracted_text`; tags → `concepts`; degrades to question-only | 0033 |
+| pypi | `sources/pypi.py` | keyless PyPI JSON API, stdlib only | latest-release metadata; description (README) → searchable text; keywords → `concepts`, classifiers → `tags`, project URLs → `links` (package↔repo edge); `pypi → tool`; degrades to metadata-only | 0034 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -383,3 +386,7 @@ Next steps already identified in decision records, in no required order:
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs
   weighed and deferred has an obvious home in the shared `llm.py`.
+- **More package registries** — the PyPI adapter (ADR 0034) sets the
+  pattern: npm, crates.io, and friends share the JSON-metadata shape and
+  the keywords→`concepts` / source-URL→`links` mapping, each a small
+  adapter.

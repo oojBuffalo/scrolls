@@ -89,6 +89,20 @@ CASES = [
     ("https://stackoverflow.com/a/11227902", "stackexchange", None),
     # the bare network portal is not a question host
     ("https://stackexchange.com/", "web", None),
+    # --- pypi ---
+    ("https://pypi.org/project/requests/", "pypi", "requests"),
+    # a versioned page is the same package: identity is the name only
+    ("https://pypi.org/project/requests/2.31.0/", "pypi", "requests"),
+    ("https://www.pypi.org/project/Flask/", "pypi", "flask"),
+    # PEP 503 name normalization: case-folded, [-_.] runs collapse to one -
+    ("https://pypi.org/project/zope.interface/", "pypi", "zope-interface"),
+    ("https://pypi.org/project/ruamel_yaml/", "pypi", "ruamel-yaml"),
+    ("https://pypi.org/project/typing--extensions/", "pypi", "typing-extensions"),
+    # search, user, and help pages: source known, package unknown
+    ("https://pypi.org/", "pypi", None),
+    ("https://pypi.org/search/?q=http", "pypi", None),
+    ("https://pypi.org/user/someone/", "pypi", None),
+    ("https://pypi.org/help/", "pypi", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

@@ -38,6 +38,12 @@ def test_github_is_project():
     assert classify_item(item).category == "project"
 
 
+def test_pypi_is_a_tool():
+    # A published package is something you install and use, not a repo to read.
+    item = make_item(source="pypi", title="rich")
+    assert classify_item(item).category == "tool"
+
+
 def test_curated_platform_default_beats_title_pattern():
     # A wikipedia page titled like a tutorial is still an encyclopedia entry.
     item = make_item(source="wikipedia", title="How to Solve It")

@@ -180,7 +180,19 @@ answers are an optional second request so a question with none, or a
 failed answers fetch, still produces a question-only scroll; only
 `/questions/<id>` and the `/q/<id>` shortlink fetch, while tag, user,
 and `/a/<id>` answer-permalink pages register but have no question to
-fetch). Items from sources without an adapter yet (today only `x`) are
+fetch), and **pypi** (the keyless PyPI JSON API — see
+`docs/adr/0034-pypi-adapter.md`: a saved `pypi.org/project/<name>/`
+page becomes a clean scroll from the project's latest-release metadata
+instead of a `trafilatura` scrape. Identity is the PEP 503-normalized
+package name, so `Flask`, `flask`, and a version-pinned page all dedupe
+to `pypi:flask`; the long description (rendered README) is the
+searchable content, the author-declared keywords become `concepts` like
+github repo topics, the trove classifiers become `tags` like arXiv
+codes, and the declared project URLs become `links` — so a package's
+Source link to its github repo connects them in `scrolls related`. A
+PyPI package classifies as `tool`, the first rule to produce that
+category; search/user/help pages register but have no package to fetch).
+Items from sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
@@ -446,9 +458,15 @@ LLM tier's `llm.py` (ADR 0032), and a keyless Stack Exchange adapter so
 a saved Stack Overflow — or any network site's — question becomes a
 clean scroll carrying the question and its accepted-first top answers,
 with the question's tags as concepts and the whole network served by one
-adapter (ADR 0033). Next candidate: a native `x` fetch
-adapter so saved tweets enrich beyond the Field Theory import, or
-two-phase batch submit/collect if a terminal wait ever outgrows the
-library (ADR 0022, ADR 0032).
+adapter (ADR 0033), and a keyless PyPI adapter so a saved package page
+becomes a clean scroll from the project's latest-release metadata —
+keywords as concepts, classifiers as tags, the source-repo URL as a
+`related` edge, and the package classified as `tool` (the first rule to
+produce that category), with the package name PEP 503-normalized so a
+version-pinned page dedupes to the package (ADR 0034). Next candidates: a
+native `x` fetch adapter so saved tweets enrich beyond the Field Theory
+import; more package registries (npm, crates.io) following the PyPI
+pattern; or two-phase batch submit/collect if a terminal wait ever
+outgrows the library (ADR 0022, ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

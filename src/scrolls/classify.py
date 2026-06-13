@@ -8,7 +8,7 @@ getting a guessed label; a future LLM engine can pick them up.
 
 Precedence (first hit wins):
 
-1. curated-platform defaults — wikipedia/arxiv/github items are what
+1. curated-platform defaults — wikipedia/arxiv/github/pypi items are what
    their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
@@ -30,6 +30,9 @@ _CURATED_SOURCE_CATEGORIES = {
     "wikipedia": "reference",
     "arxiv": "paper",
     "github": "project",
+    # A published package is something you install and use — distinct from a
+    # github repo (a "project" to read), the first rule to produce "tool".
+    "pypi": "tool",
 }
 
 # Ordered: first matching pattern decides.
