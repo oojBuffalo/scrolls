@@ -32,6 +32,7 @@ from scrolls.render import slugify
 _GENERATED_DIRS = ("sources", "categories", "concepts")
 _GENERATED_FILES = ("index.md", "graph.md")
 _RECENT_LIMIT = 10
+_RELATED_CONCEPTS_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,41 @@ def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
     return by_concept
 
 
+def related_concepts(
+    by_concept: dict[str, dict], limit: int = _RELATED_CONCEPTS_LIMIT
+) -> dict[str, list[tuple[str, str, int]]]:
+    """For each concept slug, the concepts that co-occur on its member scrolls.
+
+    Two concepts are *related* when at least one rendered scroll carries both;
+    the strength is how many scrolls carry both. Returns, per slug, a list of
+    `(other_slug, other_display, shared_count)` ordered by shared count
+    descending, then the other concept's display (case-folded), then its slug,
+    capped at `limit`. A concept whose members carry no other concept maps to an
+    empty list.
+
+    This is the deterministic concept-graph complement to the link graph
+    (`graph.py`): IDEAS.md §9's "Related Concepts". It is computed here, on the
+    concept pages, rather than as edges in `scrolls graph`, because concept
+    co-occurrence forms dense cliques — every pair of concepts on one scroll is
+    an edge — that would swamp the sparse, high-signal *link* edges the adapters
+    build (ADR 0044/0047 deferred concept edges in the link graph for exactly
+    this reason).
+    """
+    members = {
+        slug: {item.id for item in entry["items"]} for slug, entry in by_concept.items()
+    }
+    related: dict[str, list[tuple[str, str, int]]] = {}
+    for slug, ids in members.items():
+        scored = [
+            (other, by_concept[other]["display"], len(ids & other_ids))
+            for other, other_ids in members.items()
+            if other != slug and (ids & other_ids)
+        ]
+        scored.sort(key=lambda row: (-row[2], row[1].casefold(), row[0]))
+        related[slug] = scored[:limit]
+    return related
+
+
 def compile_kb(paths: LibraryPaths) -> KbResult:
     """Rebuild the compiled library under `library/`; return group/page counts.
 
@@ -95,6 +131,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         if item.category:
             by_category.setdefault(item.category, []).append(item)
     by_concept = group_concepts(items)
+    related = related_concepts(by_concept)
     summaries = load_concept_summaries(paths.db_path)
     # the link graph over the rendered items only, so every edge it shows
     # resolves to a scroll file the page can link (graph_over drops links to
@@ -125,6 +162,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
             lead=stored.summary if stored else None,
+            trailer=_related_concepts_lines(related.get(slug, [])),
         )
         pages += 1
     _write_graph_page(paths, components, {item.id: item for item in items})
@@ -183,7 +221,8 @@ def _write_index(paths, items, by_source, by_category, by_concept, components) -
 
 
 def _write_page(paths: LibraryPaths, relpath: str, title: str,
-                members: list[ScrollItem], note, lead: str | None = None) -> None:
+                members: list[ScrollItem], note, lead: str | None = None,
+                trailer: list[str] | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
     ordered = sorted(members, key=lambda i: ((i.title or i.id).casefold(), i.id))
     lines = [f"# {title}", ""]
@@ -191,9 +230,27 @@ def _write_page(paths: LibraryPaths, relpath: str, title: str,
         lines += [lead, ""]
     lines += [f"{_count(len(members))}.", ""]
     lines += [_item_line(item, page_dir, note(item)) for item in ordered]
+    if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
+        lines += trailer
     target = paths.library_dir / relpath
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _related_concepts_lines(related: list[tuple[str, str, int]]) -> list[str]:
+    """The `## Related Concepts` trailer for a concept page, or [] when none.
+
+    Each line links a co-occurring concept's page (a sibling under
+    `concepts/`, so the link is the bare `<slug>.md`) and notes how many
+    scrolls carry both (ADR 0063).
+    """
+    if not related:
+        return []
+    lines = ["", "## Related Concepts", ""]
+    for slug, display, shared in related:
+        scrolls = f"{shared} shared scroll{'' if shared == 1 else 's'}"
+        lines.append(f"- [{display}]({slug}.md) — {scrolls}")
+    return lines
 
 
 def _write_graph_page(

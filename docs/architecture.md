@@ -389,6 +389,13 @@ choice (ADRs 0004, 0005).
   rendered as adjacency lists, with the index linking to it and the compile
   summary reporting a `clusters` count; built over rendered items only so
   every link on the page resolves to a scroll file (`tests/test_kb.py`).
+  Each concept page also ends with a **Related Concepts** section
+  (`related_concepts`, ADR 0063) — the concepts that co-occur on its member
+  scrolls, ranked by shared-scroll count — the deterministic concept-graph
+  complement to `graph.md`, kept on the concept pages rather than as
+  `scrolls graph` edges so concept cliques don't swamp the sparse link edges
+  (ADR 0044/0047/0062 deferred concept edges in the link graph for that
+  reason).
 - **LLM concept engine** (`kb_llm.py`, ADR 0025) — IDEAS.md §9's fancy
   version, run via `kb --engine llm`: a model synthesizes how each
   concept with 2+ member scrolls shows up across them, writing the

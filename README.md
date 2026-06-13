@@ -873,6 +873,13 @@ into clusters (connected components), largest first, each rendered as an
 adjacency list of members and their `→ target` edges; built over rendered
 items only so every link on the page resolves to a scroll file, always
 written (empty → `No linked scrolls yet.`), and linked from the index.
+Each concept page additionally ends with a **Related Concepts** section
+(see `docs/adr/0063-kb-related-concepts.md`): the concepts that co-occur on
+its member scrolls, ranked by how many scrolls carry both — the
+deterministic concept-graph complement to `graph.md`'s link graph, kept on
+the concept pages (where a concept's neighbours are a short ranked list)
+rather than as `scrolls graph` edges (where concept cliques would swamp the
+sparse link edges).
 
 `scrolls kb --engine llm` is the fancy version of IDEAS.md §9 that
 ADR 0005 left room for (see `docs/adr/0025-llm-concept-summaries.md`):

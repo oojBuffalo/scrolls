@@ -142,6 +142,64 @@ def test_kb_groups_concepts_across_spellings(scrolls_home, capsys):
     assert "- [SQLite](concepts/sqlite.md) — 1 scroll" in index
 
 
+def test_kb_concept_page_lists_related_concepts(scrolls_home, capsys):
+    """A concept page names the concepts that co-occur on its member scrolls."""
+    main(["init"])
+    db = get_paths().db_path
+    # BM25 co-occurs with full-text search on two scrolls, with SQLite on one.
+    insert_item(db, make_rendered(
+        "web:a", "web", "FTS deep dive",
+        concepts=("BM25", "Full-text search", "SQLite")))
+    insert_item(db, make_rendered(
+        "web:b", "web", "Ranking notes", concepts=("BM25", "Full-text search")))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    assert "## Related Concepts" in page
+    related = page.split("## Related Concepts\n")[1].strip().splitlines()
+    # ordered by shared-scroll count descending (strength), link relative to siblings
+    assert related == [
+        "- [Full-text search](full-text-search.md) — 2 shared scrolls",
+        "- [SQLite](sqlite.md) — 1 shared scroll",
+    ]
+
+
+def test_kb_concept_page_without_co_occurrence_omits_related_section(scrolls_home, capsys):
+    """A concept whose member scrolls carry no other concept gets no section."""
+    main(["init"])
+    insert_item(get_paths().db_path, make_rendered(
+        "web:solo", "web", "Lonely topic", concepts=("Solitude",)))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "concepts" / "solitude.md").read_text(encoding="utf-8")
+    assert "## Related Concepts" not in page
+
+
+def test_related_concepts_merges_spellings_and_caps(scrolls_home):
+    """The pure co-occurrence map merges by slug, counts scrolls, and caps."""
+    from scrolls.kb import group_concepts, related_concepts
+
+    items = [
+        # hub concept "RAG" co-occurs with 12 distinct neighbours (one scroll each)
+        make_rendered(f"web:n{i:02d}", "web", f"Note {i:02d}", concepts=("RAG", f"Topic {i:02d}"))
+        for i in range(12)
+    ]
+    # a spelling variant of RAG that slugifies the same must not self-relate
+    items.append(make_rendered("web:variant", "web", "rag variant", concepts=("rag", "Topic 00")))
+
+    by_concept = group_concepts(items)
+    related = related_concepts(by_concept, limit=10)
+
+    rag = related["rag"]
+    assert len(rag) == 10  # capped from 12 neighbours
+    assert all(slug != "rag" for slug, _display, _shared in rag)  # never self-relates
+    # Topic 00 appears on two RAG scrolls (Note 00 and the variant), the rest on one,
+    # so it ranks first by shared-scroll count.
+    assert rag[0] == ("topic-00", "Topic 00", 2)
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -300,6 +358,35 @@ def test_kb_concept_page_leads_with_stored_summary(scrolls_home, capsys):
     # pages without a stored summary keep the plain shape
     sqlite_page = (scrolls_home / "library" / "concepts" / "sqlite.md").read_text(encoding="utf-8")
     assert sqlite_page.startswith("# Concept: SQLite\n\n1 scroll.\n")
+
+
+def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home, capsys):
+    """A page with both a stored summary and co-occurrence: lead first, related last."""
+    from scrolls.kb import save_concept_summary
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:a", "web", "A", concepts=("BM25", "SQLite")))
+    insert_item(db, make_rendered("web:b", "web", "B", concepts=("BM25", "SQLite")))
+    save_concept_summary(db, make_summary("bm25", "BM25", "How BM25 shows up here."))
+    capsys.readouterr()
+
+    run_kb(capsys)
+    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    assert page == (
+        "# Concept: BM25\n"
+        "\n"
+        "How BM25 shows up here.\n"
+        "\n"
+        "2 scrolls.\n"
+        "\n"
+        "- [A](../../scrolls/web/a.md) — web\n"
+        "- [B](../../scrolls/web/b.md) — web\n"
+        "\n"
+        "## Related Concepts\n"
+        "\n"
+        "- [SQLite](sqlite.md) — 2 shared scrolls\n"
+    )
 
 
 def test_kb_summary_for_vanished_concept_is_simply_unused(scrolls_home, capsys):

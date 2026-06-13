@@ -408,6 +408,30 @@ def test_compile_library_builds_the_pages_get_concept_page_serves(
     assert "SQLite" in page
 
 
+def test_get_concept_page_serves_related_concepts(scrolls_home):
+    """The deterministic Related Concepts section (ADR 0063) reaches MCP for free."""
+    from scrolls.db import init_db
+    from scrolls.items import ScrollItem, insert_item
+
+    paths = get_paths()
+    paths.root.mkdir(parents=True)
+    init_db(paths.db_path)
+    for item_id, concepts in (
+        ("web:a", ("BM25", "Full-text search")),
+        ("web:b", ("BM25", "Full-text search")),
+    ):
+        insert_item(paths.db_path, ScrollItem(
+            id=item_id, source="web", url=f"https://ex.org/{item_id}",
+            saved_at="2026-06-01T00:00:00+00:00", title=item_id,
+            concepts=concepts, markdown_path=f"scrolls/web/{item_id[-1]}.md",
+            stage="rendered"))
+    mcp_server.compile_library()
+
+    page = mcp_server.get_concept_page("BM25")
+    assert "## Related Concepts" in page
+    assert "[Full-text search](full-text-search.md) — 2 shared scrolls" in page
+
+
 def test_compile_library_includes_stored_concept_summaries(
     scrolls_home, fake_wikipedia_api
 ):

@@ -191,6 +191,25 @@ one shape (`test_kb_compiles_index_source_and_category_pages`):
   Consumers must treat the paragraph as optional: it appears only for
   concepts with 2+ scrolls whose owner has run `scrolls kb --engine
   llm`, and a plain recompile preserves it.
+- A concept page *may* end with a `## Related Concepts` section
+  (ADR [0063](adr/0063-kb-related-concepts.md)) — the concepts that
+  **co-occur** on its member scrolls, the deterministic concept-graph
+  complement to the link-graph page. Each bullet links a co-occurring
+  concept's sibling page (a bare `<slug>.md`) and notes how many scrolls
+  carry both, strongest first:
+
+  ```markdown
+  ## Related Concepts
+
+  - [Full-text search](full-text-search.md) — 2 shared scrolls
+  - [SQLite](sqlite.md) — 1 shared scroll
+  ```
+
+  The section is omitted when no other concept shares a scroll, and the
+  list is capped at the 10 strongest co-occurrences, so consumers must
+  treat it as optional and non-exhaustive
+  (`test_kb_concept_page_lists_related_concepts`,
+  `test_kb_concept_page_without_co_occurrence_omits_related_section`).
 
 ### The index
 
