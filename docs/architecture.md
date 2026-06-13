@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1044 tests at the time of writing). The docs themselves
+`uv run pytest` (1070 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -149,7 +149,8 @@ Two small contracts make every platform the same kind of scroll
 1. **Detection** — `detect_source(url) -> DetectedSource(source, source_id)`
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
    host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
-   `hackernews`, the `stackexchange` network (every site's question
+   `hackernews`, `lobsters` (a `/s/<short_id>` story URL, the short id
+   verbatim), the `stackexchange` network (every site's question
    URL, the per-site API slug carried in `source_id`), `pypi`
    (project pages, the PEP 503-normalized package name as `source_id` so
    a versioned page dedupes to the package), `npm` (package pages,
@@ -211,6 +212,7 @@ Implemented fetch adapters, all keyless:
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
+| lobsters | `sources/lobsters.py` | keyless `lobste.rs/s/<id>.json`, stdlib only, one request | story + tags + the *entire* comment thread in one GET (HN defers comments, SE spends a second GET); `description_plain`/`comment_plain` already plain, no HTML grammar; body + bylined comments (deleted/moderated skipped, all kept) → searchable `extracted_text`; link submission's article → bare `links` (HN pattern), `summary` = body lead else "N points, M comments"; tags → `concepts`; **no category default — unclassified like HN**; degrades to metadata-only | 0046 |
 | go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch

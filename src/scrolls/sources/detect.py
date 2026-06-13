@@ -17,6 +17,7 @@ X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitt
 GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
+LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
@@ -97,6 +98,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in HACKERNEWS_HOSTS:
         return DetectedSource("hackernews", _hackernews_id(path_parts, parsed.query))
+
+    if host in LOBSTERS_HOSTS:
+        return DetectedSource("lobsters", _lobsters_id(path_parts))
 
     se_site = _stackexchange_site(host)
     if se_site is not None:
@@ -431,6 +435,21 @@ def _hackernews_id(path_parts: list[str], query: str) -> str | None:
         item_id = _first_query_value(query, "id")
         if item_id and item_id.isdigit():
             return item_id
+    return None
+
+
+def _lobsters_id(path_parts: list[str]) -> str | None:
+    """The story short id for a `/s/<short_id>[/<slug>]` URL, else None.
+
+    A Lobsters story URL is `/s/<short_id>` optionally followed by a title
+    slug; the short id (a base-36 handle like `vg5hdf`) is the identity,
+    kept verbatim. Comment permalinks (`/c/<id>`), tag pages (`/t/<tag>`),
+    user pages (`/u/<user>`), and the front page carry no story id and
+    resolve to the source with no fetchable item — Hacker News's and Stack
+    Exchange's pattern (ADR 0031, ADR 0033).
+    """
+    if len(path_parts) >= 2 and path_parts[0] == "s":
+        return path_parts[1] or None
     return None
 
 

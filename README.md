@@ -181,7 +181,30 @@ answers are an optional second request so a question with none, or a
 failed answers fetch, still produces a question-only scroll; only
 `/questions/<id>` and the `/q/<id>` shortlink fetch, while tag, user,
 and `/a/<id>` answer-permalink pages register but have no question to
-fetch), and **pypi** (the keyless PyPI JSON API — see
+fetch), and **lobsters** (the keyless Lobsters JSON API — see
+`docs/adr/0046-lobsters-adapter.md`: a saved `lobste.rs/s/<short_id>`
+story becomes a clean scroll instead of a `trafilatura` scrape of its
+HTML page, the third discussion-aggregator adapter beside Hacker News and
+Stack Exchange. Its distinctive trait is economy: a story's `.json`
+returns the submission, its tags, *and* the entire comment thread in one
+request, where Hacker News defers comments (a fetch per node) and Stack
+Exchange spends a second GET on answers. The API ships pre-rendered plain
+text (`description_plain`, `comment_plain`), so there is no HTML grammar
+to write. A link submission's article rides along in `links` like a
+Hacker News link story, a text submission contributes its body, and
+either way the comment thread — deleted/moderated comments skipped, each
+bylined with author and score like a Stack Exchange answer, all kept
+since they come free in the one request — becomes the searchable
+extracted text. The curated tags (`css`, `security`, `ask`) become
+`concepts` like github repo topics; the `summary` leads with the body
+else the discussion status ("12 points, 1 comment"). Unlike Stack
+Exchange's weak `reference` default, a Lobsters story gets *no* category
+default — it is a heterogeneous aggregator entry, unclassified like
+Hacker News until a title rule or the LLM engine names it. The short id
+is the identity (`/c`, `/t`, `/u`, and front pages register but have no
+story to fetch), and the raw thread with comment `depth` stays in
+`raw_text` for a future threaded render; honestly keyless where Reddit's
+`.json` now 403s unauthenticated clients), and **pypi** (the keyless PyPI JSON API — see
 `docs/adr/0034-pypi-adapter.md`: a saved `pypi.org/project/<name>/`
 page becomes a clean scroll from the project's latest-release metadata
 instead of a `trafilatura` scrape. Identity is the PEP 503-normalized
@@ -700,7 +723,12 @@ software, or other repository-deposited DOI Crossref doesn't hold becomes
 a clean scroll classified by its resource type — the first time two fetch
 adapters serve one detected source through the `doi.py` dispatcher, with
 the source name held to `crossref` because identity is minted before the
-registration agency is knowable (ADR 0045). Next candidates: a native `x`
+registration agency is knowable (ADR 0045), and a keyless Lobsters
+adapter joining Hacker News and Stack Exchange as the third
+discussion-aggregator source — and the cheapest, since a story's `.json`
+returns the submission, its tags, and the whole comment thread in one
+request, classified like Hacker News with no category default (ADR 0046).
+Next candidates: a native `x`
 fetch adapter so saved tweets enrich beyond the Field Theory import; a
 third DOI registration agency (mEDRA, JaLC) joining the same `doi.py`
 dispatch; or two-phase batch submit/collect if a terminal wait ever

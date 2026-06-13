@@ -64,6 +64,16 @@ CASES = [
     ("https://news.ycombinator.com/", "hackernews", None),
     ("https://news.ycombinator.com/newest", "hackernews", None),
     ("https://news.ycombinator.com/user?id=pg", "hackernews", None),
+    # --- lobsters ---
+    ("https://lobste.rs/s/vg5hdf", "lobsters", "vg5hdf"),
+    # a trailing title slug is decoration: identity is the short id only
+    ("https://lobste.rs/s/vg5hdf/designing_lispy_dsls_part_1_scss", "lobsters", "vg5hdf"),
+    ("https://www.lobste.rs/s/vg5hdf", "lobsters", "vg5hdf"),
+    # comment permalink, tag, user, and front pages: source known, story unknown
+    ("https://lobste.rs/c/abcdef", "lobsters", None),
+    ("https://lobste.rs/t/programming", "lobsters", None),
+    ("https://lobste.rs/u/someone", "lobsters", None),
+    ("https://lobste.rs/", "lobsters", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

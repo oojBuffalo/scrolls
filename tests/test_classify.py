@@ -240,6 +240,20 @@ def test_stackexchange_defaults_to_reference_but_title_wins():
     assert classify_item(howto).category == "tutorial"
 
 
+def test_lobsters_stays_unclassified_like_hacker_news():
+    # Lobsters is a heterogeneous link aggregator like Hacker News (ADR 0046):
+    # a saved story has no single honest category, so — unlike Stack Exchange's
+    # weak `reference` default — there is no source default; the title rules
+    # and the LLM engine decide.
+    item = make_item(source="lobsters", title="German court ruling on AI Overviews")
+    assert classify_item(item).category is None
+
+
+def test_lobsters_tutorial_title_still_wins():
+    item = make_item(source="lobsters", title="A guide to writing a SQLite VFS")
+    assert classify_item(item).category == "tutorial"
+
+
 def test_unmatched_web_item_stays_unclassified():
     item = make_item(title="An ordinary post")
     classified = classify_item(item)
