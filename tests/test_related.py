@@ -126,6 +126,41 @@ def test_shared_concepts_outrank_same_category_only(db):
     assert any("same category" in reason for reason in hits[1].reasons)
 
 
+def test_devto_article_wires_to_its_crosspost_origin_and_co_concept(db):
+    # The dev.to adapter (ADR 0061) records a cross-posted article's external
+    # origin in `links` and its tags as `concepts`. So a saved dev.to post
+    # connects to the original blog it cross-posted from (the cross-source
+    # edge) and to anything sharing its concepts — the payoff a `web` scrape
+    # (no concepts, no structured canonical) never delivered.
+    insert_item(db, make_item(
+        "devto:odeeb/sec-edgar-guide",
+        url="https://dev.to/odeeb/sec-edgar-guide",
+        links=("https://datatooly.xyz/sec-edgar-search/",),  # the cross-post origin
+        concepts=("python", "api", "finance"),
+    ))
+    insert_item(db, make_item(
+        "web:datatooly", url="https://datatooly.xyz/sec-edgar-search/",
+    ))
+    insert_item(db, make_item(
+        "pypi:requests", concepts=("Python",),  # same slug, different spelling
+    ))
+
+    hits = find_related(db, "devto:odeeb/sec-edgar-guide")
+    ids = [hit.id for hit in hits]
+    assert "web:datatooly" in ids and "pypi:requests" in ids
+    # the cross-post origin is reached through the link edge, the stronger signal
+    assert ids[0] == "web:datatooly"
+    origin = next(hit for hit in hits if hit.id == "web:datatooly")
+    assert any("links to it" in reason for reason in origin.reasons)
+    co_concept = next(hit for hit in hits if hit.id == "pypi:requests")
+    assert any("python" in reason for reason in co_concept.reasons)
+
+    # and the edge resolves both ways: the origin blog finds the dev.to post
+    back = find_related(db, "web:datatooly")
+    assert [hit.id for hit in back] == ["devto:odeeb/sec-edgar-guide"]
+    assert any("linked from it" in reason for reason in back[0].reasons)
+
+
 def test_shared_tags_match_case_insensitively(db):
     insert_item(db, make_item("arxiv:1", tags=("cs.CL", "nlp")))
     insert_item(db, make_item("arxiv:2", tags=("CS.cl",)))
