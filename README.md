@@ -90,6 +90,7 @@ uv run scrolls sync           # register new items from followed feeds, as JSON
 uv run scrolls sync <id>      # sync one subscription by id, as JSON
 uv run scrolls unfollow <id>  # remove a subscription by id or feed URL, as JSON
 uv run scrolls fetch          # fetch content for detected items, as JSON
+uv run scrolls fetch --limit 50  # at most 50 fetch attempts, oldest first; resumes next run
 uv run scrolls fetch <id>     # (re)fetch one item by id, as JSON
 uv run scrolls md             # render fetched items as Markdown scrolls, as JSON
 uv run scrolls md <id>        # (re)render one item by id, as JSON
@@ -179,7 +180,10 @@ import, items enter at stage `detected` with the watch time as
 adapter like any synced feed entry. Repeat watches collapse to one item
 (earliest watch wins), ads and deleted videos are counted as ignored
 rather than failing the run, and item ids (`youtube:<videoId>`) dedupe
-against `scrolls add` and feed sync.
+against `scrolls add` and feed sync. `scrolls fetch --limit N` paces
+the enrichment of a large spine: at most N fetch attempts per run,
+oldest saved first, resuming where the last run stopped — cron-able
+and polite to the platform.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title
@@ -384,8 +388,9 @@ LLM concept engine behind `kb --engine llm` (ADR 0025) — and
 the pre-normalization duplicates ADR 0023 deferred (ADR 0026), and
 `scrolls rm` to take items — row, scroll file, captured media — back
 out of the library (ADR 0027), with the saved URL usable wherever a
-command takes an item id (ADR 0028). Next candidate: a Batches
-transport for concept summaries if libraries outgrow per-call
-generation (ADR 0025).
+command takes an item id (ADR 0028), and YouTube watch history
+arriving in bulk via Google Takeout import with `fetch --limit` pacing
+the enrichment (ADR 0029). Next candidate: a Batches transport for
+concept summaries if libraries outgrow per-call generation (ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

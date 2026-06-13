@@ -80,8 +80,9 @@ imports watch history as youtube items:
 ## Consequences
 
 - A YouTube history of any size becomes fetchable items offline in one
-  command; `scrolls fetch` then pulls metadata/transcripts at whatever
-  pace the user wants, resumable because the spine is already stored.
+  command; `scrolls fetch --limit N` then pulls metadata/transcripts at
+  whatever pace the user wants, resumable because the spine is already
+  stored.
 - Watch-history `saved_at` ordering means `scrolls list` reads as watch
   chronology for imported items.
 - The English `"Watched "` title prefix is stripped; localized prefixes

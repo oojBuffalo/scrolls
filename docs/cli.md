@@ -440,7 +440,7 @@ $ scrolls unfollow ea77c1d5239e
 
 ## Pipeline stages
 
-### `scrolls fetch [id]`
+### `scrolls fetch [id] [--limit N]`
 
 No argument: run the source adapter for every item at stage `detected`
 (network). Items whose source has no adapter yet are *skipped* (they stay
@@ -450,6 +450,17 @@ that one item regardless of stage — and asking for an adapterless item
 by id is an honest *failure*, not a skip
 (`test_fetch_by_id_refetches_regardless_of_stage`,
 `test_fetch_by_id_without_adapter_fails`).
+
+`--limit N` paces a batch run: at most N fetches are attempted, oldest
+saved first, and the next run resumes where this one stopped — the way
+to enrich a large `import google-takeout` spine incrementally
+(`test_fetch_limit_caps_attempts_and_resumes`). The limit counts fetch
+*attempts* (fetched + failed), not adapterless skips: skipped items
+stay `detected` at the front of the saved order, so counting them
+would wedge every paced run on the same skips
+(`test_fetch_limit_does_not_count_adapterless_skips`). Items beyond
+the limit are not reported. Combining `--limit` with an explicit id is
+an error (`test_fetch_limit_with_explicit_id_is_an_error`).
 
 | Key | Meaning |
 | --- | --- |

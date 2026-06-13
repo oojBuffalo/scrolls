@@ -293,6 +293,79 @@ def test_fetch_all_with_nothing_detected(scrolls_home, capsys):
     assert payload == {"fetched": 0, "skipped": 0, "failed": 0, "results": []}
 
 
+def test_fetch_limit_caps_attempts_and_resumes(scrolls_home, fake_wikipedia_api, capsys):
+    main(["init"])
+    for n, day in ((1, "01"), (2, "02")):
+        insert_item(
+            get_paths().db_path,
+            ScrollItem(
+                id=f"wikipedia:en:Page_{n}",
+                source="wikipedia",
+                source_id=f"en:Page_{n}",
+                url=f"https://en.wikipedia.org/wiki/Page_{n}",
+                saved_at=f"2026-06-{day}T00:00:00+00:00",
+            ),
+        )
+    capsys.readouterr()
+
+    exit_code = main(["fetch", "--limit", "1"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fetched"] == 1
+    assert len(payload["results"]) == 1  # items beyond the limit aren't reported
+    assert payload["results"][0]["id"] == "wikipedia:en:Page_1"  # oldest saved first
+    assert get_item(get_paths().db_path, "wikipedia:en:Page_2").stage == "detected"
+
+    # the next run picks up where this one stopped
+    main(["fetch", "--limit", "1"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["id"] == "wikipedia:en:Page_2"
+
+
+def test_fetch_limit_does_not_count_adapterless_skips(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["init"])
+    insert_item(
+        get_paths().db_path,
+        ScrollItem(
+            id="x:111",
+            source="x",
+            source_id="111",
+            url="https://x.com/a/status/111",
+            saved_at="2026-06-01T00:00:00+00:00",
+        ),
+    )
+    insert_item(
+        get_paths().db_path,
+        ScrollItem(
+            id="wikipedia:en:SQLite",
+            source="wikipedia",
+            source_id="en:SQLite",
+            url="https://en.wikipedia.org/wiki/SQLite",
+            saved_at="2026-06-02T00:00:00+00:00",
+        ),
+    )
+    capsys.readouterr()
+
+    # the x item sits first in saved order; if skips consumed the limit it
+    # would wedge the batch on every run
+    exit_code = main(["fetch", "--limit", "1"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fetched"] == 1
+    assert payload["skipped"] == 1
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").stage == "fetched"
+
+
+def test_fetch_limit_with_explicit_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["fetch", "wikipedia:en:SQLite", "--limit", "1"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_fetch_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypatch, capsys):
     def boom(url):
         raise OSError("connection refused")

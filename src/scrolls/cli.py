@@ -147,6 +147,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch one item by id or URL, refetching even if already fetched; "
         "default is every item at stage 'detected'",
     )
+    fetch_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Attempt at most N fetches this run (batch mode only), oldest "
+        "saved first; adapterless skips don't consume the limit",
+    )
 
     follow_parser = subparsers.add_parser(
         "follow", help="Subscribe to an RSS/Atom feed for sync (JSON output)"
@@ -331,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _cmd_doctor(args.fix)
     if args.command == "fetch":
-        return _cmd_fetch(args.id)
+        return _cmd_fetch(args.id, args.limit)
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "import":
@@ -553,9 +560,15 @@ def _find_item(paths: LibraryPaths, ref: str) -> tuple[ScrollItem | None, str]:
     return item, ""
 
 
-def _cmd_fetch(ref: str | None) -> int:
+def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
     paths = get_paths()
     if ref is not None:
+        if limit is not None:
+            print(
+                json.dumps({"error": "--limit paces batch runs; drop it when fetching one item"}),
+                file=sys.stderr,
+            )
+            return 1
         item, error = _find_item(paths, ref)
         if item is None:
             print(json.dumps({"error": error}), file=sys.stderr)
@@ -566,7 +579,13 @@ def _cmd_fetch(ref: str | None) -> int:
 
     results = []
     counts = {"fetched": 0, "skipped": 0, "failed": 0}
+    attempted = 0
     for item in items:
+        # the limit counts fetch attempts, not adapterless skips — skipped
+        # items stay detected at the front of the saved order, and counting
+        # them would wedge every paced run on the same skips
+        if limit is not None and attempted >= limit:
+            break
         adapter = FETCH_ADAPTERS.get(item.source)
         if adapter is None:
             # Bulk runs leave adapterless items for a future scrolls; asking
@@ -590,6 +609,7 @@ def _cmd_fetch(ref: str | None) -> int:
                 }
             )
             continue
+        attempted += 1
         try:
             fetched = adapter(item)
         except FetchError as exc:

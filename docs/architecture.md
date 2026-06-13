@@ -35,7 +35,9 @@ each command moves items between stages or derives artifacts from them.
   a row at stage `detected` (`src/scrolls/cli.py`, `src/scrolls/items.py`).
 - `scrolls fetch [id]` runs the source adapter, filling title, extracted
   text, summary, links, media, content hash, and provenance, and moves
-  the item to `fetched` (`src/scrolls/sources/`).
+  the item to `fetched` (`src/scrolls/sources/`). `--limit N` paces a
+  batch run — at most N attempts, oldest saved first, resuming next
+  run — so a bulk-imported spine enriches incrementally.
 - `scrolls md [id]` renders each fetched item to a Markdown scroll at
   `scrolls/<source>/<slug>.md` and moves it to `rendered`
   (`src/scrolls/render.py`).
