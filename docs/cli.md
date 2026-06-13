@@ -934,7 +934,14 @@ written one — the default compile includes them without any model call
 | `items` | rendered scrolls included |
 | `sources` / `categories` / `concepts` | group pages written per kind |
 | `summaries` | concept pages that carried a stored synthesized summary |
-| `pages` | total files written, including `index.md` |
+| `clusters` | connected components in the link-graph page `graph.md` (ADR 0062) |
+| `pages` | total files written, including `index.md` and `graph.md` |
+
+`graph.md` is the browsable form of `scrolls graph`'s link structure: the
+rendered scrolls that link to one another grouped into clusters, largest
+first, each an adjacency list of members and their `→ target` edges; it is
+always written (empty → `No linked scrolls yet.`) and the index links to it
+(`test_kb_graph_page_clusters_linked_scrolls`).
 
 `--engine llm` (engine `kb-llm-v1`, ADR 0025) first brings the summary
 store up to date via the Anthropic API (network; needs
@@ -973,11 +980,11 @@ and shares the Batches transport with `classify --engine llm --batch`
 
 ```console
 $ scrolls kb
-{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "pages": 4}
+{"items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 5}
 [exit 0]
 
 $ scrolls kb --engine llm     # no 2-scroll concepts yet: a zero run, no key needed
-{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "pages": 4}
+{"generated": 0, "current": 0, "failed": 0, "pruned": 0, "results": [], "items": 2, "sources": 1, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 5}
 [exit 0]
 
 $ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set

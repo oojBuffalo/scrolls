@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1432 tests at the time of writing). The docs themselves
+`uv run pytest` (1444 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -107,7 +107,7 @@ the whole tree (`src/scrolls/paths.py`):
 $SCROLLS_HOME (default ~/.scrolls)
   db.sqlite      # items + subscriptions + concept_summaries tables + FTS5 index + schema meta
   scrolls/       # one Markdown scroll per rendered item, per source
-  library/       # compiled KB: index.md, sources/, categories/, concepts/
+  library/       # compiled KB: index.md, graph.md, sources/, categories/, concepts/
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
   items/         # reserved (raw record exports; currently unused)
   media/         # captured media files (PDFs, thumbnails, photos), per source
@@ -370,15 +370,24 @@ choice (ADRs 0004, 0005).
   (linear, not the per-pair O(n²)); nodes are the connected items by
   default (`--all` adds isolates), `stats.items` the library total. The
   same `{nodes, edges, stats}` payload backs the MCP `get_link_graph` tool
-  (`tests/test_graph.py`).
-- **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md` plus
-  per-source, per-category, and per-concept pages from scratch each run
-  so stale groups can't linger; other files under `library/` are left
-  alone. Concept pages merge spellings by slug, and lead with a stored
-  synthesized summary when the LLM concept engine has written one — the
-  store (`concept_summaries`) lives on the compiler's side so a plain
-  `scrolls kb` includes summaries with no model, key, or network
-  (`tests/test_kb.py`).
+  (`tests/test_graph.py`). `connected_components` partitions the graph into
+  clusters (edges undirected for the partition, the directed edges kept) and
+  `graph_over` builds a graph over a *given* item set — both feed the KB's
+  `library/graph.md` page (ADR 0062), the browsable form of the same
+  structure.
+- **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
+  `library/graph.md`, plus per-source, per-category, and per-concept pages
+  from scratch each run so stale groups can't linger; other files under
+  `library/` are left alone. Concept pages merge spellings by slug, and
+  lead with a stored synthesized summary when the LLM concept engine has
+  written one — the store (`concept_summaries`) lives on the compiler's side
+  so a plain `scrolls kb` includes summaries with no model, key, or network.
+  `graph.md` is the browsable form of `scrolls graph`'s link structure
+  (ADR 0062): the rendered scrolls that link to one another, grouped into
+  clusters (`graph.connected_components(graph_over(rendered_items))`) and
+  rendered as adjacency lists, with the index linking to it and the compile
+  summary reporting a `clusters` count; built over rendered items only so
+  every link on the page resolves to a scroll file (`tests/test_kb.py`).
 - **LLM concept engine** (`kb_llm.py`, ADR 0025) — IDEAS.md §9's fancy
   version, run via `kb --engine llm`: a model synthesizes how each
   concept with 2+ member scrolls shows up across them, writing the

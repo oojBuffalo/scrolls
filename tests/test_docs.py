@@ -19,7 +19,7 @@ from scrolls.agents import _TARGETS
 from scrolls.cli import build_parser
 from scrolls.db import SCHEMA_VERSION, init_db
 from scrolls.items import ScrollItem, insert_item
-from scrolls.kb import _GENERATED_DIRS, compile_kb
+from scrolls.kb import _GENERATED_DIRS, _GENERATED_FILES, compile_kb
 from scrolls.paths import get_paths
 from scrolls.render import _FRONTMATTER_FIELDS, render_markdown
 
@@ -174,6 +174,20 @@ _EXAMPLE_NEIGHBOR = ScrollItem(
     stage="rendered",
 )
 
+# A model whose card cites the example paper — the model↔paper edge of
+# ADR 0041 — so the documented library/graph.md shows one real cluster.
+_EXAMPLE_MODEL = ScrollItem(
+    id="huggingface:model:google-bert/bert-base-uncased",
+    source="huggingface",
+    url="https://huggingface.co/google-bert/bert-base-uncased",
+    saved_at="2026-06-12T10:00:00+00:00",
+    title="google-bert/bert-base-uncased",
+    category="tool",
+    links=("https://arxiv.org/abs/1706.03762",),
+    markdown_path="scrolls/huggingface/google-bert-bert-base-uncased.md",
+    stage="rendered",
+)
+
 
 def _pinned_block(marker: str) -> str:
     """The fenced block right after `<!-- pinned: <marker> -->` in the format doc."""
@@ -219,11 +233,27 @@ def test_library_format_kb_index_example_matches_compiler_output(tmp_path):
     )
 
 
+def test_library_format_graph_page_example_matches_compiler_output(tmp_path):
+    paths = get_paths(tmp_path / "home")
+    paths.root.mkdir(parents=True)
+    init_db(paths.db_path)
+    insert_item(paths.db_path, _EXAMPLE_ITEM)
+    insert_item(paths.db_path, _EXAMPLE_MODEL)
+    compile_kb(paths)
+    graph = (paths.library_dir / "graph.md").read_text(encoding="utf-8")
+    assert graph == _pinned_block("example-graph-page"), (
+        "docs/library-format.md's example library/graph.md no longer matches "
+        "compile_kb() output for the documented fixture items"
+    )
+
+
 def test_library_format_names_every_generated_artifact():
-    """Generated KB dirs and agent install paths must appear in the doc."""
+    """Generated KB dirs/files and agent install paths must appear in the doc."""
     text = _LIBRARY_FORMAT.read_text(encoding="utf-8")
     missing = [f"library/{name}/" for name in _GENERATED_DIRS
                if f"library/{name}/" not in text]
+    missing += [f"library/{name}" for name in _GENERATED_FILES
+                if f"library/{name}" not in text]
     missing += [relpath for relpath in _TARGETS if relpath not in text]
     assert not missing, (
         "docs/library-format.md no longer mentions generated artifacts: "

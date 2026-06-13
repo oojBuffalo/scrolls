@@ -5,7 +5,7 @@ import json
 import pytest
 
 from scrolls.cli import main
-from scrolls.graph import build_graph
+from scrolls.graph import build_graph, connected_components, graph_over
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
 
@@ -216,3 +216,71 @@ def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0}}
+
+
+# --- connected_components (the KB graph.md clustering, ADR 0062) ----------
+
+
+def test_connected_components_groups_linked_items(db):
+    insert_item(db, make_item("web:a", links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b"))
+
+    components = connected_components(build_graph(db))
+    assert len(components) == 1
+    assert [n.id for n in components[0].nodes] == ["web:a", "web:b"]
+    assert [(e.from_id, e.to_id) for e in components[0].edges] == [("web:a", "web:b")]
+
+
+def test_connected_components_orders_clusters_by_size_then_id(db):
+    # a three-item chain c1 → c2 → c3
+    insert_item(db, make_item("web:c1", links=("https://example.org/web:c2",)))
+    insert_item(db, make_item("web:c2", links=("https://example.org/web:c3",)))
+    insert_item(db, make_item("web:c3"))
+    # a two-item cluster a1 → a2
+    insert_item(db, make_item("web:a1", links=("https://example.org/web:a2",)))
+    insert_item(db, make_item("web:a2"))
+
+    components = connected_components(build_graph(db))
+    assert [[n.id for n in c.nodes] for c in components] == [
+        ["web:c1", "web:c2", "web:c3"],  # larger cluster first
+        ["web:a1", "web:a2"],
+    ]
+
+
+def test_connected_components_group_is_undirected(db):
+    # two items both pointing at one hub still form a single cluster
+    insert_item(db, make_item("web:a", links=("https://example.org/web:hub",)))
+    insert_item(db, make_item("web:c", links=("https://example.org/web:hub",)))
+    insert_item(db, make_item("web:hub"))
+
+    components = connected_components(build_graph(db))
+    assert len(components) == 1
+    assert [n.id for n in components[0].nodes] == ["web:a", "web:c", "web:hub"]
+    assert [(e.from_id, e.to_id) for e in components[0].edges] == [
+        ("web:a", "web:hub"),
+        ("web:c", "web:hub"),
+    ]
+
+
+def test_connected_components_tie_breaks_equal_clusters_by_smallest_id(db):
+    insert_item(db, make_item("web:b1", links=("https://example.org/web:b2",)))
+    insert_item(db, make_item("web:b2"))
+    insert_item(db, make_item("web:a1", links=("https://example.org/web:a2",)))
+    insert_item(db, make_item("web:a2"))
+
+    components = connected_components(build_graph(db))
+    assert [c.nodes[0].id for c in components] == ["web:a1", "web:b1"]
+
+
+def test_connected_components_of_empty_graph_is_empty(scrolls_home):
+    main(["init"])
+    assert connected_components(build_graph(get_paths().db_path)) == ()
+
+
+def test_graph_over_drops_links_to_items_outside_the_given_set():
+    a = make_item("web:a", links=("https://example.org/web:b",))
+    b = make_item("web:b")
+    # only `a` is in the set: its link's target identity isn't indexed,
+    # so the edge is dropped — the rendered-only behavior kb.py relies on
+    assert graph_over([a]).edges == ()
+    assert [(e.from_id, e.to_id) for e in graph_over([a, b]).edges] == [("web:a", "web:b")]

@@ -18,7 +18,7 @@ def scrolls_home(monkeypatch, tmp_path):
     return root
 
 
-def make_rendered(item_id, source, title, *, category=None, concepts=(),
+def make_rendered(item_id, source, title, *, category=None, concepts=(), links=(),
                   saved_at="2026-06-01T00:00:00+00:00", markdown_path=None):
     slug = title.lower().replace(" ", "-")
     return ScrollItem(
@@ -29,6 +29,7 @@ def make_rendered(item_id, source, title, *, category=None, concepts=(),
         title=title,
         category=category,
         concepts=tuple(concepts),
+        links=tuple(links),
         markdown_path=markdown_path or f"scrolls/{source}/{slug}.md",
         stage="rendered",
     )
@@ -42,7 +43,7 @@ def run_kb(capsys):
 
 def test_kb_before_init_reports_zero_pages(scrolls_home, capsys):
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "pages": 0}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 0}
     assert not scrolls_home.exists()  # kb never creates a library
 
 
@@ -67,7 +68,7 @@ def test_kb_compiles_index_source_and_category_pages(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "summaries": 0, "pages": 5}
+    assert payload == {"items": 2, "sources": 2, "categories": 2, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 6}
 
     library = scrolls_home / "library"
     index = (library / "index.md").read_text(encoding="utf-8")
@@ -112,7 +113,7 @@ def test_kb_counts_unclassified_items_in_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "summaries": 0, "pages": 2}
+    assert payload == {"items": 1, "sources": 1, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 3}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "- unclassified — 1 scroll" in index
     assert not (scrolls_home / "library" / "categories").exists()
@@ -166,11 +167,97 @@ def test_kb_empty_initialized_library_writes_empty_index(scrolls_home, capsys):
     capsys.readouterr()
 
     payload = run_kb(capsys)
-    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "pages": 1}
+    assert payload == {"items": 0, "sources": 0, "categories": 0, "concepts": 0, "summaries": 0, "clusters": 0, "pages": 2}
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "0 scrolls from 0 sources." in index
     assert "## Sources" not in index
     assert "## Recent" not in index
+
+
+# --- the link-graph page library/graph.md (ADR 0062) ---------------------
+
+
+def test_kb_graph_page_clusters_linked_scrolls(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Article A", links=("https://example.org/web:b",)))
+    insert_item(db, make_rendered("web:b", "web", "Article B"))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["clusters"] == 1
+    assert payload["pages"] == 3  # index + graph + 1 source page (web)
+
+    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    assert "# Scrolls Link Graph" in graph
+    assert "2 scrolls connected across 1 cluster." in graph
+    assert "## Cluster 1" in graph
+    # members link to scrolls relative to library/, with the directed edge nested
+    assert "- [Article A](../scrolls/web/article-a.md) — web" in graph
+    assert "  - → [Article B](../scrolls/web/article-b.md)" in graph
+    assert "- [Article B](../scrolls/web/article-b.md) — web" in graph
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "[Link graph](graph.md) — 2 scrolls connected across 1 cluster." in index
+
+
+def test_kb_graph_page_is_empty_when_no_scrolls_link(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:a", "web", "Article A"))
+    insert_item(db, make_rendered("web:b", "web", "Article B"))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["clusters"] == 0
+
+    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    assert graph == "# Scrolls Link Graph\n\nNo linked scrolls yet.\n"
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "[Link graph](graph.md) — no linked scrolls yet." in index
+
+
+def test_kb_graph_page_orders_clusters_largest_first(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    # a two-item cluster and a three-item chain
+    insert_item(db, make_rendered(
+        "web:p", "web", "Pair One", links=("https://example.org/web:q",)))
+    insert_item(db, make_rendered("web:q", "web", "Pair Two"))
+    insert_item(db, make_rendered(
+        "web:x", "web", "Chain One", links=("https://example.org/web:y",)))
+    insert_item(db, make_rendered(
+        "web:y", "web", "Chain Two", links=("https://example.org/web:z",)))
+    insert_item(db, make_rendered("web:z", "web", "Chain Three"))
+    capsys.readouterr()
+
+    payload = run_kb(capsys)
+    assert payload["clusters"] == 2
+
+    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    # the three-item chain (Chain One) sorts before the pair under Cluster 1
+    assert graph.index("Chain One") < graph.index("Pair One")
+    assert graph.index("## Cluster 1") < graph.index("## Cluster 2")
+
+
+def test_kb_recompile_clears_a_stale_graph_cluster(scrolls_home, capsys):
+    import dataclasses
+
+    main(["init"])
+    db = get_paths().db_path
+    a = make_rendered("web:a", "web", "Article A", links=("https://example.org/web:b",))
+    insert_item(db, a)
+    insert_item(db, make_rendered("web:b", "web", "Article B"))
+    capsys.readouterr()
+    run_kb(capsys)
+    assert "## Cluster 1" in (scrolls_home / "library" / "graph.md").read_text()
+
+    update_item(db, dataclasses.replace(a, links=()))  # the link is gone
+    run_kb(capsys)
+    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    assert graph == "# Scrolls Link Graph\n\nNo linked scrolls yet.\n"
+
 
 def make_summary(slug, display, text, members_hash="abc123"):
     from scrolls.kb import ConceptSummary

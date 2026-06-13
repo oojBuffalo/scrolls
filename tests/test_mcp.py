@@ -433,5 +433,5 @@ def test_compile_library_includes_stored_concept_summaries(
 def test_compile_library_before_init_is_a_zero_run(scrolls_home):
     payload = mcp_server.compile_library()
     assert payload == {"items": 0, "sources": 0, "categories": 0,
-                       "concepts": 0, "summaries": 0, "pages": 0}
+                       "concepts": 0, "summaries": 0, "clusters": 0, "pages": 0}
     assert not scrolls_home.exists()  # compiling never creates a library

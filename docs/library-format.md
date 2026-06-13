@@ -150,10 +150,10 @@ The dominant sequence transduction models are based on complex recurrent or conv
 ## Compiled library pages: `library/`
 
 `scrolls kb` (ADR [0005](adr/0005-deterministic-kb-compiler.md))
-rebuilds a generated tree — `library/index.md`, `library/sources/`,
-`library/categories/`, `library/concepts/` — from scratch on every run,
-so a stale group page can't linger; anything *else* under `library/` is
-preserved, so hand-written notes can live alongside
+rebuilds a generated tree — `library/index.md`, `library/graph.md`,
+`library/sources/`, `library/categories/`, `library/concepts/` — from
+scratch on every run, so a stale group page can't linger; anything *else*
+under `library/` is preserved, so hand-written notes can live alongside
 (`test_kb_recompile_removes_stale_pages_but_keeps_user_files`). Only
 rendered items appear: KB pages link to scroll files, and an unrendered
 item has nothing to link to.
@@ -194,10 +194,11 @@ one shape (`test_kb_compiles_index_source_and_category_pages`):
 
 ### The index
 
-`library/index.md` is the entry point: a count line, then `## Sources`,
-`## Categories`, and `## Concepts` lists linking to group pages (the
-categories list ends with an unlinked `- unclassified — N scrolls` line
-when any rendered item lacks a category,
+`library/index.md` is the entry point: a count line, then a one-line link
+to the link-graph page (`graph.md`) summarising connectivity, then
+`## Sources`, `## Categories`, and `## Concepts` lists linking to group
+pages (the categories list ends with an unlinked `- unclassified — N
+scrolls` line when any rendered item lacks a category,
 `test_kb_counts_unclassified_items_in_index`), then `## Recent` linking
 the 10 newest scrolls, newest first
 (`test_kb_index_links_recent_scrolls_newest_first`). Sections with
@@ -206,13 +207,15 @@ nothing to list are omitted.
 Compiled from the example item above plus one rendered Wikipedia item
 (title `SQLite`, category `reference`, concept `Database software` —
 the second fixture in `tests/test_docs.py`,
-`test_library_format_kb_index_example_matches_compiler_output`):
+`test_library_format_kb_index_example_matches_compiler_output`); neither
+links to the other, so the graph line reports nothing connected:
 
 <!-- pinned: example-kb-index -->
 ```markdown
 # Scrolls Library
 
 2 scrolls from 2 sources.
+[Link graph](graph.md) — no linked scrolls yet.
 
 ## Sources
 
@@ -232,6 +235,46 @@ the second fixture in `tests/test_docs.py`,
 
 - [SQLite](../scrolls/wikipedia/sqlite.md)
 - [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md)
+```
+
+### The link graph
+
+`library/graph.md` is the browsable, human- and agent-readable form of
+`scrolls graph`'s JSON (ADR [0044](adr/0044-link-graph-command.md),
+ADR [0062](adr/0062-kb-link-graph-page.md)): the cross-source connective
+tissue the adapters build — a model wired to its paper, a package to its
+repo, a preprint to its published DOI — laid out as clusters. It is built
+over the rendered items only, so every link on the page resolves to a
+scroll file, and items that reach one another by following links (in
+either direction) are grouped into **clusters**, largest first. Each
+cluster is an adjacency list: every member as a bullet linking to its
+scroll, with its outbound edges nested beneath as `→ target`. The page is
+always written, like the index; a library whose rendered scrolls don't yet
+link to one another gets a single `No linked scrolls yet.` line, so the
+page is a stable entry point
+(`test_kb_graph_page_clusters_linked_scrolls`,
+`test_kb_graph_page_is_empty_when_no_scrolls_link`).
+
+Compiled from the example arXiv paper above plus a rendered Hugging Face
+model whose card cites it (`huggingface:model:google-bert/bert-base-uncased`,
+linking `https://arxiv.org/abs/1706.03762` — the model↔paper edge of
+ADR [0041](adr/0041-huggingface-hub-adapter.md); the third fixture in
+`tests/test_docs.py`,
+`test_library_format_graph_page_example_matches_compiler_output`):
+
+<!-- pinned: example-graph-page -->
+```markdown
+# Scrolls Link Graph
+
+2 scrolls connected across 1 cluster.
+
+## Cluster 1
+
+2 scrolls.
+
+- [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md) — arxiv
+- [google-bert/bert-base-uncased](../scrolls/huggingface/google-bert-bert-base-uncased.md) — huggingface
+  - → [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md)
 ```
 
 ## Captured media files: `media/`
@@ -274,9 +317,9 @@ Stable — agents and scripts may depend on these:
   and the `## Links` section (starting with the `- Source:` line) are
   always in the body.
 - A scroll's path never changes once written.
-- After a `scrolls kb` run, `library/index.md` exists and every link in
-  the generated tree resolves; non-generated files under `library/`
-  survive recompiles.
+- After a `scrolls kb` run, `library/index.md` and `library/graph.md`
+  exist and every link in the generated tree resolves; non-generated
+  files under `library/` survive recompiles.
 
 Not stable — expect these to grow without notice:
 

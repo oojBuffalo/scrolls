@@ -64,6 +64,20 @@ class Graph:
     item_count: int
 
 
+@dataclass(frozen=True)
+class Component:
+    """One connected component of the graph — a cluster of linked items.
+
+    Edges are treated as undirected for the partition (a link in either
+    direction joins two items into the same cluster), but the original
+    *directed* edges among the members are kept so a rendering can still
+    show which way each link points.
+    """
+
+    nodes: tuple[Node, ...]
+    edges: tuple[Edge, ...]
+
+
 def link_tokens(link: str) -> list[str]:
     """Identity tokens a single raw link could resolve to, most specific first.
 
@@ -111,7 +125,20 @@ def build_graph(db_path: Path, *, include_isolated: bool = False) -> Graph:
     total, so callers can report connectivity against the whole.
     """
     items = list_items(db_path) if db_path.exists() else []
+    return graph_over(items, include_isolated=include_isolated)
 
+
+def graph_over(items: list[ScrollItem], *, include_isolated: bool = False) -> Graph:
+    """Resolve a given set of items' links into a directed graph.
+
+    The whole-library `build_graph` loads every item and calls this; the KB
+    compiler (`kb.py`) passes only its *rendered* items so the compiled
+    `graph.md` links resolve to scroll files. A link whose target is outside
+    the given set never resolves — its identity isn't indexed — and the edge
+    is dropped, exactly as the rest of the KB ignores unrendered items.
+    `item_count` is the size of the given set, the total `nodes`/`edges`
+    report connectivity against.
+    """
     # token → the first item whose identity it matches (list_items is
     # oldest-first, so collisions from duplicates resolve deterministically).
     index: dict[str, str] = {}
@@ -171,6 +198,56 @@ def to_payload(graph: Graph) -> dict:
             "edges": len(graph.edges),
         },
     }
+
+
+def connected_components(graph: Graph) -> tuple[Component, ...]:
+    """Partition the graph into clusters of mutually linked items, largest first.
+
+    Edges are undirected for the partition (a link in either direction joins
+    its endpoints), so each component is a maximal set of items reachable
+    from one another by following links — the "islands of meaning" the
+    cross-source adapters build (a model + its paper + its dataset, a package
+    + its repo). The original directed edges among a component's members are
+    preserved on it. Components are ordered by node count descending, then by
+    their smallest node id; within a component nodes sort by id and edges by
+    `(from_id, to_id)`, so the partition is stable run to run. Isolated
+    nodes — present only when the graph was built with `include_isolated` —
+    each form a singleton component.
+    """
+    parent = {node.id: node.id for node in graph.nodes}
+
+    def find(x: str) -> str:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:  # path compression
+            parent[x], x = root, parent[x]
+        return root
+
+    for edge in graph.edges:  # union the endpoints of every (undirected) edge
+        ra, rb = find(edge.from_id), find(edge.to_id)
+        if ra != rb:
+            parent[ra] = rb
+
+    nodes_by_root: dict[str, list[Node]] = {}
+    for node in graph.nodes:
+        nodes_by_root.setdefault(find(node.id), []).append(node)
+    edges_by_root: dict[str, list[Edge]] = {}
+    for edge in graph.edges:
+        edges_by_root.setdefault(find(edge.from_id), []).append(edge)
+
+    components = [
+        Component(
+            nodes=tuple(sorted(nodes, key=lambda node: node.id)),
+            edges=tuple(sorted(
+                edges_by_root.get(root, ()),
+                key=lambda edge: (edge.from_id, edge.to_id),
+            )),
+        )
+        for root, nodes in nodes_by_root.items()
+    ]
+    components.sort(key=lambda component: (-len(component.nodes), component.nodes[0].id))
+    return tuple(components)
 
 
 def _resolve(link: str, index: dict[str, str]) -> str | None:

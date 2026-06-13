@@ -45,7 +45,7 @@ releases feed) and sync registers its new entries.
 ~/.scrolls/        # or $SCROLLS_HOME
   db.sqlite       # canonical index: items + subscriptions + concept_summaries tables, FTS5 search, schema meta
   scrolls/        # individual Markdown files, one per item, per source
-  library/        # compiled interlinked KB (index, sources, categories, concepts)
+  library/        # compiled interlinked KB (index, graph, sources, categories, concepts)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
   items/          # reserved: raw record exports (currently unused)
   media/          # captured media files (PDFs, thumbnails, photos), per source
@@ -860,12 +860,19 @@ keyless and offline.
 
 `scrolls kb` compiles the interlinked library (IDEAS.md §9, the
 deterministic version — see `docs/adr/0005-deterministic-kb-compiler.md`):
-`library/index.md` plus per-source, per-category, and per-concept pages
-that link back to rendered scrolls with relative Markdown links. The
-generated pages are rebuilt from scratch each run so stale groups can't
-linger; other files under `library/` are left alone. Concept pages merge
-spellings by slug; github repo topics, wikipedia page categories, and
-arXiv taxonomy names populate them today.
+`library/index.md`, `library/graph.md`, plus per-source, per-category, and
+per-concept pages that link back to rendered scrolls with relative Markdown
+links. The generated pages are rebuilt from scratch each run so stale
+groups can't linger; other files under `library/` are left alone. Concept
+pages merge spellings by slug; github repo topics, wikipedia page
+categories, and arXiv taxonomy names populate them today. `library/graph.md`
+is the browsable form of `scrolls graph`'s link structure (see
+`docs/adr/0062-kb-link-graph-page.md`): the rendered scrolls that link to
+one another — a model wired to its paper, a package to its repo — grouped
+into clusters (connected components), largest first, each rendered as an
+adjacency list of members and their `→ target` edges; built over rendered
+items only so every link on the page resolves to a scroll file, always
+written (empty → `No linked scrolls yet.`), and linked from the index.
 
 `scrolls kb --engine llm` is the fancy version of IDEAS.md §9 that
 ADR 0005 left room for (see `docs/adr/0025-llm-concept-summaries.md`):

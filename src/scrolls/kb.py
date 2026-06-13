@@ -24,11 +24,13 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
 
 _GENERATED_DIRS = ("sources", "categories", "concepts")
+_GENERATED_FILES = ("index.md", "graph.md")
 _RECENT_LIMIT = 10
 
 
@@ -39,6 +41,7 @@ class KbResult:
     categories: int
     concepts: int
     summaries: int
+    clusters: int
     pages: int
 
 
@@ -82,7 +85,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     database means an uninitialized library: nothing is written.
     """
     if not paths.db_path.exists():
-        return KbResult(0, 0, 0, 0, 0, 0)
+        return KbResult(0, 0, 0, 0, 0, 0, 0)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
 
     by_source: dict[str, list[ScrollItem]] = {}
@@ -93,6 +96,10 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             by_category.setdefault(item.category, []).append(item)
     by_concept = group_concepts(items)
     summaries = load_concept_summaries(paths.db_path)
+    # the link graph over the rendered items only, so every edge it shows
+    # resolves to a scroll file the page can link (graph_over drops links to
+    # unrendered targets, just as the rest of the KB ignores unrendered items)
+    components = connected_components(graph_over(items))
 
     _clear_generated(paths.library_dir)
     paths.library_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +127,9 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             lead=stored.summary if stored else None,
         )
         pages += 1
-    _write_index(paths, items, by_source, by_category, by_concept)
+    _write_graph_page(paths, components, {item.id: item for item in items})
+    pages += 1
+    _write_index(paths, items, by_source, by_category, by_concept, components)
 
     return KbResult(
         items=len(items),
@@ -128,16 +137,18 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         categories=len(by_category),
         concepts=len(by_concept),
         summaries=summarized,
+        clusters=len(components),
         pages=pages,
     )
 
 
-def _write_index(paths, items, by_source, by_category, by_concept) -> None:
+def _write_index(paths, items, by_source, by_category, by_concept, components) -> None:
     lines = [
         "# Scrolls Library",
         "",
         f"{_count(len(items))} from {len(by_source)} source"
         f"{'' if len(by_source) == 1 else 's'}.",
+        _graph_index_line(components),
     ]
     if by_source:
         lines += ["", "## Sources", ""]
@@ -185,6 +196,62 @@ def _write_page(paths: LibraryPaths, relpath: str, title: str,
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_graph_page(
+    paths: LibraryPaths,
+    components: tuple[Component, ...],
+    items_by_id: dict[str, ScrollItem],
+) -> None:
+    """Write `library/graph.md`: the link graph as connected-item clusters.
+
+    The browsable, human/agent-readable form of `scrolls graph`'s JSON
+    (ADR 0044, ADR 0062). Built over the rendered items only, so every link
+    resolves to a scroll file. Items that reach one another through links are
+    grouped into clusters, largest first, and each cluster is rendered as an
+    adjacency list: every member as a bullet linking to its scroll, with its
+    outbound edges nested beneath as `→ target`. Always written, like the
+    index; an empty graph (no links between rendered scrolls) says so, so the
+    page is a stable entry point.
+    """
+    page_dir = "library"
+    lines = ["# Scrolls Link Graph", ""]
+    if not components:
+        lines.append("No linked scrolls yet.")
+    else:
+        connected = sum(len(component.nodes) for component in components)
+        lines.append(
+            f"{_count(connected)} connected across "
+            f"{_cluster_count(len(components))}."
+        )
+        for number, component in enumerate(components, start=1):
+            lines += ["", f"## Cluster {number}", "", f"{_count(len(component.nodes))}.", ""]
+            out_edges: dict[str, list[Edge]] = {}
+            for edge in component.edges:
+                out_edges.setdefault(edge.from_id, []).append(edge)
+            for node in component.nodes:  # already sorted by id
+                item = items_by_id[node.id]
+                lines.append(_item_line(item, page_dir, note=item.source))
+                for edge in out_edges.get(node.id, ()):
+                    target = items_by_id[edge.to_id]
+                    link = os.path.relpath(target.markdown_path, start=page_dir)
+                    lines.append(f"  - → [{target.title or target.id}]({link})")
+    (paths.library_dir / "graph.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _graph_index_line(components: tuple[Component, ...]) -> str:
+    """The one-line link to `graph.md` the index carries under its count line."""
+    if not components:
+        return "[Link graph](graph.md) — no linked scrolls yet."
+    connected = sum(len(component.nodes) for component in components)
+    return (
+        f"[Link graph](graph.md) — {_count(connected)} connected across "
+        f"{_cluster_count(len(components))}."
+    )
+
+
+def _cluster_count(n: int) -> str:
+    return f"{n} cluster{'' if n == 1 else 's'}"
+
+
 def _item_line(item: ScrollItem, page_dir: str, note: str | None = None) -> str:
     link = os.path.relpath(item.markdown_path, start=page_dir)
     line = f"- [{item.title or item.id}]({link})"
@@ -196,9 +263,10 @@ def _count(n: int) -> str:
 
 
 def _clear_generated(library_dir: Path) -> None:
-    index = library_dir / "index.md"
-    if index.exists():
-        index.unlink()
+    for name in _GENERATED_FILES:
+        path = library_dir / name
+        if path.exists():
+            path.unlink()
     for name in _GENERATED_DIRS:
         shutil.rmtree(library_dir / name, ignore_errors=True)
 
