@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1717 tests at the time of writing). The docs themselves
+`uv run pytest` (1731 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -18,7 +18,8 @@ a small set of idempotent stages. Each item row carries a `stage` column;
 each command moves items between stages or derives artifacts from them.
 
 ```text
- feed ── follow ──▶ subscription ── sync ──▶ new entry URLs join at 'detected'
+ feed ── follow ───────▶ subscription ── sync ──▶ new entry URLs join at 'detected'
+ OPML ── import opml ──┘
 
  URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
                   │ ▲                   ▲                  │
@@ -69,6 +70,16 @@ each command moves items between stages or derives artifacts from them.
   a title equal to the URL (Pocket's "no title") is dropped for fetch to
   fill; columns are read by header name, so any `url`-bearing CSV imports
   (`src/scrolls/pocket.py`, ADR 0074).
+- `scrolls import opml <path>` bulk-inserts feed *subscriptions* from an
+  OPML file — the universal feed-list export of every RSS reader — the one
+  import that produces subscriptions, not items: each feed `<outline>`
+  becomes a `subscriptions` row with the same `make_subscription_id` a
+  manual `follow` mints (so the two dedupe), and the first `sync` discovers
+  its entries. Network-free unlike `follow` (which validates by fetching):
+  the `xmlUrl` is trusted on import the way a bookmarks export's URLs are,
+  a dead feed surfacing only on its first sync; parsed from bytes (the XML
+  encoding declaration), folders walked but dropped (subscriptions carry no
+  tags), non-http feeds counted (`src/scrolls/opml.py`, ADR 0076).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

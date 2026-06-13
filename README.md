@@ -86,6 +86,7 @@ uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from 
 uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history from a Takeout export, as JSON
 uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML export, as JSON
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
+uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -877,6 +878,24 @@ as migration context, blank or non-http rows are counted rather than
 failing the run, and `scrolls fetch --limit N` paces the enrichment of a
 years-deep pile. Columns are read by header name, so the importer also
 takes any CSV carrying a `url` column.
+
+`scrolls import opml <path>` bulk-imports feed subscriptions from an OPML
+file — the universal feed-list format every RSS reader (Feedly,
+Inoreader, NetNewsWire, Reeder, …) exports (see
+`docs/adr/0076-opml-import.md`). It is the bulk sibling of single-feed
+`scrolls follow`, and the one import that produces **subscriptions**
+rather than items: an OPML file lists feeds, not saved pages, so each
+feed outline becomes a row in the same subscription table `scrolls
+follow` writes, and the first `scrolls sync` discovers each feed's
+entries. Unlike `follow`, which fetches a feed once to validate it, OPML
+import is network-free like the other bulk imports — an export can hold
+hundreds of feeds and the `xmlUrl` is declared to be a feed by the
+exporting reader, so a dead feed surfaces only on its first sync, failing
+its own subscription and never the batch. A feed imported here gets the
+same subscription id a manual `follow` of that URL would mint, so the two
+acquisition paths dedupe; folders are walked through but dropped (a
+subscription carries no tags), and non-http feeds are counted rather than
+failing the run.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

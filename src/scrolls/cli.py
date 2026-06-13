@@ -26,6 +26,7 @@ from scrolls.feeds import (
     FeedError,
     follow_feed,
     get_subscription,
+    insert_subscription,
     list_subscriptions,
     make_subscription_id,
     remove_subscription,
@@ -49,6 +50,8 @@ from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
+from scrolls.opml import ImportSourceError as OPMLSourceError
+from scrolls.opml import load_opml_export
 from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_item_id
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
@@ -265,6 +268,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pocket export .zip, a directory of CSV parts, or a single "
         "exported .csv file",
     )
+    opml_parser = import_sub.add_parser(
+        "opml",
+        help="Import feed subscriptions from an OPML file (JSON output)",
+    )
+    opml_parser.add_argument(
+        "path",
+        help="exported OPML feed list (from Feedly, Inoreader, NetNewsWire, "
+        "and most RSS readers)",
+    )
 
     ingest_parser = subparsers.add_parser(
         "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
@@ -475,6 +487,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_takeout(args.path)
         if args.import_command == "pocket":
             return _cmd_import_pocket(args.path)
+        if args.import_command == "opml":
+            return _cmd_import_opml(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -728,6 +742,30 @@ def _cmd_import_pocket(path: str) -> int:
 
     # ignored entries (bookmarklets, blank URLs) are normal in real exports,
     # so they never fail the run
+    print(json.dumps({**counts, **stats}))
+    return 0
+
+
+def _cmd_import_opml(path: str) -> int:
+    try:
+        subscriptions, stats = load_opml_export(Path(path).expanduser())
+    except OPMLSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for subscription in subscriptions:
+        # INSERT OR IGNORE: an already-followed feed (earlier follow/import) is
+        # never overwritten, so a re-import keeps its sync state and stays cheap
+        if insert_subscription(paths.db_path, subscription):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    # ignored outlines (non-http feeds, folders) are normal in real exports,
+    # so they never fail the run; the first `scrolls sync` discovers entries
     print(json.dumps({**counts, **stats}))
     return 0
 

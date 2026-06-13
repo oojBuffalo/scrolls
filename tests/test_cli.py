@@ -9,7 +9,7 @@ import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
-from scrolls.feeds import Subscription, insert_subscription
+from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
 from scrolls.paths import get_paths
 from scrolls.items import ScrollItem, get_item, insert_item, update_item
 from scrolls.render import write_scroll
@@ -1615,6 +1615,75 @@ def test_import_pocket_never_overwrites_existing_item(
 
 def test_import_pocket_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
     exit_code = main(["import", "pocket", str(tmp_path / "nowhere.csv")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+@pytest.fixture
+def fake_opml(tmp_path):
+    """A miniature OPML export: a foldered feed, a top-level feed, a duplicate."""
+    export = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<opml version="2.0"><head><title>Subscriptions</title></head><body>'
+        '<outline text="Blogs">'
+        '<outline type="rss" text="A Weblog" xmlUrl="https://blog.example.com/atom.xml"/>'
+        "</outline>"
+        '<outline type="rss" text="News" xmlUrl="https://news.example.com/rss"/>'
+        '<outline type="rss" text="dup" xmlUrl="https://blog.example.com/atom.xml"/>'
+        "</body></opml>"
+    )
+    path = tmp_path / "subscriptions.opml"
+    path.write_text(export, encoding="utf-8")
+    return path
+
+
+def test_import_opml_registers_subscriptions(scrolls_home, fake_opml, capsys):
+    exit_code = main(["import", "opml", str(fake_opml)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "imported": 2,
+        "skipped": 0,
+        "feeds": 3,
+        "repeats": 1,
+        "ignored": {"not_http": 0},
+    }
+
+    # the subscriptions are queryable through the same path `scrolls follow` lists,
+    # with no sync state yet so the first sync discovers their entries
+    subs = list_subscriptions(get_paths().db_path)
+    assert {s.feed_url for s in subs} == {
+        "https://blog.example.com/atom.xml",
+        "https://news.example.com/rss",
+    }
+    assert all(s.last_synced_at is None and s.etag is None for s in subs)
+
+
+def test_import_opml_dedupes_against_a_prior_follow(scrolls_home, fake_feeds, fake_opml, capsys):
+    # a feed already followed manually is the same subscription id an import mints,
+    # so the import skips it instead of duplicating it
+    main(["follow", "https://blog.example.com/atom.xml"])
+    capsys.readouterr()
+    main(["import", "opml", str(fake_opml)])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1  # only the news feed is new
+    assert payload["skipped"] == 1  # the already-followed weblog
+
+
+def test_import_opml_is_idempotent(scrolls_home, fake_opml, capsys):
+    main(["import", "opml", str(fake_opml)])
+    capsys.readouterr()
+    exit_code = main(["import", "opml", str(fake_opml)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 2
+
+
+def test_import_opml_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "opml", str(tmp_path / "nowhere.opml")])
     assert exit_code == 1
     captured = capsys.readouterr()
     assert captured.out == ""

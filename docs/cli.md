@@ -427,6 +427,56 @@ $ scrolls import pocket /tmp/scrolls-demo.BgrqMO/pocket.csv
 [exit 0]
 ```
 
+### `scrolls import opml <path>`
+
+Import feed subscriptions from an OPML file (ADR 0076) — the universal
+feed-list interchange format every RSS reader (Feedly, Inoreader,
+NetNewsWire, Reeder, The Old Reader, …) exports. This is the bulk sibling
+of single-feed `scrolls follow`, and the one import that produces
+**subscriptions** rather than items: an OPML file lists feeds, not saved
+pages, so each feed outline becomes a row in the same `subscriptions`
+table `scrolls follow` writes, and the **first `scrolls sync` discovers
+each feed's entries**. A missing path, malformed XML, or a document whose
+root is not `<opml>` (an RSS feed passed by mistake) is an error envelope
+on stderr (`test_import_opml_missing_file_is_an_error` in
+`tests/test_cli.py`; `test_non_opml_document_raises` in
+`tests/test_opml.py`).
+
+Unlike `scrolls follow`, which fetches a feed once to validate it, OPML
+import is **network-free** like the other bulk imports: an export can hold
+hundreds of feeds and the `xmlUrl` is declared to be a feed by the
+exporting reader, so it is trusted on import and a dead feed surfaces only
+on its first sync, failing its own subscription and never the batch
+(`test_subscriptions_carry_no_validators_so_first_sync_sees_entries`). A
+feed imported here gets the same subscription id `scrolls follow` of that
+feed URL would mint, so an import and a manual follow dedupe on purpose
+(`test_import_opml_dedupes_against_a_prior_follow`). The whole outline
+tree is walked, so feeds nested in folders and top-level feeds alike
+surface; folder grouping is display metadata in the source reader and is
+dropped — subscriptions carry no tags
+(`test_imports_opml_outlines_as_subscriptions`).
+
+Per-outline oddities never fail the run — exports carry folders and the
+occasional non-http feed — so the command exits 0 and counts them:
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new subscriptions inserted |
+| `skipped` | already followed (id collision is the dedupe working) |
+| `feeds` | http(s) feed outlines found (duplicates included; `imported + skipped == feeds - repeats`) |
+| `repeats` | extra copies of a feed URL already seen in the file |
+| `ignored.not_http` | outlines with a non-http(s) `xmlUrl` (`file:`, `feed:`), counted separately from `feeds` |
+
+```console
+$ scrolls import opml /tmp/scrolls-demo.BgrqMO/subscriptions.opml
+{"imported": 3, "skipped": 0, "feeds": 4, "repeats": 1, "ignored": {"not_http": 1}}
+[exit 0]
+
+$ scrolls import opml /tmp/scrolls-demo.BgrqMO/subscriptions.opml
+{"imported": 0, "skipped": 3, "feeds": 4, "repeats": 1, "ignored": {"not_http": 1}}
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any
