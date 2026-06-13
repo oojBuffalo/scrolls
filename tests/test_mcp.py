@@ -203,6 +203,49 @@ def test_get_context_bundle_honors_facets(scrolls_home, fake_wikipedia_api):
     assert "No matching scrolls." in empty
 
 
+def test_search_and_bundle_honor_tag_and_concept_facets(scrolls_home):
+    # The tag/concept membership facets (ADR 0059) reach MCP clients through
+    # the same search_items/build_context, so lock both surfaces here.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:SQLite", source="wikipedia",
+        url="https://en.wikipedia.org/wiki/SQLite",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title="SQLite", extracted_text="SQLite is a database engine.",
+        summary="SQLite is a database engine.",
+        tags=("Database",), concepts=("Full-text search",), stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:2401.0001", source="arxiv",
+        url="https://arxiv.org/abs/2401.0001",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title="A database paper",
+        extracted_text="This paper studies database engines.",
+        summary="This paper studies database engines.",
+        tags=("ml",), concepts=("Neural networks",), stage="rendered",
+    ))
+
+    # concept facet (by slug) and tag facet (case-insensitive) on search_scrolls
+    assert [h["id"] for h in mcp_server.search_scrolls(
+        "database", concept="full text search"
+    )] == ["wikipedia:en:SQLite"]
+    assert [h["id"] for h in mcp_server.search_scrolls(
+        "database", tag="DATABASE"
+    )] == ["wikipedia:en:SQLite"]
+
+    # the bundle inherits both facets and names them in the title
+    bundle = mcp_server.get_context_bundle("database", concept="Full-text search")
+    assert bundle.startswith(
+        "# Scrolls Context Bundle: database (concept=Full-text search)"
+    )
+    assert "wikipedia:en:SQLite" in bundle
+    assert "arxiv:2401.0001" not in bundle
+
+
 def test_get_context_bundle_surfaces_connected_scrolls(scrolls_home):
     # The CLI's link-graph enrichment (ADR 0047) reaches MCP clients through
     # the same build_context — no MCP-side code, so it must be locked here.

@@ -731,7 +731,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -745,7 +745,13 @@ Filters combine with AND
 stages (a typo is a usage error, exit 2 —
 `test_list_rejects_an_unknown_stage`), and `--category ""` selects
 items *without* a category — the pool a batch `classify` would pick
-up — mirroring `scrolls set`'s empty-clears convention.
+up — mirroring `scrolls set`'s empty-clears convention. `--tag` and
+`--concept` are membership facets over the JSON list columns (ADR 0059):
+an item matches when the value is one of its tags (case-insensitive) or
+concepts (matched by slug, so "BM25" and "bm25" agree), the same way
+`scrolls related` compares them (`test_list_items_filters_by_tag`,
+`test_list_items_filters_by_concept`). They carry no empty-string
+overload — a value that nothing has prints `[]`.
 
 ```console
 $ scrolls list
@@ -783,7 +789,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -793,14 +799,18 @@ errors. `score` is SQLite's `bm25()`: results are ordered best-first and
 (`test_search_respects_limit_flag`). No matches prints `[]`; a blank
 query is an error (`test_search_blank_query_is_an_error`).
 
-`--source`, `--category`, and `--stage` scope the ranked match
-(`test_search_filters_by_source_and_category`, ADR 0058): they AND with
-the FTS match and with each other and leave the BM25 order untouched.
-`--source` and `--stage` match exactly (`--stage` choices:
-`detected`/`fetched`/`rendered`); `--category` matches exactly too,
-except an empty value (`--category ""`), which selects unclassified
-items — the same convention `scrolls list`/`scrolls set` use. A facet
-that excludes every hit prints `[]`, not an error.
+`--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
+ranked match (`test_search_filters_by_source_and_category`,
+`test_search_filters_by_tag`, `test_search_filters_by_concept`, ADRs
+0058/0059): they AND with the FTS match and with each other and leave the
+BM25 order untouched. `--source` and `--stage` match exactly (`--stage`
+choices: `detected`/`fetched`/`rendered`); `--category` matches exactly
+too, except an empty value (`--category ""`), which selects unclassified
+items — the same convention `scrolls list`/`scrolls set` use. `--tag` and
+`--concept` are membership facets over the JSON list columns — `--tag`
+case-insensitive, `--concept` by slug, as `scrolls related` compares them
+— with no empty-string overload. A facet that excludes every hit prints
+`[]`, not an error.
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
 (matches bracketed, `…` for elided context).
@@ -858,7 +868,7 @@ $ scrolls graph
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N] [--source S] [--category C] [--stage ST]`
+### `scrolls context <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -873,15 +883,17 @@ match and direction that pulled it in
 no such connections. Default limit 8. Errors are still JSON on stderr
 (blank query, as with `search`).
 
-`--source`, `--category`, and `--stage` scope the bundle exactly as they
-scope `scrolls search` (ADR 0058,
-`test_context_facets_scope_the_bundle`): they narrow the underlying
-ranked match (and so the connected-scrolls graph). When any facet is set
-the title carries a scope note — `# Scrolls Context Bundle: <query>
-(source=arxiv)` — so a scoped bundle stays self-documenting; an empty
-`--category ""` selects unclassified items and reads as
-`category=unclassified`. A facet that excludes everything still yields a
-valid `No matching scrolls.` bundle, with the scope note intact.
+`--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
+bundle exactly as they scope `scrolls search` (ADRs 0058/0059,
+`test_context_facets_scope_the_bundle`,
+`test_context_tag_and_concept_facets_scope_the_bundle`): they narrow the
+underlying ranked match (and so the connected-scrolls graph). When any
+facet is set the title carries a scope note — `# Scrolls Context Bundle:
+<query> (source=arxiv)` — so a scoped bundle stays self-documenting; an
+empty `--category ""` selects unclassified items and reads as
+`category=unclassified`, while `--tag`/`--concept` report their value
+verbatim. A facet that excludes everything still yields a valid `No
+matching scrolls.` bundle, with the scope note intact.
 
 ```console
 $ scrolls context "local search"
@@ -1006,8 +1018,8 @@ The tools wrap the same engines as the CLI commands
 
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
-| `get_context_bundle(query, limit=8, source=None, category=None, stage=None)` | `scrolls context` | Markdown bundle, optionally faceted |
-| `search_scrolls(query, limit=20, source=None, category=None, stage=None)` | `scrolls search` | hit list with snippets, optionally faceted |
+| `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
+| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, optionally faceted |
 | `get_scroll(item_id)` | `scrolls show` | full item record |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

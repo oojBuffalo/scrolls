@@ -120,6 +120,36 @@ def test_context_facet_with_no_matches_keeps_the_scope_note(scrolls_home, capsys
     assert "No matching scrolls." in out
 
 
+def test_context_tag_and_concept_facets_scope_the_bundle(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.",
+        tags=("Database",), concepts=("Full-text search",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        source="arxiv", tags=("ml",), concepts=("Neural networks",),
+    ))
+    capsys.readouterr()
+
+    # --concept matches by slug and names itself in the title
+    out = run_context(capsys, "database", "--concept", "full text search")
+    assert out.startswith(
+        "# Scrolls Context Bundle: database (concept=full text search)\n"
+    )
+    assert "wikipedia:en:SQLite" in out
+    assert "arxiv:2401.0001" not in out
+
+    # --tag matches case-insensitively, AND-ing with the rest
+    out = run_context(capsys, "database", "--tag", "database")
+    assert out.startswith("# Scrolls Context Bundle: database (tag=database)\n")
+    assert "wikipedia:en:SQLite" in out
+    assert "arxiv:2401.0001" not in out
+
+
 def test_context_ranks_title_matches_first(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path

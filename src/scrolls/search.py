@@ -20,6 +20,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.items import register_facet_functions, tag_concept_filters
+
 _BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
 _SNIPPET_TOKENS = 12
 
@@ -56,14 +58,18 @@ def search_items(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
 
     `source` and `stage` match exactly; `category` matches exactly too,
     except the empty string, which selects items *without* a category — the
-    unclassified pool, mirroring `list_items`/`scrolls set`. `None` never
-    filters. Filters AND with the full-text match and leave the ranking
-    untouched.
+    unclassified pool, mirroring `list_items`/`scrolls set`. `tag` and
+    `concept` are membership facets over the JSON array columns (ADR 0059):
+    `tag` matches case-insensitively, `concept` by slug, each the way
+    `scrolls related` compares them. `None` never filters. Filters AND with
+    the full-text match and leave the ranking untouched.
 
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
@@ -71,9 +77,10 @@ def search_items(
     match = _escape_query(query)
     if not db_path.exists():
         return []
-    clauses, params = _filters(source, category, stage)
+    clauses, params = _filters(source, category, stage, tag, concept)
     sql = _QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))
     conn = sqlite3.connect(db_path)
+    register_facet_functions(conn)
     try:
         rows = conn.execute(sql, (match, *params, limit)).fetchall()
     finally:
@@ -82,7 +89,11 @@ def search_items(
 
 
 def _filters(
-    source: str | None, category: str | None, stage: str | None
+    source: str | None,
+    category: str | None,
+    stage: str | None,
+    tag: str | None,
+    concept: str | None,
 ) -> tuple[list[str], list[str]]:
     """SQL clauses and their params for the optional facets, in column order."""
     clauses: list[str] = []
@@ -98,6 +109,9 @@ def _filters(
     if stage is not None:
         clauses.append("items.stage = ?")
         params.append(stage)
+    membership_clauses, membership_params = tag_concept_filters(tag, concept)
+    clauses += membership_clauses
+    params += membership_params
     return clauses, params
 
 

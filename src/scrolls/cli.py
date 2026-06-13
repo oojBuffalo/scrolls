@@ -138,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only scrolls at one pipeline stage",
     )
+    context_parser.add_argument(
+        "--tag", default=None, help="Only scrolls carrying this tag (case-insensitive)"
+    )
+    context_parser.add_argument(
+        "--concept",
+        default=None,
+        help="Only scrolls carrying this concept (matched by slug)",
+    )
 
     detect_parser = subparsers.add_parser(
         "detect", help="Detect which source adapter handles a URL (JSON output)"
@@ -270,6 +278,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only items with this category; an empty value selects "
         "unclassified items",
     )
+    list_parser.add_argument(
+        "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
+    )
+    list_parser.add_argument(
+        "--concept",
+        default=None,
+        help="Only items carrying this concept (matched by slug)",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -342,6 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only hits at one pipeline stage",
     )
+    search_parser.add_argument(
+        "--tag", default=None, help="Only hits carrying this tag (case-insensitive)"
+    )
+    search_parser.add_argument(
+        "--concept",
+        default=None,
+        help="Only hits carrying this concept (matched by slug)",
+    )
 
     set_parser = subparsers.add_parser(
         "set", help="Set classification fields on one item by hand (JSON output)"
@@ -392,7 +416,13 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_classify(args.id, args.engine, args.batch)
     if args.command == "context":
         return _cmd_context(
-            args.query, args.limit, args.source, args.category, args.stage
+            args.query,
+            args.limit,
+            args.source,
+            args.category,
+            args.stage,
+            args.tag,
+            args.concept,
         )
     if args.command == "detect":
         return _cmd_detect(args.url)
@@ -417,7 +447,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "kb":
         return _cmd_kb(args.engine, args.batch)
     if args.command == "list":
-        return _cmd_list(args.source, args.stage, args.category)
+        return _cmd_list(
+            args.source, args.stage, args.category, args.tag, args.concept
+        )
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -432,7 +464,13 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_rm(args.refs)
     if args.command == "search":
         return _cmd_search(
-            args.query, args.limit, args.source, args.category, args.stage
+            args.query,
+            args.limit,
+            args.source,
+            args.category,
+            args.stage,
+            args.tag,
+            args.concept,
         )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
@@ -984,11 +1022,22 @@ def _cmd_kb(engine: str = "deterministic", batch: bool = False) -> int:
 
 
 def _cmd_list(
-    source: str | None = None, stage: str | None = None, category: str | None = None
+    source: str | None = None,
+    stage: str | None = None,
+    category: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> int:
     paths = get_paths()
     items = (
-        list_items(paths.db_path, stage=stage, source=source, category=category)
+        list_items(
+            paths.db_path,
+            stage=stage,
+            source=source,
+            category=category,
+            tag=tag,
+            concept=concept,
+        )
         if paths.db_path.exists()
         else []
     )
@@ -1036,6 +1085,8 @@ def _cmd_context(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
@@ -1046,6 +1097,8 @@ def _cmd_context(
             source=source,
             category=category,
             stage=stage,
+            tag=tag,
+            concept=concept,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -1113,6 +1166,8 @@ def _cmd_search(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
@@ -1123,6 +1178,8 @@ def _cmd_search(
             source=source,
             category=category,
             stage=stage,
+            tag=tag,
+            concept=concept,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)

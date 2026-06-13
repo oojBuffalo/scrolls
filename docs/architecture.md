@@ -334,7 +334,14 @@ choice (ADRs 0004, 0005).
   the BM25 order untouched, mirroring `scrolls list`'s filters (`""`
   category selects unclassified), so a search can ask "papers about X" over
   30+ heterogeneous sources, not just "anything mentioning X" (ADR 0058,
-  `tests/test_search.py`).
+  `tests/test_search.py`). Two further facets, `tag` and `concept`, scope
+  by *membership* in the JSON list columns rather than single-column
+  equality: a `json_each` `EXISTS` subquery with `tag` lowered and
+  `concept` slugified — the `scrolls related` comparisons, via two SQL
+  functions registered on the connection (`items.register_facet_functions`)
+  — so the filtering stays in SQL and `search`'s `LIMIT` is still correct
+  (ADR 0059). The clause builder (`items.tag_concept_filters`) is shared by
+  `search_items` and `list_items`.
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
   no LLM: link connections in either direction (resolved through source
   detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv
@@ -419,11 +426,13 @@ choice (ADRs 0004, 0005).
   match count, and omitted when nothing connects; the MCP
   `get_context_bundle` inherits it through `build_context`
   (`tests/test_context.py`). The bundle takes the same
-  `source`/`category`/`stage` facets as search (ADR 0058): they narrow the
+  `source`/`category`/`stage` facets as search (ADR 0058), plus the
+  `tag`/`concept` membership facets (ADR 0059): they narrow the
   underlying ranked match — and so the connected-scrolls graph — so a
-  bundle can cover "what the *papers* say about X"; a scoped bundle names
-  its facets in the title (`category=unclassified` for the empty-string
-  pool) to stay self-documenting once dropped into context.
+  bundle can cover "what the *papers* tagged efficient say about X"; a
+  scoped bundle names its facets in the title (`category=unclassified` for
+  the empty-string pool, `tag`/`concept` verbatim) to stay self-documenting
+  once dropped into context.
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`).

@@ -105,16 +105,18 @@ uv run scrolls set <id> category=tool tags=a,b  # set classification fields by h
 uv run scrolls rm <id-or-url> [...]  # remove items and the files they own, as JSON
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls search <query> --source arxiv --category paper  # scope the ranked match; filters AND, "" = unclassified
+uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
+uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
-uv run scrolls context <query> --source arxiv  # scope the bundle (same --source/--category/--stage facets as search)
+uv run scrolls context <query> --source arxiv  # scope the bundle (same --source/--category/--stage/--tag/--concept facets as search)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON
 uv run scrolls doctor --fix   # repair what is safe offline: merge dupes, rewrite scrolls, rebuild FTS
@@ -732,8 +734,17 @@ in one library, they answer "what *papers* does my library know about
 transformers" (`--source arxiv` or `--category paper`) or "which
 *unclassified* items mention SQLite" (`--category ""`) — the filters AND
 with the match and with each other, leaving the BM25 order untouched, and
-mirror `scrolls list`'s exactly (`""` selects unclassified). The MCP
-`search_scrolls` tool takes the same three facets. `scrolls show <id>`
+mirror `scrolls list`'s exactly (`""` selects unclassified). Two more
+facets, `--tag` and `--concept`, scope by *membership* in the JSON list
+columns (see `docs/adr/0059-tag-concept-facets.md`): `--tag` matches
+case-insensitively and `--concept` by slug — exactly as `scrolls related`
+and the KB concept pages compare them, so `--concept "full text search"`
+finds an item whose concept is `Full-text search` — answering "papers
+about transformers *tagged* efficient" or "items carrying the *BM25*
+concept". They AND with the other facets and carry no empty-string
+overload (a value nothing has returns nothing). All five facets flow
+through `scrolls list`, `scrolls context`, and the MCP `search_scrolls`
+and `get_context_bundle` tools. `scrolls show <id>`
 prints the full stored item. Every command that takes an item id also
 accepts the item's URL — `scrolls show https://example.com/post`
 resolves through the same normalization and detection as `add` (see

@@ -569,6 +569,39 @@ def test_search_filters_by_source_and_category(
     assert json.loads(capsys.readouterr().out) == []
 
 
+def test_search_and_list_filter_by_tag_and_concept(
+    scrolls_home, fake_wikipedia_api, fake_github_api, capsys
+):
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])  # concept: db management
+    main(["ingest", "https://github.com/oojBuffalo/scrolls"])  # concepts: kb, sqlite
+    capsys.readouterr()
+
+    # --concept scopes by slug; only the github repo carries the "sqlite" topic
+    main(["search", "SQLite", "--concept", "SQLite"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == [
+        "github:oojBuffalo/scrolls"
+    ]
+
+    # the wikipedia page's category concept matches by slug despite spacing/case
+    main(["list", "--concept", "database management systems"])
+    assert [i["id"] for i in json.loads(capsys.readouterr().out)] == [
+        "wikipedia:en:SQLite"
+    ]
+
+    # a hand-set tag is then filterable case-insensitively
+    main(["set", "wikipedia:en:SQLite", "tags=Python,SQLite"])
+    capsys.readouterr()
+    exit_code = main(["list", "--tag", "python"])
+    assert exit_code == 0
+    assert [i["id"] for i in json.loads(capsys.readouterr().out)] == [
+        "wikipedia:en:SQLite"
+    ]
+
+    # a tag nothing carries is an empty result, not an error
+    assert main(["search", "SQLite", "--tag", "rust"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     main(["fetch"])

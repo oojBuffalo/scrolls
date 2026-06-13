@@ -187,18 +187,72 @@ def library_counts(db_path: Path) -> dict[str, Any]:
     }
 
 
+def register_facet_functions(conn: sqlite3.Connection) -> None:
+    """Register the SQL helpers the tag/concept membership facets need (ADR 0059).
+
+    Concepts merge by slug and tags match case-insensitively, exactly as
+    `scrolls related` and the KB concept pages treat them. The built-in SQL
+    `lower()` is ASCII-only, so a Unicode-aware `str.lower` is registered
+    alongside `slugify`, keeping the indexed column value and the
+    Python-normalized parameter in agreement for non-ASCII tags. Both
+    `list_items` and the joined `search_items` query call this on their
+    connection before running a `tag_concept_filters` clause.
+    """
+    from scrolls.render import slugify  # lazy: render imports items at module load
+
+    conn.create_function("scrolls_slug", 1, slugify, deterministic=True)
+    conn.create_function("scrolls_lower", 1, str.lower, deterministic=True)
+
+
+def tag_concept_filters(
+    tag: str | None, concept: str | None
+) -> tuple[list[str], list[str]]:
+    """SQL membership clauses and params for the optional tag/concept facets.
+
+    Each facet is a single value AND-ed with the others: an item matches
+    when the value is a member of its `tags` (case-insensitive) or
+    `concepts` (by slug) JSON-array column. The clauses reference
+    `items.tags`/`items.concepts`, so they correlate equally in
+    `list_items`' `SELECT * FROM items` and `search_items`' join; the
+    connection must have run `register_facet_functions`. `None` never
+    filters.
+    """
+    from scrolls.render import slugify  # lazy: render imports items at module load
+
+    clauses: list[str] = []
+    params: list[str] = []
+    if tag is not None:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM json_each(items.tags) "
+            "WHERE scrolls_lower(json_each.value) = ?)"
+        )
+        params.append(tag.lower())
+    if concept is not None:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM json_each(items.concepts) "
+            "WHERE scrolls_slug(json_each.value) = ?)"
+        )
+        params.append(slugify(concept))
+    return clauses, params
+
+
 def list_items(
     db_path: Path,
     stage: str | None = None,
     source: str | None = None,
     category: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
     `stage` and `source` match exactly. `category` matches exactly too,
     except the empty string, which selects items *without* a category —
     the batch-classifiable pool, mirroring `scrolls set`'s empty-clears
-    convention. `None` never filters.
+    convention. `tag` and `concept` are membership facets over the JSON
+    array columns (ADR 0059): `tag` matches case-insensitively, `concept`
+    by slug, each the way `scrolls related` compares them. `None` never
+    filters.
     """
     clauses = []
     params: list[str] = []
@@ -213,10 +267,14 @@ def list_items(
     elif category is not None:
         clauses.append("category = ?")
         params.append(category)
+    membership_clauses, membership_params = tag_concept_filters(tag, concept)
+    clauses += membership_clauses
+    params += membership_params
     query = "SELECT * FROM items"
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     conn = sqlite3.connect(db_path)
+    register_facet_functions(conn)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(query + " ORDER BY saved_at, id", tuple(params)).fetchall()

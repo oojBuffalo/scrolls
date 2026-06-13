@@ -146,6 +146,44 @@ def test_list_items_filters_by_source_and_category(db_path):
     assert [i.id for i in list_items(db_path, source="web", category="")] == ["web:b"]
 
 
+def test_list_items_filters_by_tag(db_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", tags=("Python", "SQLite")))
+    insert_item(db_path, make_item(id="web:b", source="web", source_id=None,
+                                   url="https://b.example", tags=("rust",)))
+
+    # tag membership is case-insensitive, mirroring `scrolls related`
+    assert [i.id for i in list_items(db_path, tag="python")] == ["web:a"]
+    assert [i.id for i in list_items(db_path, tag="RUST")] == ["web:b"]
+    # an item without the tag is excluded; no match returns []
+    assert list_items(db_path, tag="go") == []
+
+
+def test_list_items_filters_by_concept(db_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example",
+                                   concepts=("Full-text search", "BM25")))
+    insert_item(db_path, make_item(id="web:b", source="web", source_id=None,
+                                   url="https://b.example", concepts=("Birds",)))
+
+    # concept membership is by slug, so spelling/case/punctuation vary freely
+    assert [i.id for i in list_items(db_path, concept="full text search")] == ["web:a"]
+    assert [i.id for i in list_items(db_path, concept="bm25")] == ["web:a"]
+
+
+def test_list_items_tag_and_concept_combine_with_other_filters(db_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", category="tool",
+                                   tags=("python",), concepts=("Search",)))
+    insert_item(db_path, make_item(id="arxiv:1", source="arxiv", source_id="1",
+                                   url="https://x.example",
+                                   tags=("python",), concepts=("Search",)))
+
+    assert [i.id for i in list_items(
+        db_path, source="web", tag="python", concept="search"
+    )] == ["web:a"]
+
+
 def test_list_items_orders_by_saved_at(db_path):
     insert_item(
         db_path,

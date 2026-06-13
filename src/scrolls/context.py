@@ -41,27 +41,37 @@ def build_context(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
 
-    The optional `source`/`category`/`stage` facets scope the bundle the
-    same way they scope `scrolls search` (ADR 0058) — they narrow the
-    underlying ranked match (and so the connected-scrolls graph that hangs
-    off it), letting an agent ask "what do the *papers* say about X" rather
-    than "anything about X". When any facet is set the title carries a scope
-    note so the bundle is self-documenting; the empty-string `category`
-    selects the unclassified pool and reads as `category=unclassified`.
+    The optional `source`/`category`/`stage` facets (ADR 0058) and the
+    `tag`/`concept` membership facets (ADR 0059) scope the bundle the same
+    way they scope `scrolls search` — they narrow the underlying ranked
+    match (and so the connected-scrolls graph that hangs off it), letting an
+    agent ask "what do the *papers* tagged efficient say about X" rather than
+    "anything about X". When any facet is set the title carries a scope note
+    so the bundle is self-documenting; the empty-string `category` selects
+    the unclassified pool and reads as `category=unclassified`.
 
     No matches (or no library yet) still yields a valid bundle saying so,
     because agents shouldn't crash on an empty library.
     """
     hits = search_items(
-        db_path, query, limit=limit, source=source, category=category, stage=stage
+        db_path,
+        query,
+        limit=limit,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
 
     title = f"# Scrolls Context Bundle: {query}"
-    scope = _scope_note(source, category, stage)
+    scope = _scope_note(source, category, stage, tag, concept)
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
@@ -95,12 +105,19 @@ def build_context(
     return "\n".join(lines) + "\n"
 
 
-def _scope_note(source: str | None, category: str | None, stage: str | None) -> str:
-    """A `source=…, category=…, stage=…` summary of the active facets, else ''.
+def _scope_note(
+    source: str | None,
+    category: str | None,
+    stage: str | None,
+    tag: str | None,
+    concept: str | None,
+) -> str:
+    """A `source=…, category=…, …` summary of the active facets, else ''.
 
     The empty-string `category` (the unclassified pool, mirroring `scrolls
     search`/`list`) reads as `category=unclassified` so the title is honest
-    about what an empty value selects.
+    about what an empty value selects. `tag`/`concept` (ADR 0059) carry no
+    such overload — they report their value verbatim.
     """
     parts = []
     if source is not None:
@@ -109,6 +126,10 @@ def _scope_note(source: str | None, category: str | None, stage: str | None) -> 
         parts.append(f"category={category or 'unclassified'}")
     if stage is not None:
         parts.append(f"stage={stage}")
+    if tag is not None:
+        parts.append(f"tag={tag}")
+    if concept is not None:
+        parts.append(f"concept={concept}")
     return ", ".join(parts)
 
 

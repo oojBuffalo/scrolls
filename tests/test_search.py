@@ -218,6 +218,66 @@ def test_search_filters_compose_with_limit(db_path):
     assert all(hit.source == "arxiv" for hit in hits)
 
 
+def test_search_filters_by_tag(db_path):
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        source="arxiv", tags=("cs.DB", "cs.LG"),
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0002", "Another database paper",
+        "Another database study.",
+        source="arxiv", tags=("cs.CL",),
+    ))
+    # tag membership is case-insensitive, mirroring `scrolls related`
+    hits = search_items(db_path, "database", tag="CS.db")
+    assert [hit.id for hit in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_filters_by_concept(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.",
+        concepts=("Full-text search", "Embedded databases"),
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Pelican", "Pelican database",
+        "A database of birds.",
+        concepts=("Birds",),
+    ))
+    # concept membership is by slug, so spelling/case/punctuation vary freely
+    hits = search_items(db_path, "database", concept="full text search")
+    assert [hit.id for hit in hits] == ["wikipedia:en:SQLite"]
+
+
+def test_search_tag_and_concept_combine_with_other_facets(db_path):
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        source="arxiv", category="paper",
+        tags=("cs.DB",), concepts=("Full-text search",),
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0002", "Another database paper",
+        "Another database study.",
+        source="arxiv", category="paper",
+        tags=("cs.DB",), concepts=("Birds",),
+    ))
+    hits = search_items(
+        db_path, "database",
+        source="arxiv", category="paper", tag="cs.db", concept="full-text-search",
+    )
+    assert [hit.id for hit in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_tag_filter_excludes_items_without_the_tag(db_path):
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post",
+        "Some database thoughts.", source="web",  # no tags
+    ))
+    assert search_items(db_path, "database", tag="python") == []
+
+
 def test_search_blank_query_still_rejected_with_filters(db_path):
     with pytest.raises(ValueError):
         search_items(db_path, "   ", source="arxiv")

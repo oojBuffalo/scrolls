@@ -53,19 +53,31 @@ def search_scrolls(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
     `score` is SQLite bm25(): more negative means a stronger match. The
     optional facets scope the ranked match (they AND together): `source`
     limits to one source (e.g. arxiv, github, web), `category` to one
-    category (an empty string selects unclassified items), and `stage` to
-    one pipeline stage (detected, fetched, rendered). Use them to ask, e.g.,
-    what *papers* the library knows about a topic, not just what mentions it.
+    category (an empty string selects unclassified items), `stage` to one
+    pipeline stage (detected, fetched, rendered), `tag` to items carrying a
+    tag (case-insensitive), and `concept` to items carrying a concept
+    (matched by slug, so "BM25" and "bm25" agree). Use them to ask, e.g.,
+    what *papers* tagged efficient the library knows about a topic, not just
+    what mentions it.
     """
     paths = get_paths()
     hits = search_items(
-        paths.db_path, query, limit=limit, source=source, category=category, stage=stage
+        paths.db_path,
+        query,
+        limit=limit,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
     )
     return [dataclasses.asdict(hit) for hit in hits]
 
@@ -116,6 +128,8 @@ def get_context_bundle(
     source: str | None = None,
     category: str | None = None,
     stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
 ) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
 
@@ -123,13 +137,21 @@ def get_context_bundle(
     optional facets scope it the same way they scope search_scrolls (they
     AND together): `source` limits to one source (e.g. arxiv, github),
     `category` to one category (an empty string selects unclassified items),
-    and `stage` to one pipeline stage — so the bundle can cover, e.g., what
-    the *papers* say about a topic. A scoped bundle names its facets in the
-    title.
+    `stage` to one pipeline stage, `tag` to items carrying a tag
+    (case-insensitive), and `concept` to items carrying a concept (matched by
+    slug) — so the bundle can cover, e.g., what the *papers* say about a
+    topic. A scoped bundle names its facets in the title.
     """
     paths = get_paths()
     return build_context(
-        paths.db_path, query, limit=limit, source=source, category=category, stage=stage
+        paths.db_path,
+        query,
+        limit=limit,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
     )
 
 
