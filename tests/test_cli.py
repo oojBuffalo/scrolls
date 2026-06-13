@@ -1856,3 +1856,76 @@ def test_rm_before_init_fails(scrolls_home, capsys):
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["removed"] == 0 and payload["failed"] == 1
+
+
+# --- every item-id argument accepts the item's URL (ADR 0028) ---
+
+
+def test_show_accepts_item_url(scrolls_home, capsys):
+    main(["add", "https://example.com/post?utm_source=newsletter"])
+    capsys.readouterr()
+
+    exit_code = main(["show", "https://example.com/post"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["url"] == "https://example.com/post"
+    assert payload["source"] == "web"
+
+
+def test_show_unknown_url_reports_the_resolved_id(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+
+    exit_code = main(["show", "https://example.com/never-saved"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error.startswith("no such item: web:")
+    assert "(from https://example.com/never-saved)" in error
+
+
+def test_fetch_accepts_item_url(scrolls_home, capsys):
+    main(["add", "https://x.com/karpathy/status/1111"])
+    capsys.readouterr()
+
+    # resolution worked iff fetch reaches the adapter check, not "no such item"
+    exit_code = main(["fetch", "https://x.com/karpathy/status/1111"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["error"] == "no fetch adapter for source 'x'"
+
+
+def test_set_accepts_item_url(scrolls_home, capsys):
+    main(["add", "https://example.com/post"])
+    capsys.readouterr()
+
+    exit_code = main(["set", "https://example.com/post", "category=tool"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "set" and payload["category"] == "tool"
+
+
+def test_related_accepts_item_url(scrolls_home, capsys):
+    main(["add", "https://example.com/post"])
+    capsys.readouterr()
+
+    exit_code = main(["related", "https://example.com/post"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_md_accepts_item_url(scrolls_home, capsys):
+    main(["add", "https://example.com/post"])
+    item_id = json.loads(capsys.readouterr().out)["id"]
+    item = get_item(get_paths().db_path, item_id)
+    update_item(
+        get_paths().db_path,
+        dataclasses.replace(item, title="A Post", extracted_text="text", stage="fetched"),
+    )
+
+    exit_code = main(["md", "https://example.com/post"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1
+    assert payload["results"][0]["id"] == item_id

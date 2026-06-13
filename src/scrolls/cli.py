@@ -32,15 +32,15 @@ from scrolls.feeds import (
 )
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
-from scrolls.items import get_item, insert_item, list_items, update_item
+from scrolls.items import ScrollItem, get_item, insert_item, list_items, update_item
 from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
-from scrolls.paths import get_paths
-from scrolls.pipeline import ensure_library, ingest_url, register_url
+from scrolls.paths import LibraryPaths, get_paths
+from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_item_id
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
-from scrolls.remove import remove_item, resolve_item_id
+from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.search import search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     classify_parser.add_argument(
         "id",
         nargs="?",
-        help="Classify one item by id, replacing any existing category; "
+        help="Classify one item by id or URL, replacing any existing category; "
         "default is every fetched/rendered item without one",
     )
     classify_parser.add_argument(
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument(
         "id",
         nargs="?",
-        help="Fetch one item by id, refetching even if already fetched; "
+        help="Fetch one item by id or URL, refetching even if already fetched; "
         "default is every item at stage 'detected'",
     )
 
@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     md_parser.add_argument(
         "id",
         nargs="?",
-        help="Render one item by id, re-rendering even if already rendered; "
+        help="Render one item by id or URL, re-rendering even if already rendered; "
         "default is every item at stage 'fetched'",
     )
     media_parser = subparsers.add_parser(
@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     media_parser.add_argument(
         "id",
         nargs="?",
-        help="Capture one item's media by id, re-downloading even if captured; "
+        help="Capture one item's media by id or URL, re-downloading even if captured; "
         "default is every item with uncaptured media references",
     )
 
@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     related_parser = subparsers.add_parser(
         "related", help="Find items related to one item (JSON output)"
     )
-    related_parser.add_argument("id", help="Item id, e.g. x:1111")
+    related_parser.add_argument("id", help="Item id (e.g. x:1111), or the item's URL")
     related_parser.add_argument(
         "--limit",
         type=int,
@@ -261,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser = subparsers.add_parser(
         "set", help="Set classification fields on one item by hand (JSON output)"
     )
-    set_parser.add_argument("id", help="Item id, e.g. wikipedia:en:SQLite")
+    set_parser.add_argument("id", help="Item id (e.g. wikipedia:en:SQLite), or the item's URL")
     set_parser.add_argument(
         "assignments",
         nargs="+",
@@ -273,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser(
         "show", help="Print one item in full (JSON output)"
     )
-    show_parser.add_argument("id", help="Item id, e.g. wikipedia:en:SQLite")
+    show_parser.add_argument("id", help="Item id (e.g. wikipedia:en:SQLite), or the item's URL")
 
     subparsers.add_parser("status", help="Report library state (JSON output)")
 
@@ -491,12 +491,29 @@ def _cmd_import_fieldtheory(root: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_fetch(item_id: str | None) -> int:
+def _find_item(paths: LibraryPaths, ref: str) -> tuple[ScrollItem | None, str]:
+    """Look up an item by id-or-URL ref; return (item, "") or (None, error).
+
+    A URL resolves to the id `add` would mint (ADR 0028); the error
+    names the resolved id so the resolution stays visible.
+    """
+    try:
+        item_id = resolve_item_id(ref)
+    except ValueError as exc:
+        return None, str(exc)
+    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    if item is None:
+        suffix = f" (from {ref})" if item_id != ref else ""
+        return None, f"no such item: {item_id}{suffix}"
+    return item, ""
+
+
+def _cmd_fetch(ref: str | None) -> int:
     paths = get_paths()
-    if item_id is not None:
-        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    if ref is not None:
+        item, error = _find_item(paths, ref)
         if item is None:
-            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            print(json.dumps({"error": error}), file=sys.stderr)
             return 1
         items = [item]
     else:
@@ -509,7 +526,7 @@ def _cmd_fetch(item_id: str | None) -> int:
         if adapter is None:
             # Bulk runs leave adapterless items for a future scrolls; asking
             # for one by id deserves an honest failure.
-            if item_id is None:
+            if ref is None:
                 counts["skipped"] += 1
                 results.append(
                     {
@@ -587,9 +604,9 @@ def _cmd_classify(
         llm_model = resolve_llm_model(config)
 
     if item_id is not None:
-        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        item, error = _find_item(paths, item_id)
         if item is None:
-            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            print(json.dumps({"error": error}), file=sys.stderr)
             return 1
         # Asking for one item by id is an explicit reclassify; batch runs
         # below never overwrite an existing category (user overrides win).
@@ -671,9 +688,9 @@ def _cmd_classify(
 def _cmd_md(item_id: str | None) -> int:
     paths = get_paths()
     if item_id is not None:
-        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        item, error = _find_item(paths, item_id)
         if item is None:
-            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            print(json.dumps({"error": error}), file=sys.stderr)
             return 1
         items = [item]
     else:
@@ -711,9 +728,9 @@ def _cmd_md(item_id: str | None) -> int:
 def _cmd_media(item_id: str | None) -> int:
     paths = get_paths()
     if item_id is not None:
-        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        item, error = _find_item(paths, item_id)
         if item is None:
-            print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+            print(json.dumps({"error": error}), file=sys.stderr)
             return 1
         # By id: explicit re-capture, like `fetch <id>` refetches.
         items, force = [item], True
@@ -856,7 +873,7 @@ def _cmd_context(query: str, limit: int) -> int:
 def _cmd_related(item_id: str, limit: int) -> int:
     paths = get_paths()
     try:
-        hits = find_related(paths.db_path, item_id, limit=limit)
+        hits = find_related(paths.db_path, resolve_item_id(item_id), limit=limit)
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
@@ -872,18 +889,10 @@ def _cmd_rm(refs: list[str]) -> int:
     results = []
     counts = {"removed": 0, "failed": 0}
     for ref in refs:
-        try:
-            item_id = resolve_item_id(ref)
-        except ValueError as exc:
-            counts["failed"] += 1
-            results.append({"ref": ref, "status": "failed", "error": str(exc)})
-            continue
-        item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+        item, error = _find_item(paths, ref)
         if item is None:
             counts["failed"] += 1
-            results.append(
-                {"ref": ref, "status": "failed", "error": f"no such item: {item_id}"}
-            )
+            results.append({"ref": ref, "status": "failed", "error": error})
             continue
         try:
             files = remove_item(paths, item)
@@ -920,9 +929,9 @@ def _cmd_search(query: str, limit: int) -> int:
 
 def _cmd_set(item_id: str, assignments: list[str]) -> int:
     paths = get_paths()
-    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    item, error = _find_item(paths, item_id)
     if item is None:
-        print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+        print(json.dumps({"error": error}), file=sys.stderr)
         return 1
     try:
         overrides = parse_assignments(assignments)
@@ -956,9 +965,9 @@ def _cmd_set(item_id: str, assignments: list[str]) -> int:
 
 def _cmd_show(item_id: str) -> int:
     paths = get_paths()
-    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    item, error = _find_item(paths, item_id)
     if item is None:
-        print(json.dumps({"error": f"no such item: {item_id}"}), file=sys.stderr)
+        print(json.dumps({"error": error}), file=sys.stderr)
         return 1
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):

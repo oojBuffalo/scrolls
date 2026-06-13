@@ -1,11 +1,12 @@
 """Tests for `scrolls rm`: item removal (ADR 0027).
 
-The removal engine (`remove.py`) is `scrolls add`'s inverse: it resolves
-an id or URL to the id `add` would mint, deletes the files the item owns
-(its scroll, its captured media), then deletes the row — files first,
-row last, so an interrupted removal leaves a re-runnable item rather
-than orphan files doctor refuses to delete. Recorded paths that escape
-the library root fail the removal before anything is touched.
+The removal engine (`remove.py`) is `scrolls add`'s inverse: it deletes
+the files the item owns (its scroll, its captured media), then deletes
+the row — files first, row last, so an interrupted removal leaves a
+re-runnable item rather than orphan files doctor refuses to delete.
+Recorded paths that escape the library root fail the removal before
+anything is touched. Id-or-URL ref resolution lives in the pipeline
+(`tests/test_pipeline.py`).
 """
 
 import dataclasses
@@ -15,7 +16,7 @@ import pytest
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, get_item, insert_item, make_item_id
 from scrolls.paths import get_paths
-from scrolls.remove import remove_item, resolve_item_id
+from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.search import search_items
 
@@ -54,30 +55,6 @@ def _web_item(url, *, fetched=False, **overrides):
         )
     fields.update(overrides)
     return ScrollItem(**fields)
-
-
-# --- resolve_item_id: the id-or-URL handle ---
-
-
-def test_resolve_passes_ids_through_verbatim():
-    assert resolve_item_id("wikipedia:en:SQLite") == "wikipedia:en:SQLite"
-
-
-def test_resolve_mints_the_same_id_as_add():
-    url = "https://youtu.be/dQw4w9WgXcQ"
-    assert resolve_item_id(url) == "youtube:dQw4w9WgXcQ"
-
-
-def test_resolve_normalizes_urls_like_add():
-    """A tracking-decorated spelling resolves to the clean URL's id (ADR 0023)."""
-    clean = "https://example.com/post"
-    junk = "https://example.com/post?utm_source=newsletter&fbclid=IwAR0"
-    assert resolve_item_id(junk) == make_item_id("web", None, clean)
-
-
-def test_resolve_rejects_non_http_urls():
-    with pytest.raises(ValueError):
-        resolve_item_id("ftp://example.com/file")
 
 
 # --- remove_item: files first, row last ---

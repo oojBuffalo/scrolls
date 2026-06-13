@@ -42,6 +42,16 @@ claim cites the test that locks it; unless noted, tests live in
   URL carries a source-local id (`wikipedia:en:SQLite`,
   `arxiv:1706.03762`, `x:1111`), else `source:` + a 12-hex-char SHA-256
   of the URL (`tests/test_items.py`).
+- **The saved URL works wherever an item id does** (ADR 0028): every
+  command that takes an item id (`show`, `fetch`, `classify`, `md`,
+  `media`, `set`, `related`, `rm`) also accepts the item's URL, in any
+  tracking-decorated spelling — resolved to the id `add` would mint
+  (`tests/test_pipeline.py`, `test_show_accepts_item_url`,
+  `test_fetch_accepts_item_url`). A URL that matches nothing reports
+  the id it resolved to
+  (`test_show_unknown_url_reports_the_resolved_id`). Subscription ids
+  (`sync`, `unfollow`) are a separate namespace; `unfollow` accepts
+  feed URLs already.
 - **Stages**: `detected → fetched → rendered`, advanced by
   `fetch` and `md`; `classify`, `media`, and `kb` are stage-neutral.
 
@@ -626,7 +636,8 @@ width — every entry has the same seven keys)*
 One item in full: every `ScrollItem` field
 (`docs/architecture.md` → "The data model"), with list fields always
 present as JSON arrays (`test_show_prints_full_item_json`). Unset fields
-are `null`, not omitted.
+are `null`, not omitted. The id may also be the item's URL — see
+Conventions (`test_show_accepts_item_url`).
 
 ```console
 $ scrolls show x:1111

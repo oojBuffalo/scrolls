@@ -11,25 +11,8 @@ mutation.
 
 from __future__ import annotations
 
-from scrolls.items import ScrollItem, delete_item, make_item_id
+from scrolls.items import ScrollItem, delete_item
 from scrolls.paths import LibraryPaths
-from scrolls.sources.detect import detect_source
-from scrolls.sources.urls import normalize_url
-
-
-def resolve_item_id(ref: str) -> str:
-    """An item id verbatim, or a URL resolved to the id `add` would mint.
-
-    The same normalize → detect → mint chain as `pipeline.register_url`
-    (ADR 0023 included), so the URL that created an item — in any
-    tracking-decorated spelling — is always a valid handle for removing
-    it. Raises ValueError for URLs no adapter can handle.
-    """
-    if "://" not in ref:
-        return ref
-    cleaned = normalize_url(ref)
-    detected = detect_source(cleaned)
-    return make_item_id(detected.source, detected.source_id, cleaned)
 
 
 def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:

@@ -211,7 +211,11 @@ allows re-capture — the media tree is cache, not canon (see
 (BM25-ranked, title weighted highest) and returns hits with snippets; the
 index is kept in sync by SQL triggers. Query tokens are AND-ed and quoted,
 so arbitrary agent input never hits FTS5 syntax errors. `scrolls show <id>`
-prints the full stored item.
+prints the full stored item. Every command that takes an item id also
+accepts the item's URL — `scrolls show https://example.com/post`
+resolves through the same normalization and detection as `add` (see
+`docs/adr/0028-item-refs-accept-urls.md`) — so nobody has to compute
+hash ids for web items.
 
 `scrolls related <id>` finds the items connected to one item with
 deterministic, explainable signals (IDEAS.md §10): link connections in
@@ -365,7 +369,9 @@ LLM concept engine behind `kb --engine llm` (ADR 0025) — and
 `scrolls doctor` to find and repair index/file-tree drift, including
 the pre-normalization duplicates ADR 0023 deferred (ADR 0026), and
 `scrolls rm` to take items — row, scroll file, captured media — back
-out of the library (ADR 0027). Next candidate: a Batches transport for
-concept summaries if libraries outgrow per-call generation (ADR 0025).
+out of the library (ADR 0027), with the saved URL usable wherever a
+command takes an item id (ADR 0028). Next candidate: a Batches
+transport for concept summaries if libraries outgrow per-call
+generation (ADR 0025).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

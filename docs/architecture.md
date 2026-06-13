@@ -328,6 +328,11 @@ recurring rules:
   testable without it (`tests/test_cli.py` covers the seams). The
   add/ingest chain lives in `src/scrolls/pipeline.py` so the CLI and
   the MCP server share one implementation (ADR 0014).
+- **Item refs are ids or URLs** (ADR 0028): every command that takes an
+  item id also accepts the item's URL, resolved by
+  `pipeline.resolve_item_id` through the same normalize → detect → mint
+  chain `add` registers with, so the saved URL is always a valid handle
+  (`tests/test_pipeline.py`).
 - **Dependency posture** (ADR 0001): stdlib first; a third-party package
   must buy its feature something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`

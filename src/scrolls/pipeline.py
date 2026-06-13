@@ -45,6 +45,21 @@ def ensure_library(paths: LibraryPaths) -> bool:
     return existed_before
 
 
+def resolve_item_id(ref: str) -> str:
+    """An item id verbatim, or a URL resolved to the id `add` would mint.
+
+    The same normalize → detect → mint chain as `register_url` (ADR 0023
+    included), so the URL that saved an item — in any tracking-decorated
+    spelling — is a valid handle wherever a command takes an item id
+    (ADR 0028). Raises ValueError for URLs no adapter can handle.
+    """
+    if "://" not in ref:
+        return ref
+    cleaned = normalize_url(ref)
+    detected = detect_source(cleaned)
+    return make_item_id(detected.source, detected.source_id, cleaned)
+
+
 def register_url(url: str) -> tuple[LibraryPaths, ScrollItem, bool]:
     """Detect, ensure the library exists, and register the URL as an item.
 
