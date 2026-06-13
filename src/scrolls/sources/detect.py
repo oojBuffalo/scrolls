@@ -21,6 +21,11 @@ GITLAB_HOSTS = {"gitlab.com", "www.gitlab.com"}
 # repo root has no shape tell — ADR 0055/0056). Codeberg runs Forgejo,
 # gitea.com runs Gitea; one `gitea` source covers both (ADR 0056).
 GITEA_HOSTS = {"codeberg.org", "www.codeberg.org", "gitea.com", "www.gitea.com"}
+# Bitbucket Cloud is a single hosted service (api.bitbucket.org), so it is
+# host-scoped like github/gitlab — not host-in-id like gitea (ADR 0057).
+# Bitbucket Server/Data Center (self-hosted, a different API) is deferred like
+# self-hosted GitLab.
+BITBUCKET_HOSTS = {"bitbucket.org", "www.bitbucket.org"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
@@ -81,6 +86,14 @@ GITEA_RESERVED = {
     "notifications", "org", "pulls", "repo", "search", "sign_up", "user",
 }
 
+# Top-level bitbucket.org path segments that are site pages or platform routes,
+# never a repo workspace. Bitbucket repos live at `<workspace>/<repo>`, so only
+# the first-segment site routes need excluding (github's small-set scale).
+BITBUCKET_RESERVED = {
+    "account", "dashboard", "repo", "snippets", "product", "plans", "pricing",
+    "support", "blog", "whats-new",
+}
+
 # Top-level huggingface.co path segments that are site pages, not model repos.
 # `datasets` and `spaces` are handled by dedicated branches before this set is
 # consulted; the rest are routes that can never be a model's `<org>/<name>`.
@@ -124,6 +137,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in GITEA_HOSTS:
         return DetectedSource("gitea", _gitea_id(host, path_parts))
+
+    if host in BITBUCKET_HOSTS:
+        return DetectedSource("bitbucket", _bitbucket_id(path_parts))
 
     if host in ARXIV_HOSTS:
         return DetectedSource("arxiv", _arxiv_id(path_parts))
@@ -297,6 +313,28 @@ def _gitea_id(host: str, path_parts: list[str]) -> str | None:
     if len(path_parts) < 2 or path_parts[0].lower() in GITEA_RESERVED:
         return None
     return f"{canonical_host}/{path_parts[0]}/{path_parts[1]}"
+
+
+def _bitbucket_id(path_parts: list[str]) -> str | None:
+    """`<workspace>/<repo>` for a Bitbucket Cloud repo URL, else None.
+
+    Bitbucket repos use github's flat `<workspace>/<repo>` shape, so the first
+    two segments are the repo and a deep link (`/src/...`, `/pull-requests/1`,
+    `/issues`) dedupes to it. Unlike gitea, the host does *not* ride in the
+    identity: Bitbucket Cloud is a single hosted service (`api.bitbucket.org`),
+    so one fixed API host serves every repo (the github/gitlab rule).
+
+    The path is folded lowercase: Bitbucket auto-lowercases repo slugs, mints
+    lowercase workspace ids, and routes case-insensitively (the live API
+    resolves a mixed-case request), so `/Workspace/Repo` and `/workspace/repo`
+    dedupe to one item — the gitlab/crates case-fold (ADR 0055/0036), not
+    github's verbatim `owner/repo`. A bare workspace page (one segment) and the
+    reserved site routes (`account`, `dashboard`, `snippets`, …) carry no repo
+    and resolve to the source with no fetchable item — github's pattern.
+    """
+    if len(path_parts) < 2 or path_parts[0].lower() in BITBUCKET_RESERVED:
+        return None
+    return f"{path_parts[0].lower()}/{path_parts[1].lower()}"
 
 
 def _arxiv_id(path_parts: list[str]) -> str | None:

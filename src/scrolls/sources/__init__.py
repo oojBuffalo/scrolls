@@ -19,6 +19,7 @@ class FetchError(Exception):
 # back from this package.
 from scrolls.sources import (  # noqa: E402
     arxiv,
+    bitbucket,
     bluesky,
     crates,
     crossref,
@@ -50,6 +51,10 @@ from scrolls.sources import (  # noqa: E402
 
 FETCH_ADAPTERS = {
     "arxiv": arxiv.fetch_item,
+    # Bitbucket is the fourth code host; Bitbucket Cloud is a single hosted
+    # service, so it is host-scoped with a flat `<workspace>/<repo>` identity
+    # like github (not host-in-id like gitea), folded lowercase (ADR 0057).
+    "bitbucket": bitbucket.fetch_item,
     "bluesky": bluesky.fetch_item,
     "crates": crates.fetch_item,
     # A `doi.org` link is detected as `crossref`, but its registration agency

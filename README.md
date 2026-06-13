@@ -168,7 +168,30 @@ README.md-first via the keyless *API* raw route — the contents listing's
 clients, and listing a large repo's root times out (forgejo/forgejo did) —
 with a root-listing fallback that finds a differently-named README
 (`README.rst`); set `GITEA_TOKEN`/`FORGEJO_TOKEN` to lift the rate limit and
-reach private repos; degrades to a metadata-only scroll), and **arxiv**
+reach private repos; degrades to a metadata-only scroll), and **bitbucket**
+(the fourth code host — Bitbucket Cloud's keyless `/2.0` API, see
+`docs/adr/0057-bitbucket-adapter.md`: `GET /2.0/repositories/<workspace>/<repo>`.
+Where gitea carries the instance host in the id because its API is per-host,
+Bitbucket *Cloud* is a single hosted service (`api.bitbucket.org`), so it is
+host-scoped with one fixed API host and the flat `<workspace>/<repo>` identity
+github uses — *not* host-in-id. The id is folded lowercase (Bitbucket
+auto-lowercases slugs and routes case-insensitively, so `/Workspace/Repo` and a
+deep `/src/...` link dedupe to one repo — the gitlab fold, not github's
+verbatim). Bitbucket Cloud has no repository-topics feature, so `concepts` stay
+empty *by design* (the Go/RubyGems posture) — the repo's `language` is the one
+structured facet it offers and becomes the single `tag` (github ignores
+`language` because its richer topics fill that role). The README needs no
+`/readme` endpoint (github) or `/raw/` route (gitea): a file's body comes from
+the `/src/<commit>/<path>` route, which accepts a branch name, so the adapter
+reads `mainbranch.name` and fetches `README.md` first (one fast keyless GET),
+falling back to a root listing (`commit_file`/`commit_directory` entries) only to
+find a differently-named README (`README.rst`) — the gitea README pattern on
+Bitbucket's src endpoint. `title` is `full_name`, `author` the owner's
+`display_name`, `published_at` the `created_on`, the canonical URL the
+`links.html.href`; set `BITBUCKET_TOKEN` (a Bitbucket access token) to send
+`Authorization: Bearer` and lift the rate limit; Bitbucket Server/Data Center,
+the self-hosted product on a different API, is deferred like self-hosted GitLab;
+degrades to a metadata-only scroll), and **arxiv**
 (keyless Atom export API, stdlib XML: the abstract becomes the
 searchable summary, taxonomy codes become `tags` and their display
 names — "Computation and Language" for `cs.CL`, via a bundled taxonomy

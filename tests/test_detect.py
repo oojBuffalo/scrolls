@@ -77,6 +77,24 @@ CASES = [
     ("https://codeberg.org/explore/repos", "gitea", None),
     ("https://gitea.com/issues", "gitea", None),
     ("https://codeberg.org/", "gitea", None),
+    # --- bitbucket (host-scoped, single API host like github; flat workspace/repo) ---
+    ("https://bitbucket.org/atlassian/python-bitbucket", "bitbucket",
+     "atlassian/python-bitbucket"),
+    ("https://www.bitbucket.org/atlassian/python-bitbucket", "bitbucket",
+     "atlassian/python-bitbucket"),
+    # deep links dedupe to the repo (github's flat shape)
+    ("https://bitbucket.org/atlassian/python-bitbucket/src/master/", "bitbucket",
+     "atlassian/python-bitbucket"),
+    ("https://bitbucket.org/atlassian/python-bitbucket/pull-requests/1", "bitbucket",
+     "atlassian/python-bitbucket"),
+    # folded lowercase (Bitbucket auto-lowercases slugs, routes case-insensitively)
+    ("https://bitbucket.org/Atlassian/Python-Bitbucket", "bitbucket",
+     "atlassian/python-bitbucket"),
+    # workspace page, reserved routes, and the bare host carry no fetchable repo
+    ("https://bitbucket.org/atlassian", "bitbucket", None),
+    ("https://bitbucket.org/dashboard/overview", "bitbucket", None),
+    ("https://bitbucket.org/product", "bitbucket", None),
+    ("https://bitbucket.org/", "bitbucket", None),
     # --- arxiv ---
     ("https://arxiv.org/abs/2406.01234", "arxiv", "2406.01234"),
     ("https://arxiv.org/abs/2406.01234v2", "arxiv", "2406.01234v2"),
