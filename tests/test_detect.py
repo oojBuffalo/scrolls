@@ -196,6 +196,29 @@ CASES = [
     # at fetch time by the threadiverse dispatcher, not at detection (ADR 0053).
     ("https://piefed.social/post/1600132", "lemmy", "piefed.social/1600132"),
     ("https://piefed.world/post/956553", "lemmy", "piefed.world/956553"),
+    # --- discourse forums (host-less, fetched from the keyless .json view — ADR 0054) ---
+    # /t/<slug>/<topic_id> on any instance; identity carries the host + the
+    # all-digits topic id, the display-only slug dropped
+    ("https://discuss.python.org/t/welcome-to-discourse/8", "discourse",
+     "discuss.python.org/8"),
+    ("https://meta.discourse.org/t/how-to-do-x/12345", "discourse",
+     "meta.discourse.org/12345"),
+    # a trailing /<post_number> jump target dedupes to the same topic
+    ("https://discuss.python.org/t/welcome-to-discourse/8/3", "discourse",
+     "discuss.python.org/8"),
+    # the host is lowercased (DNS); a query is ignored by path parsing
+    ("https://Discuss.Python.org/t/welcome-to-discourse/8", "discourse",
+     "discuss.python.org/8"),
+    ("https://users.rust-lang.org/t/help-with-lifetimes/4242?page=2", "discourse",
+     "users.rust-lang.org/4242"),
+    # the all-digits guard keeps a /t/<slug>/<non-numeric> a web page (the weak
+    # `t` literal can't carry the match on its own — the Lemmy rule, ADR 0052)
+    ("https://blog.example/t/some-thread/not-a-number", "web", None),
+    # a two-segment /t/<tag> tag page carries no topic id -> plain web
+    ("https://blog.example/t/python", "web", None),
+    # category and user routes don't match the /t/<slug>/<digits> shape
+    ("https://discuss.python.org/c/users-help/7", "web", None),
+    ("https://discuss.python.org/u/guido", "web", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

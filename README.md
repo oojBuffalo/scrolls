@@ -560,8 +560,36 @@ a link/video post's `url` a `link` (so a PieFed video pointing at a YouTube
 URL becomes a cross-source edge), cross-posts — which PieFed nests with a
 `post_id` and no `ap_id` — becoming same-instance `/post/<id>` post↔post
 links, the community a `concept`, no category default, and the `Poll`/`Event`
-payloads kept in `raw_text` for a future render). Items from sources without
-an adapter yet (today only `x`) are
+payloads kept in `raw_text` for a future render), and **discourse** (the
+keyless Discourse forum `.json` view — see
+`docs/adr/0054-discourse-adapter.md`: Discourse is the open-source software
+behind countless dev communities (discuss.python.org, meta.discourse.org,
+users.rust-lang.org), the *centralized-forum* sibling of the aggregators
+Hacker News, Lobsters, Lemmy, and PieFed — and the **first non-Fediverse
+host-less source**, proving the shape-only detection the Fediverse adapters
+built generalizes beyond ActivityPub. Like them it has no host set to claim:
+a `/t/<slug>/<topic_id>` topic on any instance becomes
+`discourse:<host>/<topic_id>`, the display-only slug dropped from identity and
+the all-digits id carrying the weak `t` literal — so a blog's `/t/<slug>` tag
+page or a `/t/<slug>/<non-numeric>` stays a web page, and a misdetect degrades
+to a benign failed fetch (the adapter validates the response is a Discourse
+topic before producing a scroll, never a wrong one). Unlike the two-request
+social and aggregator adapters, `GET /t/<id>.json` returns the topic *and* its
+first page of posts in *one* request (Lobsters' economy): a real `title` (a
+forum thread, not a synthesized social post), the opening post the searchable
+body, the later posts a bylined `### Replies` section (moderator-action,
+whisper, and deleted posts skipped), the `cooked` HTML reduced to text by a
+stdlib parser (no `trafilatura`, Mastodon's rule). The topic's `tags` become
+`concepts` like github topics, its outbound `details.links` — the
+internal-navigation and incoming-reflection links filtered out — become
+`links` so a thread pointing at an arXiv paper or github repo wires to it
+through `scrolls related`/`graph`, and its representative `image_url` becomes a
+`thumbnail`. The `summary` leads with the opening post else the engagement
+status ("3 replies, 20 likes"); like Hacker News, Lobsters, Lemmy, and the
+social posts it gets *no* category default. A long thread is bounded to the
+first page, the full post-id `stream` surviving in `raw_text` for a later paged
+render; category/user/tag routes carry no topic id to fetch). Items from
+sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
@@ -945,15 +973,21 @@ own `/api/alpha` API with diverging field names (so it can't ride Lemmy's
 adapter either), making it a hybrid: its own *adapter* on Lemmy's *source*,
 reached by a fetch-time `threadiverse` dispatcher (Lemmy first, PieFed
 fallback) the way DataCite sits behind Crossref, with `source="lemmy"` kept
-and `provenance.adapter="piefed"` recording the truth (ADR 0053). Next
-candidates: **Mbin** as a third link aggregator (its thread URL
-`/m/<magazine>/t/<id>` is a *distinct* shape, so it would detect separately,
-unlike PieFed); home-instance-canonical Mastodon/Misskey/Lemmy and
-DID-canonical Bluesky identity so a post saved through two routes dedupes —
-the fetch-time id rewrite no adapter does yet (ADR 0048–0053); a third DOI
-registration agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or
-two-phase batch submit/collect if a terminal wait ever outgrows the library
-(ADR 0022, ADR 0032). A native `x` fetch adapter
+and `provenance.adapter="piefed"` recording the truth (ADR 0053). The
+discussion family then reached the *forums*: **Discourse** — the centralized
+forum software behind countless dev communities — joins on its
+`/t/<slug>/<id>` topic shape, the first non-Fediverse host-less source, its
+topic and first page of posts fetched from the keyless `.json` view in one
+request (ADR 0054). Next candidates: home-instance-canonical
+Mastodon/Misskey/Lemmy and DID-canonical Bluesky identity so a post saved
+through two routes dedupes — the fetch-time id rewrite no adapter does yet
+(ADR 0048–0053); a third DOI registration agency (mEDRA, JaLC) joining the
+same `doi.py` dispatch; or two-phase batch submit/collect if a terminal wait
+ever outgrows the library (ADR 0022, ADR 0032). **Mbin** (the kbin fork) was
+the named next aggregator, but its read API is OAuth-gated — its
+`security.yaml` grants no anonymous `/api/entry` and live instances 401/403 an
+unauthenticated read — so it cannot be a keyless adapter without a
+client-credentials token dance, and is deferred (ADR 0054). A native `x` fetch adapter
 remains out of reach while X's read API stays paywalled; `x` enriches only
 through the Field Theory import (ADR 0009).
 

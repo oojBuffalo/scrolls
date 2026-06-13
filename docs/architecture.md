@@ -195,7 +195,12 @@ Two small contracts make every platform the same kind of scroll
    shape, so it too detects as `lemmy` — which of the two backends actually
    serves a post (Lemmy's `/api/v3` or PieFed's `/api/alpha`) is resolved at
    *fetch* time by the `threadiverse` dispatcher, not at detection (ADR 0053,
-   the DOI-dispatch pattern of ADR 0045). Finally `.pdf`
+   the DOI-dispatch pattern of ADR 0045). A fourth shape-only branch,
+   `discourse`, then matches the forum software's `/t/<slug>/<id>` topic URL on
+   any unclaimed host (`discourse:<host>/<topic_id>`, the slug display-only and
+   dropped, the all-digits id carrying the weak `t` literal) — the **first
+   non-Fediverse host-less source**, proving the shape-detection technique
+   generalizes beyond ActivityPub (ADR 0054). Finally `.pdf`
    paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -238,6 +243,7 @@ Implemented fetch adapters, all keyless:
 | misskey (incl. Sharkey, Firefish, Foundkey) | `sources/misskey.py` | keyless Misskey API, stdlib only; `POST /api/notes/show` (JSON body) then optional `notes/children` | the Fediverse Misskey-API family — *not* Mastodon-compatible, so its own source/adapter; the first POST-bodied adapter (new `http.post_json`); MFM `text` is already plain (no HTML parser, Lobsters' economy), links scanned from the text + a quote-renote's note → `links` (post↔post + cross-source edges), `files` → `photo`/video-`thumbnail` media (`comment` alt searchable), bare-string `tags` → `concepts`, `cw` content warning leads the body, a pure renote unwraps; synthesized title, `summary` = lead else alt else engagement status; **no category default**; degrades to metadata-only | 0051 |
 | lemmy (Lemmy backend) | `sources/lemmy.py` via `sources/threadiverse.py` dispatch | keyless Lemmy API v3, stdlib only; `GET /api/v3/post` then optional `/comment/list` | the federated link aggregator (HN/Lobsters' cousin) — *not* Mastodon/Misskey-compatible, so its own source/adapter, the third Fediverse split by client API; plain GET so `http.get_json` serves it; a *real* `name` title (an aggregator entry, not synthesized) and `ap_id` canonical; flat comments sorted into thread pre-order by integer `path`, bylined like Lobsters (deleted/removed skipped); link post `url` → article `link`, text post `body` the content, image post `url` → `photo` media (told by `url_content_type`), `thumbnail_url` → preview; body URLs + `cross_posts` `ap_id` → `links` (cross-source + post↔post edges); community → one `concept`; `summary` = body lead else "N points, M comments"; **no category default — unclassified like HN/Lobsters/social**; degrades to post-only | 0052 |
 | lemmy (PieFed backend) | `sources/piefed.py` via `sources/threadiverse.py` dispatch | keyless PieFed `/api/alpha`, stdlib only; `GET /post` then optional `/comment/list` | PieFed shares Lemmy's exact `/post/<digits>` URL, so it can't be its own *detected* source; but its API is its own (`/api/alpha`, `post.title`/`creator.user_name`/`comment.body`/`post_type` not Lemmy's `name`/`name`/`content`/`url_content_type`), so it can't ride Lemmy's *adapter* either — its own adapter on Lemmy's source, resolved at fetch time by the `threadiverse` dispatcher (Lemmy first, PieFed fallback — the `doi.py` pattern); identity stays `lemmy:<host>/<id>`, `provenance.adapter="piefed"` honest (the DataCite-vs-Crossref split); otherwise mirrors Lemmy — image by `post_type=="Image"`, cross-posts (no `ap_id`) → same-instance `/post/<id>` links, `summary` = body lead else "PieFed discussion: N points, M comments"; `Poll`/`Event` payloads kept in `raw_text`; degrades to post-only | 0053 |
+| discourse | `sources/discourse.py` | keyless Discourse `.json` view, stdlib only; `GET /t/<id>.json` — topic **and** its first page of posts in *one* request | the centralized *forum* sibling of the aggregators, and the **first non-Fediverse host-less source** (matched by `/t/<slug>/<id>` shape on any unclaimed host, slug dropped from identity, the weak `t` literal making the all-digits id carry the weight); a *real* `title` (a forum thread, not a synthesized post), opening post → body, later posts → bylined `### Replies` (mod-action/whisper/deleted skipped); HTML `cooked` → text via stdlib `HTMLParser` (no trafilatura); `tags` → `concepts`, outbound `details.links` (internal/reflection filtered) → `links` (cross-source edges), `image_url` → `thumbnail` media; `summary` = OP lead else "N replies, M likes"; **no category default — unclassified like HN/Lobsters/Lemmy/social**; validates `post_stream` so a misdetect raises rather than mis-scrolls; long threads first-page-only (full `stream` in `raw_text`) | 0054 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -489,6 +495,21 @@ Next steps already identified in decision records, in no required order:
   post's true id at fetch time so it dedupes across the routes that reach
   it — ADRs 0048–0051 all defer it as the only fetch-time id rewrite any
   adapter would do).
+- **Discussion aggregators and forums** — the federated link aggregators
+  Lemmy (ADR 0052) and PieFed (ADR 0053) and the centralized forum software
+  Discourse (ADR 0054) extend the discussion family beyond the centralized
+  Hacker News (ADR 0031) and Lobsters (ADR 0046). Discourse is the first
+  *non-Fediverse* host-less source — shape-detected by its `/t/<slug>/<id>`
+  topic URL the way the Fediverse sources are — so the technique is now
+  general, not ActivityPub-specific. **Mbin** (the kbin fork) was the named
+  next aggregator (ADRs 0052/0053), but its read API is OAuth-gated — its
+  `security.yaml` grants no anonymous `/api/entry`, and live instances 401/403
+  an unauthenticated read — so it cannot join as a keyless adapter without a
+  client-credentials token dance or an ActivityPub `apId` object fetch; it is
+  deferred to its own ADR if that posture is ever taken (ADR 0054). A future
+  Lemmy-shaped aggregator with a *distinct* URL would detect separately like
+  Discourse; one sharing `/post/<digits>` would slot into the `threadiverse`
+  dispatcher like PieFed.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs

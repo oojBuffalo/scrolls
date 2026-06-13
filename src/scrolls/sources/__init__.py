@@ -23,6 +23,7 @@ from scrolls.sources import (  # noqa: E402
     crates,
     crossref,
     datacite,
+    discourse,
     doi,
     github,
     go,
@@ -53,6 +54,10 @@ FETCH_ADAPTERS = {
     # (Crossref or DataCite) is resolved at fetch time by the doi dispatcher
     # (ADR 0045): Crossref first, DataCite fallback.
     "crossref": doi.fetch_item,
+    # Discourse forum software is host-less like the Fediverse sources, detected
+    # by its `/t/<slug>/<id>` topic shape and fetched from that instance's
+    # keyless `.json` view (ADR 0054).
+    "discourse": discourse.fetch_item,
     "github": github.fetch_item,
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,

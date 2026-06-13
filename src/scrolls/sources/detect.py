@@ -159,6 +159,16 @@ def detect_source(url: str) -> DetectedSource:
     if lemmy_id is not None:
         return DetectedSource("lemmy", lemmy_id)
 
+    # Discourse — the forum software behind countless dev communities
+    # (discuss.python.org, meta.discourse.org, users.rust-lang.org) — is
+    # host-less like the Fediverse sources, recognized by its `/t/<slug>/<id>`
+    # topic shape on whatever instance the URL names and fetched from that
+    # instance's keyless `.json` view (ADR 0054). Its `/t/` literal never
+    # collides with the Fediverse shapes above, so it runs after them.
+    discourse_id = _discourse_id(host, path_parts)
+    if discourse_id is not None:
+        return DetectedSource("discourse", discourse_id)
+
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
 
@@ -663,6 +673,39 @@ def _lemmy_id(host: str, path_parts: list[str]) -> str | None:
     """
     if len(path_parts) == 2 and path_parts[0] == "post" and path_parts[1].isdigit():
         return f"{host}/{path_parts[1]}"
+    return None
+
+
+def _discourse_id(host: str, path_parts: list[str]) -> str | None:
+    """`<host>/<topic_id>` for a Discourse `/t/<slug>/<id>` topic URL, else None.
+
+    Discourse powers thousands of independent forums with no shared host, so —
+    like the Fediverse sources (ADR 0049–0052) — a topic is recognized by its
+    URL *shape* on whatever instance the saved URL names; this branch runs only
+    after every known-platform host and the Fediverse shapes have been ruled out.
+
+    The canonical topic permalink is `/t/<slug>/<topic_id>`, optionally followed
+    by a `/<post_number>` jump target — so the topic id is the third path
+    segment, an autoincrement integer, and any trailing post number is not part
+    of identity. The `t` literal is weak (countless sites use a `/t/...` path),
+    so — the Pleroma/Misskey/Lemmy rule that a weak literal makes the id carry
+    the weight (ADR 0050–0052) — the constraint is strict: a `slug` segment
+    between `t` and an *all-digits* topic id, so a two-segment `/t/<tag>` tag
+    page or a `/t/<slug>/<non-numeric>` stays a web page. The residual risk — a
+    non-Discourse `/t/<slug>/<digits>` URL the user wanted as `web` — degrades
+    to a benign failed fetch (the `.json` view 404s or lacks `post_stream`),
+    never a wrong scroll: the conservative, reversible tradeoff a host-less
+    shape forces (ADR 0049).
+
+    Identity carries the instance host (a topic id is unique only within its
+    instance) lowercased; the slug is *not* part of identity — Discourse treats
+    it as display-only and redirects a wrong slug to the canonical one, and the
+    adapter fetches the slug-free `/t/<id>.json` route. Category
+    (`/c/<slug>/<id>`), user (`/u/<name>`), and tag (`/tag/<name>`) pages carry
+    no topic id and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) >= 3 and path_parts[0] == "t" and path_parts[2].isdigit():
+        return f"{host}/{path_parts[2]}"
     return None
 
 
