@@ -161,6 +161,30 @@ CASES = [
     ("https://rubygems.org/", "rubygems", None),
     ("https://rubygems.org/gems", "rubygems", None),
     ("https://rubygems.org/search?query=http", "rubygems", None),
+    # --- go modules (pkg.go.dev) ---
+    ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
+    # a version is attached with @; the module path is everything before it
+    ("https://pkg.go.dev/github.com/gin-gonic/gin@v1.12.0", "go",
+     "github.com/gin-gonic/gin"),
+    # a versioned sub-package URL still dedupes to its module (before the @)
+    ("https://pkg.go.dev/github.com/gin-gonic/gin@v1.12.0/binding", "go",
+     "github.com/gin-gonic/gin"),
+    # module paths are case-sensitive — kept verbatim (the proxy escapes the
+    # request, not the identity), so a mixed-case module never folds
+    ("https://pkg.go.dev/github.com/Masterminds/squirrel", "go",
+     "github.com/Masterminds/squirrel"),
+    # vanity paths are modules too: a domain first segment, two+ segments
+    ("https://pkg.go.dev/golang.org/x/tools", "go", "golang.org/x/tools"),
+    ("https://pkg.go.dev/rsc.io/quote", "go", "rsc.io/quote"),
+    ("https://www.pkg.go.dev/k8s.io/client-go", "go", "k8s.io/client-go"),
+    # standard library (first segment has no dot) and site routes carry no
+    # fetchable module: source known, module unknown
+    ("https://pkg.go.dev/net/http", "go", None),
+    ("https://pkg.go.dev/fmt", "go", None),
+    ("https://pkg.go.dev/std", "go", None),
+    ("https://pkg.go.dev/about", "go", None),
+    ("https://pkg.go.dev/search?q=logging", "go", None),
+    ("https://pkg.go.dev/", "go", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI

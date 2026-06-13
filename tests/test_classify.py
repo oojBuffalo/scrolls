@@ -74,6 +74,13 @@ def test_rubygems_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_go_module_is_a_tool():
+    # A Go module is a published package you import and use, like the others.
+    item = make_item(source="go", source_id="github.com/gin-gonic/gin",
+                     title="github.com/gin-gonic/gin")
+    assert classify_item(item).category == "tool"
+
+
 def test_huggingface_model_is_a_tool():
     # A Hugging Face model is a published artifact you install and use,
     # like a package; the repo kind rides in the source id.

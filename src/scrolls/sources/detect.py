@@ -22,6 +22,9 @@ NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
 PACKAGIST_HOSTS = {"packagist.org", "www.packagist.org"}
 RUBYGEMS_HOSTS = {"rubygems.org", "www.rubygems.org"}
+# pkg.go.dev is the canonical Go module browse host; the fetch adapter
+# talks to proxy.golang.org, deriving the module path from the URL.
+GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
 # hf.co is Hugging Face's short domain; it redirects to huggingface.co, but
 # the fetch adapter uses the repo id, not the host, so both resolve alike.
 HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co"}
@@ -113,6 +116,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in RUBYGEMS_HOSTS:
         return DetectedSource("rubygems", _rubygems_id(path_parts))
+
+    if host in GO_HOSTS:
+        return DetectedSource("go", _go_id(path_parts))
 
     if host in HUGGINGFACE_HOSTS:
         return DetectedSource("huggingface", _huggingface_id(path_parts))
@@ -330,6 +336,33 @@ def _rubygems_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip()
     return name or None
+
+
+def _go_id(path_parts: list[str]) -> str | None:
+    """The module path for a `pkg.go.dev/<module>[@version][/<pkg>]` URL, else None.
+
+    A pkg.go.dev URL is `<module-path>[@<version>][/<package-in-module>]`.
+    When a version is present the module path is unambiguously everything
+    before the `@` (pkg.go.dev attaches the version to the module, then any
+    in-module package follows it), so a versioned sub-package URL still
+    dedupes to its module. Without a version the whole path is taken as the
+    module candidate — an unversioned sub-package URL (`.../gin/binding`)
+    can't be told from a module and resolves to the source with no
+    fetchable item if the proxy 404s it.
+
+    A real module path's first segment is a domain (it contains a `.`), so
+    the standard library (`net/http`, `fmt`) and site routes (`about`,
+    `search`) — first segment with no dot — carry no fetchable module. The
+    path is kept verbatim: module paths are case-sensitive, and the proxy
+    case-encodes the request at fetch time, not the identity.
+    """
+    if not path_parts:
+        return None
+    module = unquote("/".join(path_parts)).split("@", 1)[0].strip("/")
+    segments = [s for s in module.split("/") if s]
+    if len(segments) < 2 or "." not in segments[0]:
+        return None
+    return "/".join(segments)
 
 
 def _huggingface_id(path_parts: list[str]) -> str | None:

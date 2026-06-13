@@ -311,7 +311,32 @@ becomes the base model's Hub page (the model↔base-model lineage edge,
 deduped across the bare and `base_model:finetune:` forms). A model classifies as `tool`
 like a package, a dataset as `dataset` — the IDEAS.md §8 vocabulary term;
 a repo with no card degrades to a metadata-only scroll, and site routes,
-`spaces`, and bare profiles register but have no repo to fetch).
+`spaces`, and bare profiles register but have no repo to fetch), and
+**go** (the keyless Go module proxy — see
+`docs/adr/0042-go-modules-adapter.md`: a saved `pkg.go.dev/<module>` page
+becomes a clean scroll from `proxy.golang.org` instead of a `trafilatura`
+scrape of a JS-rendered docs page, the Go sibling of the package-registry
+family and the last on the JSON-metadata pattern. Identity is the module
+path kept verbatim — module paths are case-sensitive, and the proxy
+*case-encodes* the request (`github.com/Masterminds/squirrel` →
+`github.com/!masterminds/squirrel`), so the escaping touches the request,
+not the identity; the module is everything before any `@version`, so a
+versioned sub-package URL dedupes to its module, and a domain-first-segment
+rule keeps the standard library and site routes from fetching. Go is the
+sparsest adapter of the family: `/@latest` carries only the version,
+publish time, and source `Origin`, so there is no description (`summary`
+stays empty — honest, not synthesized), no keywords (`concepts` empty by
+design, like RubyGems), and no license or classifier facet (`tags` empty
+too). The one content the proxy holds is the `go.mod` manifest, fetched
+from `/@v/<version>.mod` and kept as the searchable extracted text — the
+module path plus its dependency graph, the first adapter whose content is
+a manifest rather than prose. The source repository becomes the one
+`link`: from `Origin.URL` when present — the only way to learn a vanity
+path's repo (`golang.org/x/tools` → `go.googlesource.com/tools`) — else
+derived from the module path for the well-known VCS hosts, resolving
+through `scrolls related` to a saved github repo (the package↔repo edge).
+A Go module classifies as `tool` like the other packages; the standard
+library, search, and site routes register but have no module to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -614,13 +639,17 @@ dataset page becomes a clean scroll from the Hub's structured metadata —
 one adapter for both repo kinds (the kind in the item id), the card
 README as searchable text, the task and card tags as concepts (not the
 Hub's noisy flat tag soup), and the `arxiv:` tag wired to the saved arXiv
-paper that introduced the model (the model↔paper edge, ADR 0041). Next
-candidates: a native `x` fetch adapter so saved tweets enrich beyond the
-Field Theory import; a DataCite adapter on the same `doi.org` detection
-for dataset DOIs Crossref doesn't hold; Go modules — the last obvious
-package registry on the JSON-metadata pattern (the `proxy.golang.org`
-endpoints); a Hugging Face Spaces sub-adapter on the same host; or
-two-phase batch submit/collect if a terminal wait ever outgrows the
-library (ADR 0022, ADR 0032).
+paper that introduced the model (the model↔paper edge, ADR 0041), and a
+keyless Go modules adapter completing the package-registry family across
+six languages — a saved `pkg.go.dev` module becomes a clean scroll from
+the `proxy.golang.org` proxy, the go.mod manifest as searchable content
+and the source repo (from `Origin` or the module path) as the package↔repo
+edge, the sparsest of the family with no description, keywords, or license
+facet to offer (ADR 0042). Next candidates: a native `x` fetch adapter so
+saved tweets enrich beyond the Field Theory import; a DataCite adapter on
+the same `doi.org` detection for dataset DOIs Crossref doesn't hold; a
+Hugging Face Spaces sub-adapter on the same host; or two-phase batch
+submit/collect if a terminal wait ever outgrows the library (ADR 0022,
+ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

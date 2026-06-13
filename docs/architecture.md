@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (927 tests at the time of writing). The docs themselves
+`uv run pytest` (964 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -162,6 +162,10 @@ Two small contracts make every platform the same kind of scroll
    trailing `.json` and deeper subpages stripped),
    `rubygems` (gem pages, the gem name verbatim as `source_id` since
    RubyGems is case-sensitive like npm, version pages included),
+   `go` (`pkg.go.dev` module pages, the module path verbatim as
+   `source_id` — case-sensitive, the part before any `@version`, with a
+   domain first segment so stdlib and site routes carry no fetchable
+   module),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
    lowercase as `source_id` since DOIs are case-insensitive), and
    `huggingface` (model and dataset repo pages on `huggingface.co`/`hf.co`,
@@ -199,6 +203,7 @@ Implemented fetch adapters, all keyless:
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets (kind in `source_id`); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; `library_name`+license → `tags`; `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`→Hub `link` (model↔dataset edge), `base_model:`→Hub `link` (model↔base-model lineage edge); `model → tool`, `dataset → dataset`; degrades to metadata-only | 0041 |
+| go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -413,13 +418,15 @@ Next steps already identified in decision records, in no required order:
   outgrows a terminal wait, the persisted-batch-id design those ADRs
   weighed and deferred has an obvious home in the shared `llm.py`.
 - **More package registries** — the PyPI adapter (ADR 0034) set the
-  pattern and npm (0035), crates.io (0036), Packagist (0039), and RubyGems
-  (0040) followed it; Go modules are the last obvious registry on the same
-  JSON-metadata shape (the `proxy.golang.org` `@latest`/`.info`
-  endpoints), a small adapter with no keywords (like RubyGems) and a
-  module-path identity. Packagist's comparator-free "highest stable
-  `version_normalized`" selection (ADR 0039) is the technique a registry
-  with no latest-version pointer can reuse.
+  pattern and npm (0035), crates.io (0036), Packagist (0039), RubyGems
+  (0040), and Go modules (0042) followed it, completing the family across
+  Python, JavaScript, Rust, PHP, Ruby, and Go. Go was the sparsest — the
+  `proxy.golang.org` `@latest` carries no description, keywords, or
+  license, so `summary`/`concepts`/`tags` are all empty and the go.mod
+  manifest is the searchable content. Packagist's comparator-free "highest
+  stable `version_normalized`" selection (ADR 0039) and Go's request
+  case-encoding (`X`→`!x`, ADR 0042) are the techniques a future
+  JSON-metadata registry can reuse.
 - **A DataCite DOI adapter** — Crossref (ADR 0037) covers the published
   literature behind a `doi.org` link, but dataset and software DOIs are
   registered with DataCite and 404 against Crossref. A DataCite adapter
