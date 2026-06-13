@@ -39,6 +39,7 @@ from scrolls.sources import (  # noqa: E402
     mastodon,
     misskey,
     npm,
+    openlibrary,
     packagist,
     pdf,
     piefed,
@@ -104,6 +105,11 @@ FETCH_ADAPTERS = {
     # is a separate source/adapter, not a mastodon URL shape (ADR 0051).
     "misskey": misskey.fetch_item,
     "npm": npm.fetch_item,
+    # Open Library is the keyless bibliographic catalog for books — a content
+    # type with no prior home; subjects become concepts (the github-topics role)
+    # so a saved book joins the KB concept graph a `web` scrape never could, and
+    # an edition links to its FRBR work (the edition↔work edge, ADR 0073).
+    "openlibrary": openlibrary.fetch_item,
     "packagist": packagist.fetch_item,
     "pdf": pdf.fetch_item,
     # PubMed indexes the biomedical literature, the arXiv/Crossref paper sibling;

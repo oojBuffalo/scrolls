@@ -738,7 +738,56 @@ edges in both directions). Publication dates are `Month Year`, padded to the fir
 of the month. An RFC classifies as `reference` — a normative spec to consult, like
 a Wikipedia article, not a paper to cite; a record with neither an abstract nor
 fetchable text is an honest metadata-only scroll, and STD/BCP sub-series and
-Internet-Drafts are deferred).
+Internet-Drafts are deferred), and **openlibrary**
+(the keyless Open Library `.json` view — see
+`docs/adr/0073-openlibrary-adapter.md`: **books** were the missing content
+type, a saved `openlibrary.org` link falling through to `web` as a
+concept-less unlinked island the way dev.to and RFCs did before their
+adapters (ADR 0061/0066). Open Library is the Internet Archive's open,
+keyless bibliographic catalog — books' Crossref — and models them in the
+same FRBR sense `scrolls works` uses (ADR 0069): a *work*
+(`openlibrary.org/works/OL…W`, the abstract book), an *edition*
+(`/books/OL…M`, a specific manifestation), and an ISBN (`/isbn/<isbn>`,
+which names an edition). All three are common save targets, so all three
+are claimed, the kind riding in the item id — but the OLID's own type
+letter (`W` for a work, `M` for an edition) already encodes
+work-vs-edition, so only the ISBN form needs an explicit `isbn:` prefix
+(the Hugging Face kind-in-id without the prefix). The OLID is uppercased to
+a canonical form (Open Library routes case-insensitively but displays
+uppercase — the crates/gitlab fold), a title slug or `/editions` subpage
+deduping to it, and an ISBN is hyphen-stripped and `X`-uppercased. The
+adapter routes on the id — a work reads `/works/<OLID>.json`, an edition
+`/books/<OLID>.json`, an `isbn:` id `/isbn/<isbn>.json` (which Open Library
+302-redirects to the edition record, urllib following it). The curated
+`subjects` become `concepts` like github repo topics — the whole point of a
+dedicated adapter, joining a book to the concept graph a `web` scrape never
+could — with Open Library's administrative/accessibility flags
+(`Accessible book`, `Open Library Staff Picks`) and library call numbers
+(`Pz7.d1515`) filtered as noise, the list deduped case-insensitively and
+capped; subjects live on the *work*, so an edition/ISBN fetch follows its
+`works` ref with one extra GET to pull them (the Bluesky/Stack Exchange
+two-request shape), degrading to the edition's own subjects on any failure.
+The `description` blurb (a string or a `{value}` text object) becomes the
+searchable `summary` with no `extracted_text` — the catalog holds metadata,
+not the book's body, so a book is honestly summary-only (the Crossref/PubMed
+shape) — and `tags` stay empty by design, a book having no clean controlled
+facet like an RFC's status or a package's license (the go/rubygems posture).
+Authors are named by key only (`/authors/OL…A`), so each is resolved with a
+bounded GET to its name (truncated past a cap with "et al.", a failed lookup
+skipped so the byline degrades rather than failing). An edition links to its
+FRBR work (`/works/<OLID>`, the edition↔work edge `scrolls related`/`graph`
+resolves when both are saved), a work's external `links` become outbound
+edges, the first present cover (Open Library's `-1` "no cover" sentinel
+skipped) becomes a `thumbnail` media ref on `covers.openlibrary.org`, and
+free-form publication dates (`Aug 20, 2015`, `August 2015`, `2015`,
+`2008-09`) parse to UTC ISO 8601 padded to the start of the period. No
+category default is assigned: Open Library spans fiction and non-fiction, so
+forcing `reference` (right for a textbook) would be dishonest for a novel —
+the honesty value that keeps a medRxiv paper off the `biorxiv` label — so a
+book flows through the title rules and otherwise stays honestly
+unclassified, like a Hacker News post; author-bio enrichment, `identifiers`
+cross-references (Wikidata/Goodreads), and a true work↔edition scroll merge
+are deferred).
 Items from
 sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.

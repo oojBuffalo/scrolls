@@ -57,6 +57,10 @@ DEVTO_HOSTS = {"dev.to", "www.dev.to"}
 # hf.co is Hugging Face's short domain; it redirects to huggingface.co, but
 # the fetch adapter uses the repo id, not the host, so both resolve alike.
 HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co"}
+# Open Library is the keyless bibliographic catalog for *books* — a content type
+# with no prior first-class home (the RFC/dev.to gap, ADR 0066/0061). Books live
+# on the one host; the fetch adapter reads the record's `.json` view (ADR 0073).
+OPENLIBRARY_HOSTS = {"openlibrary.org", "www.openlibrary.org"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -230,6 +234,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in HUGGINGFACE_HOSTS:
         return DetectedSource("huggingface", _huggingface_id(path_parts))
+
+    if host in OPENLIBRARY_HOSTS:
+        return DetectedSource("openlibrary", _openlibrary_id(path_parts))
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
@@ -709,6 +716,51 @@ def _hf_repo(kind: str, rest: list[str]) -> str | None:
     name = f"{rest[0]}/{rest[1]}" if len(rest) >= 2 else rest[0]
     name = name.strip()
     return f"{kind}:{name}" if name else None
+
+
+# An Open Library identifier (OLID) is `OL<digits><type-letter>`: a work ends in
+# `W`, an edition in `M` (author records end in `A`, not a book). The letter
+# carries the *kind*, so the fetch adapter routes on it without a separate
+# prefix — the huggingface `kind:id` economy without the prefix.
+_OLID_WORK = re.compile(r"OL\d+W", re.IGNORECASE)
+_OLID_EDITION = re.compile(r"OL\d+M", re.IGNORECASE)
+# An ISBN-13 is 13 digits; an ISBN-10 is 9 digits plus a check char that may be
+# `X`. Hyphens/spaces are stripped before matching (a pasted ISBN may carry them).
+_ISBN = re.compile(r"\d{13}|\d{9}[\dX]", re.IGNORECASE)
+
+
+def _openlibrary_id(path_parts: list[str]) -> str | None:
+    """The identity for an Open Library work, edition, or ISBN URL, else None.
+
+    Open Library models books in the FRBR sense the rest of Scrolls uses for
+    `works` (ADR 0069): a *work* (`/works/OL…W`) is the abstract book, an
+    *edition* (`/books/OL…M`) a specific manifestation, and an ISBN
+    (`/isbn/<isbn>`) names an edition. All three are common save targets, so all
+    three are claimed; the kind rides in the source id the way Hugging Face's
+    does (ADR 0043) — but the OLID's own type letter (`W`/`M`) already encodes
+    work-vs-edition, so only the ISBN form needs an explicit `isbn:` prefix.
+
+    The OLID is uppercased to a canonical form (Open Library routes
+    case-insensitively but displays uppercase), so a mixed-case paste dedupes —
+    the crates/gitlab fold (ADR 0036/0055). A trailing title slug or `/editions`
+    subpage dedupes to the OLID by taking only the id segment. The ISBN is
+    stripped of hyphens/spaces and uppercased (the check char may be `X`).
+
+    Author pages (`/authors/OL…A`), subject/search/list routes, and the home
+    page carry no book and resolve to the source with no fetchable item —
+    github's profile-page pattern.
+    """
+    if len(path_parts) < 2:
+        return None
+    head, ident = path_parts[0], path_parts[1]
+    if head == "works" and _OLID_WORK.fullmatch(ident):
+        return ident.upper()
+    if head == "books" and _OLID_EDITION.fullmatch(ident):
+        return ident.upper()
+    if head == "isbn":
+        isbn = unquote(ident).replace("-", "").replace(" ", "").upper()
+        return f"isbn:{isbn}" if _ISBN.fullmatch(isbn) else None
+    return None
 
 
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")

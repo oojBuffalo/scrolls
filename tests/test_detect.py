@@ -411,6 +411,32 @@ CASES = [
     ("https://dev.to/settings/profile", "devto", None),
     ("https://dev.to/dashboard", "devto", None),
     ("https://dev.to/", "devto", None),
+    # --- openlibrary (books) ---
+    # a work (the abstract book) — the OLID's W is the kind, no extra prefix
+    ("https://openlibrary.org/works/OL45804W", "openlibrary", "OL45804W"),
+    ("https://openlibrary.org/works/OL45804W/Fantastic_Mr_Fox", "openlibrary",
+     "OL45804W"),
+    # the editions subpage dedupes to the work
+    ("https://openlibrary.org/works/OL45804W/editions", "openlibrary", "OL45804W"),
+    ("https://www.openlibrary.org/works/OL45804W", "openlibrary", "OL45804W"),
+    # an edition (a specific manifestation) — the OLID's M is the kind
+    ("https://openlibrary.org/books/OL27112900M/Fluent_Python", "openlibrary",
+     "OL27112900M"),
+    # a mixed-case paste folds to the canonical uppercase OLID
+    ("https://openlibrary.org/works/ol45804w", "openlibrary", "OL45804W"),
+    # an ISBN names an edition; the kind is prefixed since it is not an OLID
+    ("https://openlibrary.org/isbn/9781491946008", "openlibrary",
+     "isbn:9781491946008"),
+    # hyphens are stripped; an ISBN-10's X check char uppercases
+    ("https://openlibrary.org/isbn/0-13-110362-8", "openlibrary", "isbn:0131103628"),
+    ("https://openlibrary.org/isbn/097522980x", "openlibrary", "isbn:097522980X"),
+    # author pages, subjects, search, and the home page carry no book:
+    # source known, item unknown
+    ("https://openlibrary.org/authors/OL34184A", "openlibrary", None),
+    ("https://openlibrary.org/subjects/python", "openlibrary", None),
+    ("https://openlibrary.org/search?q=python", "openlibrary", None),
+    ("https://openlibrary.org/isbn/not-an-isbn", "openlibrary", None),
+    ("https://openlibrary.org/", "openlibrary", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI
