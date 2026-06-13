@@ -35,9 +35,11 @@ from scrolls.sources import (  # noqa: E402
     npm,
     packagist,
     pdf,
+    piefed,
     pypi,
     rubygems,
     stackexchange,
+    threadiverse,
     web,
     wikipedia,
     youtube,
@@ -55,9 +57,11 @@ FETCH_ADAPTERS = {
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,
     "huggingface": huggingface.fetch_item,
-    # Lemmy is the federated link aggregator: Fediverse like mastodon but with
-    # its own `/api/v3` API, so a separate source/adapter (ADR 0052).
-    "lemmy": lemmy.fetch_item,
+    # A `/post/<digits>` aggregator URL is detected as `lemmy`, but its backend
+    # (Lemmy `/api/v3` or PieFed `/api/alpha` — PieFed shares the identical URL
+    # shape) is resolved at fetch time by the threadiverse dispatcher (ADR 0053):
+    # Lemmy first, PieFed fallback — the doi.py pattern (ADR 0045).
+    "lemmy": threadiverse.fetch_item,
     "lobsters": lobsters.fetch_item,
     "mastodon": mastodon.fetch_item,
     # Misskey-family is Fediverse like mastodon but speaks its own API, so it

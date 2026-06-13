@@ -382,5 +382,11 @@ def test_api_request_failure_raises():
         fetch_item(make_item(), get_json=get_json)
 
 
-def test_registered_in_fetch_adapters():
-    assert FETCH_ADAPTERS["lemmy"] is fetch_item
+def test_registered_via_the_threadiverse_dispatcher():
+    # `lemmy` no longer points straight at this adapter: a `/post/<digits>` URL
+    # is detected as `lemmy` but its backend (Lemmy or PieFed) is resolved at
+    # fetch time, so the registered fetcher is the threadiverse dispatcher that
+    # tries this adapter first, then PieFed (ADR 0053).
+    from scrolls.sources import threadiverse
+
+    assert FETCH_ADAPTERS["lemmy"] is threadiverse.fetch_item

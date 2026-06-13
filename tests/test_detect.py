@@ -191,6 +191,11 @@ CASES = [
     ("https://lemmy.world/comment/98765", "web", None),
     ("https://lemmy.world/c/rust", "web", None),
     ("https://lemmy.world/u/ferris", "web", None),
+    # PieFed shares Lemmy's exact /post/<digits> shape (autoincrement int ids),
+    # so it is detected as `lemmy` too — the backend (Lemmy vs PieFed) is resolved
+    # at fetch time by the threadiverse dispatcher, not at detection (ADR 0053).
+    ("https://piefed.social/post/1600132", "lemmy", "piefed.social/1600132"),
+    ("https://piefed.world/post/956553", "lemmy", "piefed.world/956553"),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),
