@@ -1768,6 +1768,30 @@ def test_export_bookmarks_empty_library_is_valid(scrolls_home, capsys):
     assert "<DT>" not in out
 
 
+def test_export_bookmarks_source_filter_scopes_the_export(scrolls_home, capsys):
+    main(["add", "https://github.com/sqlite/sqlite"])
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+    exit_code = main(["export", "bookmarks", "--source", "github"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # only the one source's item is exported; the wikipedia one is held back
+    assert "https://github.com/sqlite/sqlite" in out
+    assert "en.wikipedia.org" not in out
+
+
+def test_export_bookmarks_tag_filter_scopes_the_export(scrolls_home, capsys):
+    main(["add", "https://example.com/a"])
+    main(["add", "https://example.com/b"])
+    main(["set", "https://example.com/a", "tags=keep"])
+    capsys.readouterr()
+    exit_code = main(["export", "bookmarks", "--tag", "keep"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "https://example.com/a" in out
+    assert "https://example.com/b" not in out
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

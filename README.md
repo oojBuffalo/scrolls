@@ -89,6 +89,7 @@ uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as 
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
+uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -896,6 +897,10 @@ Pinboard-style tools read it) — while the extracted content stays in the
 Markdown scrolls. An item with no title labels itself by its URL, and the
 round-trip is the contract: an export re-imports to the same items. With
 import and export, `import bookmarks` is a way-station rather than a sink.
+By default the whole library is exported; the same durable item-property
+filters `scrolls list` offers — `--source`, `--category`, `--tag` — scope
+it to a slice, so `scrolls export bookmarks --source github > repos.html`
+exports just the github items.
 
 `scrolls import pocket <path>` bulk-imports a Pocket data export — the
 CSV (`title,url,time_added,tags,status`) Mozilla mailed users when

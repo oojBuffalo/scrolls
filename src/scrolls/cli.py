@@ -286,9 +286,21 @@ def build_parser() -> argparse.ArgumentParser:
         "opml",
         help="Export feed subscriptions as an OPML document (to stdout)",
     )
-    export_sub.add_parser(
+    export_bookmarks_parser = export_sub.add_parser(
         "bookmarks",
         help="Export items as a Netscape bookmark file (to stdout)",
+    )
+    export_bookmarks_parser.add_argument(
+        "--source", default=None, help="Only items from one source, e.g. web, github"
+    )
+    export_bookmarks_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only items with this category; an empty value selects "
+        "unclassified items",
+    )
+    export_bookmarks_parser.add_argument(
+        "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
     )
 
     ingest_parser = subparsers.add_parser(
@@ -505,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
         if args.export_command == "bookmarks":
-            return _cmd_export_bookmarks()
+            return _cmd_export_bookmarks(args.source, args.category, args.tag)
         return _cmd_export_opml()
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -798,9 +810,18 @@ def _cmd_export_opml() -> int:
     return 0
 
 
-def _cmd_export_bookmarks() -> int:
+def _cmd_export_bookmarks(
+    source: str | None, category: str | None, tag: str | None
+) -> int:
     paths = get_paths()
-    items = list_items(paths.db_path) if paths.db_path.exists() else []
+    # the same durable-property facets `scrolls list` filters by (source,
+    # category, tag) scope the export to a slice of the library; they AND
+    # together and default to the whole library, in `list_items` saved order
+    items = (
+        list_items(paths.db_path, source=source, category=category, tag=tag)
+        if paths.db_path.exists()
+        else []
+    )
     # the bookmark file *is* the artifact, like `export opml`, so it prints raw —
     # `scrolls export bookmarks > bookmarks.html` (the shell owns redirection)
     sys.stdout.write(dump_bookmark_export(items))

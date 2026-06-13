@@ -526,6 +526,15 @@ file **is** the artifact, so it prints raw on stdout (the same exception
 it: `scrolls export bookmarks > bookmarks.html`. There is no path argument;
 the shell owns redirection.
 
+By default the whole library is exported. Three optional filters — the
+same durable item-property facets `scrolls list` filters by — scope it to
+a slice and AND together: `--source` (e.g. `--source github`), `--category`
+(an empty value selects unclassified items), and `--tag`
+(case-insensitive). So `scrolls export bookmarks --source github >
+repos.html` exports just the github items. `--stage` and `--concept` are
+deliberately not offered (transient pipeline state and a derived KB lens,
+not how a bookmark set is curated).
+
 The export carries each item's *spine* — URL, title, save date, and tags —
 because that is all a bookmark file holds; the extracted content stays in
 the Markdown scrolls. Each item is one `<DT><A HREF=… ADD_DATE=… TAGS=…>`:

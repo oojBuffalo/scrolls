@@ -68,9 +68,15 @@ bookmark file to **stdout** (`bookmarks.dump_bookmark_export`,
   keys on — plus a charset META and `<TITLE>`/`<H1>`, then a flat `<DL>`. An
   empty library produces a valid empty document, not an error.
 - **Items are exported in `list_items` order** (oldest `saved_at` first, id
-  tiebreak), all of them, regardless of source or stage. Source/stage/tag
-  filters are deferred (see Consequences) — the first slice matches `export
-  opml`'s no-argument shape.
+  tiebreak), the whole library by default. Three optional filters scope the
+  export to a slice — `--source`, `--category`, `--tag` — the same durable
+  *item-property* facets `scrolls list` filters by, passed straight through to
+  the shared, already-tested `list_items` query (they AND together). `--stage`
+  and `--concept`, which `scrolls list` also offers, are deliberately not
+  exposed: stage is transient pipeline state and concept is a derived KB-graph
+  lens, neither a property a user curates a bookmark set by. So "export my
+  github items" or "export my `paper` items" is one command, while the bare
+  `export bookmarks` still matches `export opml`'s whole-library shape.
 - **Round-trip is the contract.** `dump_bookmark_export` then
   `load_bookmark_export` reproduces the same URLs, titles, save dates, and tags
   in order, and re-importing through the CLI skips every item as
@@ -100,8 +106,10 @@ bookmark file to **stdout** (`bookmarks.dump_bookmark_export`,
   This is the same lossy edge `export opml` accepts for a titleless
   subscription, and `fetch` overwrites it with the source's real title on the
   next enrich, so it is not load-bearing.
-- Scoping filters (`export bookmarks --source github`, `--tag …`) are an
-  obvious, additive follow-up — `list_items` already supports them — and would
-  apply equally to `export opml` for consistency. Folder-from-tags emission is
-  deliberately not done and would only be revisited if a concrete consumer
-  needed a hierarchy a flat `TAGS` attribute cannot express.
+- Scoping filters (`--source`, `--category`, `--tag`) reuse the `list_items`
+  query rather than re-implementing selection, so the export stays a thin
+  serializer over the same item-selection logic the rest of the CLI shares;
+  adding `--stage`/`--concept` later, if a need appears, is a one-line
+  passthrough. Folder-from-tags emission is deliberately not done and would
+  only be revisited if a concrete consumer needed a hierarchy a flat `TAGS`
+  attribute cannot express.
