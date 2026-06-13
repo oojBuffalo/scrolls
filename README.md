@@ -639,7 +639,34 @@ through `scrolls related`/`graph`, and its representative `image_url` becomes a
 status ("3 replies, 20 likes"); like Hacker News, Lobsters, Lemmy, and the
 social posts it gets *no* category default. A long thread is bounded to the
 first page, the full post-id `stream` surviving in `raw_text` for a later paged
-render; category/user/tag routes carry no topic id to fetch). Items from
+render; category/user/tag routes carry no topic id to fetch), and **devto**
+(the keyless dev.to / Forem articles API — see
+`docs/adr/0061-devto-adapter.md`: dev.to is one of the largest
+developer-blogging communities, and a saved `dev.to/<user>/<slug>` article used
+to fall through to the `web` adapter, which extracts the text but produces no
+`concepts` — so the post became a concept-less *island*, invisible to `scrolls
+related`, the concept facets, and the KB concept pages. One keyless `GET
+/api/articles/<user>/<slug>` returns the whole article, and the curated `tags`
+(`python`, `api`, `webdev`) become `concepts` like github repo topics — the
+structured signal the `web` scrape could never produce, finally wiring the post
+into the concept graph. The identity `<user>/<slug>` is folded lowercase
+because Forem mints lowercase handles and slugs and its API is case-sensitive —
+only the lowercase form resolves (a mixed-case request 404s), the
+gitlab/bitbucket fold — and a deeper link dedupes to the article. A subtlety
+the API surfaces: for an organization post the URL handle is the *org* while
+the byline `user` is a *person*, and the fetch keys on the handle (the org), so
+`source_id` carries it and `author` reads `user.name`. The `body_markdown` is
+already Markdown (no HTML grammar, Lobsters' economy) and becomes the searchable
+text; the platform's `description` excerpt is the summary (else the body lead,
+else a "45 reactions, 40 comments" engagement status). When the author
+cross-posted from their own blog, the external original recorded in
+`canonical_url` rides along in `links` as the cross-source edge while the
+scroll's own canonical stays the dev.to permalink, and the `cover_image` becomes
+a `thumbnail`. Like Hacker News, Lobsters, and the social posts, a heterogeneous
+dev.to article gets *no* category default — the title rules and the LLM engine
+decide; self-hosted Forem instances have no shape tell and are deferred like
+self-hosted GitLab, and bare profiles and reserved site routes register but have
+no article to fetch). Items from
 sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
 

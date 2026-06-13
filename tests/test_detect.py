@@ -391,6 +391,26 @@ CASES = [
     ("https://pkg.go.dev/about", "go", None),
     ("https://pkg.go.dev/search?q=logging", "go", None),
     ("https://pkg.go.dev/", "go", None),
+    # --- dev.to (Forem) ---
+    # an article is <user>/<slug>; the id is folded lowercase (Forem mints
+    # lowercase handles/slugs and the case-sensitive API only resolves them)
+    ("https://dev.to/ben/the-dev-to-story-2c8j", "devto", "ben/the-dev-to-story-2c8j"),
+    ("https://www.dev.to/ben/the-dev-to-story-2c8j", "devto", "ben/the-dev-to-story-2c8j"),
+    # the URL handle is the author *or organization* the post is published under
+    ("https://dev.to/devteam/what-was-your-win-this-week-4k11", "devto",
+     "devteam/what-was-your-win-this-week-4k11"),
+    # a mixed-case paste folds to the one form the API resolves
+    ("https://dev.to/Ben/The-Story-2c8j", "devto", "ben/the-story-2c8j"),
+    # a deeper link (the comments anchor) dedupes to the article (first two segments)
+    ("https://dev.to/ben/the-dev-to-story-2c8j/comments", "devto",
+     "ben/the-dev-to-story-2c8j"),
+    # tag pages, profiles, and reserved site routes carry no article:
+    # source known, item unknown
+    ("https://dev.to/t/python", "devto", None),
+    ("https://dev.to/ben", "devto", None),
+    ("https://dev.to/settings/profile", "devto", None),
+    ("https://dev.to/dashboard", "devto", None),
+    ("https://dev.to/", "devto", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI

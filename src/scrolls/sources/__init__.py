@@ -24,6 +24,7 @@ from scrolls.sources import (  # noqa: E402
     crates,
     crossref,
     datacite,
+    devto,
     discourse,
     doi,
     gitea,
@@ -61,6 +62,10 @@ FETCH_ADAPTERS = {
     # (Crossref or DataCite) is resolved at fetch time by the doi dispatcher
     # (ADR 0045): Crossref first, DataCite fallback.
     "crossref": doi.fetch_item,
+    # dev.to (Forem) articles fetch from the keyless `/api/articles/<user>/<slug>`
+    # endpoint; tags become concepts so the post joins the KB concept graph a
+    # `web` scrape never would (ADR 0061).
+    "devto": devto.fetch_item,
     # Discourse forum software is host-less like the Fediverse sources, detected
     # by its `/t/<slug>/<id>` topic shape and fetched from that instance's
     # keyless `.json` view (ADR 0054).

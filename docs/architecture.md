@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1374 tests at the time of writing). The docs themselves
+`uv run pytest` (1432 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -187,6 +187,12 @@ Two small contracts make every platform the same kind of scroll
    `source_id` — case-sensitive, the part before any `@version`, with a
    domain first segment so stdlib and site routes carry no fetchable
    module),
+   `devto` (a `dev.to/<user>/<slug>` article URL, the flat two-segment
+   `<user>/<slug>` folded lowercase since Forem mints lowercase handles and
+   slugs and the case-sensitive API only resolves the lowercase form — the
+   gitlab/bitbucket fold — deep links deduping to the article, reserved
+   `t`/site routes carrying no article, the URL handle being the author *or
+   organization* the post is published under, ADR 0061),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
    lowercase as `source_id` since DOIs are case-insensitive — the DOI's
    *registration agency*, Crossref or DataCite, is resolved at fetch
@@ -263,6 +269,7 @@ Implemented fetch adapters, all keyless:
 | lemmy (Lemmy backend) | `sources/lemmy.py` via `sources/threadiverse.py` dispatch | keyless Lemmy API v3, stdlib only; `GET /api/v3/post` then optional `/comment/list` | the federated link aggregator (HN/Lobsters' cousin) — *not* Mastodon/Misskey-compatible, so its own source/adapter, the third Fediverse split by client API; plain GET so `http.get_json` serves it; a *real* `name` title (an aggregator entry, not synthesized) and `ap_id` canonical; flat comments sorted into thread pre-order by integer `path`, bylined like Lobsters (deleted/removed skipped); link post `url` → article `link`, text post `body` the content, image post `url` → `photo` media (told by `url_content_type`), `thumbnail_url` → preview; body URLs + `cross_posts` `ap_id` → `links` (cross-source + post↔post edges); community → one `concept`; `summary` = body lead else "N points, M comments"; **no category default — unclassified like HN/Lobsters/social**; degrades to post-only | 0052 |
 | lemmy (PieFed backend) | `sources/piefed.py` via `sources/threadiverse.py` dispatch | keyless PieFed `/api/alpha`, stdlib only; `GET /post` then optional `/comment/list` | PieFed shares Lemmy's exact `/post/<digits>` URL, so it can't be its own *detected* source; but its API is its own (`/api/alpha`, `post.title`/`creator.user_name`/`comment.body`/`post_type` not Lemmy's `name`/`name`/`content`/`url_content_type`), so it can't ride Lemmy's *adapter* either — its own adapter on Lemmy's source, resolved at fetch time by the `threadiverse` dispatcher (Lemmy first, PieFed fallback — the `doi.py` pattern); identity stays `lemmy:<host>/<id>`, `provenance.adapter="piefed"` honest (the DataCite-vs-Crossref split); otherwise mirrors Lemmy — image by `post_type=="Image"`, cross-posts (no `ap_id`) → same-instance `/post/<id>` links, `summary` = body lead else "PieFed discussion: N points, M comments"; `Poll`/`Event` payloads kept in `raw_text`; degrades to post-only | 0053 |
 | discourse | `sources/discourse.py` | keyless Discourse `.json` view, stdlib only; `GET /t/<id>.json` — topic **and** its first page of posts in *one* request | the centralized *forum* sibling of the aggregators, and the **first non-Fediverse host-less source** (matched by `/t/<slug>/<id>` shape on any unclaimed host, slug dropped from identity, the weak `t` literal making the all-digits id carry the weight); a *real* `title` (a forum thread, not a synthesized post), opening post → body, later posts → bylined `### Replies` (mod-action/whisper/deleted skipped); HTML `cooked` → text via stdlib `HTMLParser` (no trafilatura); `tags` → `concepts`, outbound `details.links` (internal/reflection filtered) → `links` (cross-source edges), `image_url` → `thumbnail` media; `summary` = OP lead else "N replies, M likes"; **no category default — unclassified like HN/Lobsters/Lemmy/social**; validates `post_stream` so a misdetect raises rather than mis-scrolls; long threads first-page-only (full `stream` in `raw_text`) | 0054 |
+| devto | `sources/devto.py` | keyless `dev.to/api/articles/<user>/<slug>`, stdlib only, one request | the developer-blogging platform a `web` scrape left a concept-less island; one GET returns the whole article so `tags` → `concepts` joins it to the KB graph (github-topics pattern), `tags` field empty (no license/classifier facet); identity `<user>/<slug>` folded lowercase (Forem mints lowercase, case-sensitive API only resolves it — the gitlab/bitbucket fold); the URL handle is the author *or organization*, so `author` reads the byline `user.name` (the person); `body_markdown` already Markdown (no HTML grammar, Lobsters' economy) → `extracted_text`, `description` → `summary` (→ lead → engagement → None), cross-post `canonical_url` → `links` (cross-source edge) while the scroll's canonical stays the dev.to permalink, `cover_image`/`social_image` → `thumbnail` media; **no category default — unclassified like HN/Lobsters/Bluesky**; self-hosted Forem deferred; degrades to metadata-only | 0061 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine

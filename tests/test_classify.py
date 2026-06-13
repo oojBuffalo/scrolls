@@ -282,6 +282,19 @@ def test_bluesky_tutorial_title_still_wins():
     assert classify_item(item).category == "tutorial"
 
 
+def test_devto_stays_unclassified_like_hacker_news():
+    # dev.to is a heterogeneous blogging platform (ADR 0061): a post can be a
+    # tutorial, an opinion, or a show-and-tell, so there is no honest source
+    # default — the title rules and the LLM engine decide.
+    item = make_item(source="devto", title="What was your win this week?")
+    assert classify_item(item).category is None
+
+
+def test_devto_tutorial_title_still_wins():
+    item = make_item(source="devto", title="Getting started with the SEC EDGAR API in Python")
+    assert classify_item(item).category == "tutorial"
+
+
 def test_lemmy_stays_unclassified_like_hacker_news():
     # Lemmy is a federated link aggregator like Hacker News/Lobsters (ADR 0052):
     # a saved post has no single honest category, so no source default — the

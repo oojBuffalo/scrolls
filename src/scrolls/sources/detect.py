@@ -40,6 +40,11 @@ RUBYGEMS_HOSTS = {"rubygems.org", "www.rubygems.org"}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
+# dev.to is the flagship Forem community; the fetch adapter talks to its
+# keyless `/api/articles/<user>/<slug>` endpoint. Self-hosted Forem
+# instances have no shape tell (a bare article URL looks like any blog), so
+# they are deferred like self-hosted GitLab (ADR 0055/0061).
+DEVTO_HOSTS = {"dev.to", "www.dev.to"}
 # hf.co is Hugging Face's short domain; it redirects to huggingface.co, but
 # the fetch adapter uses the repo id, not the host, so both resolve alike.
 HUGGINGFACE_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co"}
@@ -92,6 +97,17 @@ GITEA_RESERVED = {
 BITBUCKET_RESERVED = {
     "account", "dashboard", "repo", "snippets", "product", "plans", "pricing",
     "support", "blog", "whats-new",
+}
+
+# Top-level dev.to path segments that are site routes, never an article's
+# author/org handle. Forem reserves these names so no user can claim them, so
+# excluding them can't shadow a real article. `t` (tag pages, `/t/<tag>`) is
+# the common two-segment collision; the rest are the platform's fixed routes.
+DEVTO_RESERVED = {
+    "t", "tags", "search", "settings", "dashboard", "admin", "enter", "new",
+    "notifications", "readinglist", "listings", "pod", "videos", "about",
+    "contact", "privacy", "terms", "code-of-conduct", "faq", "api", "page",
+    "onboarding", "welcome", "signout", "latest", "top",
 }
 
 # Top-level huggingface.co path segments that are site pages, not model repos.
@@ -177,6 +193,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
+
+    if host in DEVTO_HOSTS:
+        return DetectedSource("devto", _devto_id(path_parts))
 
     if host in HUGGINGFACE_HOSTS:
         return DetectedSource("huggingface", _huggingface_id(path_parts))
@@ -536,6 +555,35 @@ def _go_id(path_parts: list[str]) -> str | None:
     if len(segments) < 2 or "." not in segments[0]:
         return None
     return "/".join(segments)
+
+
+def _devto_id(path_parts: list[str]) -> str | None:
+    """`<user>/<slug>` for a dev.to article URL, folded lowercase, else None.
+
+    A dev.to article lives at `/<author-or-org>/<slug>` — github's flat
+    two-segment shape — so the first two segments are the identity and a
+    deeper link (`/comments`, a series page) dedupes to the article by
+    taking only those two. The fetch adapter hits
+    `/api/articles/<user>/<slug>` with exactly this pair (the URL's handle,
+    which is the *author or organization* the post is published under, not
+    the byline author of an org post).
+
+    The id is folded lowercase: Forem mints lowercase handles and lowercase
+    article slugs, the canonical URL uses the lowercase form, and the API
+    is case-sensitive — only the lowercase form resolves (a mixed-case
+    request 404s) — so folding both dedupes a mixed-case paste and aims at
+    the one form that works (the gitlab/bitbucket/crates fold, ADR
+    0055/0057/0036), unlike github's case-preserving `owner/repo`.
+
+    A bare profile page (one segment) and the reserved site routes (`t` tag
+    pages, `settings`, `dashboard`, …) carry no article and resolve to the
+    source with no fetchable item — github's pattern. A misrouted two-
+    segment URL degrades to a benign failed fetch (the API 404s), never a
+    wrong scroll.
+    """
+    if len(path_parts) < 2 or path_parts[0].lower() in DEVTO_RESERVED:
+        return None
+    return f"{path_parts[0].lower()}/{path_parts[1].lower()}"
 
 
 def _huggingface_id(path_parts: list[str]) -> str | None:
