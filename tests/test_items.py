@@ -10,6 +10,7 @@ from scrolls.items import (
     delete_item,
     get_item,
     insert_item,
+    library_counts,
     list_items,
     make_item_id,
     replace_items,
@@ -191,3 +192,16 @@ def test_delete_item_removes_the_row(db_path):
 
 def test_delete_item_reports_absent_id(db_path):
     assert delete_item(db_path, "youtube:nope") is False
+
+
+def test_library_counts_summarizes_items(db_path):
+    insert_item(db_path, make_item())  # youtube, detected, unclassified
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", stage="fetched",
+                                   category="tool"))
+    assert library_counts(db_path) == {
+        "total": 2,
+        "by_stage": {"detected": 1, "fetched": 1, "rendered": 0},
+        "by_source": {"web": 1, "youtube": 1},
+        "unclassified": 1,
+    }

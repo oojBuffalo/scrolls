@@ -77,18 +77,34 @@ $ scrolls init
 
 Report library state without creating anything
 (`test_status_before_init`, `test_status_after_init`).
-`schema_version` is `null` until `init` (current version: 5,
-`src/scrolls/db.py`).
+`schema_version` is `null` until `init` (current version: 6,
+`src/scrolls/db.py`). The counts answer "what should run next":
+`by_stage.detected` items await `fetch`, `by_stage.fetched` await `md`,
+and `unclassified` is the pool a batch `classify` would pick up
+(`test_status_counts_items_and_subscriptions`,
+`tests/test_items.py`). An uninitialized library reports zero-filled
+counts, so the payload shape never varies.
+
+| Key | Meaning |
+| --- | --- |
+| `initialized` / `schema_version` | `false`/`null` until `init` |
+| `root` | library root in use |
+| `items` | `total`, `by_stage` (always all three stages), `by_source` (present sources only), `unclassified` |
+| `subscriptions` | followed feeds (`scrolls follow`) |
 
 ```console
 $ scrolls status        # before init
-{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null}
+{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0}
 [exit 0]
 
-$ scrolls status        # after init
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 5}
+$ scrolls status        # after the imports and adds below
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0}
 [exit 0]
 ```
+
+*(x:1111 is already classified here — the Field Theory import's
+frontmatter join carries `category` over — which is why `unclassified`
+is 3 of 4)*
 
 ### `scrolls paths`
 
@@ -881,6 +897,7 @@ scrolls fetch x:3333                               # by-id: fails, exit 1
 scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
 scrolls add https://arxiv.org/abs/1706.03762
+scrolls status                                    # populated counts now
 scrolls list
 scrolls list --source x --category technique      # filters AND together
 scrolls ingest https://en.wikipedia.org/wiki/SQLite  # network

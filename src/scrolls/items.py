@@ -153,6 +153,40 @@ def count_by_source(db_path: Path) -> dict[str, int]:
     return dict(rows)
 
 
+def library_counts(db_path: Path) -> dict[str, Any]:
+    """Item counts for `scrolls status`: total, by stage, by source, unclassified.
+
+    `by_stage` always carries all three stages (zero-filled) so agents
+    can read pending work — detected items await `fetch`, fetched ones
+    await `md` — without key-existence checks; `by_source` lists only
+    sources present. `unclassified` is the pool a batch `classify`
+    would pick up (`category IS NULL`, any stage).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        by_stage = {"detected": 0, "fetched": 0, "rendered": 0}
+        by_stage.update(
+            conn.execute("SELECT stage, COUNT(*) FROM items GROUP BY stage").fetchall()
+        )
+        by_source = dict(
+            conn.execute(
+                "SELECT source, COUNT(*) FROM items GROUP BY source ORDER BY source"
+            ).fetchall()
+        )
+        total = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        unclassified = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE category IS NULL"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "total": total,
+        "by_stage": by_stage,
+        "by_source": by_source,
+        "unclassified": unclassified,
+    }
+
+
 def list_items(
     db_path: Path,
     stage: str | None = None,

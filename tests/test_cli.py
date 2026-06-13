@@ -9,6 +9,7 @@ import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
+from scrolls.feeds import Subscription, insert_subscription
 from scrolls.paths import get_paths
 from scrolls.items import ScrollItem, get_item, insert_item, update_item
 from scrolls.render import write_scroll
@@ -90,6 +91,14 @@ def test_init_is_idempotent_and_preserves_config(scrolls_home, capsys):
     assert config.read_text() == "# user edits must survive re-init\n"
 
 
+_EMPTY_COUNTS = {
+    "total": 0,
+    "by_stage": {"detected": 0, "fetched": 0, "rendered": 0},
+    "by_source": {},
+    "unclassified": 0,
+}
+
+
 def test_status_before_init(scrolls_home, capsys):
     exit_code = main(["status"])
     assert exit_code == 0
@@ -98,6 +107,8 @@ def test_status_before_init(scrolls_home, capsys):
         "initialized": False,
         "root": str(scrolls_home),
         "schema_version": None,
+        "items": _EMPTY_COUNTS,
+        "subscriptions": 0,
     }
 
 
@@ -112,7 +123,43 @@ def test_status_after_init(scrolls_home, capsys):
         "initialized": True,
         "root": str(scrolls_home),
         "schema_version": SCHEMA_VERSION,
+        "items": _EMPTY_COUNTS,
+        "subscriptions": 0,
     }
+
+
+def test_status_counts_items_and_subscriptions(scrolls_home, capsys):
+    main(["add", "https://x.com/karpathy/status/1111"])
+    main(["add", "https://example.com/post"])
+    item = get_item(get_paths().db_path, "x:1111")
+    update_item(
+        get_paths().db_path,
+        dataclasses.replace(
+            item, title="A tweet", extracted_text="text", category="technique",
+            stage="fetched",
+        ),
+    )
+    insert_subscription(
+        get_paths().db_path,
+        Subscription(
+            id="feedfeedfeed",
+            feed_url="https://blog.example/feed.xml",
+            title="Demo Weblog",
+            added_at="2026-06-12T08:00:00+00:00",
+        ),
+    )
+    capsys.readouterr()
+
+    exit_code = main(["status"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["items"] == {
+        "total": 2,
+        "by_stage": {"detected": 1, "fetched": 1, "rendered": 0},
+        "by_source": {"web": 1, "x": 1},
+        "unclassified": 1,
+    }
+    assert payload["subscriptions"] == 1
 
 
 def test_add_persists_detected_item(scrolls_home, capsys):

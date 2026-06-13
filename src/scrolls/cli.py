@@ -32,7 +32,14 @@ from scrolls.feeds import (
 )
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
-from scrolls.items import ScrollItem, get_item, insert_item, list_items, update_item
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    insert_item,
+    library_counts,
+    list_items,
+    update_item,
+)
 from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
@@ -979,12 +986,27 @@ def _cmd_show(item_id: str) -> int:
 def _cmd_status() -> int:
     paths = get_paths()
     schema_version = read_schema_version(paths.db_path)
+    if schema_version is not None:
+        items = library_counts(paths.db_path)
+        subscriptions = len(list_subscriptions(paths.db_path))
+    else:
+        # an uninitialized library honestly holds nothing; zero-filled
+        # counts keep the payload shape stable for agents
+        items = {
+            "total": 0,
+            "by_stage": {"detected": 0, "fetched": 0, "rendered": 0},
+            "by_source": {},
+            "unclassified": 0,
+        }
+        subscriptions = 0
     print(
         json.dumps(
             {
                 "initialized": schema_version is not None,
                 "root": str(paths.root),
                 "schema_version": schema_version,
+                "items": items,
+                "subscriptions": subscriptions,
             }
         )
     )
