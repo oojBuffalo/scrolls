@@ -50,6 +50,8 @@ from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_item_id
+from scrolls.pocket import ImportSourceError as PocketSourceError
+from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
 from scrolls.remove import remove_item
@@ -253,6 +255,15 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Takeout .zip, extracted directory, or watch-history.json itself "
         "(JSON export format required)",
+    )
+    pocket_parser = import_sub.add_parser(
+        "pocket",
+        help="Import a Pocket CSV data export (JSON output)",
+    )
+    pocket_parser.add_argument(
+        "path",
+        help="Pocket export .zip, a directory of CSV parts, or a single "
+        "exported .csv file",
     )
 
     ingest_parser = subparsers.add_parser(
@@ -462,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_bookmarks(args.path)
         if args.import_command == "google-takeout":
             return _cmd_import_takeout(args.path)
+        if args.import_command == "pocket":
+            return _cmd_import_pocket(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -691,6 +704,30 @@ def _cmd_import_takeout(path: str) -> int:
 
     # ignored entries (ads, deleted videos, community posts) are normal
     # in every watch history, so they never fail the run
+    print(json.dumps({**counts, **stats}))
+    return 0
+
+
+def _cmd_import_pocket(path: str) -> int:
+    try:
+        imported_items, stats = load_pocket_export(Path(path).expanduser())
+    except PocketSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for item in imported_items:
+        # INSERT OR IGNORE: an existing item (earlier import, or a manual
+        # `add`/user edit) is never overwritten — re-imports stay cheap
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    # ignored entries (bookmarklets, blank URLs) are normal in real exports,
+    # so they never fail the run
     print(json.dumps({**counts, **stats}))
     return 0
 

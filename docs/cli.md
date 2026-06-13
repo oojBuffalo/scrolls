@@ -377,6 +377,56 @@ $ scrolls import google-takeout /tmp/scrolls-demo.BgrqMO/takeout.zip
 [exit 0]
 ```
 
+### `scrolls import pocket <path>`
+
+Bulk-import a Pocket data export (ADR 0074) — the CSV
+(`title,url,time_added,tags,status`) Mozilla mailed users when Pocket
+shut down in 2025. `path` is the export `.zip` (large accounts split
+across `part_*.csv`), a directory of CSV parts, or a single `.csv`. A
+missing path, a zip/directory with no CSV, or a CSV without a `url`
+column is an error envelope on stderr
+(`test_import_pocket_missing_file_is_an_error` in `tests/test_cli.py`;
+`test_csv_without_a_url_column_raises` in `tests/test_pocket.py`).
+
+Pocket is a heterogeneous spine-only archive like browser bookmarks
+(ADR 0030), so items enter at stage `detected` and reuse the same spine:
+every URL routes through the same source detection and normalization as
+`scrolls add`, so a saved video becomes a `youtube` item and a repo a
+`github` item, all deduping against the library
+(`test_imports_pocket_rows_as_detected_items`,
+`test_import_pocket_never_overwrites_existing_item`). `time_added` (epoch
+seconds) becomes `saved_at` — when the page entered the user's life,
+never `published_at`. Pipe-delimited Pocket `tags` become `tags` (the
+user's own curation, like bookmark folders), and a title equal to the
+URL — Pocket's "no title" marker — is dropped so fetch fills the real one
+(both are pinned by `test_imports_pocket_rows_as_detected_items`).
+Columns are read by header name, so the importer also takes any CSV
+carrying a `url` column.
+
+Per-row oddities never fail the run — exports carry blank-URL lines and
+the occasional non-http save — so the command exits 0 and counts them
+instead:
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new items inserted |
+| `skipped` | already existed (id collision is the dedupe working) |
+| `rows` | total CSV data rows across the export's parts |
+| `repeats` | extra copies of an already-seen URL (earliest `time_added` wins `saved_at`; tags union) |
+| `ignored.no_url` | rows with a blank `url` field |
+| `ignored.not_http` | non-http(s) saves (`mailto:`, bookmarklets, …) |
+| `status` | unread/archive split across the detected save rows |
+
+```console
+$ scrolls import pocket /tmp/scrolls-demo.BgrqMO/pocket.csv
+{"imported": 3, "skipped": 0, "rows": 4, "repeats": 0, "ignored": {"no_url": 1, "not_http": 0}, "status": {"unread": 2, "archive": 1}}
+[exit 0]
+
+$ scrolls import pocket /tmp/scrolls-demo.BgrqMO/pocket.csv
+{"imported": 0, "skipped": 3, "rows": 4, "repeats": 0, "ignored": {"no_url": 1, "not_http": 0}, "status": {"unread": 2, "archive": 1}}
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any

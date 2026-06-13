@@ -85,6 +85,7 @@ uv run scrolls ingest <url>   # add + fetch + md in one step, as JSON
 uv run scrolls import fieldtheory [--root PATH]  # bulk-import X bookmarks from ~/.fieldtheory, as JSON
 uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history from a Takeout export, as JSON
 uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML export, as JSON
+uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -832,6 +833,23 @@ becomes `tags` (root containers like "Bookmarks bar" are excluded as
 browser furniture, and Firefox's `TAGS` attribute merges in), a `<DD>`
 note seeds `summary`, and bookmarklets or `place:` smart folders are
 counted as ignored rather than failing the run.
+
+`scrolls import pocket <path>` bulk-imports a Pocket data export — the
+CSV (`title,url,time_added,tags,status`) Mozilla mailed users when
+Pocket shut down in 2025, where the saved internet of a large population
+lived (see `docs/adr/0074-pocket-import.md`). `path` is the export
+`.zip` (large accounts split across `part_*.csv`), a directory of CSV
+parts, or a single `.csv`. It reuses the bookmarks spine wholesale:
+items enter at stage `detected` with `time_added` as `saved_at`, every
+URL routes through the same detection/normalization as `scrolls add`
+(so a saved video becomes a `youtube` item and dedupes against the
+library), pipe-delimited Pocket `tags` become `tags` curation, and a
+title equal to the URL — Pocket's "no title" marker — is dropped so
+fetch fills the real one. The unread/archive `status` split is reported
+as migration context, blank or non-http rows are counted rather than
+failing the run, and `scrolls fetch --limit N` paces the enrichment of a
+years-deep pile. Columns are read by header name, so the importer also
+takes any CSV carrying a `url` column.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

@@ -23,7 +23,8 @@ each command moves items between stages or derives artifacts from them.
  URL ── add ──▶ detected ── fetch ──▶ fetched ── md ──▶ rendered
                   │ ▲                   ▲                  │
                   │ ├ import google-takeout                │
-                  │ └ import bookmarks                     │
+                  │ ├ import bookmarks                     │
+                  │ └ import pocket                        │
                   │   import fieldtheory┘                  ▼
                   │            classify (stage-neutral, sets category)
                   │            media    (stage-neutral, downloads media refs)
@@ -60,6 +61,14 @@ each command moves items between stages or derives artifacts from them.
   export at stage `detected` — another bare spine, but heterogeneous:
   each URL routes through the same detection as `add`, and folder
   ancestry becomes `tags` (`src/scrolls/bookmarks.py`, ADR 0030).
+- `scrolls import pocket` bulk-inserts a Pocket CSV data export
+  (`title,url,time_added,tags,status`; a `.zip` of `part_*.csv`, a
+  directory, or one `.csv`) at stage `detected` — the read-later spine,
+  the same heterogeneous bookmarks shape: each URL detects like `add`,
+  `time_added` → `saved_at`, pipe-delimited Pocket `tags` → `tags`, and
+  a title equal to the URL (Pocket's "no title") is dropped for fetch to
+  fill; columns are read by header name, so any `url`-bearing CSV imports
+  (`src/scrolls/pocket.py`, ADR 0074).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

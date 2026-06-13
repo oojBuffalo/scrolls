@@ -1560,6 +1560,67 @@ def test_import_bookmarks_missing_file_is_an_error(scrolls_home, tmp_path, capsy
     assert "error" in json.loads(captured.err)
 
 
+@pytest.fixture
+def fake_pocket_csv(tmp_path):
+    """A miniature Pocket export: one video, one repeat, one blank URL."""
+    export = (
+        "title,url,time_added,tags,status\n"
+        "How SQLite FTS Works,https://www.youtube.com/watch?v=abc123xyz00,1700000000,db|search,unread\n"
+        "same video again,https://www.youtube.com/watch?v=abc123xyz00,1600000000,,archive\n"
+        ",,1600000000,,unread\n"
+    )
+    path = tmp_path / "part_000000.csv"
+    path.write_text(export, encoding="utf-8")
+    return path
+
+
+def test_import_pocket_end_to_end(scrolls_home, fake_pocket_csv, capsys):
+    exit_code = main(["import", "pocket", str(fake_pocket_csv)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "imported": 1,
+        "skipped": 0,
+        "rows": 3,
+        "repeats": 1,
+        "ignored": {"no_url": 1, "not_http": 0},
+        "status": {"unread": 1, "archive": 1},
+    }
+
+    stored = get_item(get_paths().db_path, "youtube:abc123xyz00")
+    assert stored.stage == "detected"
+    assert stored.title == "same video again"  # earliest save's row wins
+    assert stored.tags == ("db", "search")
+    assert stored.saved_at == "2020-09-13T12:26:40+00:00"  # earliest time_added
+
+
+def test_import_pocket_is_idempotent(scrolls_home, fake_pocket_csv, capsys):
+    main(["import", "pocket", str(fake_pocket_csv)])
+    capsys.readouterr()
+    exit_code = main(["import", "pocket", str(fake_pocket_csv)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 1
+
+
+def test_import_pocket_never_overwrites_existing_item(
+    scrolls_home, fake_pocket_csv, capsys
+):
+    main(["add", "https://www.youtube.com/watch?v=abc123xyz00"])
+    main(["import", "pocket", str(fake_pocket_csv)])
+    # `add` registered the item without a title; import must not touch it
+    assert get_item(get_paths().db_path, "youtube:abc123xyz00").title is None
+
+
+def test_import_pocket_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "pocket", str(tmp_path / "nowhere.csv")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
