@@ -118,6 +118,20 @@ CASES = [
     ("https://www.npmjs.com/search?q=http", "npm", None),
     ("https://www.npmjs.com/~someone", "npm", None),
     ("https://www.npmjs.com/package", "npm", None),
+    # --- crates.io ---
+    ("https://crates.io/crates/serde", "crates", "serde"),
+    # a versioned page is the same crate: identity is the name only
+    ("https://crates.io/crates/serde_json/1.0.150", "crates", "serde-json"),
+    # case-insensitive and -/_ -equivalent, folded like PEP 503
+    ("https://crates.io/crates/Serde-Json", "crates", "serde-json"),
+    ("https://crates.io/crates/SERDE_JSON", "crates", "serde-json"),
+    ("https://www.crates.io/crates/tokio", "crates", "tokio"),
+    # crate list, search, user, and category pages: source known, crate unknown
+    ("https://crates.io/", "crates", None),
+    ("https://crates.io/crates", "crates", None),
+    ("https://crates.io/search?q=http", "crates", None),
+    ("https://crates.io/users/dtolnay", "crates", None),
+    ("https://crates.io/categories/encoding", "crates", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

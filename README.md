@@ -208,8 +208,26 @@ empty; and the homepage and repository become `links`, the repository's
 `git+https://…​.git` form normalized to a clean URL so a package's repo
 connects to it in `scrolls related`. An npm package classifies as
 `tool` like a PyPI one; search/user/org pages register but have no
-package to fetch). Items from sources without an adapter yet (today
-only `x`) are skipped, and per-item failures don't abort the batch.
+package to fetch), and **crates** (the keyless crates.io JSON API — see
+`docs/adr/0036-crates-io-adapter.md`: a saved `crates.io/crates/<name>`
+page becomes a clean scroll from the crate's displayed-version metadata,
+the Rust sibling of the PyPI and npm adapters. Identity is the crate
+name folded like a PyPI one — crates.io is case-insensitive and treats
+`-`/`_` as equivalent, so `serde_json`, `serde-json`, and a version page
+all dedupe to `crates:serde-json`, while the canonical published name is
+read back from the API for the canonical URL and the download path. The
+crate JSON carries no inline README — only a link to an HTML-rendered
+one — so the raw Markdown README is extracted from the published
+`.crate` tarball (the capped `http.get_bytes` npm introduced), every
+tarball failure degrading to a metadata-only scroll. Author-declared
+keywords become `concepts` like github repo topics; the curated category
+taxonomy's display names become `tags` like PyPI classifiers; and the
+homepage, `docs.rs` docs, and repository become `links`, the repository
+normalized so a crate's repo connects to it in `scrolls related`. A
+crate classifies as `tool` like a PyPI or npm package;
+search/user/category pages register but have no crate to fetch). Items
+from sources without an adapter yet (today only `x`) are skipped, and
+per-item failures don't abort the batch.
 
 `scrolls import fieldtheory [--root PATH]` bulk-imports X/Twitter
 bookmarks from a local Field Theory archive (IDEAS.md §7 — see
@@ -484,10 +502,18 @@ adapter — the JavaScript sibling — so a saved `npmjs.com/package/<name>`
 becomes a clean scroll with its README pulled from the registry packument
 or, when that is empty (as it is for high-traffic packages), from the
 published tarball, keywords as concepts and the normalized repository URL
-as the package↔repo `related` edge (ADR 0035). Next candidates: a
-native `x` fetch adapter so saved tweets enrich beyond the Field Theory
-import; more package registries (crates.io and friends) following the
-PyPI/npm pattern; or two-phase batch submit/collect if a terminal wait
-ever outgrows the library (ADR 0022, ADR 0032).
+as the package↔repo `related` edge (ADR 0035), and a keyless crates.io
+adapter — the Rust sibling completing the package-registry trio — so a
+saved `crates.io/crates/<name>` page becomes a clean scroll from the
+crate's displayed-version metadata, its README extracted from the
+published `.crate` tarball (the crate JSON carries no inline README), the
+name folded like a PyPI one since crates.io is case-insensitive, keywords
+as concepts, the curated category taxonomy as tags, and the normalized
+repository URL as the crate↔repo `related` edge (ADR 0036). Next
+candidates: a native `x` fetch adapter so saved tweets enrich beyond the
+Field Theory import; more package registries (RubyGems, Packagist, Go
+modules) following the PyPI/npm/crates pattern; or two-phase batch
+submit/collect if a terminal wait ever outgrows the library (ADR 0022,
+ADR 0032).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

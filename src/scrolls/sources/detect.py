@@ -19,6 +19,7 @@ ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
+CRATES_HOSTS = {"crates.io", "www.crates.io"}
 
 # Stack Exchange network sites on dedicated domains, mapped to the API
 # `site` slug. Every *.stackexchange.com subdomain is its own site (the
@@ -85,6 +86,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in NPM_HOSTS:
         return DetectedSource("npm", _npm_id(path_parts))
+
+    if host in CRATES_HOSTS:
+        return DetectedSource("crates", _crates_id(path_parts))
 
     if parsed.path.lower().endswith(".pdf"):
         return DetectedSource("pdf")
@@ -221,6 +225,30 @@ def _npm_id(path_parts: list[str]) -> str | None:
     else:
         name = first
     return name or None
+
+
+def _crates_id(path_parts: list[str]) -> str | None:
+    """The normalized crate name for a `/crates/<name>[/<version>]` URL, else None.
+
+    Identity is the crate name only: `serde_json` and the versioned page
+    `/crates/serde_json/1.0.150` are the same crate, so the trailing
+    version segment is ignored. crates.io is case-insensitive and treats
+    `-`/`_` as equivalent, so the name is folded the way PyPI applies PEP
+    503 (`serde-json` and `serde_json` dedupe to one id) — the registry
+    resolves the folded form, and the adapter reads the canonical
+    published name back from the API. The crate list, search, user, and
+    category pages carry no crate name and resolve to the source with no
+    fetchable item.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "crates":
+        return None
+    return _normalize_crate_name(path_parts[1])
+
+
+def _normalize_crate_name(name: str) -> str | None:
+    """Canonical crates.io lookup name: case-folded, `[-_]` runs to one `-`."""
+    normalized = re.sub(r"[-_]+", "-", unquote(name)).strip("-").lower()
+    return normalized or None
 
 
 def _hackernews_id(path_parts: list[str], query: str) -> str | None:

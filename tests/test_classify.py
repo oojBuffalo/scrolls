@@ -50,6 +50,12 @@ def test_npm_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_crates_is_a_tool():
+    # A crates.io crate is a published package you install, like PyPI and npm.
+    item = make_item(source="crates", title="serde")
+    assert classify_item(item).category == "tool"
+
+
 def test_curated_platform_default_beats_title_pattern():
     # A wikipedia page titled like a tutorial is still an encyclopedia entry.
     item = make_item(source="wikipedia", title="How to Solve It")

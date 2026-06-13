@@ -8,8 +8,8 @@ getting a guessed label; a future LLM engine can pick them up.
 
 Precedence (first hit wins):
 
-1. curated-platform defaults — wikipedia/arxiv/github/pypi/npm items are
-   what their platform makes them, whatever the title says;
+1. curated-platform defaults — wikipedia/arxiv/github/pypi/npm/crates
+   items are what their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -31,10 +31,11 @@ _CURATED_SOURCE_CATEGORIES = {
     "arxiv": "paper",
     "github": "project",
     # A published package is something you install and use — distinct from a
-    # github repo (a "project" to read). PyPI and npm both ship packages,
-    # the rules that produce "tool".
+    # github repo (a "project" to read). PyPI, npm, and crates.io all ship
+    # packages, the rules that produce "tool".
     "pypi": "tool",
     "npm": "tool",
+    "crates": "tool",
 }
 
 # Ordered: first matching pattern decides.
