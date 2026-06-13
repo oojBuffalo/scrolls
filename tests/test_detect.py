@@ -74,6 +74,23 @@ CASES = [
     ("https://lobste.rs/t/programming", "lobsters", None),
     ("https://lobste.rs/u/someone", "lobsters", None),
     ("https://lobste.rs/", "lobsters", None),
+    # --- bluesky ---
+    ("https://bsky.app/profile/alice.bsky.social/post/3kqpost1",
+     "bluesky", "alice.bsky.social/3kqpost1"),
+    # the handle is case-folded (DNS/DID are case-insensitive), the rkey kept verbatim
+    ("https://bsky.app/profile/Alice.BSKY.Social/post/3kqAbC",
+     "bluesky", "alice.bsky.social/3kqAbC"),
+    # a DID actor instead of a handle
+    ("https://bsky.app/profile/did:plc:abc123/post/3kqpost1",
+     "bluesky", "did:plc:abc123/3kqpost1"),
+    ("https://www.bsky.app/profile/alice.bsky.social/post/3kqpost1",
+     "bluesky", "alice.bsky.social/3kqpost1"),
+    # profile, feed, list, and home routes carry no post id
+    ("https://bsky.app/profile/alice.bsky.social", "bluesky", None),
+    ("https://bsky.app/profile/alice.bsky.social/feed/whats-hot", "bluesky", None),
+    ("https://bsky.app/profile/alice.bsky.social/lists/3kqlist", "bluesky", None),
+    ("https://bsky.app/", "bluesky", None),
+    ("https://bsky.app/search", "bluesky", None),
     # --- stack exchange network ---
     ("https://stackoverflow.com/questions/11227809/why-is-it-faster",
      "stackexchange", "stackoverflow:11227809"),

@@ -18,6 +18,9 @@ GITHUB_HOSTS = {"github.com", "www.github.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
+# bsky.app is the public web app whose post URLs users save; the fetch
+# adapter talks to the keyless AppView (public.api.bsky.app).
+BLUESKY_HOSTS = {"bsky.app", "www.bsky.app"}
 PYPI_HOSTS = {"pypi.org", "www.pypi.org"}
 NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
@@ -101,6 +104,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in LOBSTERS_HOSTS:
         return DetectedSource("lobsters", _lobsters_id(path_parts))
+
+    if host in BLUESKY_HOSTS:
+        return DetectedSource("bluesky", _bluesky_id(path_parts))
 
     se_site = _stackexchange_site(host)
     if se_site is not None:
@@ -450,6 +456,35 @@ def _lobsters_id(path_parts: list[str]) -> str | None:
     """
     if len(path_parts) >= 2 and path_parts[0] == "s":
         return path_parts[1] or None
+    return None
+
+
+def _bluesky_id(path_parts: list[str]) -> str | None:
+    """`<actor>/<rkey>` for a `bsky.app/profile/<actor>/post/<rkey>` URL, else None.
+
+    A Bluesky post URL is `/profile/<actor>/post/<rkey>`, where `<actor>` is
+    either a handle (`bsky.app`) or a DID (`did:plc:…`) and `<rkey>` is the
+    post's record key. The actor is folded lowercase: handles are DNS names
+    and DIDs are lowercase by construction, both case-insensitive, so
+    `Bsky.App` and `bsky.app` dedupe to one item — while the record key is
+    kept verbatim. The stable identity is really the post's AT-URI
+    (`at://<did>/…`), but the DID can only be learned at fetch time, so the
+    actor the URL carries is used as registered, like the handle in any
+    other source's URL.
+
+    A profile page (`/profile/<actor>`), feeds, lists, and the home/search
+    routes carry no post and resolve to the source with no fetchable item —
+    Hacker News's and Lobsters' pattern (ADR 0031, ADR 0046).
+    """
+    if (
+        len(path_parts) >= 4
+        and path_parts[0] == "profile"
+        and path_parts[2] == "post"
+    ):
+        actor = unquote(path_parts[1]).strip().lower()
+        rkey = unquote(path_parts[3]).strip()
+        if actor and rkey:
+            return f"{actor}/{rkey}"
     return None
 
 

@@ -19,6 +19,7 @@ class FetchError(Exception):
 # back from this package.
 from scrolls.sources import (  # noqa: E402
     arxiv,
+    bluesky,
     crates,
     crossref,
     datacite,
@@ -41,6 +42,7 @@ from scrolls.sources import (  # noqa: E402
 
 FETCH_ADAPTERS = {
     "arxiv": arxiv.fetch_item,
+    "bluesky": bluesky.fetch_item,
     "crates": crates.fetch_item,
     # A `doi.org` link is detected as `crossref`, but its registration agency
     # (Crossref or DataCite) is resolved at fetch time by the doi dispatcher

@@ -254,6 +254,19 @@ def test_lobsters_tutorial_title_still_wins():
     assert classify_item(item).category == "tutorial"
 
 
+def test_bluesky_stays_unclassified_like_hacker_news():
+    # A Bluesky post is a heterogeneous social entry like a Hacker News or
+    # Lobsters story (ADR 0048): no single honest category, so no source
+    # default — the title rules and the LLM engine decide.
+    item = make_item(source="bluesky", title="Alice: shipping a new local-first sync engine today")
+    assert classify_item(item).category is None
+
+
+def test_bluesky_tutorial_title_still_wins():
+    item = make_item(source="bluesky", title="Bob: a guide to writing a SQLite VFS, a thread 🧵")
+    assert classify_item(item).category == "tutorial"
+
+
 def test_unmatched_web_item_stays_unclassified():
     item = make_item(title="An ordinary post")
     classified = classify_item(item)

@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1070 tests at the time of writing). The docs themselves
+`uv run pytest` (1107 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -150,7 +150,11 @@ Two small contracts make every platform the same kind of scroll
    in `src/scrolls/sources/detect.py`. Pure URL inspection, no network:
    host tables map to `youtube`, `wikipedia`, `github`, `arxiv`, `x`,
    `hackernews`, `lobsters` (a `/s/<short_id>` story URL, the short id
-   verbatim), the `stackexchange` network (every site's question
+   verbatim), `bluesky` (a `bsky.app/profile/<actor>/post/<rkey>` post URL,
+   `<actor>/<rkey>` as `source_id` with the actor folded lowercase — handle
+   and DID are both case-insensitive — and the record key verbatim; the
+   post's true AT-URI identity needs a DID resolvable only at fetch time,
+   ADR 0048), the `stackexchange` network (every site's question
    URL, the per-site API slug carried in `source_id`), `pypi`
    (project pages, the PEP 503-normalized package name as `source_id` so
    a versioned page dedupes to the package), `npm` (package pages,
@@ -214,6 +218,7 @@ Implemented fetch adapters, all keyless:
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
 | lobsters | `sources/lobsters.py` | keyless `lobste.rs/s/<id>.json`, stdlib only, one request | story + tags + the *entire* comment thread in one GET (HN defers comments, SE spends a second GET); `description_plain`/`comment_plain` already plain, no HTML grammar; body + bylined comments (deleted/moderated skipped, all kept) → searchable `extracted_text`; link submission's article → bare `links` (HN pattern), `summary` = body lead else "N points, M comments"; tags → `concepts`; **no category default — unclassified like HN**; degrades to metadata-only | 0046 |
 | go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
+| bluesky | `sources/bluesky.py` | keyless AppView (`public.api.bsky.app`), stdlib only; `resolveHandle` GET for a handle URL, then one `getPostThread` | the open social-post source X couldn't be (IDEAS.md §6 deferred X; its API is now paywalled); a handle URL resolves to the DID the AT-URI needs (a `did:` URL skips it), then one call returns the post + its reply tree; post text + bylined replies (deleted/blocked/empty skipped) → `extracted_text`, image alt text the body of a textless post; external card / quoted post / inline `#link` facets → `links` (post↔post + cross-source edges), images → `photo` media, `#hashtag` facets → `concepts`; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default — unclassified like HN/Lobsters**; degrades to metadata-only | 0048 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
@@ -443,9 +448,17 @@ the compiled KB with context bundles and agent install.
 
 Next steps already identified in decision records, in no required order:
 
-- **A native `x` fetch adapter** — `x` items arrive only through
-  `import fieldtheory` (ADR 0009); a fetch adapter would let a pasted or
-  synced tweet URL enrich on its own, like every other source.
+- **Social posts** — the Bluesky adapter (ADR 0048) reaches the keyless
+  social-post source IDEAS.md §6 deferred X for, on the open network. `x`
+  itself still arrives only through `import fieldtheory` (ADR 0009): a
+  native `x` fetch adapter would let a pasted or synced tweet URL enrich
+  on its own, but X's read API is now paywalled, so it cannot be keyless
+  like every other adapter. A natural Bluesky tightening is
+  DID-canonical identity (resolve a handle id to its DID at fetch time, so
+  a post saved under both spellings dedupes — ADR 0048 deferred it as the
+  only fetch-time id rewrite any adapter would do); other open networks on
+  documented public APIs (Mastodon's per-instance API, the Fediverse) fit
+  the same shape.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs

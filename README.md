@@ -397,7 +397,41 @@ scroll classified by `types.resourceTypeGeneral` — `Dataset → dataset`,
 `Software`/`Model` → `tool`, text types → `paper`, `Image`/`Sound` →
 `media` — instead of falling to a `web` scrape; the source stays
 `crossref` because identity is fixed at `add` time before the agency is
-knowable, with `provenance.adapter="datacite"` recording the truth).
+knowable, with `provenance.adapter="datacite"` recording the truth),
+and **bluesky** (the keyless AT Protocol AppView — see
+`docs/adr/0048-bluesky-adapter.md`: the open social-post source X could
+never be. IDEAS.md §6 deferred X for its auth/session complexity, and X's
+read API is now paywalled, so a keyless `x` adapter is off the table — but
+Bluesky's `public.api.bsky.app` serves posts and their threads with no
+login, cookie, or token. A saved `bsky.app/profile/<actor>/post/<rkey>`
+post becomes a clean scroll instead of a `trafilatura` scrape of a
+JS-rendered page. The wrinkle is identity: the URL carries a *handle* (or
+a DID), but the thread endpoint is keyed by the post's AT-URI
+(`at://<did>/app.bsky.feed.post/<rkey>`), which needs the DID — so a handle
+URL costs one keyless `resolveHandle` GET (the Stack Exchange / Hugging
+Face two-request shape) while a `did:` URL skips straight to the thread,
+and the actor is folded lowercase in the `<actor>/<rkey>` source id since
+handles and DIDs are case-insensitive. One `getPostThread` call returns
+the post *and* its nested reply tree (the way a Lobsters story's `.json`
+returns its comments): the post text leads the searchable
+`extracted_text`, the replies follow as a `### Replies` subsection each
+bylined with author and like count (deleted/blocked/empty nodes skipped),
+and an image-only post contributes its images' alt text as the body so it
+stays searchable. An external link card, a quoted post, and inline
+`#link` richtext facets become `links` — a post pointing at an arXiv
+paper, a github repo, or another saved post wiring to it through
+`scrolls related`/`graph` (the quoted-post URL is the post↔post edge);
+embedded images become `photo` media (the CDN's extensionless `…@jpeg`
+URL resolving to `.jpg` through the same fallback tweet photos use); and
+`#hashtag` facets become `concepts` like github repo topics. Posts have no
+title, so one is synthesized from the byline and lead line; the `summary`
+leads with the post's first paragraph, falling back for a textless post to
+image alt text, then the link card's title, then the engagement status
+("128 likes, 12 reposts, 3 replies"). Like Hacker News and Lobsters, a
+heterogeneous social post gets *no* category default — unclassified until
+a title rule or the LLM engine names it; the whole thread stays in
+`raw_text` for a future nested render, and profile/feed/list/home routes
+register but have no post to fetch).
 Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
@@ -734,11 +768,22 @@ registration agency is knowable (ADR 0045), and a keyless Lobsters
 adapter joining Hacker News and Stack Exchange as the third
 discussion-aggregator source — and the cheapest, since a story's `.json`
 returns the submission, its tags, and the whole comment thread in one
-request, classified like Hacker News with no category default (ADR 0046).
-Next candidates: a native `x`
-fetch adapter so saved tweets enrich beyond the Field Theory import; a
-third DOI registration agency (mEDRA, JaLC) joining the same `doi.py`
-dispatch; or two-phase batch submit/collect if a terminal wait ever
-outgrows the library (ADR 0022, ADR 0032).
+request, classified like Hacker News with no category default (ADR 0046),
+and a keyless Bluesky adapter reaching the social-post source IDEAS.md §6
+deferred X for — on the open AT Protocol AppView, no login, where X's read
+API is now paywalled — so a saved `bsky.app` post becomes a clean scroll
+carrying its text and reply thread (one `getPostThread` call, after a
+`resolveHandle` GET turns a handle into the DID the AT-URI needs), its
+external card / quoted post / inline links as edges, its images as media,
+and its hashtags as concepts, classified like Hacker News and Lobsters
+with no category default (ADR 0048). Next candidates: DID-canonical
+Bluesky identity so a post saved under both its handle and its DID dedupes
+(ADR 0048); other open-network social sources on documented public APIs
+(Mastodon's per-instance API, the Fediverse); a third DOI registration
+agency (mEDRA, JaLC) joining the same `doi.py` dispatch; or two-phase
+batch submit/collect if a terminal wait ever outgrows the library
+(ADR 0022, ADR 0032). A native `x` fetch adapter remains out of reach
+while X's read API stays paywalled; `x` enriches only through the Field
+Theory import (ADR 0009).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.
