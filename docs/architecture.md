@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (824 tests at the time of writing). The docs themselves
+`uv run pytest` (827 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -177,7 +177,7 @@ Implemented fetch adapters, all keyless:
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
-| arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`; degrades to abstract-only | 0008, 0010, 0012 |
+| arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`, published `arxiv:doi` → `doi.org` `link` (preprint↔published edge, ADR 0038); degrades to abstract-only | 0008, 0010, 0012, 0038 |
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
 | stackexchange | `sources/stackexchange.py` | keyless Stack Exchange API, stdlib only; optional second GET for answers | one adapter for the whole network (site in `source_id`); question + accepted-first top answers → `extracted_text`; tags → `concepts`; degrades to question-only | 0033 |
@@ -254,7 +254,9 @@ choice (ADRs 0004, 0005).
   input never hits FTS5 syntax errors (`tests/test_search.py`).
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
   no LLM: link connections in either direction (resolved through source
-  detection, so `arxiv.org/pdf/X` finds item `arxiv:X`), shared concepts
+  detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, and an arXiv
+  preprint's published `doi.org` link finds its `crossref:<doi>` paper —
+  ADR 0038), shared concepts
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).
@@ -404,7 +406,8 @@ Next steps already identified in decision records, in no required order:
   registered with DataCite and 404 against Crossref. A DataCite adapter
   on the same `doi.org` detection, chosen by a fetch-time fallback, would
   extend DOI coverage to those without a new URL shape.
-- **Linking preprints to their published versions** — arXiv (ADR 0008)
-  and Crossref (ADR 0037) both land in the `paper` category, but a saved
-  `arxiv.org/abs/X` and the `doi.org/10.…` of its published version are
-  distinct items; the DOI arXiv records in its metadata is the join.
+- **Cross-source `paper` enrichment** — arXiv and its published Crossref
+  version now relate through the `arxiv:doi` link (ADR 0038). A natural
+  next step is the reverse from richer Crossref `relation` data, or a
+  concept-level merge so the preprint and published version share one KB
+  concept page rather than two near-duplicate `paper` entries.

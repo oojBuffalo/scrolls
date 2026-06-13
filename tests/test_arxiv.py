@@ -125,6 +125,22 @@ def test_fetch_item_merges_concept_names_shared_across_codes():
     assert fetched.concepts == ("Machine Learning",)
 
 
+def test_published_doi_becomes_a_doi_org_link():
+    # once a preprint is published, arXiv stamps an arxiv:doi; it becomes
+    # a doi.org link so `related` wires the preprint to its Crossref scroll
+    feed = FEED.replace(
+        "  </entry>",
+        '    <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">'
+        "10.1109/EXAMPLE.2024.12345</arxiv:doi>\n  </entry>",
+    )
+    assert fetch(feed=feed).links == ("https://doi.org/10.1109/EXAMPLE.2024.12345",)
+
+
+def test_no_published_doi_means_no_links():
+    # most preprints have no journal DOI yet — honestly empty, not a guess
+    assert fetch().links == ()
+
+
 def test_fetch_item_downloads_the_pdf_link_over_https():
     seen = {}
 

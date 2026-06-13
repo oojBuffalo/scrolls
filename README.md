@@ -534,7 +534,10 @@ Crossref adapter so a saved `doi.org/<doi>` link becomes a clean scroll
 from the work's registered metadata — title, authors, venue, date, and a
 JATS abstract reduced to plain text — instead of a redirect into a
 publisher paywall, classified as `paper` alongside arXiv so Scrolls now
-spans both preprints and the published literature (ADR 0037). Next
+spans both preprints and the published literature (ADR 0037), and the
+arXiv adapter learning to record a preprint's published `arxiv:doi` as a
+`doi.org` link so `scrolls related` wires a saved preprint to its
+published paper, the literature loop closed both ways (ADR 0038). Next
 candidates: a native `x` fetch adapter so saved tweets enrich beyond the
 Field Theory import; a DataCite adapter on the same `doi.org` detection
 for dataset DOIs Crossref doesn't hold; more package registries

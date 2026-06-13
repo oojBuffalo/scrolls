@@ -10,8 +10,12 @@ than failing the fetch, the same contract as caption-less youtube
 videos. Taxonomy category codes (`cs.CL`) go to `tags`; their display
 names from the bundled taxonomy table ("Computation and Language")
 become `concepts`, joining github topics and wikipedia categories in the
-KB's concept graph (ADR 0012). The raw feed is kept in `raw_text` so
-scrolls and indexes can be rebuilt without refetching.
+KB's concept graph (ADR 0012). When the entry carries an `arxiv:doi` —
+arXiv records the DOI of the published version once a preprint appears in
+a journal or proceedings — it becomes a `https://doi.org/<doi>` link, so
+`scrolls related` connects the preprint to its published Crossref scroll
+(ADR 0038, the preprint↔published edge). The raw feed is kept in
+`raw_text` so scrolls and indexes can be rebuilt without refetching.
 """
 
 from __future__ import annotations
@@ -31,6 +35,8 @@ from scrolls.sources.arxiv_taxonomy import CATEGORY_NAMES
 
 API_ROOT = "https://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"
+_ARXIV = "{http://arxiv.org/schemas/atom}"
+DOI_RESOLVER = "https://doi.org"
 
 GetText = Callable[[str], str]
 GetBytes = Callable[[str], bytes]
@@ -105,6 +111,7 @@ def fetch_item(
                 CATEGORY_NAMES[code] for code in codes if code in CATEGORY_NAMES
             )
         ),
+        links=_doi_links(entry),
         media=({"type": "pdf", "url": pdf_url},) if pdf_url else (),
         content_hash="sha256:" + hashlib.sha256(hashed.encode("utf-8")).hexdigest(),
         provenance={
@@ -114,6 +121,23 @@ def fetch_item(
         },
         stage="fetched",
     )
+
+
+def _doi_links(entry: ElementTree.Element) -> tuple[str, ...]:
+    """The published version's DOI(s) as `doi.org` links, deduped, or empty.
+
+    arXiv stamps an `arxiv:doi` element once a preprint is published; the
+    resulting `https://doi.org/<doi>` link resolves (through source
+    detection in `related._link_targets`) to the `crossref:<doi>` item a
+    saved DOI mints, wiring the preprint to its published paper. Most
+    entries have no DOI, so this is honestly empty — the common case.
+    """
+    links = []
+    for element in entry.findall(f"{_ARXIV}doi"):
+        doi = " ".join((element.text or "").split())
+        if doi:
+            links.append(f"{DOI_RESOLVER}/{doi}")
+    return tuple(dict.fromkeys(links))
 
 
 def _pdf_text(pdf_url: str, get_bytes: GetBytes) -> str | None:

@@ -58,6 +58,30 @@ def test_link_to_another_items_url_relates_them_both_ways(db):
     assert any("linked from it" in reason for reason in backward[0].reasons)
 
 
+def test_arxiv_preprint_relates_to_its_published_crossref_paper(db):
+    # arXiv stamps the published DOI as a doi.org link (ADR 0038); it
+    # resolves to the crossref item id even though the link's DOI case
+    # differs from the stored id — DOIs fold through source detection
+    insert_item(db, make_item(
+        "arxiv:2310.06825",
+        url="https://arxiv.org/abs/2310.06825",
+        links=("https://doi.org/10.1109/Example.2024.12345",),  # mixed case
+    ))
+    insert_item(db, make_item(
+        "crossref:10.1109/example.2024.12345",
+        url="https://doi.org/10.1109/example.2024.12345",
+    ))
+    insert_item(db, make_item("web:other", url="https://example.com/elsewhere"))
+
+    forward = find_related(db, "arxiv:2310.06825")
+    assert [hit.id for hit in forward] == ["crossref:10.1109/example.2024.12345"]
+    assert any("links to it" in reason for reason in forward[0].reasons)
+
+    backward = find_related(db, "crossref:10.1109/example.2024.12345")
+    assert [hit.id for hit in backward] == ["arxiv:2310.06825"]
+    assert any("linked from it" in reason for reason in backward[0].reasons)
+
+
 def test_exact_url_match_relates_web_items(db):
     insert_item(db, make_item(
         "x:1111",
