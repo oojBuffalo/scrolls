@@ -175,8 +175,15 @@ def to_payload(graph: Graph) -> dict:
 
     `from`/`to` rather than the dataclass's `from_id`/`to_id` because
     `from` is a Python keyword; `stats.items` is the library total, against
-    which `nodes`/`edges` report connectivity.
+    which `nodes`/`edges` report connectivity. `stats.clusters` is the
+    number of connected components with 2+ members — the link clusters the
+    KB's `graph.md` page renders (ADR 0062) — so a singleton isolate added
+    by `--all` is *not* counted, and the count is the same notion whether or
+    not isolates are included.
     """
+    clusters = sum(
+        1 for component in connected_components(graph) if len(component.nodes) >= 2
+    )
     return {
         "nodes": [
             {
@@ -196,6 +203,7 @@ def to_payload(graph: Graph) -> dict:
             "items": graph.item_count,
             "nodes": len(graph.nodes),
             "edges": len(graph.edges),
+            "clusters": clusters,
         },
     }
 

@@ -859,12 +859,15 @@ at once. Nodes carry the `id`, `source`, `title`, `url`, `stage` shape
 
 Nodes are the *connected* items by default — `--all` widens it to every
 item, isolated ones included. `stats.items` is always the library total,
-so `nodes`/`edges` read as connectivity against the whole. An empty or
+so `nodes`/`edges` read as connectivity against the whole; `stats.clusters`
+counts the connected components with 2+ members — the link clusters the
+KB's `graph.md` page renders (ADR 0062), so a singleton added by `--all` is
+not counted (`test_cli_graph_stats_count_clusters`). An empty or
 uninitialized library is an empty graph, exit 0.
 
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}}
 [exit 0]
 ```
 

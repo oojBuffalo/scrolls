@@ -188,7 +188,7 @@ def test_cli_graph_prints_nodes_edges_and_stats(db, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["stats"] == {"items": 3, "nodes": 2, "edges": 1}
+    assert payload["stats"] == {"items": 3, "nodes": 2, "edges": 1, "clusters": 1}
     assert payload["edges"] == [
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
     ]
@@ -206,7 +206,8 @@ def test_cli_graph_all_includes_isolated_items(db, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert [n["id"] for n in payload["nodes"]] == ["wikipedia:en:Pelican"]
-    assert payload["stats"] == {"items": 1, "nodes": 1, "edges": 0}
+    # the lone isolate is a singleton, not a cluster: clusters counts 2+ only
+    assert payload["stats"] == {"items": 1, "nodes": 1, "edges": 0, "clusters": 0}
 
 
 def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
@@ -215,7 +216,7 @@ def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
     exit_code = main(["graph"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0}}
+    assert payload == {"nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0, "clusters": 0}}
 
 
 # --- connected_components (the KB graph.md clustering, ADR 0062) ----------
@@ -275,6 +276,21 @@ def test_connected_components_tie_breaks_equal_clusters_by_smallest_id(db):
 def test_connected_components_of_empty_graph_is_empty(scrolls_home):
     main(["init"])
     assert connected_components(build_graph(get_paths().db_path)) == ()
+
+
+def test_cli_graph_stats_count_clusters(db, capsys):
+    # two independent 2-item clusters plus one isolate
+    insert_item(db, make_item("web:a", links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b"))
+    insert_item(db, make_item("web:c", links=("https://example.org/web:d",)))
+    insert_item(db, make_item("web:d"))
+    insert_item(db, make_item("web:lonely"))
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    payload = json.loads(capsys.readouterr().out)
+    # the isolate inflates items/nodes but not clusters (2+ members only)
+    assert payload["stats"] == {"items": 5, "nodes": 5, "edges": 2, "clusters": 2}
 
 
 def test_graph_over_drops_links_to_items_outside_the_given_set():

@@ -215,12 +215,12 @@ def test_get_link_graph_returns_directed_edges(scrolls_home):
     assert graph["edges"] == [
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
     ]
-    assert graph["stats"] == {"items": 2, "nodes": 2, "edges": 1}
+    assert graph["stats"] == {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}
 
 
 def test_get_link_graph_empty_library(scrolls_home):
     assert mcp_server.get_link_graph() == {
-        "nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0}
+        "nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0, "clusters": 0}
     }
 
 

@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1444 tests at the time of writing). The docs themselves
+`uv run pytest` (1445 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -368,7 +368,8 @@ choice (ADRs 0004, 0005).
   imports them, so both views agree on what a link resolves to. The build
   indexes every item's identity tokens once then probes with each link
   (linear, not the per-pair O(n²)); nodes are the connected items by
-  default (`--all` adds isolates), `stats.items` the library total. The
+  default (`--all` adds isolates), `stats.items` the library total and
+  `stats.clusters` the number of 2+-member components. The
   same `{nodes, edges, stats}` payload backs the MCP `get_link_graph` tool
   (`tests/test_graph.py`). `connected_components` partitions the graph into
   clusters (edges undirected for the partition, the directed edges kept) and
