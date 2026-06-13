@@ -185,11 +185,13 @@ Two small contracts make every platform the same kind of scroll
    the Fediverse is federated with no host set: `mastodon` matches a
    Mastodon-API status URL (`/@<user>/<digits>`, GoToSocial's
    `/@<user>/statuses/<id>`, Pleroma's `/notice/<id>`, the shared AP
-   `/users/<user>/statuses/<id>`) and `misskey` matches the Misskey-family
-   `/notes/<id>` — both folding the instance host into the id
-   (`<host>/<id>`, instance-local), each id constrained as strictly as its
-   anchoring literal is weak, a misdetect degrading to a benign failed
-   fetch (ADRs 0049–0051). Finally `.pdf`
+   `/users/<user>/statuses/<id>`), `misskey` matches the Misskey-family
+   `/notes/<id>`, and `lemmy` matches the link-aggregator `/post/<digits>`
+   — all folding the instance host into the id (`<host>/<id>`,
+   instance-local), each id constrained as strictly as its anchoring
+   literal is weak (Lemmy's `post` literal needs an all-digits id and
+   exactly two segments), a misdetect degrading to a benign failed
+   fetch (ADRs 0049–0052). Finally `.pdf`
    paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -230,6 +232,7 @@ Implemented fetch adapters, all keyless:
 | bluesky | `sources/bluesky.py` | keyless AppView (`public.api.bsky.app`), stdlib only; `resolveHandle` GET for a handle URL, then one `getPostThread` | the open social-post source X couldn't be (IDEAS.md §6 deferred X; its API is now paywalled); a handle URL resolves to the DID the AT-URI needs (a `did:` URL skips it), then one call returns the post + its reply tree; post text + bylined replies (deleted/blocked/empty skipped) → `extracted_text`, image alt text the body of a textless post; external card / quoted post / inline `#link` facets → `links` (post↔post + cross-source edges), images → `photo` media, `#hashtag` facets → `concepts`; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default — unclassified like HN/Lobsters**; degrades to metadata-only | 0048 |
 | mastodon (incl. GoToSocial, Pleroma/Akkoma) | `sources/mastodon.py` | keyless Mastodon REST API, stdlib only; `GET /api/v1/statuses/<id>` then optional `.../context` | the Fediverse Mastodon-API family on one adapter, matched by URL *shape* not host (no shared host to key on); HTML `content` → text via stdlib `HTMLParser` (no trafilatura), flat `descendants` → bylined replies; card + body links → `links` (mentions/hashtags excluded), images → `photo`/videos → `thumbnail` media, `tags[].name` → `concepts`; `spoiler_text` content warning leads the body, a boost unwraps; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default**; degrades to metadata-only | 0049, 0050 |
 | misskey (incl. Sharkey, Firefish, Foundkey) | `sources/misskey.py` | keyless Misskey API, stdlib only; `POST /api/notes/show` (JSON body) then optional `notes/children` | the Fediverse Misskey-API family — *not* Mastodon-compatible, so its own source/adapter; the first POST-bodied adapter (new `http.post_json`); MFM `text` is already plain (no HTML parser, Lobsters' economy), links scanned from the text + a quote-renote's note → `links` (post↔post + cross-source edges), `files` → `photo`/video-`thumbnail` media (`comment` alt searchable), bare-string `tags` → `concepts`, `cw` content warning leads the body, a pure renote unwraps; synthesized title, `summary` = lead else alt else engagement status; **no category default**; degrades to metadata-only | 0051 |
+| lemmy | `sources/lemmy.py` | keyless Lemmy API v3, stdlib only; `GET /api/v3/post` then optional `/comment/list` | the federated link aggregator (HN/Lobsters' cousin) — *not* Mastodon/Misskey-compatible, so its own source/adapter, the third Fediverse split by client API; plain GET so `http.get_json` serves it; a *real* `name` title (an aggregator entry, not synthesized) and `ap_id` canonical; flat comments sorted into thread pre-order by integer `path`, bylined like Lobsters (deleted/removed skipped); link post `url` → article `link`, text post `body` the content, image post `url` → `photo` media (told by `url_content_type`), `thumbnail_url` → preview; body URLs + `cross_posts` `ap_id` → `links` (cross-source + post↔post edges); community → one `concept`; `summary` = body lead else "N points, M comments"; **no category default — unclassified like HN/Lobsters/social**; degrades to post-only | 0052 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
 adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
