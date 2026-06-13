@@ -217,18 +217,24 @@ CASES = [
     ("https://huggingface.co/datasets/rajpurkar/squad", "huggingface",
      "dataset:rajpurkar/squad"),
     ("https://huggingface.co/datasets/squad", "huggingface", "dataset:squad"),
+    # Spaces carry the spaces/ prefix; the kind rides in source_id (ADR 0043)
+    ("https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat", "huggingface",
+     "space:HuggingFaceH4/zephyr-chat"),
+    # a Space subpage (tree/blob) dedupes to the repo, like a model
+    ("https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat/tree/main",
+     "huggingface", "space:HuggingFaceH4/zephyr-chat"),
     # the short hf.co host resolves to the same repo
     ("https://hf.co/google-bert/bert-base-uncased", "huggingface",
      "model:google-bert/bert-base-uncased"),
-    # site pages, listings, docs, blog, a bare profile, and spaces:
+    # site pages, listings, docs, blog, and a bare profile:
     # source known, repo unknown (no fetchable item)
     ("https://huggingface.co/", "huggingface", None),
     ("https://huggingface.co/models", "huggingface", None),
     ("https://huggingface.co/datasets", "huggingface", None),
+    ("https://huggingface.co/spaces", "huggingface", None),
     ("https://huggingface.co/docs/transformers/index", "huggingface", None),
     ("https://huggingface.co/blog/llama3", "huggingface", None),
     ("https://huggingface.co/google-bert", "huggingface", None),
-    ("https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat", "huggingface", None),
     # --- pdf (generic, after platform-specific checks) ---
     ("https://example.com/papers/attention.pdf", "pdf", None),
     ("https://example.com/REPORT.PDF", "pdf", None),

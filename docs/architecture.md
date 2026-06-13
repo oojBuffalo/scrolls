@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (964 tests at the time of writing). The docs themselves
+`uv run pytest` (976 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -168,12 +168,12 @@ Two small contracts make every platform the same kind of scroll
    module),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
    lowercase as `source_id` since DOIs are case-insensitive), and
-   `huggingface` (model and dataset repo pages on `huggingface.co`/`hf.co`,
-   the repo *kind* in the `source_id` as `model:<org>/<name>` or
-   `dataset:<...>` so one adapter serves both API endpoints — the Stack
-   Exchange shape — the id kept verbatim since the Hub is case-sensitive,
-   subpages deduped to the two-segment repo, site routes and `spaces`
-   carrying no fetchable repo); `.pdf`
+   `huggingface` (model, dataset, and Space repo pages on
+   `huggingface.co`/`hf.co`, the repo *kind* in the `source_id` as
+   `model:<org>/<name>`, `dataset:<...>`, or `space:<...>` so one adapter
+   serves all three API endpoints — the Stack Exchange shape — the id kept
+   verbatim since the Hub is case-sensitive, subpages deduped to the
+   two-segment repo, site routes carrying no fetchable repo); `.pdf`
    paths map to `pdf`; everything else is `web`. A
    known source with `source_id=None` means the adapter resolves
    identity at fetch time (`tests/test_detect.py`).
@@ -202,7 +202,7 @@ Implemented fetch adapters, all keyless:
 | crossref | `sources/crossref.py` | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |
 | rubygems | `sources/rubygems.py` | keyless RubyGems JSON API, stdlib only | gem metadata for a `name` (verbatim, case-sensitive identity like npm); `gems/<name>.json` returns the latest version inline (no version selection); `info` → `summary` (no README in the API, so no `extracted_text`); no keywords so `concepts` empty *by design*, SPDX licenses → `tags`; homepage/source/docs URIs → `links` (gem↔repo edge survives a tagged-tree source URI); `rubygems → tool`; honestly metadata-only | 0040 |
-| huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets (kind in `source_id`); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; `library_name`+license → `tags`; `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`→Hub `link` (model↔dataset edge), `base_model:`→Hub `link` (model↔base-model lineage edge); `model → tool`, `dataset → dataset`; degrades to metadata-only | 0041 |
+| huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
 | go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
 
 X items arrive through `scrolls import fieldtheory` rather than a fetch
@@ -276,7 +276,8 @@ choice (ADRs 0004, 0005).
   detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv
   preprint's published `doi.org` link finds its `crossref:<doi>` paper —
   ADR 0038 — and a Hugging Face model's `arxiv:` tag finds the
-  `arxiv:<id>` paper it introduced — ADR 0041), shared concepts
+  `arxiv:<id>` paper it introduced — ADR 0041 — while a Space finds the
+  model it serves and the dataset it draws on — ADR 0043), shared concepts
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).

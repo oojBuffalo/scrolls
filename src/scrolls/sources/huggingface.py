@@ -1,23 +1,28 @@
-"""Hugging Face Hub fetch adapter (IDEAS.md §6, ADR 0041).
+"""Hugging Face Hub fetch adapter (IDEAS.md §6, ADR 0041, ADR 0043).
 
-A saved Hugging Face model or dataset page becomes a clean scroll instead
-of a `trafilatura` scrape of its JS-rendered HTML. One GET against the
-keyless Hub API (`huggingface.co/api/models|datasets/<id>`) returns the
-repo's metadata document, and a second fetches the card
+A saved Hugging Face model, dataset, or Space page becomes a clean scroll
+instead of a `trafilatura` scrape of its JS-rendered HTML. One GET against
+the keyless Hub API (`huggingface.co/api/models|datasets|spaces/<id>`)
+returns the repo's metadata document, and a second fetches the card
 (`<repo>/raw/main/README.md`) — no auth, no runtime dependency.
 
 This is the ML sibling of the package-registry adapters (PyPI, npm, …):
 the same JSON-metadata shape, the same author-declared keywords→concepts
 mapping. Two facts distinguish it, both confirmed against the live API:
 
-1. **One adapter, two repo kinds.** Models and datasets live on one host
-   under different API endpoints, so the repo *kind* rides in the source
-   id (`model:<org>/<name>` / `dataset:<org>/<name>`) the way the Stack
-   Exchange site does (ADR 0033) — `detect_source` picks the kind off the
-   URL, and this adapter routes to `/api/models` or `/api/datasets`
-   accordingly. A model classifies as `tool` (an artifact you use, like a
-   package), a dataset as `dataset` — literally in the IDEAS.md §8
-   vocabulary (ADR 0004).
+1. **One adapter, three repo kinds.** Models, datasets, and Spaces live on
+   one host under different API endpoints, so the repo *kind* rides in the
+   source id (`model:<org>/<name>` / `dataset:<org>/<name>` /
+   `space:<org>/<name>`) the way the Stack Exchange site does (ADR 0033) —
+   `detect_source` picks the kind off the URL, and this adapter routes to
+   `/api/models`, `/api/datasets`, or `/api/spaces` accordingly. A model
+   and a Space both classify as `tool` (an artifact you use — a package, a
+   hosted demo), a dataset as `dataset` — literally in the IDEAS.md §8
+   vocabulary (ADR 0004). A Space's framework `sdk` (gradio/streamlit/
+   docker/static) fills the `tags` facet that `library_name` fills for a
+   model, its card `title` is its human name (ADR 0043), and its card's
+   `models`/`datasets` lists become space↔model/dataset links — a saved
+   demo wiring to the model it serves and the dataset it draws on.
 
 2. **The Hub flattens everything into one `tags` array.** A repo's tags
    mix author intent (`exbert`) with auto-derived noise (frameworks
@@ -57,12 +62,17 @@ from scrolls.sources import http
 API_ROOT = "https://huggingface.co/api"
 SITE_ROOT = "https://huggingface.co"
 
+# Each repo kind's API endpoint and site path segment. A model lives at the
+# host root (`huggingface.co/<id>`), so its site prefix is empty; datasets
+# and spaces carry their segment as a prefix.
+_PATH_SEGMENT = {"model": "models", "dataset": "datasets", "space": "spaces"}
+
 # The metadata fields worth keeping in the index; the response also carries
 # large, useless-to-search structures (siblings, config, safetensors,
-# widgetData, transformersInfo, spaces) that are dropped (crates curates
-# raw_text the same way, ADR 0036).
+# widgetData, transformersInfo, runtime) that are dropped (crates curates
+# raw_text the same way, ADR 0036). `sdk` is a Space's framework facet.
 _RAW_KEYS = (
-    "id", "author", "sha", "pipeline_tag", "library_name", "tags",
+    "id", "author", "sha", "pipeline_tag", "library_name", "sdk", "tags",
     "downloads", "likes", "private", "gated", "createdAt", "lastModified",
     "cardData", "description",
 )
@@ -91,8 +101,7 @@ def fetch_item(
     get_text = get_text or _get_text
     kind, repo_id = _parse_source_id(item)
 
-    endpoint = "datasets" if kind == "dataset" else "models"
-    url = f"{API_ROOT}/{endpoint}/{repo_id}"
+    url = f"{API_ROOT}/{_PATH_SEGMENT[kind]}/{repo_id}"
     try:
         data = get_json(url)
     except (OSError, ValueError) as exc:
@@ -121,7 +130,7 @@ def fetch_item(
         summary=summary,
         tags=_tags(kind, data, card_data),
         concepts=_concepts(kind, data, card_data),
-        links=_links(tags_list),
+        links=_links(kind, tags_list, card_data),
         content_hash="sha256:" + hashlib.sha256(hashed.encode("utf-8")).hexdigest(),
         provenance={
             "adapter": "huggingface",
@@ -133,14 +142,13 @@ def fetch_item(
 
 
 def _parse_source_id(item: ScrollItem) -> tuple[str, str]:
-    """`(kind, repo_id)` from a `model:<id>`/`dataset:<id>` source id.
+    """`(kind, repo_id)` from a `model:`/`dataset:`/`space:<id>` source id.
 
-    Raises FetchError for a missing id, an unknown kind (`spaces` has no
-    adapter), or an empty repo — the cases `detect_source` leaves as the
-    source with no fetchable item.
+    Raises FetchError for a missing id, an unknown kind, or an empty repo —
+    the cases `detect_source` leaves as the source with no fetchable item.
     """
     kind, sep, repo_id = (item.source_id or "").partition(":")
-    if not sep or kind not in ("model", "dataset") or not repo_id.strip():
+    if not sep or kind not in _PATH_SEGMENT or not repo_id.strip():
         raise FetchError(f"cannot determine huggingface repo for item {item.id!r}")
     return kind, repo_id.strip()
 
@@ -148,12 +156,11 @@ def _parse_source_id(item: ScrollItem) -> tuple[str, str]:
 def _fetch_card(kind: str, repo_id: str, get_text: GetText) -> str | None:
     """The repo's card README, frontmatter stripped, or None on any failure.
 
-    The card is the rich searchable content (the model/dataset card). A
-    repo without one — or a transient fetch failure — degrades to a
+    The card is the rich searchable content (the model/dataset/Space card).
+    A repo without one — or a transient fetch failure — degrades to a
     metadata-only scroll rather than aborting the fetch (ADR 0002).
     """
-    prefix = "datasets/" if kind == "dataset" else ""
-    url = f"{SITE_ROOT}/{prefix}{repo_id}/raw/main/README.md"
+    url = f"{SITE_ROOT}/{_site_prefix(kind)}{repo_id}/raw/main/README.md"
     try:
         text = get_text(url)
     except (OSError, ValueError):
@@ -238,17 +245,28 @@ def _lead_paragraph(card: str | None) -> str | None:
 
 
 def _title(kind: str, canonical_id: str, card_data: dict[str, Any]) -> str:
-    """A dataset's human `pretty_name` when set, else the repo id."""
+    """The repo's human card title, else the repo id.
+
+    A dataset's `pretty_name` and a Space's `title` are the author's
+    human-readable names (a Space's repo id is a slug like
+    `org/cool-demo`); a model has neither, so it falls back to the id.
+    """
     if kind == "dataset":
-        pretty = _clean(card_data.get("pretty_name"))
-        if pretty:
-            return pretty
-    return canonical_id
+        human = _clean(card_data.get("pretty_name"))
+    elif kind == "space":
+        human = _clean(card_data.get("title"))
+    else:
+        human = None
+    return human or canonical_id
+
+
+def _site_prefix(kind: str) -> str:
+    """The site path prefix for a repo kind: `datasets/`, `spaces/`, or empty."""
+    return "" if kind == "model" else f"{_PATH_SEGMENT[kind]}/"
 
 
 def _canonical_url(kind: str, canonical_id: str) -> str:
-    prefix = "datasets/" if kind == "dataset" else ""
-    return f"{SITE_ROOT}/{prefix}{canonical_id}"
+    return f"{SITE_ROOT}/{_site_prefix(kind)}{canonical_id}"
 
 
 def _concepts(kind: str, data: dict[str, Any], card_data: dict[str, Any]) -> tuple[str, ...]:
@@ -270,29 +288,38 @@ def _concepts(kind: str, data: dict[str, Any], card_data: dict[str, Any]) -> tup
 
 
 def _tags(kind: str, data: dict[str, Any], card_data: dict[str, Any]) -> tuple[str, ...]:
-    """The structured-facet slot: framework `library_name` (models) + license.
+    """The structured-facet slot: a framework facet + license.
 
     The license is the structured taxonomy PyPI classifiers and SPDX
-    licenses fill elsewhere; `library_name` (`transformers`, `diffusers`)
-    is the framework facet, present only for models.
+    licenses fill elsewhere. The framework facet is `library_name`
+    (`transformers`, `diffusers`) for a model and `sdk` (`gradio`,
+    `streamlit`, `docker`, `static`) for a Space — the runtime that hosts
+    it; a dataset has neither.
     """
     values: list[Any] = []
-    if kind != "dataset":
+    if kind == "model":
         values.append(data.get("library_name"))
+    elif kind == "space":
+        values.append(data.get("sdk"))
     values += _str_list(card_data.get("license"))
     return _dedupe(values)
 
 
-def _links(tags_list: list[Any]) -> tuple[str, ...]:
-    """Cross-reference prefixes in the flat tag array, as deduped links.
+def _links(
+    kind: str, tags_list: list[Any], card_data: dict[str, Any]
+) -> tuple[str, ...]:
+    """Cross-source edges, all resolved by `scrolls related` through source detection.
 
-    Three edges, all resolved by `scrolls related` through source
-    detection (ADR 0041): `arxiv:<id>` → the paper's abstract page (the
-    model↔paper edge); `dataset:<name>` → the dataset's Hub page (the
-    model↔dataset edge); and `base_model:<id>` → the base model's Hub page
-    (the model↔base-model lineage edge). Order-preserving and deduped, so
-    a base model declared both bare and with a relation (`base_model:X`
-    and `base_model:finetune:X`) yields one link.
+    From the flat tag array (ADR 0041): `arxiv:<id>` → the paper's abstract
+    page (the model↔paper edge); `dataset:<name>` → the dataset's Hub page
+    (the model↔dataset edge); `base_model:<id>` → the base model's Hub page
+    (the model↔base-model lineage edge), deduped across the bare and
+    relation forms (`base_model:X` and `base_model:finetune:X`).
+
+    A Space additionally declares the repos it *runs* in its card —
+    `cardData.models` and `cardData.datasets` — which become the
+    space↔model and space↔dataset edges (a saved demo wires to the model
+    it serves and the dataset it draws on). Order-preserving and deduped.
     """
     links: list[str] = []
     for tag in tags_list:
@@ -310,6 +337,11 @@ def _links(tags_list: list[Any]) -> tuple[str, ...]:
             value = _base_model_id(tag[len("base_model:"):])
             if value:
                 links.append(f"{SITE_ROOT}/{value}")
+    if kind == "space":
+        links += [f"{SITE_ROOT}/{m}" for m in _str_list(card_data.get("models"))]
+        links += [
+            f"{SITE_ROOT}/datasets/{d}" for d in _str_list(card_data.get("datasets"))
+        ]
     return tuple(dict.fromkeys(links))
 
 

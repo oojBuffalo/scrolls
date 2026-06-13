@@ -107,18 +107,19 @@ def _category(item: ScrollItem) -> str | None:
 def _curated_category(item: ScrollItem) -> str | None:
     """The platform-inherent category, or None.
 
-    Hugging Face serves two repo kinds under one source (ADR 0041), so the
-    category is read off the source id's prefix: a `model:` repo is a `tool`
-    (a published artifact you use, like a package), a `dataset:` repo is a
-    `dataset` (the IDEAS.md §8 vocabulary term). A huggingface item that is
-    neither — a profile or listing page registered but never fetched — has
-    no inherent category and falls through.
+    Hugging Face serves three repo kinds under one source (ADR 0041,
+    ADR 0043), so the category is read off the source id's prefix: a
+    `model:` or `space:` repo is a `tool` (a published artifact you use —
+    a package, a hosted demo), a `dataset:` repo is a `dataset` (the
+    IDEAS.md §8 vocabulary term). A huggingface item that is none of these
+    — a profile or listing page registered but never fetched — has no
+    inherent category and falls through.
     """
     if item.source == "huggingface":
         source_id = item.source_id or ""
         if source_id.startswith("dataset:"):
             return "dataset"
-        if source_id.startswith("model:"):
+        if source_id.startswith(("model:", "space:")):
             return "tool"
         return None
     return _CURATED_SOURCE_CATEGORIES.get(item.source)

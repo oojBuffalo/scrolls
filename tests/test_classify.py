@@ -102,6 +102,16 @@ def test_huggingface_dataset_is_a_dataset():
     assert classify_item(item).category == "dataset"
 
 
+def test_huggingface_space_is_a_tool():
+    # A Hugging Face Space is a hosted demo/app you use, a tool like a model.
+    item = make_item(
+        source="huggingface",
+        source_id="space:HuggingFaceH4/zephyr-chat",
+        title="Zephyr Chat",
+    )
+    assert classify_item(item).category == "tool"
+
+
 def test_huggingface_repo_kind_beats_title_pattern():
     # A model card titled like a tutorial is still a tool, not a tutorial.
     item = make_item(

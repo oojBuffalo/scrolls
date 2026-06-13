@@ -366,27 +366,30 @@ def _go_id(path_parts: list[str]) -> str | None:
 
 
 def _huggingface_id(path_parts: list[str]) -> str | None:
-    """`<kind>:<repo_id>` for a model or dataset repo URL, else None.
+    """`<kind>:<repo_id>` for a model, dataset, or Space repo URL, else None.
 
-    The fetch adapter serves both the `/api/models` and `/api/datasets`
-    endpoints, so the repo *kind* rides in the source id the way the Stack
-    Exchange site does: a model is `model:<org>/<name>`, a dataset is
-    `dataset:<org>/<name>` (or a legacy single-segment `dataset:<name>`).
+    The fetch adapter serves the `/api/models`, `/api/datasets`, and
+    `/api/spaces` endpoints, so the repo *kind* rides in the source id the
+    way the Stack Exchange site does: a model is `model:<org>/<name>`, a
+    dataset is `dataset:<org>/<name>` (or a legacy single-segment
+    `dataset:<name>`), a Space is `space:<org>/<name>` (ADR 0043).
 
     A model repo is exactly `<org>/<name>` — the github rule — so a
     repo subpage (`/tree/main`, `/blob/...`, `/discussions`) dedupes to
     the repo by taking only the first two path segments, and a bare
     `<org>` (a profile, ambiguous with legacy un-namespaced models) is
-    not fetchable. Site routes (`docs`, `blog`, `models`, …) and `spaces`
-    carry no model repo. Repo ids are case-sensitive, so they are kept
-    verbatim (the npm/github rule), not folded like a PyPI name.
+    not fetchable. Site routes (`docs`, `blog`, `models`, …) carry no
+    repo. Repo ids are case-sensitive, so they are kept verbatim (the
+    npm/github rule), not folded like a PyPI name.
     """
     if not path_parts:
         return None
     head = path_parts[0]
     if head == "datasets":
         return _hf_repo("dataset", path_parts[1:])
-    if head in HUGGINGFACE_RESERVED:  # includes `spaces`, which has no adapter
+    if head == "spaces":
+        return _hf_repo("space", path_parts[1:])
+    if head in HUGGINGFACE_RESERVED:  # `datasets`/`spaces` handled above
         return None
     if len(path_parts) >= 2:
         return f"model:{path_parts[0]}/{path_parts[1]}"

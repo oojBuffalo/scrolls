@@ -110,6 +110,42 @@ pretty_name: SQuAD
 SQuAD is a reading comprehension dataset.
 """
 
+# Recorded (and trimmed) from https://huggingface.co/api/spaces/HuggingFaceH4/zephyr-chat
+SPACE_DOC = {
+    "id": "HuggingFaceH4/zephyr-chat",
+    "author": "HuggingFaceH4",
+    "sdk": "docker",
+    "tags": ["docker", "region:us"],
+    "likes": 904,
+    "createdAt": "2023-10-09T12:29:17.000Z",
+    "lastModified": "2024-11-27T14:41:27.000Z",
+    "cardData": {
+        "title": "Zephyr Chat",
+        "emoji": "\U0001fa81",
+        "colorFrom": "indigo",
+        "sdk": "docker",
+        "license": "mit",
+        "tags": ["chat", "llm"],
+        "models": ["HuggingFaceH4/zephyr-7b-beta"],
+        "datasets": ["HuggingFaceH4/ultrachat_200k"],
+    },
+    # heavy runtime/config fields the adapter drops from raw_text
+    "runtime": {"stage": "RUNNING", "hardware": {"current": "cpu-basic"}},
+}
+
+SPACE_README = """\
+---
+title: Zephyr Chat
+emoji: 🪁
+sdk: docker
+license: mit
+models:
+- HuggingFaceH4/zephyr-7b-beta
+---
+
+A hosted chat demo for the Zephyr 7B Beta model, served with a Docker SDK.
+"""
+
 
 def make_model(**overrides):
     base = dict(
@@ -155,9 +191,27 @@ def fetch_model(doc=MODEL_DOC, readme=MODEL_README, item=None):
     )
 
 
+def make_space(**overrides):
+    base = dict(
+        id="huggingface:space:HuggingFaceH4/zephyr-chat",
+        source="huggingface",
+        source_id="space:HuggingFaceH4/zephyr-chat",
+        url="https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat",
+        saved_at="2026-06-13T00:00:00+00:00",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
 def fetch_dataset(doc=DATASET_DOC, readme=DATASET_README, item=None):
     return fetch_item(
         item or make_dataset(), get_json=fake_json(doc), get_text=fake_text(readme)
+    )
+
+
+def fetch_space(doc=SPACE_DOC, readme=SPACE_README, item=None):
+    return fetch_item(
+        item or make_space(), get_json=fake_json(doc), get_text=fake_text(readme)
     )
 
 
@@ -312,6 +366,92 @@ def test_dataset_summary_falls_back_to_description_without_a_card():
     assert fetched.summary == "Dataset Card Stanford Question Answering Dataset (SQuAD) is a dataset."
 
 
+# --- spaces -------------------------------------------------------------
+
+
+def test_fetch_space_maps_metadata():
+    fetched = fetch_space()
+
+    # a Space prefers its human card `title` over the slug repo id
+    assert fetched.title == "Zephyr Chat"
+    assert fetched.author == "HuggingFaceH4"
+    assert fetched.published_at == "2023-10-09T12:29:17+00:00"
+    assert fetched.canonical_url == (
+        "https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat")
+    assert fetched.provenance["extraction_method"] == "huggingface-api:json+card"
+    assert fetched.stage == "fetched"
+
+
+def test_space_title_falls_back_to_repo_id_without_card_title():
+    doc = json.loads(json.dumps(SPACE_DOC))
+    doc["cardData"].pop("title")
+    assert fetch_space(doc).title == "HuggingFaceH4/zephyr-chat"
+
+
+def test_space_tags_are_sdk_and_license():
+    # the sdk (the runtime that hosts the demo) fills the framework facet
+    # library_name fills for a model, plus the license
+    assert fetch_space().tags == ("docker", "mit")
+
+
+def test_space_concepts_are_the_card_tags():
+    # a Space has no pipeline_tag/task_categories; cardData.tags feed concepts
+    assert fetch_space().concepts == ("chat", "llm")
+
+
+def test_space_models_and_datasets_become_links():
+    # the headline Space edge: the repos a demo runs become cross-source
+    # links that `scrolls related` resolves to the saved model/dataset
+    links = fetch_space().links
+    assert "https://huggingface.co/HuggingFaceH4/zephyr-7b-beta" in links
+    assert "https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k" in links
+
+
+def test_space_card_is_the_summary_and_extracted_text():
+    fetched = fetch_space()
+    assert fetched.summary.startswith("A hosted chat demo for the Zephyr 7B")
+    assert fetched.extracted_text.startswith("A hosted chat demo")
+    assert "title: Zephyr Chat" not in fetched.extracted_text  # frontmatter stripped
+
+
+def test_space_requests_the_spaces_api_and_card_urls():
+    seen = []
+
+    def get_json(url):
+        seen.append(url)
+        return json.loads(json.dumps(SPACE_DOC))
+
+    def get_text(url):
+        seen.append(url)
+        return SPACE_README
+
+    fetch_item(make_space(), get_json=get_json, get_text=get_text)
+    assert seen == [
+        "https://huggingface.co/api/spaces/HuggingFaceH4/zephyr-chat",
+        "https://huggingface.co/spaces/HuggingFaceH4/zephyr-chat/raw/main/README.md",
+    ]
+
+
+def test_space_without_a_card_degrades_to_metadata_only():
+    def no_card(url):
+        raise OSError("HTTP Error 404: Not Found")
+
+    fetched = fetch_item(make_space(), get_json=fake_json(SPACE_DOC), get_text=no_card)
+    assert fetched.extracted_text is None
+    assert fetched.summary is None  # Spaces have no description field
+    assert fetched.provenance["extraction_method"] == "huggingface-api:json"
+    assert fetched.tags == ("docker", "mit")  # metadata still maps
+    # the space->model/dataset edges come from cardData, present without a card
+    assert "https://huggingface.co/HuggingFaceH4/zephyr-7b-beta" in fetched.links
+
+
+def test_space_raw_text_drops_heavy_runtime_field():
+    raw = json.loads(fetch_space().raw_text)
+    assert raw["id"] == "HuggingFaceH4/zephyr-chat"
+    assert raw["sdk"] == "docker"
+    assert "runtime" not in raw
+
+
 # --- requests, identity, errors -----------------------------------------
 
 
@@ -397,7 +537,7 @@ def test_setext_heading_is_not_mistaken_for_the_summary():
     assert fetch_model(readme=readme).summary == "The real description goes here."
 
 
-@pytest.mark.parametrize("source_id", [None, "", "model:", "garbage", "space:foo/bar"])
+@pytest.mark.parametrize("source_id", [None, "", "model:", "garbage", "org:foo/bar"])
 def test_requires_a_valid_repo(source_id):
     item = make_model(id="huggingface:bad", source_id=source_id)
     with pytest.raises(FetchError, match="huggingface repo"):
