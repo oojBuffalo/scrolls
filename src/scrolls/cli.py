@@ -181,7 +181,24 @@ def build_parser() -> argparse.ArgumentParser:
         "compile (needs ANTHROPIC_API_KEY; model overridable via "
         "SCROLLS_LLM_MODEL)",
     )
-    subparsers.add_parser("list", help="List library items (JSON output)")
+    list_parser = subparsers.add_parser(
+        "list", help="List library items (JSON output)"
+    )
+    list_parser.add_argument(
+        "--source", default=None, help="Only items from one source, e.g. web, arxiv"
+    )
+    list_parser.add_argument(
+        "--stage",
+        choices=("detected", "fetched", "rendered"),
+        default=None,
+        help="Only items at one pipeline stage",
+    )
+    list_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only items with this category; an empty value selects "
+        "unclassified items",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -295,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "kb":
         return _cmd_kb(args.engine)
     if args.command == "list":
-        return _cmd_list()
+        return _cmd_list(args.source, args.stage, args.category)
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -764,9 +781,15 @@ def _cmd_kb(engine: str = "deterministic") -> int:
     return 1 if generation.get("failed") else 0
 
 
-def _cmd_list() -> int:
+def _cmd_list(
+    source: str | None = None, stage: str | None = None, category: str | None = None
+) -> int:
     paths = get_paths()
-    items = list_items(paths.db_path) if paths.db_path.exists() else []
+    items = (
+        list_items(paths.db_path, stage=stage, source=source, category=category)
+        if paths.db_path.exists()
+        else []
+    )
     print(
         json.dumps(
             [
@@ -775,6 +798,7 @@ def _cmd_list() -> int:
                     "source": item.source,
                     "url": item.url,
                     "title": item.title,
+                    "category": item.category,
                     "stage": item.stage,
                     "saved_at": item.saved_at,
                 }

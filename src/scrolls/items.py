@@ -139,17 +139,39 @@ def count_by_source(db_path: Path) -> dict[str, int]:
     return dict(rows)
 
 
-def list_items(db_path: Path, stage: str | None = None) -> list[ScrollItem]:
-    """All items (optionally only one pipeline stage), oldest saved first."""
-    query = "SELECT * FROM items"
-    params: tuple = ()
+def list_items(
+    db_path: Path,
+    stage: str | None = None,
+    source: str | None = None,
+    category: str | None = None,
+) -> list[ScrollItem]:
+    """All items, oldest saved first; filters combine with AND.
+
+    `stage` and `source` match exactly. `category` matches exactly too,
+    except the empty string, which selects items *without* a category —
+    the batch-classifiable pool, mirroring `scrolls set`'s empty-clears
+    convention. `None` never filters.
+    """
+    clauses = []
+    params: list[str] = []
     if stage is not None:
-        query += " WHERE stage = ?"
-        params = (stage,)
+        clauses.append("stage = ?")
+        params.append(stage)
+    if source is not None:
+        clauses.append("source = ?")
+        params.append(source)
+    if category == "":
+        clauses.append("category IS NULL")
+    elif category is not None:
+        clauses.append("category = ?")
+        params.append(category)
+    query = "SELECT * FROM items"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(query + " ORDER BY saved_at, id", params).fetchall()
+        rows = conn.execute(query + " ORDER BY saved_at, id", tuple(params)).fetchall()
     finally:
         conn.close()
     return [_from_row(row) for row in rows]

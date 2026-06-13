@@ -103,6 +103,7 @@ uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JS
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls list           # list items, as JSON
+uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)

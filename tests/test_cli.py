@@ -1232,7 +1232,45 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     assert {entry["id"] for entry in payload} == {"youtube:dQw4w9WgXcQ", "wikipedia:en:SQLite"}
     for entry in payload:
         assert entry["stage"] == "detected"
-        assert set(entry) == {"id", "source", "url", "title", "stage", "saved_at"}
+        assert set(entry) == {
+            "id", "source", "url", "title", "category", "stage", "saved_at"
+        }
+
+
+def test_list_filters_by_source_stage_and_category(scrolls_home, capsys):
+    main(["add", "https://youtu.be/dQw4w9WgXcQ"])
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["set", "wikipedia:en:SQLite", "category=reference"])
+    capsys.readouterr()
+
+    main(["list", "--source", "wikipedia"])
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["id"] for entry in payload] == ["wikipedia:en:SQLite"]
+
+    main(["list", "--category", "reference"])
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["id"] for entry in payload] == ["wikipedia:en:SQLite"]
+    assert payload[0]["category"] == "reference"
+
+    # the empty value selects unclassified items, mirroring `scrolls set`'s
+    # empty-clears convention
+    main(["list", "--category", ""])
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["id"] for entry in payload] == ["youtube:dQw4w9WgXcQ"]
+
+    main(["list", "--stage", "detected", "--source", "youtube"])
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["id"] for entry in payload] == ["youtube:dQw4w9WgXcQ"]
+
+    main(["list", "--stage", "rendered"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_rejects_an_unknown_stage(scrolls_home):
+    # stages are a closed vocabulary; a typo should not silently match nothing
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list", "--stage", "rendred"])
+    assert excinfo.value.code == 2
 
 
 # --- scrolls media (ADR 0011) ---

@@ -551,21 +551,34 @@ $ scrolls media x:1111                # this bookmark has no media refs
 
 ## Reading the library
 
-### `scrolls list`
+### `scrolls list [--source S] [--stage S] [--category C]`
 
-Every item as a summary array (full records: `scrolls show`). An empty or
-uninitialized library prints `[]` (`test_list_after_adds_prints_summaries`,
+Every matching item as a summary array (full records: `scrolls show`).
+An empty or uninitialized library prints `[]`
+(`test_list_after_adds_prints_summaries`,
 `test_list_before_init_prints_empty_array`). Summary keys: `id`,
-`source`, `url`, `title`, `stage`, `saved_at`.
+`source`, `url`, `title`, `category`, `stage`, `saved_at`.
+
+Filters combine with AND
+(`test_list_filters_by_source_stage_and_category`): `--source` and
+`--category` match exactly, `--stage` only accepts the three real
+stages (a typo is a usage error, exit 2 —
+`test_list_rejects_an_unknown_stage`), and `--category ""` selects
+items *without* a category — the pool a batch `classify` would pick
+up — mirroring `scrolls set`'s empty-clears convention.
 
 ```console
 $ scrolls list
-[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
+[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
+[exit 0]
+
+$ scrolls list --source x --category technique
+[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}]
 [exit 0]
 ```
 
-*(array entries after the first elided here for width — every entry has
-the same six keys)*
+*(in the first call, array entries after the first are elided here for
+width — every entry has the same seven keys)*
 
 ### `scrolls show <id>`
 
@@ -817,6 +830,7 @@ scrolls import fieldtheory --root "$DEMO/fieldtheory"
 scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
 scrolls add https://arxiv.org/abs/1706.03762
 scrolls list
+scrolls list --source x --category technique      # filters AND together
 scrolls ingest https://en.wikipedia.org/wiki/SQLite  # network
 scrolls classify
 scrolls classify wikipedia:en:SQLite --engine llm  # without a key: exit 1

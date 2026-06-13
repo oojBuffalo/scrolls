@@ -128,6 +128,22 @@ def test_list_items_filters_by_stage(db_path):
     assert len(list_items(db_path)) == 2
 
 
+def test_list_items_filters_by_source_and_category(db_path):
+    insert_item(db_path, make_item())  # youtube, unclassified
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", category="tool"))
+    insert_item(db_path, make_item(id="web:b", source="web", source_id=None,
+                                   url="https://b.example",
+                                   saved_at="2026-06-11T01:00:00+00:00"))
+
+    assert [i.id for i in list_items(db_path, source="web")] == ["web:a", "web:b"]
+    assert [i.id for i in list_items(db_path, category="tool")] == ["web:a"]
+    # the empty string selects the unclassified (batch-classifiable) pool
+    assert [i.id for i in list_items(db_path, category="")] == ["youtube:abc123", "web:b"]
+    # filters combine with AND
+    assert [i.id for i in list_items(db_path, source="web", category="")] == ["web:b"]
+
+
 def test_list_items_orders_by_saved_at(db_path):
     insert_item(
         db_path,
