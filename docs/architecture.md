@@ -281,6 +281,16 @@ choice (ADRs 0004, 0005).
   (merged by slug), shared tags, same category/domain as weak
   corroboration. Every hit carries its `reasons`
   (`tests/test_related.py`).
+- **Link graph** (`graph.py`, ADR 0044) — `scrolls graph` resolves *every*
+  item's links into directed edges across the whole library, the
+  whole-library complement to `related`'s per-item lens. The link-resolution
+  primitives (`link_tokens`, `identity_tokens`) live here and `related.py`
+  imports them, so both views agree on what a link resolves to. The build
+  indexes every item's identity tokens once then probes with each link
+  (linear, not the per-pair O(n²)); nodes are the connected items by
+  default (`--all` adds isolates), `stats.items` the library total. The
+  same `{nodes, edges, stats}` payload backs the MCP `get_link_graph` tool
+  (`tests/test_graph.py`).
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md` plus
   per-source, per-category, and per-concept pages from scratch each run
   so stale groups can't linger; other files under `library/` are left
@@ -360,7 +370,8 @@ choice (ADRs 0004, 0005).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`
   serves the same engines to MCP clients over stdio: plain sync tool
   functions (`get_context_bundle`, `search_scrolls`, `get_scroll`,
-  `get_related_scrolls`, `get_concept_page`, `list_sources`,
+  `get_related_scrolls`, `get_link_graph`, `get_concept_page`,
+  `list_sources`,
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
   `compile_library`) registered

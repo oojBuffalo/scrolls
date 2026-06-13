@@ -1,0 +1,218 @@
+"""Tests for the cross-item link graph (ADR 0044)."""
+
+import json
+
+import pytest
+
+from scrolls.cli import main
+from scrolls.graph import build_graph
+from scrolls.items import ScrollItem, insert_item
+from scrolls.paths import get_paths
+
+
+@pytest.fixture
+def scrolls_home(monkeypatch, tmp_path):
+    """Point the library root at a temp dir so tests never touch ~/.scrolls."""
+    root = tmp_path / "scrolls-home"
+    monkeypatch.setenv("SCROLLS_HOME", str(root))
+    return root
+
+
+@pytest.fixture
+def db(scrolls_home):
+    main(["init"])
+    return get_paths().db_path
+
+
+def make_item(item_id, **overrides):
+    base = dict(
+        id=item_id,
+        source=item_id.split(":")[0],
+        url=f"https://example.org/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title=item_id,
+        stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def test_edge_resolves_a_link_to_the_item_it_names(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/pdf/2605.27848",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:2605.27848",
+        url="https://arxiv.org/abs/2605.27848",
+    ))
+
+    graph = build_graph(db)
+    assert [(e.from_id, e.to_id) for e in graph.edges] == [
+        ("x:1111", "arxiv:2605.27848")
+    ]
+    assert graph.edges[0].via == "https://arxiv.org/pdf/2605.27848"
+
+
+def test_only_connected_items_are_nodes_by_default(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))
+    insert_item(db, make_item("arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    insert_item(db, make_item("wikipedia:en:Pelican"))  # isolated
+
+    graph = build_graph(db)
+    assert [n.id for n in graph.nodes] == ["arxiv:2605.27848", "x:1111"]
+    assert graph.item_count == 3  # the whole library, including the isolate
+
+
+def test_include_isolated_adds_unconnected_items_as_nodes(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))
+    insert_item(db, make_item("arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    insert_item(db, make_item("wikipedia:en:Pelican"))
+
+    graph = build_graph(db, include_isolated=True)
+    assert [n.id for n in graph.nodes] == [
+        "arxiv:2605.27848",
+        "wikipedia:en:Pelican",
+        "x:1111",
+    ]
+
+
+def test_edge_resolves_through_source_detection_with_case_folding(db):
+    # arXiv stamps the published DOI as a doi.org link (ADR 0038); it
+    # resolves to the crossref item id even though the link's DOI case
+    # differs from the stored id — DOIs fold through source detection.
+    insert_item(db, make_item(
+        "arxiv:2310.06825",
+        url="https://arxiv.org/abs/2310.06825",
+        links=("https://doi.org/10.1109/Example.2024.12345",),  # mixed case
+    ))
+    insert_item(db, make_item(
+        "crossref:10.1109/example.2024.12345",
+        url="https://doi.org/10.1109/example.2024.12345",
+    ))
+
+    graph = build_graph(db)
+    assert [(e.from_id, e.to_id) for e in graph.edges] == [
+        ("arxiv:2310.06825", "crossref:10.1109/example.2024.12345")
+    ]
+
+
+def test_link_with_tracking_params_matches_the_clean_stored_url(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://blog.example.com/post?utm_source=tweet#intro",),
+    ))
+    insert_item(db, make_item("web:abc123", url="https://blog.example.com/post"))
+
+    graph = build_graph(db)
+    assert [(e.from_id, e.to_id) for e in graph.edges] == [("x:1111", "web:abc123")]
+
+
+def test_parallel_links_collapse_to_one_edge(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=(
+            "https://arxiv.org/abs/2605.27848",
+            "https://arxiv.org/pdf/2605.27848",  # same target, different form
+        ),
+    ))
+    insert_item(db, make_item("arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+
+    graph = build_graph(db)
+    assert len(graph.edges) == 1
+    # the first link in declared order is the kept evidence
+    assert graph.edges[0].via == "https://arxiv.org/abs/2605.27848"
+
+
+def test_self_links_are_not_edges(db):
+    insert_item(db, make_item(
+        "web:self",
+        url="https://blog.example.com/post",
+        canonical_url="https://blog.example.com/post",
+        links=("https://blog.example.com/post",),  # points at itself
+    ))
+
+    graph = build_graph(db)
+    assert graph.edges == ()
+    assert graph.nodes == ()
+
+
+def test_links_to_items_outside_the_library_are_dropped(db):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/9999.99999",),  # never saved
+    ))
+
+    graph = build_graph(db)
+    assert graph.edges == ()
+    assert graph.nodes == ()
+    assert graph.item_count == 1
+
+
+def test_empty_or_uninitialized_library_is_an_empty_graph(scrolls_home):
+    graph = build_graph(get_paths().db_path)
+    assert graph == build_graph(get_paths().db_path)  # stable
+    assert graph.nodes == ()
+    assert graph.edges == ()
+    assert graph.item_count == 0
+
+
+def test_cli_graph_prints_nodes_edges_and_stats(db, capsys):
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        title="@a: paper thread",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:2605.27848",
+        url="https://arxiv.org/abs/2605.27848",
+        title="A Paper",
+    ))
+    insert_item(db, make_item("wikipedia:en:Pelican"))  # isolated
+    capsys.readouterr()
+
+    exit_code = main(["graph"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["stats"] == {"items": 3, "nodes": 2, "edges": 1}
+    assert payload["edges"] == [
+        {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
+    ]
+    assert [n["id"] for n in payload["nodes"]] == ["arxiv:2605.27848", "x:1111"]
+    paper = next(n for n in payload["nodes"] if n["id"] == "arxiv:2605.27848")
+    assert paper["title"] == "A Paper"
+    assert paper["source"] == "arxiv"
+
+
+def test_cli_graph_all_includes_isolated_items(db, capsys):
+    insert_item(db, make_item("wikipedia:en:Pelican"))
+    capsys.readouterr()
+
+    exit_code = main(["graph", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in payload["nodes"]] == ["wikipedia:en:Pelican"]
+    assert payload["stats"] == {"items": 1, "nodes": 1, "edges": 0}
+
+
+def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["graph"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0}}

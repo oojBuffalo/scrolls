@@ -34,6 +34,7 @@ from scrolls.feeds import (
 )
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
+from scrolls.graph import build_graph, to_payload as graph_payload
 from scrolls.items import (
     ScrollItem,
     get_item,
@@ -155,6 +156,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Attempt at most N fetches this run (batch mode only), oldest "
         "saved first; adapterless skips don't consume the limit",
+    )
+
+    graph_parser = subparsers.add_parser(
+        "graph", help="The cross-item link graph (JSON output)"
+    )
+    graph_parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help="Include isolated items (those in no edge) as nodes too",
     )
 
     follow_parser = subparsers.add_parser(
@@ -357,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor(args.fix)
     if args.command == "fetch":
         return _cmd_fetch(args.id, args.limit)
+    if args.command == "graph":
+        return _cmd_graph(args.include_all)
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "import":
@@ -1005,6 +1018,13 @@ def _cmd_related(item_id: str, limit: int) -> int:
     for hit in payload:
         hit["reasons"] = list(hit["reasons"])
     print(json.dumps(payload))
+    return 0
+
+
+def _cmd_graph(include_all: bool) -> int:
+    paths = get_paths()
+    graph = build_graph(paths.db_path, include_isolated=include_all)
+    print(json.dumps(graph_payload(graph)))
     return 0
 
 

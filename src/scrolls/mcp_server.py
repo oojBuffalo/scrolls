@@ -20,6 +20,8 @@ from typing import Any
 from scrolls import feeds
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
+from scrolls.graph import build_graph
+from scrolls.graph import to_payload as graph_payload
 from scrolls.items import count_by_source, get_item
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
@@ -37,7 +39,8 @@ _INSTRUCTIONS = (
     "articles, repos) compiled as a local knowledge library. Start with "
     "get_context_bundle for a compact, citable overview of a topic; use "
     "search_scrolls and get_scroll for depth, get_related_scrolls and "
-    "get_concept_page to follow connections, and ingest_url to save "
+    "get_concept_page to follow connections, get_link_graph for the whole "
+    "library's link structure at once, and ingest_url to save "
     "something new. follow_feed subscribes the library to an RSS/Atom "
     "feed and sync_feeds registers its new entries. compile_library "
     "rebuilds the knowledge-base pages get_concept_page serves."
@@ -76,6 +79,21 @@ def get_related_scrolls(
     for hit in hits:
         hit["reasons"] = list(hit["reasons"])
     return hits
+
+
+def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
+    """The library's cross-item link graph: directed edges between saved items.
+
+    An edge `from → to` means a link inside one saved item resolves to
+    another (a model to its paper, a preprint to its published DOI, a tweet
+    to the article it cites); `via` is the link that matched. Where
+    get_related_scrolls explores one item's neighborhood, this returns the
+    whole structure at once. Nodes are the connected items unless
+    `include_isolated` widens it to every item; `stats.items` is the library
+    total.
+    """
+    paths = get_paths()
+    return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
 
 
 def get_context_bundle(query: str, limit: int = DEFAULT_CONTEXT_LIMIT) -> str:
@@ -197,6 +215,7 @@ _TOOLS = (
     search_scrolls,
     get_scroll,
     get_related_scrolls,
+    get_link_graph,
     get_context_bundle,
     get_concept_page,
     list_sources,

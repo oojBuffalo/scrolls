@@ -822,6 +822,29 @@ $ scrolls related x:2222
 [exit 0]
 ```
 
+### `scrolls graph [--all]`
+
+The whole-library link graph in one call (ADR 0044, `tests/test_graph.py`).
+Where `related` scores *one* item's neighborhood, this resolves *every*
+item's links into directed edges — `from → to` whenever a link inside one
+saved item names another (a tweet citing a paper, a model's `arxiv:` tag,
+a preprint's published DOI), with `via` the link that matched. Resolution
+is the same two-sided, source-detecting match `related` uses (ADR 0023),
+so the graph is exactly the connections `related` would find, materialized
+at once. Nodes carry the `id`, `source`, `title`, `url`, `stage` shape
+`related`/`search` hits use, sorted by id; edges sorted by `(from, to)`.
+
+Nodes are the *connected* items by default — `--all` widens it to every
+item, isolated ones included. `stats.items` is always the library total,
+so `nodes`/`edges` read as connectivity against the whole. An empty or
+uninitialized library is an empty graph, exit 0.
+
+```console
+$ scrolls graph
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1}}
+[exit 0]
+```
+
 ### `scrolls context <query> [--limit N]`
 
 The Markdown exception: a compact context bundle — best matches,

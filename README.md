@@ -106,6 +106,7 @@ uv run scrolls rm <id-or-url> [...]  # remove items and the files they own, as J
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
+uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls kb             # compile the interlinked library pages, as JSON
@@ -445,6 +446,15 @@ links resolve through source detection, so `arxiv.org/pdf/X` finds item
 `arxiv:X`), shared concepts (merged by slug like KB pages), shared tags,
 and same category/domain as weak corroboration. Every hit carries its
 `reasons`, and the scoring needs no LLM.
+
+`scrolls graph` materializes the whole library's link structure at once
+(ADR 0044): every item's links resolved into directed edges (`from → to`,
+with the matching link as `via`), using the same source-detecting match
+`related` uses. Where `related` explores one item's neighborhood, the
+graph is the connective tissue the adapters have been building — a model
+to its paper, a preprint to its published DOI, a Space to the model it
+serves — in a single JSON object an agent can reason over. Nodes are the
+connected items; `--all` includes isolated ones too.
 
 `scrolls ingest <url>` chains add → fetch → classify → md for one URL, so
 the first render already carries the category; re-ingesting an existing

@@ -82,6 +82,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "search_scrolls",
         "get_scroll",
         "get_related_scrolls",
+        "get_link_graph",
         "get_context_bundle",
         "get_concept_page",
         "list_sources",
@@ -138,6 +139,35 @@ def test_get_scroll_unknown_id_raises(scrolls_home):
 def test_get_related_scrolls_for_lonely_item_is_empty(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     assert mcp_server.get_related_scrolls("wikipedia:en:SQLite") == []
+
+
+def test_get_link_graph_returns_directed_edges(scrolls_home):
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="x:1111", source="x", url="https://x.com/a/status/1111",
+        saved_at="2026-06-12T00:00:00+00:00", title="thread",
+        links=("https://arxiv.org/abs/2605.27848",), stage="fetched",
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:2605.27848", source="arxiv", url="https://arxiv.org/abs/2605.27848",
+        saved_at="2026-06-12T00:00:00+00:00", title="A Paper", stage="fetched",
+    ))
+
+    graph = mcp_server.get_link_graph()
+    assert graph["edges"] == [
+        {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
+    ]
+    assert graph["stats"] == {"items": 2, "nodes": 2, "edges": 1}
+
+
+def test_get_link_graph_empty_library(scrolls_home):
+    assert mcp_server.get_link_graph() == {
+        "nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0}
+    }
 
 
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
