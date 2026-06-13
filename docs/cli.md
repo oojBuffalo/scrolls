@@ -477,6 +477,45 @@ $ scrolls import opml /tmp/scrolls-demo.BgrqMO/subscriptions.opml
 [exit 0]
 ```
 
+### `scrolls export opml`
+
+Export the library's feed subscriptions as an OPML 2.0 document (ADR 0077)
+— the inverse of `scrolls import opml`, so the feeds you curate in Scrolls
+can move to another reader, get backed up, or sync a second device. The
+OPML document **is** the artifact, so it prints raw on stdout (the
+`scrolls context` exception to the JSON-on-stdout rule) — redirect it to a
+file or pipe it: `scrolls export opml > feeds.opml`. There is no path
+argument; the shell owns redirection, so the command never writes to or
+overwrites a file itself.
+
+The export is flat — subscriptions carry no folder grouping (the import
+dropped it), so it honestly emits a flat `<body>` rather than inventing a
+hierarchy. Each subscription is one `<outline type="rss" text=… title=…
+xmlUrl=…>` in `scrolls follow` listing order; a subscription with no title
+labels itself by its feed URL (OPML requires a `text`), and attribute
+values are XML-escaped, so a feed URL with `&` survives a re-import. The
+round-trip is the contract: an export re-imports to the same feeds (the
+import skips them as already-followed —
+`test_export_opml_round_trips_through_import` in `tests/test_cli.py`,
+`test_export_then_import_round_trips` in `tests/test_opml.py`). An empty
+library produces a valid empty OPML, not an error
+(`test_export_opml_empty_library_is_valid`).
+
+```console
+$ scrolls export opml
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Scrolls subscriptions</title>
+  </head>
+  <body>
+    <outline type="rss" text="Simon Willison" title="Simon Willison" xmlUrl="https://simonwillison.net/atom/everything/" />
+    <outline type="rss" text="Julia Evans" title="Julia Evans" xmlUrl="https://jvns.ca/atom.xml" />
+  </body>
+</opml>
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any

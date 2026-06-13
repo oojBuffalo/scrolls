@@ -51,7 +51,7 @@ from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.opml import ImportSourceError as OPMLSourceError
-from scrolls.opml import load_opml_export
+from scrolls.opml import dump_opml_export, load_opml_export
 from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_item_id
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
@@ -278,6 +278,15 @@ def build_parser() -> argparse.ArgumentParser:
         "and most RSS readers)",
     )
 
+    export_parser = subparsers.add_parser(
+        "export", help="Export library data to a portable format (to stdout)"
+    )
+    export_sub = export_parser.add_subparsers(dest="export_command", required=True)
+    export_sub.add_parser(
+        "opml",
+        help="Export feed subscriptions as an OPML document (to stdout)",
+    )
+
     ingest_parser = subparsers.add_parser(
         "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
     )
@@ -490,6 +499,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.import_command == "opml":
             return _cmd_import_opml(args.path)
         return _cmd_import_fieldtheory(args.root)
+    if args.command == "export":
+        return _cmd_export_opml()
     if args.command == "ingest":
         return _cmd_ingest(args.url)
     if args.command == "init":
@@ -767,6 +778,17 @@ def _cmd_import_opml(path: str) -> int:
     # ignored outlines (non-http feeds, folders) are normal in real exports,
     # so they never fail the run; the first `scrolls sync` discovers entries
     print(json.dumps({**counts, **stats}))
+    return 0
+
+
+def _cmd_export_opml() -> int:
+    paths = get_paths()
+    subscriptions = (
+        list_subscriptions(paths.db_path) if paths.db_path.exists() else []
+    )
+    # the OPML document *is* the artifact (the `context`/scroll exception to the
+    # JSON-on-stdout rule), so it prints raw — `scrolls export opml > feeds.opml`
+    sys.stdout.write(dump_opml_export(subscriptions))
     return 0
 
 

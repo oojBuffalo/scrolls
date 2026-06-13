@@ -42,10 +42,17 @@ Only `http`/`https` feeds are imported. The `feed:` pseudo-scheme some older
 exporters emit (`feed://host/…`) is ambiguous between http and https, so it
 is counted under `ignored.not_http` rather than guessed at; unwrapping it is
 deferred to a future slice.
+
+`scrolls export opml` (ADR 0077) is the inverse: `dump_opml_export` serializes
+the library's subscriptions back to an OPML document, so the feeds you curate
+in Scrolls can move to another reader — the round-trip that makes the import
+honest. The export is flat (subscriptions carry no folders) and re-imports to
+the same feeds.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,6 +61,7 @@ from xml.etree import ElementTree
 from scrolls.feeds import Subscription, make_subscription_id
 
 _XMLURL = "xmlurl"  # the spec spells it `xmlUrl`; matched case-insensitively
+_HEAD_TITLE = "Scrolls subscriptions"
 
 
 class ImportSourceError(Exception):
@@ -114,6 +122,41 @@ def load_opml_export(path: Path) -> tuple[list[Subscription], dict]:
         "ignored": ignored,
     }
     return subscriptions, stats
+
+
+def dump_opml_export(subscriptions: Iterable[Subscription]) -> str:
+    """Serialize subscriptions to an OPML 2.0 document — the import inverse.
+
+    Returns a complete OPML document as text: an XML declaration, a `<head>`
+    with a title, then a **flat** `<body>` of
+    `<outline type="rss" text=… title=… xmlUrl=…>` rows, one per subscription
+    in the given order. A subscription with no title labels itself by its feed
+    URL (OPML requires a display `text`). The list is flat because
+    subscriptions carry no folder grouping — the import dropped it (ADR 0076),
+    so the export honestly emits none rather than inventing one. Attribute
+    values are XML-escaped, so a feed URL with `&` survives a re-import, and the
+    document parses back through `load_opml_export` to the same feeds (the
+    round-trip the importer's id and title rules guarantee).
+    """
+    opml = ElementTree.Element("opml", {"version": "2.0"})
+    head = ElementTree.SubElement(opml, "head")
+    ElementTree.SubElement(head, "title").text = _HEAD_TITLE
+    body = ElementTree.SubElement(opml, "body")
+    for subscription in subscriptions:
+        label = subscription.title or subscription.feed_url
+        ElementTree.SubElement(
+            body,
+            "outline",
+            {
+                "type": "rss",
+                "text": label,
+                "title": label,
+                "xmlUrl": subscription.feed_url,
+            },
+        )
+    ElementTree.indent(opml)
+    document = ElementTree.tostring(opml, encoding="unicode")
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n{document}\n'
 
 
 def _parse(path: Path) -> ElementTree.Element:

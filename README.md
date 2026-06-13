@@ -87,6 +87,7 @@ uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history
 uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML export, as JSON
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
+uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -896,6 +897,16 @@ same subscription id a manual `follow` of that URL would mint, so the two
 acquisition paths dedupe; folders are walked through but dropped (a
 subscription carries no tags), and non-http feeds are counted rather than
 failing the run.
+
+`scrolls export opml` is the inverse (see
+`docs/adr/0077-opml-export.md`): it serializes the library's feed
+subscriptions back to an OPML 2.0 document on stdout, so the feeds you
+curate in Scrolls can move to another reader, get backed up, or sync a
+second device — `scrolls export opml > feeds.opml`. The export is flat
+(subscriptions carry no folders), each feed one `<outline>` with its feed
+URL, and the round-trip is the contract: an export re-imports to the same
+feeds. With import and export, Scrolls is a way-station on a feed list's
+life rather than a sink.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

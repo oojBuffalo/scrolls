@@ -1,9 +1,19 @@
-"""Tests for the OPML subscription-list importer (IDEAS.md §13, ADR 0076)."""
+"""Tests for the OPML subscription-list importer (IDEAS.md §13, ADR 0076)
+and the symmetric exporter (ADR 0077)."""
 
 import pytest
 
-from scrolls.feeds import make_subscription_id
-from scrolls.opml import ImportSourceError, load_opml_export
+from scrolls.feeds import Subscription, make_subscription_id
+from scrolls.opml import ImportSourceError, dump_opml_export, load_opml_export
+
+
+def _sub(feed_url, title=None):
+    return Subscription(
+        id=make_subscription_id(feed_url),
+        feed_url=feed_url,
+        title=title,
+        added_at="2026-06-13T00:00:00+00:00",
+    )
 
 # A realistic OPML export: an `<opml>` document whose `<body>` nests feed
 # outlines (carrying `xmlUrl`) inside folder outlines (carrying none). The
@@ -149,3 +159,72 @@ def test_malformed_xml_raises(tmp_path):
 def test_missing_file_raises(tmp_path):
     with pytest.raises(ImportSourceError, match="no OPML export"):
         load_opml_export(tmp_path / "nope.opml")
+
+
+# --- export (ADR 0077) ---------------------------------------------------
+
+
+def test_dump_serializes_subscriptions_as_opml():
+    opml = dump_opml_export(
+        [
+            _sub("https://blog.example.com/atom.xml", "A Weblog"),
+            _sub("https://news.example.com/rss", "Daily News"),
+        ]
+    )
+    # a proper declaration (so a reader honors the encoding) and an OPML 2.0 root
+    assert opml.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert '<opml version="2.0">' in opml
+    assert "<title>Scrolls subscriptions</title>" in opml
+    # each feed is one <outline> carrying the feed URL and its display label
+    assert 'xmlUrl="https://blog.example.com/atom.xml"' in opml
+    assert 'text="A Weblog"' in opml and 'title="A Weblog"' in opml
+    assert 'type="rss"' in opml
+
+
+def test_export_then_import_round_trips(tmp_path):
+    subs = [
+        _sub("https://blog.example.com/atom.xml", "A Weblog"),
+        _sub("https://news.example.com/rss", "Daily News"),
+    ]
+    path = tmp_path / "out.opml"
+    path.write_text(dump_opml_export(subs), encoding="utf-8")
+
+    reloaded, stats = load_opml_export(path)
+    # feed URLs and titles survive a full export → import cycle, in order
+    assert [(s.feed_url, s.title) for s in reloaded] == [
+        ("https://blog.example.com/atom.xml", "A Weblog"),
+        ("https://news.example.com/rss", "Daily News"),
+    ]
+    assert stats == {"feeds": 2, "repeats": 0, "ignored": {"not_http": 0}}
+
+
+def test_dump_titleless_subscription_falls_back_to_feed_url(tmp_path):
+    opml = dump_opml_export([_sub("https://nameless.example/feed")])
+    # OPML requires a `text`; a subscription with no title labels itself by URL
+    assert 'text="https://nameless.example/feed"' in opml
+    path = tmp_path / "out.opml"
+    path.write_text(opml, encoding="utf-8")
+    reloaded, _ = load_opml_export(path)
+    assert reloaded[0].title == "https://nameless.example/feed"
+
+
+def test_dump_escapes_ampersands_in_feed_urls(tmp_path):
+    url = "https://www.youtube.com/feeds/videos.xml?channel_id=UC123&extra=1"
+    opml = dump_opml_export([_sub(url, "Chan")])
+    # raw `&` would be invalid XML; it must be escaped and survive a re-parse
+    assert "&amp;" in opml
+    path = tmp_path / "out.opml"
+    path.write_text(opml, encoding="utf-8")
+    reloaded, _ = load_opml_export(path)
+    assert reloaded[0].feed_url == url
+
+
+def test_dump_empty_is_valid_parseable_opml(tmp_path):
+    opml = dump_opml_export([])
+    assert '<opml version="2.0">' in opml
+    path = tmp_path / "out.opml"
+    path.write_text(opml, encoding="utf-8")
+    # a valid, empty OPML round-trips to no subscriptions without error
+    reloaded, stats = load_opml_export(path)
+    assert reloaded == []
+    assert stats == {"feeds": 0, "repeats": 0, "ignored": {"not_http": 0}}

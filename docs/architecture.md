@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1731 tests at the time of writing). The docs themselves
+`uv run pytest` (1739 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -80,6 +80,10 @@ each command moves items between stages or derives artifacts from them.
   a dead feed surfacing only on its first sync; parsed from bytes (the XML
   encoding declaration), folders walked but dropped (subscriptions carry no
   tags), non-http feeds counted (`src/scrolls/opml.py`, ADR 0076).
+  `scrolls export opml` is the inverse: `opml.dump_opml_export` serializes
+  the library's subscriptions back to an OPML document on stdout (the
+  artifact-is-the-output convention), the round-trip that makes the import a
+  way-station rather than a sink (ADR 0077).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters
@@ -613,8 +617,10 @@ envelopes, with captured real output — lives in `docs/cli.md`. The
 recurring rules:
 
 - **JSON on stdout** for every data command; errors as JSON on stderr
-  with exit 1. Two deliberate exceptions emit Markdown: `context` (the
-  bundle is the artifact) and the scroll/KB files themselves.
+  with exit 1. The deliberate exceptions emit the artifact itself: `context`
+  emits a Markdown bundle, `export opml` an OPML document (ADR 0077), and the
+  scroll/KB files are Markdown — in each the output *is* the thing the
+  command produces, not a report about it.
 - **CLI is one module** (`cli.py`): argparse subcommands, each a thin
   `cmd_*` function over the library modules. The CLI owns process
   concerns (JSON encoding, exit codes, loading `config.toml` — ADR

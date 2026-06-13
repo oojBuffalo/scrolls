@@ -1690,6 +1690,43 @@ def test_import_opml_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def test_export_opml_emits_subscriptions(scrolls_home, fake_opml, capsys):
+    main(["import", "opml", str(fake_opml)])
+    capsys.readouterr()
+    exit_code = main(["export", "opml"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # the OPML document is emitted raw on stdout (not JSON), declaration first
+    assert out.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert 'xmlUrl="https://blog.example.com/atom.xml"' in out
+    assert 'xmlUrl="https://news.example.com/rss"' in out
+
+
+def test_export_opml_round_trips_through_import(scrolls_home, fake_opml, tmp_path, capsys):
+    main(["import", "opml", str(fake_opml)])
+    capsys.readouterr()
+    main(["export", "opml"])
+    exported = capsys.readouterr().out
+
+    # re-importing the export reproduces the same subscriptions: skipped, not new
+    out_path = tmp_path / "round-trip.opml"
+    out_path.write_text(exported, encoding="utf-8")
+    exit_code = main(["import", "opml", str(out_path)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0
+    assert payload["skipped"] == 2
+
+
+def test_export_opml_empty_library_is_valid(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["export", "opml"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert '<opml version="2.0">' in out  # a valid, empty OPML document
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
