@@ -8,9 +8,9 @@ getting a guessed label; a future LLM engine can pick them up.
 
 Precedence (first hit wins):
 
-1. curated-platform defaults — wikipedia/arxiv/crossref/github/gitlab/pypi/
-   npm/crates/packagist/rubygems/go/huggingface items are what their platform
-   makes them, whatever the title says;
+1. curated-platform defaults — wikipedia/arxiv/crossref/github/gitlab/gitea/
+   pypi/npm/crates/packagist/rubygems/go/huggingface items are what their
+   platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -37,6 +37,8 @@ _CURATED_SOURCE_CATEGORIES = {
     # GitLab repos are projects to read like github's, not packages to install
     # (ADR 0055).
     "gitlab": "project",
+    # Gitea/Forgejo repos are projects to read like github's/gitlab's (ADR 0056).
+    "gitea": "project",
     # A published package is something you install and use — distinct from a
     # github repo (a "project" to read). PyPI, npm, crates.io, Packagist,
     # RubyGems, and Go modules all ship packages, the rules that produce "tool".

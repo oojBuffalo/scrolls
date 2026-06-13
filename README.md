@@ -150,7 +150,25 @@ pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
 fetched from the project's `/-/raw/` route; `topics` become `concepts`
 like github's, the SPDX license key becomes a `tag`; nested-group project
 paths are URL-encoded whole and folded lowercase; set `GITLAB_TOKEN` to
-lift the rate limit and reach private projects), and **arxiv**
+lift the rate limit and reach private projects), and **gitea**
+(the third code host — Codeberg and gitea.com, one adapter for Gitea and
+its API-compatible fork Forgejo (Codeberg runs Forgejo) the way the
+mastodon adapter serves its forks — see
+`docs/adr/0056-gitea-forgejo-adapter.md`: keyless
+`GET /api/v1/repos/<owner>/<repo>`, repo metadata plus an optional README.
+Unlike github/gitlab, the Gitea API lives on each *instance's own host*
+(`codeberg.org/api/v1`, `gitea.com/api/v1`), not one fixed endpoint, so the
+instance host rides in the item id — `gitea:<host>/<owner>/<repo>`, the
+Fediverse `<host>/<id>` shape — and reaching a self-hosted instance later is
+a detection-only change. Inline `topics` become `concepts` like github's
+(no second call); Gitea carries no inline license, so `tags` stay empty
+(github-parallel, not gitlab's license tag). The README is fetched
+README.md-first via the keyless *API* raw route — the contents listing's
+`download_url` is the web raw route, which login-gates anonymous gitea.com
+clients, and listing a large repo's root times out (forgejo/forgejo did) —
+with a root-listing fallback that finds a differently-named README
+(`README.rst`); set `GITEA_TOKEN`/`FORGEJO_TOKEN` to lift the rate limit and
+reach private repos; degrades to a metadata-only scroll), and **arxiv**
 (keyless Atom export API, stdlib XML: the abstract becomes the
 searchable summary, taxonomy codes become `tags` and their display
 names — "Computation and Language" for `cs.CL`, via a bundled taxonomy

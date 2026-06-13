@@ -25,6 +25,7 @@ from scrolls.sources import (  # noqa: E402
     datacite,
     discourse,
     doi,
+    gitea,
     github,
     gitlab,
     go,
@@ -59,6 +60,11 @@ FETCH_ADAPTERS = {
     # by its `/t/<slug>/<id>` topic shape and fetched from that instance's
     # keyless `.json` view (ADR 0054).
     "discourse": discourse.fetch_item,
+    # Gitea/Forgejo is the third code host; one adapter serves both the
+    # original and its API-compatible fork (codeberg.org runs Forgejo,
+    # gitea.com runs Gitea), the host riding in the id since the API lives on
+    # each instance's own host (ADR 0056).
+    "gitea": gitea.fetch_item,
     "github": github.fetch_item,
     # GitLab is the second major code host and the most self-hosted one, but
     # gitlab.com only here (host-scoped like github), with nested-group paths

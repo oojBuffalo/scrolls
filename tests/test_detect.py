@@ -60,6 +60,23 @@ CASES = [
     ("https://gitlab.com/explore", "gitlab", None),
     ("https://gitlab.com/explore/projects/trending", "gitlab", None),
     ("https://gitlab.com/-/snippets/2716", "gitlab", None),
+    # --- gitea / forgejo (host-scoped; the instance host rides in the id) ---
+    ("https://codeberg.org/forgejo/forgejo", "gitea", "codeberg.org/forgejo/forgejo"),
+    ("https://gitea.com/gitea/tea", "gitea", "gitea.com/gitea/tea"),
+    # www. folds to the canonical host so it dedupes
+    ("https://www.codeberg.org/forgejo/forgejo", "gitea", "codeberg.org/forgejo/forgejo"),
+    # deep links dedupe to the repo (github's flat owner/repo shape)
+    ("https://codeberg.org/forgejo/forgejo/issues/123", "gitea",
+     "codeberg.org/forgejo/forgejo"),
+    ("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md", "gitea",
+     "codeberg.org/forgejo/forgejo"),
+    # owner/repo kept verbatim like github (Gitea preserves display case)
+    ("https://codeberg.org/Codeberg/Community", "gitea", "codeberg.org/Codeberg/Community"),
+    # profile, reserved routes, and the bare host carry no fetchable repo
+    ("https://codeberg.org/forgejo", "gitea", None),
+    ("https://codeberg.org/explore/repos", "gitea", None),
+    ("https://gitea.com/issues", "gitea", None),
+    ("https://codeberg.org/", "gitea", None),
     # --- arxiv ---
     ("https://arxiv.org/abs/2406.01234", "arxiv", "2406.01234"),
     ("https://arxiv.org/abs/2406.01234v2", "arxiv", "2406.01234v2"),

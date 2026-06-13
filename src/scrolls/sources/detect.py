@@ -16,6 +16,11 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtu
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
 GITHUB_HOSTS = {"github.com", "www.github.com"}
 GITLAB_HOSTS = {"gitlab.com", "www.gitlab.com"}
+# Gitea/Forgejo is self-hosted across many hosts, but only the two big public
+# instances are recognized for now (host-scoped like github/gitlab; a bare
+# repo root has no shape tell — ADR 0055/0056). Codeberg runs Forgejo,
+# gitea.com runs Gitea; one `gitea` source covers both (ADR 0056).
+GITEA_HOSTS = {"codeberg.org", "www.codeberg.org", "gitea.com", "www.gitea.com"}
 ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org"}
 HACKERNEWS_HOSTS = {"news.ycombinator.com", "www.news.ycombinator.com"}
 LOBSTERS_HOSTS = {"lobste.rs", "www.lobste.rs"}
@@ -66,6 +71,16 @@ GITLAB_RESERVED = {
     "snippets", "users",
 }
 
+# Top-level Gitea/Forgejo path segments that are site pages or platform
+# routes, never a repo owner. Drawn from Gitea's reserved-username list (so
+# none can shadow a real account); only the names that appear as top-level
+# routes are kept, github's small-set scale.
+GITEA_RESERVED = {
+    "-", "admin", "api", "assets", "attachments", "avatar", "avatars",
+    "explore", "ghost", "help", "issues", "login", "milestones", "new",
+    "notifications", "org", "pulls", "repo", "search", "sign_up", "user",
+}
+
 # Top-level huggingface.co path segments that are site pages, not model repos.
 # `datasets` and `spaces` are handled by dedicated branches before this set is
 # consulted; the rest are routes that can never be a model's `<org>/<name>`.
@@ -106,6 +121,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in GITLAB_HOSTS:
         return DetectedSource("gitlab", _gitlab_id(path_parts))
+
+    if host in GITEA_HOSTS:
+        return DetectedSource("gitea", _gitea_id(host, path_parts))
 
     if host in ARXIV_HOSTS:
         return DetectedSource("arxiv", _arxiv_id(path_parts))
@@ -254,6 +272,31 @@ def _gitlab_id(path_parts: list[str]) -> str | None:
     if len(path_parts) < 2 or path_parts[0].lower() in GITLAB_RESERVED:
         return None
     return "/".join(p.lower() for p in path_parts) or None
+
+
+def _gitea_id(host: str, path_parts: list[str]) -> str | None:
+    """`<host>/<owner>/<repo>` for a Gitea/Forgejo repo URL, else None.
+
+    Gitea/Forgejo repos use github's flat `<owner>/<repo>` shape, so the first
+    two segments are the repo and a deep link (`/issues/1`, `/src/branch/...`)
+    dedupes to it. Unlike github, the host rides in the identity: the Gitea API
+    lives on each instance's own host (`codeberg.org/api/v1`, `gitea.com/api/v1`),
+    so the adapter needs the host to fetch — the Fediverse identity shape
+    (`<host>/<id>`, ADR 0049). The host is folded to its canonical form
+    (`www.` stripped) so `www.gitea.com` and `gitea.com` dedupe; owner/repo are
+    kept verbatim like github (Gitea routes case-insensitively but preserves
+    display case, and the API resolves either).
+
+    A bare profile/org page (one segment) and the reserved site routes
+    (`explore`, `issues`, `user`, …) carry no repo and resolve to the source
+    with no fetchable item — github's pattern. Detection is host-scoped to the
+    two big public instances; self-hosted Gitea has no universal shape tell, so
+    it is deferred exactly as self-hosted GitLab is (ADR 0055/0056).
+    """
+    canonical_host = host[4:] if host.startswith("www.") else host
+    if len(path_parts) < 2 or path_parts[0].lower() in GITEA_RESERVED:
+        return None
+    return f"{canonical_host}/{path_parts[0]}/{path_parts[1]}"
 
 
 def _arxiv_id(path_parts: list[str]) -> str | None:

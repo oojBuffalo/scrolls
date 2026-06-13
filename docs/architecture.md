@@ -153,7 +153,12 @@ Two small contracts make every platform the same kind of scroll
    host; the whole `group[/subgroup…]/project` path before any `/-/`
    sub-resource separator as `source_id`, nested-group-aware, folded
    lowercase since GitLab forces lowercase slugs, deep links deduping to the
-   project, ADR 0055), `arxiv`, `x`,
+   project, ADR 0055), `gitea` (a `codeberg.org`/`gitea.com`
+   `/<owner>/<repo>` URL — the third code host, one source for Gitea and its
+   fork Forgejo; uniquely the *instance host rides in the* `source_id`
+   (`<host>/<owner>/<repo>`, `www.` folded off, owner/repo verbatim) because
+   the Gitea API lives on each instance's own host, so reaching a self-hosted
+   instance later is a detection-only change, ADR 0056), `arxiv`, `x`,
    `hackernews`, `lobsters` (a `/s/<short_id>` story URL, the short id
    verbatim), `bluesky` (a `bsky.app/profile/<actor>/post/<rkey>` post URL,
    `<actor>/<rkey>` as `source_id` with the actor folded lowercase — handle
@@ -230,6 +235,7 @@ Implemented fetch adapters, all keyless:
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
 | gitlab | `sources/gitlab.py` | keyless REST API + optional README via the `/-/raw/` route | the second code host (gitlab.com only); nested-group path URL-encoded whole + folded lowercase; `topics` → `concepts`, SPDX `license.key` → `tag`; `GITLAB_TOKEN` (→`PRIVATE-TOKEN`) lifts the rate limit; degrades to metadata-only | 0055 |
+| gitea (incl. Forgejo) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>` + optional README via the API raw route | the third code host (codeberg.org/gitea.com), and the first to carry the instance host *in the id* (`gitea:<host>/<owner>/<repo>`) because the API is per-host not a single service — one adapter for Gitea + its API-compatible fork Forgejo (the mastodon/forks pattern); inline `topics` → `concepts` like github (no second call), no inline license so `tags` empty; README is README.md-first via the API raw route (the web `download_url` login-gates anonymous gitea.com clients; listing a big root times out) with a root-listing fallback for a non-`.md` README; `GITEA_TOKEN`/`FORGEJO_TOKEN` (→`Authorization: token`) lifts the limit; degrades to metadata-only | 0056 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`, published `arxiv:doi` → `doi.org` `link` (preprint↔published edge, ADR 0038); degrades to abstract-only | 0008, 0010, 0012, 0038 |
 | pdf | `sources/pdf.py` | direct download + `pypdf` text and document metadata | `/Title`-or-filename → `title`, `/Subject` → `summary`, the document → `media`; non-PDF payload fails, textless PDF degrades to metadata-only | 0013 |
 | hackernews | `sources/hackernews.py` | keyless Firebase API, one request, stdlib only | text posts → body + lead `summary`; link posts → "N points, M comments" + bare article URL in `links`; degrades to metadata-only; `kids` kept in `raw_text` | 0031 |
@@ -516,17 +522,19 @@ Next steps already identified in decision records, in no required order:
   Lemmy-shaped aggregator with a *distinct* URL would detect separately like
   Discourse; one sharing `/post/<digits>` would slot into the `threadiverse`
   dispatcher like PieFed.
-- **More code hosts** — the GitHub adapter (ADR 0007) got a sibling in
-  GitLab (ADR 0055), the second major host and the most self-hosted one.
-  Two natural extensions stay open. *Gitea/Forgejo* (Codeberg, gitea.com)
-  expose a keyless `/api/v1/repos/<owner>/<repo>` that could become its own
-  adapter — and, since the software is self-hosted across many hosts like the
-  Fediverse, a future run could even share one adapter across known Gitea
-  hosts the way Mastodon's forks share one (ADR 0050). *Self-hosted GitLab*
-  (deferred in ADR 0055 because a bare repo root carries no shape tell) would
-  want a configured host allowlist or an explicit source hint, the same
-  problem any host-scoped adapter faces off its canonical domain. Bitbucket
-  (keyless `/2.0/repositories/<workspace>/<repo>`) is the remaining big one.
+- **More code hosts** — the GitHub adapter (ADR 0007) got siblings in
+  GitLab (ADR 0055, the second major host) and Gitea/Forgejo (ADR 0056, the
+  third — Codeberg and gitea.com). Gitea introduced the host-in-identity shape
+  (`gitea:<host>/<owner>/<repo>`) that a self-hosted-across-many-hosts platform
+  needs: the instance host rides in the `source_id` because the API lives on
+  each host, so two extensions are now cheap detection changes rather than
+  adapter rewrites. *More Gitea/Forgejo hosts* (self-hosted Codeberg-likes)
+  could join via a configured host allowlist, the adapter already host-carrying.
+  *Gitea's cousin Gitea-API hosts* aside, *self-hosted GitLab* (deferred in
+  ADR 0055 because a bare repo root carries no shape tell) would want the same
+  host allowlist or an explicit source hint. *Bitbucket* (keyless
+  `/2.0/repositories/<workspace>/<repo>`, a single API host like github) is the
+  remaining big one.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs
