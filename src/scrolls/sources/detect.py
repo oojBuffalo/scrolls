@@ -71,6 +71,13 @@ OPENLIBRARY_HOSTS = {"openlibrary.org", "www.openlibrary.org"}
 # (`/wiki/Q42`), the RDF concept URI (`/entity/Q42`), and the canonical entity
 # data the adapter reads (`/wiki/Special:EntityData/Q42.json`).
 WIKIDATA_HOSTS = {"wikidata.org", "www.wikidata.org", "m.wikidata.org"}
+# Zenodo (CERN's open-science repository) mints a DOI for every deposit —
+# datasets, software, preprints, posters. A `zenodo.org/records/<id>` landing
+# page is the URL people paste; the fetch adapter reads the record's keyless
+# `/api/records/<id>` JSON, and the record's DataCite DOI links it to its DOI
+# scroll (ADR 0083). zenodo.org is the one host; sandbox.zenodo.org is a test
+# instance deliberately excluded (its records are throwaway).
+ZENODO_HOSTS = {"zenodo.org", "www.zenodo.org"}
 # doi.org is the canonical DOI resolver; dx.doi.org is its legacy alias.
 # Both carry the DOI as the whole path, handled by the Crossref adapter.
 DOI_HOSTS = {"doi.org", "www.doi.org", "dx.doi.org", "www.dx.doi.org"}
@@ -256,6 +263,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in OPENLIBRARY_HOSTS:
         return DetectedSource("openlibrary", _openlibrary_id(path_parts))
+
+    if host in ZENODO_HOSTS:
+        return DetectedSource("zenodo", _zenodo_id(path_parts))
 
     if host in DOI_HOSTS:
         return DetectedSource("crossref", _crossref_id(path_parts))
@@ -845,6 +855,32 @@ def _openlibrary_id(path_parts: list[str]) -> str | None:
     if head == "isbn":
         isbn = unquote(ident).replace("-", "").replace(" ", "").upper()
         return f"isbn:{isbn}" if _ISBN.fullmatch(isbn) else None
+    return None
+
+
+def _zenodo_id(path_parts: list[str]) -> str | None:
+    """The numeric record id for a Zenodo record URL, else None.
+
+    A Zenodo deposit is reachable as `zenodo.org/records/<id>` (the modern
+    form), the legacy singular `zenodo.org/record/<id>`, and the API URL
+    `zenodo.org/api/records/<id>` people sometimes paste — every form carries a
+    `record`/`records` path segment followed by the integer record id, so the id
+    is taken from the digits after the first such segment. A deeper link
+    (`/records/<id>/files/data.zip`, `/records/<id>/preview/...`) dedupes to the
+    record by stopping at that id (the slug-dropped Discourse pattern, ADR 0054).
+
+    The record id is a *version*-specific accession; `conceptrecid` names the
+    all-versions concept, but the URL identifies one version, so the id is kept
+    as written — different versions are different items, the Open Library edition
+    rule (ADR 0073). Communities, search, deposit, and badge routes carry no
+    `record`/`records`+digits shape and resolve to the source with no fetchable
+    item — github's profile-page pattern.
+    """
+    for index, segment in enumerate(path_parts):
+        if segment in ("record", "records"):
+            nxt = path_parts[index + 1] if index + 1 < len(path_parts) else ""
+            if nxt.isdigit():
+                return nxt
     return None
 
 

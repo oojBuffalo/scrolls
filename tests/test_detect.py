@@ -471,6 +471,26 @@ CASES = [
     ("https://openlibrary.org/search?q=python", "openlibrary", None),
     ("https://openlibrary.org/isbn/not-an-isbn", "openlibrary", None),
     ("https://openlibrary.org/", "openlibrary", None),
+    # --- zenodo (open-science records) ---
+    # the modern records URL; the numeric record id is the identity
+    ("https://zenodo.org/records/7834392", "zenodo", "7834392"),
+    # a deep link (files, preview) dedupes to the record
+    ("https://zenodo.org/records/7834392/files/data.zip", "zenodo", "7834392"),
+    ("https://zenodo.org/records/7834392/preview/readme.txt", "zenodo", "7834392"),
+    # the legacy singular `record` form dedupes to the same item
+    ("https://zenodo.org/record/7834392", "zenodo", "7834392"),
+    # the API URL people sometimes paste resolves to the record too
+    ("https://zenodo.org/api/records/7834392", "zenodo", "7834392"),
+    ("https://www.zenodo.org/records/7834392", "zenodo", "7834392"),
+    # communities, search, deposit, and badge routes carry no record:
+    # source known, item unknown
+    ("https://zenodo.org/communities/covid-19", "zenodo", None),
+    ("https://zenodo.org/search?q=covid", "zenodo", None),
+    ("https://zenodo.org/records/", "zenodo", None),
+    ("https://zenodo.org/records/not-a-number", "zenodo", None),
+    ("https://zenodo.org/", "zenodo", None),
+    # the sandbox test instance is deliberately not Zenodo here (throwaway records)
+    ("https://sandbox.zenodo.org/records/12345", "web", None),
     # --- crossref (doi.org) ---
     ("https://doi.org/10.1145/2939672.2939754", "crossref", "10.1145/2939672.2939754"),
     # the suffix may itself contain slashes; the whole path is the DOI

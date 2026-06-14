@@ -54,6 +54,7 @@ from scrolls.sources import (  # noqa: E402
     wikidata,
     wikipedia,
     youtube,
+    zenodo,
 )
 
 FETCH_ADAPTERS = {
@@ -136,4 +137,9 @@ FETCH_ADAPTERS = {
     "wikidata": wikidata.fetch_item,
     "wikipedia": wikipedia.fetch_item,
     "youtube": youtube.fetch_item,
+    # Zenodo is CERN's open-science repository for datasets, software, and
+    # preprints; the landing-page URL fetches the keyless InvenioRDM record and
+    # its DataCite DOI links to its DOI scroll, clustering as one work
+    # (the metadata-only + DOI-edge shape of DataCite, ADR 0083).
+    "zenodo": zenodo.fetch_item,
 }

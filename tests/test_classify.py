@@ -137,6 +137,52 @@ def test_datacite_resource_type_beats_title_pattern():
     assert classify_item(item).category == "dataset"
 
 
+def _zenodo_item(resource_type, **overrides):
+    # A Zenodo deposit the adapter fetched: the upload type rides in provenance
+    # (ADR 0083), the DataCite mechanism with the Zenodo vocabulary.
+    provenance = {"adapter": "zenodo", "resource_type": resource_type}
+    return make_item(source="zenodo", source_id="7834392", provenance=provenance, **overrides)
+
+
+def test_zenodo_dataset_is_a_dataset():
+    item = _zenodo_item("dataset", title="A large-scale COVID-19 Twitter chatter dataset")
+    assert classify_item(item).category == "dataset"
+
+
+def test_zenodo_software_is_a_tool():
+    item = _zenodo_item("software", title="scrolls")
+    assert classify_item(item).category == "tool"
+
+
+def test_zenodo_publication_is_a_paper():
+    item = _zenodo_item("publication", title="A taxonomic treatment")
+    assert classify_item(item).category == "paper"
+
+
+def test_zenodo_image_and_video_are_media():
+    for resource_type in ("image", "video"):
+        item = _zenodo_item(resource_type, title="A figure")
+        assert classify_item(item).category == "media"
+
+
+def test_zenodo_ambiguous_type_stays_unclassified():
+    # A poster/presentation/lesson is not guessed — DataCite's honesty rule.
+    item = _zenodo_item("poster", title="A conference poster")
+    assert classify_item(item).category is None
+
+
+def test_zenodo_unfetched_deposit_stays_unclassified():
+    # Detected but not yet fetched: no resource type is known, so no category.
+    item = make_item(source="zenodo", source_id="7834392", provenance=None, title="A deposit")
+    assert classify_item(item).category is None
+
+
+def test_zenodo_resource_type_beats_title_pattern():
+    # A dataset whose title reads like a tutorial is still a dataset.
+    item = _zenodo_item("dataset", title="Getting Started with the COVID-19 Corpus")
+    assert classify_item(item).category == "dataset"
+
+
 def test_pypi_is_a_tool():
     # A published package is something you install and use, not a repo to read.
     item = make_item(source="pypi", title="rich")

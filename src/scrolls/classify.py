@@ -9,7 +9,7 @@ getting a guessed label; a future LLM engine can pick them up.
 Precedence (first hit wins):
 
 1. curated-platform defaults — wikipedia/wikidata/rfc/arxiv/biorxiv/medrxiv/pubmed/
-   crossref/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
+   crossref/zenodo/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
    huggingface items are what their platform makes them, whatever the title says;
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
@@ -121,6 +121,21 @@ _DATACITE_CATEGORIES = {
     "sound": "media",
 }
 
+# Zenodo `resource_type.type` (the InvenioRDM upload-type vocabulary) → category.
+# Like a DataCite output, a Zenodo deposit is not always a paper (ADR 0083): a
+# dataset is the IDEAS.md §8 `dataset` term, software is a tool, the publication
+# family is literature, and image/video deposits are media. The genuinely
+# ambiguous types (`poster`, `presentation`, `lesson`, `physicalobject`, `other`)
+# stay unclassified rather than guessed — the engine's standing rule, the same
+# honesty DataCite's unmapped types get.
+_ZENODO_CATEGORIES = {
+    "dataset": "dataset",
+    "software": "tool",
+    "publication": "paper",
+    "image": "media",
+    "video": "media",
+}
+
 # CSL `type` (lowercased) → category, for a DOI served by content negotiation
 # (ADR 0081). The agencies reached only this way (JaLC, mEDRA, KISTI, OP, …)
 # are scholarly-literature registries, so unlike DataCite a content-negotiated
@@ -191,6 +206,13 @@ def _curated_category(item: ScrollItem) -> str | None:
         return None
     if item.source == "crossref":
         return _doi_category(item)
+    # A Zenodo deposit's category depends on its resource type, a fetch-time
+    # fact the adapter records in `provenance.resource_type` — the DataCite
+    # mechanism (ADR 0045/0083). An unfetched or unmapped/ambiguous type stays
+    # unclassified.
+    if item.source == "zenodo":
+        resource_type = ((item.provenance or {}).get("resource_type") or "").lower()
+        return _ZENODO_CATEGORIES.get(resource_type)
     return _CURATED_SOURCE_CATEGORIES.get(item.source)
 
 

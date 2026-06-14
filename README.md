@@ -865,7 +865,44 @@ the honesty value that keeps a medRxiv paper off the `biorxiv` label — so a
 book flows through the title rules and otherwise stays honestly
 unclassified, like a Hacker News post; author-bio enrichment, `identifiers`
 cross-references (Wikidata/Goodreads), and a true work↔edition scroll merge
-are deferred).
+are deferred), and **zenodo**
+(the keyless InvenioRDM REST API — see
+`docs/adr/0083-zenodo-adapter.md`: research **datasets and software** were the
+content type a saved `zenodo.org/records/<id>` landing page left as a `web`
+scrape, a concept-less edgeless island the way dev.to and books were before
+their adapters (ADR 0061/0073). Zenodo is CERN's general-purpose open-science
+repository — the default archive for EU-funded output and the citable-DOI
+snapshot every released GitHub repo gets. Its DOIs are *DataCite*-registered, so
+a saved `doi.org/10.5281/zenodo.<id>` already fetches through the DataCite
+adapter (ADR 0045) — but the URL researchers paste is the landing page, which
+has its own keyless API (`zenodo.org/api/records/<recid>`, a plain JSON record
+with no JSON:API envelope, stdlib only). Identity is the version-specific record
+id the URL carries — taken from the digits after a `record`/`records` segment so
+the modern `/records/<id>`, the legacy `/record/<id>`, and the pasted
+`/api/records/<id>` forms all dedupe, deeper `/files`/`/preview` links deduping
+to the record — kept verbatim because `conceptrecid`/`conceptdoi` name the
+all-versions concept while the URL identifies one version (the Open Library
+edition rule). The record's DOI becomes a `doi.org` `link` that ties the landing
+page to its DataCite DOI scroll and clusters them as **one work** in `scrolls
+works` (the DOI-edge pattern, ADR 0037/0045/0069); the `conceptdoi` links the
+concept. The HTML `description` becomes the plain-text `summary` with no
+`extracted_text` — the deposit's files are the body, not the catalog metadata,
+so a record is honestly summary-only (the Crossref/DataCite shape), and the shape
+that keeps the Zenodo scroll consistent with its DataCite-DOI twin. The
+`resource_type.type` (`dataset`, `software`, `publication`, `image`, `video`, …)
+rides in `provenance.resource_type` and the rules engine maps it — `dataset →
+dataset`, `software → tool`, `publication → paper`, `image`/`video → media`, the
+ambiguous `poster`/`presentation`/`lesson` honestly unclassified — the DataCite
+fetch-time-fact mechanism (ADR 0045), since a deposit is not always a paper.
+Free-text `keywords` and controlled `subjects` become `concepts` (the
+github-topics/MeSH role), and `type`/`subtype`/`license.id` become `tags`. Each
+`related_identifiers` entry becomes an outgoing edge by its scheme — a `doi` to
+`doi.org`, an `arxiv` to `arxiv.org/abs` (the preprint edge, ADR 0038, the
+`arXiv:` prefix stripped), a `url` kept when http(s), other schemes skipped as
+dead links — so a dataset that supplements a paper or archives a repo wires into
+the graph; partial publication dates (`2023`, `2023-04`) pad to the start of the
+period (the RFC rule). Version↔concept consolidation, the deposit's files as
+captured media, and self-hosted InvenioRDM are deferred).
 Items from
 sources without an adapter yet (today only `x`) are
 skipped, and per-item failures don't abort the batch.
