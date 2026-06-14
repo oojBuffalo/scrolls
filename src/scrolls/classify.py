@@ -121,6 +121,20 @@ _DATACITE_CATEGORIES = {
     "sound": "media",
 }
 
+# CSL `type` (lowercased) → category, for a DOI served by content negotiation
+# (ADR 0081). The agencies reached only this way (JaLC, mEDRA, KISTI, OP, …)
+# are scholarly-literature registries, so unlike DataCite a content-negotiated
+# DOI defaults to `paper` (see `_doi_category`); this map only redirects the
+# few CSL types that are honestly not papers.
+_CSL_CATEGORIES = {
+    "dataset": "dataset",
+    "software": "tool",
+    "figure": "media",
+    "graphic": "media",
+    "motion_picture": "media",
+    "song": "media",
+}
+
 
 def classify_item(item: ScrollItem) -> ScrollItem:
     """Return the item with a rule-derived category, or unchanged if none match.
@@ -181,19 +195,25 @@ def _curated_category(item: ScrollItem) -> str | None:
 
 
 def _doi_category(item: ScrollItem) -> str | None:
-    """The category of a `doi.org` item, by which agency served it (ADR 0045).
+    """The category of a `doi.org` item, by which agency served it (ADR 0045, 0081).
 
     A Crossref work is always a published `paper` (arXiv's preprint sibling).
     A DataCite output's category depends on its resource type, which the
     DataCite adapter records in `provenance.resource_type` because it can only
     be known at fetch time — the same fetch-time fact the source name can't
-    carry. An unmapped or absent DataCite type stays unclassified; a DOI not
-    yet fetched (no adapter provenance) defaults to `paper`, the common case.
+    carry. An unmapped or absent DataCite type stays unclassified. A DOI served
+    by content negotiation (the long-tail agencies — JaLC, mEDRA, …, all
+    scholarly-literature registries) defaults to `paper` like Crossref, but an
+    explicit `dataset`/`software` CSL type is honored. A DOI not yet fetched
+    (no adapter provenance) defaults to `paper`, the common case.
     """
     provenance = item.provenance or {}
-    if provenance.get("adapter") == "datacite":
-        resource_type = (provenance.get("resource_type") or "").lower()
+    adapter = provenance.get("adapter")
+    resource_type = (provenance.get("resource_type") or "").lower()
+    if adapter == "datacite":
         return _DATACITE_CATEGORIES.get(resource_type)
+    if adapter == "content-negotiation":
+        return _CSL_CATEGORIES.get(resource_type, "paper")
     return "paper"
 
 

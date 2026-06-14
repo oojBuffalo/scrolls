@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1739 tests at the time of writing). The docs themselves
+`uv run pytest` (1815 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -244,8 +244,9 @@ Two small contracts make every platform the same kind of scroll
    organization* the post is published under, ADR 0061),
    `crossref` (a `doi.org`/`dx.doi.org` DOI link, the DOI folded
    lowercase as `source_id` since DOIs are case-insensitive — the DOI's
-   *registration agency*, Crossref or DataCite, is resolved at fetch
-   time, not detection, ADR 0045), and
+   *registration agency*, Crossref, DataCite, or any other (JaLC, mEDRA, …)
+   via content negotiation, is resolved at fetch time, not detection,
+   ADR 0045/0081), and
    `huggingface` (model, dataset, and Space repo pages on
    `huggingface.co`/`hf.co`, the repo *kind* in the `source_id` as
    `model:<org>/<name>`, `dataset:<...>`, or `space:<...>` so one adapter
@@ -300,10 +301,13 @@ Two small contracts make every platform the same kind of scroll
    with no entry (today only `x`) is still registered by `scrolls add`
    but skipped by `scrolls fetch` until its adapter lands. One source can
    map to a *dispatch* over several adapters: `crossref` points at the
-   `doi.py` dispatcher, which tries the Crossref adapter and falls back to
-   the DataCite one for a DOI Crossref doesn't hold (ADR 0045) — the
-   registration agency can't be read off a `doi.org` URL, so it is
-   resolved at fetch time, not detection.
+   `doi.py` dispatcher, a three-tier cascade — the Crossref adapter, then
+   the DataCite one for a DOI Crossref doesn't hold (ADR 0045), then a
+   generic content-negotiation adapter (`csl.py`) for a DOI neither holds,
+   reaching every other registration agency (JaLC, mEDRA, …) at once
+   through one CSL-JSON request (ADR 0081) — the registration agency can't
+   be read off a `doi.org` URL, so it is resolved at fetch time, not
+   detection.
 
 Implemented fetch adapters, all keyless:
 
@@ -328,6 +332,7 @@ Implemented fetch adapters, all keyless:
 | crates | `sources/crates.py` | keyless crates.io JSON API + capped `.crate` tarball GET for the README | displayed-version metadata; raw README from the `.crate` tarball → searchable text; keywords → `concepts`, curated category taxonomy → `tags`; homepage/docs/normalized repository → `links` (crate↔repo edge); `crates → tool`; degrades to metadata-only | 0036 |
 | crossref (`doi.org`, Crossref agency) | `sources/crossref.py` via `sources/doi.py` dispatch | keyless Crossref DOI metadata API, stdlib only | registered work metadata for a `doi.org` DOI (folded lowercase identity); JATS abstract → plain `summary` (no full text, so no `extracted_text`); `subject` → `concepts`, `type`+venue → `tags`; publisher landing page → `links` (`reference` DOIs dropped); `crossref → paper` like arXiv; degrades to metadata-only | 0037 |
 | crossref (`doi.org`, DataCite agency) | `sources/datacite.py` via `sources/doi.py` dispatch | keyless DataCite DOI metadata API, stdlib only | fetch-time fallback when Crossref 404s a DOI (datasets/software/etc.); JSON:API `attributes` → titles+subtitle, creators "Given Family", `Abstract` description → `summary` (no full text), `subjects` → `concepts`, DataCite date precedence, `resourceTypeGeneral`+`resourceType`+publisher → `tags`, landing + container-DOI `links` (cross-source edge); `resourceTypeGeneral` → `provenance.resource_type` drives classification (`Dataset → dataset`, `Software`/`Model` → `tool`, text types → `paper`, `Image`/`Sound` → `media`); source stays `crossref`, `provenance.adapter="datacite"` is honest; degrades to metadata-only | 0045 |
+| crossref (`doi.org`, any other agency) | `sources/csl.py` via `sources/doi.py` dispatch | keyless DOI content negotiation (`doi.org/<doi>` with `Accept: application/vnd.citationstyles.csl+json`), stdlib only | the **third dispatch tier**, reached when Crossref *and* DataCite 404 a DOI — one adapter for every remaining registration agency (JaLC, mEDRA, KISTI, OP, …), since the resolver proxies CSL-JSON to whichever agency holds the DOI; CSL-JSON is Crossref's REST JSON's sibling (`title`/`container-title` plain strings, authors carry `literal` for orgs) so the Crossref mapping transfers: JATS `abstract` → plain `summary`, `subject` → `concepts`, `type`+venue → `tags`, `URL` landing page → the one `link`; `type` → `provenance.resource_type` defaults classification to `paper` (the post-DataCite agencies are scholarly) but honors a `dataset`/`software`/`figure` type; source stays `crossref`, `provenance.adapter="content-negotiation"` is honest; a parsed-but-non-CSL body raises rather than minting a junk scroll; degrades to metadata-only | 0081 |
 | pubmed | `sources/pubmed.py` | keyless NCBI E-utilities efetch API, stdlib ElementTree, one request | the biomedical literature, the arXiv/Crossref paper sibling (PMID identity); MeSH `DescriptorName`s → `concepts` (the curated controlled vocabulary, github-topics/arXiv-taxonomy role; qualifiers dropped), author `Keyword`s the fallback for not-yet-MEDLINE-indexed records; structured abstract → `summary` (no full text, so no `extracted_text`, the Crossref shape); publication types + journal venue → `tags`; date precedence electronic `ArticleDate` → journal `PubDate` (month-name/year-only/`MedlineDate` parsed) → history; article DOI → `doi.org` `link` (PubMed↔Crossref paper edge, ADR 0038's biomedical analog); `pubmed → paper`; degrades to metadata-only | 0065 |
 | rfc | `sources/rfc.py` | keyless RFC Editor JSON view (`rfc-editor.org/rfc/rfc<N>.json`) + the `.txt` spec body, stdlib only | IETF technical standards, a content type with no prior home; host-restricted shape detection (RFC Editor + `datatracker`/`tools`/`ietf`, only `rfc<digits>` claimed, drafts/WG/org → `web`); integer-number identity, leading zeros stripped; `keywords` → `concepts` (github-topics/MeSH role; whitespace placeholder dropped), maturity `status` title-cased → the one `tag`; abstract → `summary`, the `.txt` spec body fetched + de-paginated → `extracted_text` (the arXiv abstract+PDF split, ADR 0010/0067; classic form-feed/`[Page N]`/running-header pagination stripped, modern unpaginated format passes through; degrades to abstract-only on `.txt` failure); DOI `10.17487/RFC<N>` → `doi.org` `link` (RFC↔Crossref edge), `obsoletes`/`updates` → `rfc-editor.org/rfc/rfc<M>` `link`s (RFC↔RFC lineage; inverse relations not re-emitted); number leads the title; `Month Year` dates padded to first-of-month; `rfc → reference`; degrades to metadata-only | 0066, 0067 |
 | packagist | `sources/packagist.py` | keyless Packagist JSON API, stdlib only | Composer package metadata for a `vendor/name` (folded lowercase identity); highest *stable* release picked by ranking the numeric `version_normalized` (no `default_version` pointer, no comparator dep); description → `summary` (no README in the API, so no `extracted_text`); keywords → `concepts`, `type`+SPDX licenses → `tags`; repository/homepage/git source → `links` (package↔repo edge); `packagist → tool`; honestly metadata-only | 0039 |

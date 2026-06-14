@@ -540,7 +540,28 @@ scroll classified by `types.resourceTypeGeneral` — `Dataset → dataset`,
 `media` — instead of falling to a `web` scrape; the source stays
 `crossref` because identity is fixed at `add` time before the agency is
 knowable, with `provenance.adapter="datacite"` recording the truth),
-and **bluesky** (the keyless AT Protocol AppView — see
+and a generic **content-negotiation** fallback on the same `doi.org`
+detection (see `docs/adr/0081-doi-content-negotiation-fallback.md`: the
+*third* tier of the `doi.py` dispatch, reached when both Crossref and
+DataCite 404 a DOI. The DOI system has ~a dozen registration agencies —
+JaLC (essentially the entire Japanese scholarly literature), mEDRA, KISTI,
+OP, Airiti, CNKI — whose DOIs neither rich API holds, so rather than a
+bespoke adapter per agency, `csl.py` reaches them all at once through DOI
+**content negotiation**: a `https://doi.org/<doi>` GET with
+`Accept: application/vnd.citationstyles.csl+json` is proxied by the resolver
+to whichever agency holds the DOI, and every agency answers with the same
+**CSL-JSON** document. CSL-JSON is Crossref's REST JSON's structural sibling
+(`title`/`container-title` plain strings, authors carry `literal` for orgs),
+so the Crossref mapping transfers almost verbatim — the JATS abstract
+reduced to a plain `summary`, `subject` → `concepts`, `type` + venue →
+`tags`, the landing `URL` → the one `link`, a record with no abstract an
+honest metadata-only scroll. The `type` (recorded in
+`provenance.resource_type`) defaults classification to `paper` like Crossref
+— the post-DataCite agencies are scholarly-literature registries — while a
+`dataset`/`software`/`figure` CSL type is honored instead of mislabeled;
+the source stays `crossref`, `provenance.adapter="content-negotiation"` is
+honest, and a parsed-but-non-CSL body raises rather than minting a junk
+scroll), and **bluesky** (the keyless AT Protocol AppView — see
 `docs/adr/0048-bluesky-adapter.md`: the open social-post source X could
 never be. IDEAS.md §6 deferred X for its auth/session complexity, and X's
 read API is now paywalled, so a keyless `x` adapter is off the table — but
@@ -1343,11 +1364,20 @@ discussion family then reached the *forums*: **Discourse** — the centralized
 forum software behind countless dev communities — joins on its
 `/t/<slug>/<id>` topic shape, the first non-Fediverse host-less source, its
 topic and first page of posts fetched from the keyless `.json` view in one
-request (ADR 0054). Next candidates: home-instance-canonical
+request (ADR 0054). The DOI dispatch then grew a **third tier** behind
+Crossref and DataCite: rather than a bespoke adapter per remaining
+registration agency (the named candidate was "a third agency, mEDRA/JaLC"),
+a generic **content-negotiation** adapter (`csl.py`) reaches *every* other
+agency at once — a `doi.org/<doi>` GET asking for CSL-JSON is proxied to
+whichever agency holds the DOI (JaLC, mEDRA, KISTI, OP, Airiti, CNKI, …) and
+all answer in one uniform format, so a DOI neither Crossref nor DataCite
+holds becomes a clean scroll instead of a foreign-language paywall scrape;
+it is the third tier of `doi.py`, reached only when both rich agencies 404,
+`provenance.adapter="content-negotiation"` recording the agency-agnostic
+truth (ADR 0081). Next candidates: home-instance-canonical
 Mastodon/Misskey/Lemmy and DID-canonical Bluesky identity so a post saved
 through two routes dedupes — the fetch-time id rewrite no adapter does yet
-(ADR 0048–0053); a third DOI registration agency (mEDRA, JaLC) joining the
-same `doi.py` dispatch; or two-phase batch submit/collect if a terminal wait
+(ADR 0048–0053); or two-phase batch submit/collect if a terminal wait
 ever outgrows the library (ADR 0022, ADR 0032). **Mbin** (the kbin fork) was
 the named next aggregator, but its read API is OAuth-gated — its
 `security.yaml` grants no anonymous `/api/entry` and live instances 401/403 an
