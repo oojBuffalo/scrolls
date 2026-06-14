@@ -58,6 +58,9 @@ PUB_HOSTS = {
     "pub.dartlang.org",
     "www.pub.dartlang.org",
 }
+# hex.pm is the Elixir/Erlang package registry; hexdocs.pm (the docs host)
+# is left to `web`, since it serves rendered docs, not the package metadata.
+HEX_HOSTS = {"hex.pm", "www.hex.pm"}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
@@ -262,6 +265,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in PUB_HOSTS:
         return DetectedSource("pub", _pub_id(path_parts))
+
+    if host in HEX_HOSTS:
+        return DetectedSource("hex", _hex_id(path_parts))
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
@@ -817,6 +823,28 @@ def _pub_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip().lower()
     return name if _fullmatch(_PUB_NAME_RE, name) else None
+
+
+# A Hex package name is lowercase letters, digits, and underscores (the
+# registry's naming rules; no uppercase — the API is case-sensitive).
+_HEX_NAME_RE = re.compile(r"[a-z0-9_]+")
+
+
+def _hex_id(path_parts: list[str]) -> str | None:
+    """The package name for a `hex.pm/packages/<name>[/<version>]` URL, else None.
+
+    Identity is the package name only: `/packages/ecto` and the version
+    page `/packages/ecto/3.14.0` are the same package. Hex names are
+    lowercase and the API is case-sensitive — `packages/Ecto` 404s while
+    `packages/ecto` resolves — so the name is folded lowercase (the
+    PyPI/crates/Packagist/pub fold, not RubyGems' verbatim rule, since the
+    canonical form is always lowercase). The package list and search pages
+    carry no package name and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "packages":
+        return None
+    name = unquote(path_parts[1]).strip().lower()
+    return name if _fullmatch(_HEX_NAME_RE, name) else None
 
 
 def _go_id(path_parts: list[str]) -> str | None:

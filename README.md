@@ -594,8 +594,33 @@ package's github repo through `scrolls related` (the package↔repo edge)
 even when it points into a monorepo tree
 (`github.com/flutter/packages/tree/main/packages/url_launcher`); a pub
 package classifies as `tool` like every other package, and a package whose
-pubspec lists no topics simply contributes empty `concepts`), and
-**datacite** (the keyless DataCite JSON:API — see
+pubspec lists no topics simply contributes empty `concepts`), and **hex**
+(the keyless Hex JSON API — see `docs/adr/0089-hex-adapter.md`: a saved
+`hex.pm/packages/<name>` page becomes a clean scroll from the package's
+metadata, the Elixir/Erlang sibling of the package-registry family and
+pub.dev's closest twin in field layout — a `meta` object holding the
+description, the licenses, and a links map. One keyless `GET
+hex.pm/api/packages/<name>` returns the whole package. Identity is the
+package name folded lowercase — Hex names are lowercase and the API is
+case-sensitive (`packages/Ecto` 404s, `packages/ecto` resolves), so folding
+is the forgiving choice pub uses: the canonical name is always lowercase, so
+a mistyped capital is rescued, version pages dedupe, and the docs host
+`hexdocs.pm` is left to the `web` adapter since it serves rendered docs, not
+package metadata. The `meta.description` is the searchable `summary` with no
+`extracted_text` (the README ships only in the package tarball — RubyGems'
+metadata-only situation). This is the axis on which Hex and its
+layout-twin pub.dev diverge: pub's `topics` feed the KB concept graph, but
+Hex has no keywords field, so its `concepts` are empty *by design* like
+RubyGems and Go — the registry's data, not the adapter, deciding whether a
+package can join the concept graph. The SPDX `meta.licenses` become `tags`;
+and the `meta.links` map — a `{label: url}` of `GitHub`, `Changelog`,
+`Docs` — becomes `links` by iterating its values (where RubyGems and pub
+read named scalar fields), the `GitHub` entry resolving to the package's
+github repo through `scrolls related` (the package↔repo edge). The publish
+date is read from the release matching `latest_stable_version`, robust to a
+pre-release topping the list; the author is left unset, since Hex exposes
+only an owner list with emails and no clean byline), and **datacite** (the
+keyless DataCite JSON:API — see
 `docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a
 fetch-time fallback behind `crossref`'s `doi.org` detection, the second
 DOI registration agency. The `doi.py` dispatcher tries Crossref first and

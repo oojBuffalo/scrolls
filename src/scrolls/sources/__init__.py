@@ -34,6 +34,7 @@ from scrolls.sources import (  # noqa: E402
     gitlab,
     go,
     hackernews,
+    hex,
     huggingface,
     lemmy,
     lobsters,
@@ -101,6 +102,10 @@ FETCH_ADAPTERS = {
     "gitlab": gitlab.fetch_item,
     "go": go.fetch_item,
     "hackernews": hackernews.fetch_item,
+    # Hex is the Elixir/Erlang package registry, pub.dev's closest twin in
+    # field layout (a `meta` object of description/licenses/links); no
+    # keywords so `concepts` empty by design like RubyGems/Go (ADR 0089).
+    "hex": hex.fetch_item,
     "huggingface": huggingface.fetch_item,
     # A `/post/<digits>` aggregator URL is detected as `lemmy`, but its backend
     # (Lemmy `/api/v3` or PieFed `/api/alpha` — PieFed shares the identical URL

@@ -488,6 +488,21 @@ CASES = [
     ("https://pub.dev/help", "pub", None),
     # a hyphen is not a valid Dart identifier — not a real package name
     ("https://pub.dev/packages/foo-bar", "pub", None),
+    # --- hex (Elixir/Erlang) ---
+    ("https://hex.pm/packages/ecto", "hex", "ecto"),
+    # a version page is the same package: identity is the name only
+    ("https://hex.pm/packages/ecto/3.14.0", "hex", "ecto"),
+    # hex names are lowercase; the case-sensitive API only resolves the
+    # lowercase form, so a mistyped capital folds (pub's rule)
+    ("https://hex.pm/packages/Ecto", "hex", "ecto"),
+    ("https://hex.pm/packages/phoenix_live_view", "hex", "phoenix_live_view"),
+    ("https://www.hex.pm/packages/jason", "hex", "jason"),
+    # the package list and search pages: source known, item unknown
+    ("https://hex.pm/", "hex", None),
+    ("https://hex.pm/packages", "hex", None),
+    ("https://hex.pm/dashboard", "hex", None),
+    # hexdocs.pm is the docs host, not the package metadata — left to web
+    ("https://hexdocs.pm/ecto/Ecto.html", "web", None),
     # --- go modules (pkg.go.dev) ---
     ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
     # a version is attached with @; the module path is everything before it
