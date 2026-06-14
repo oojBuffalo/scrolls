@@ -224,7 +224,13 @@ Two small contracts make every platform the same kind of scroll
    fork Forgejo; uniquely the *instance host rides in the* `source_id`
    (`<host>/<owner>/<repo>`, `www.` folded off, owner/repo verbatim) because
    the Gitea API lives on each instance's own host, so reaching a self-hosted
-   instance later is a detection-only change, ADR 0056), `bitbucket` (a
+   instance later is a detection-only change, ADR 0056 — or, when the URL is
+   `/issues/<n>` or the **plural** PR path `/pulls/<n>`, an issue/pull-request
+   *discussion thread* `<host>/<owner>/<repo>#<n>`, the github thread template
+   ADR 0084 since Gitea unifies numbering like github so one `#` marker suffices,
+   the only divergence the plural `/pulls/` web path vs github's singular, deep
+   thread links deduping while the lists/`/src` collapse to the repo, ADR 0086),
+   `bitbucket` (a
    `bitbucket.org/<workspace>/<repo>` URL — the fourth code host, host-scoped
    with a single fixed API host like github since Bitbucket Cloud is one
    service, *not* host-in-id like gitea; the flat `<workspace>/<repo>` folded
@@ -353,6 +359,7 @@ Implemented fetch adapters, all keyless:
 | gitlab | `sources/gitlab.py` | keyless REST API + optional README via the `/-/raw/` route | the second code host (gitlab.com only); nested-group path URL-encoded whole + folded lowercase; `topics` → `concepts`, SPDX `license.key` → `tag`; `GITLAB_TOKEN` (→`PRIVATE-TOKEN`) lifts the rate limit; degrades to metadata-only | 0055 |
 | gitlab (issue / MR) | `sources/gitlab.py` | keyless `GET /projects/<enc>/{issues,merge_requests}/<iid>` + optional `/notes` | the github thread template (ADR 0084) on the next host, with the divergence GitLab forces — issues and MRs keep **separate iid sequences**, so identity is GitLab's own cross-reference notation (`group/project#<iid>` issue, `group/project!<iid>` MR) and the `#`/`!` marker both disambiguates *and* picks the endpoint (`#`→`/issues`, `!`→`/merge_requests`), unlike github's one endpoint serving both; the adapter dispatches on the marker (the huggingface one-source-many-kinds shape, *not* a new source — an MR lives on gitlab.com/api.github-style and extends the project's id); project path URL-encoded whole like a repo fetch; one GET for the thread, `/notes?sort=asc` a second only when `user_notes_count` > 0 — but gitlab.com **gates anonymous notes (401)** while serving the metadata keyless, so the common keyless case degrades to body-only and `GITLAB_TOKEN` reaches the conversation; Markdown description (no HTML strip) + `#### Comment by <username>` bylined notes → `extracted_text` with GitLab **system notes (`system: true`) dropped** as automated activity (the Discourse mod-action skip); labels → `concepts` (both bare-string and object shapes), kind + state → `tags` with the state **normalized to github's vocab** (`opened`→`open`, a merged MR read directly from `state`); `gitlab.com/<project>` link → thread↔project edge + body-URL scan; **no category default** — a thread is heterogeneous (the github carve-out, a `#`/`!`-bearing id stays unclassified); degrades to metadata-only | 0085 |
 | gitea (incl. Forgejo) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>` + optional README via the API raw route | the third code host (codeberg.org/gitea.com), and the first to carry the instance host *in the id* (`gitea:<host>/<owner>/<repo>`) because the API is per-host not a single service — one adapter for Gitea + its API-compatible fork Forgejo (the mastodon/forks pattern); inline `topics` → `concepts` like github (no second call), no inline license so `tags` empty; README is README.md-first via the API raw route (the web `download_url` login-gates anonymous gitea.com clients; listing a big root times out) with a root-listing fallback for a non-`.md` README; `GITEA_TOKEN`/`FORGEJO_TOKEN` (→`Authorization: token`) lifts the limit; degrades to metadata-only | 0056 |
+| gitea (issue / PR) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>/issues/<n>` + optional comments | the github thread template (ADR 0084) on the third host, applying github's rule *not* gitlab's because Gitea/Forgejo **unify issue/PR numbering** like github — one `/issues/<index>` endpoint serves both (a PR carries a `pull_request` object), so a single `#` marker suffices; identity `<host>/<owner>/<repo>#<n>` keeps the per-instance host (ADR 0056) and adds the thread marker the adapter dispatches on (the huggingface one-source-many-kinds shape, repo path byte-unchanged); the one divergence detection encodes is the **plural PR web path `/pulls/<n>`** (vs github's singular `/pull/<n>`); one GET then `…/issues/<n>/comments?per_page=100` only when present — and **the comments endpoint is keyless** (unlike gitlab's 401-gated `/notes`), so the common case reaches the whole conversation with no token, degrading to body-only on failure; Markdown body + `#### Comment by <user>` bylined comments → `extracted_text` (no HTML strip), labels → `concepts`, kind + state (`issue`/`pull request`, `open`/`closed`/`merged` via `pull_request.merged_at`, the vocab matching github's directly) → `tags`, a `<host>/<owner>/<repo>` link → the **thread↔repo edge** + body-URL scan; title leads host-free `owner/repo#<n>:` (matching the repo's `full_name` title); author/byline read `login` else `username`; **no category default** — `gitea → project` applies only to repos (a `#`-bearing id is unclassified, the github one-marker carve-out); degrades to metadata-only | 0086 |
 | bitbucket | `sources/bitbucket.py` | keyless `GET /2.0/repositories/<ws>/<repo>` + optional README via the `/src/<branch>` route | the fourth code host; Bitbucket *Cloud* is a single service so it is host-scoped with a fixed API host and a flat `<workspace>/<repo>` identity like github (not host-in-id like gitea; Bitbucket Server/DC deferred), folded lowercase (slugs auto-lowercase, case-insensitive routing — the gitlab fold); **no topics so `concepts` empty by design**, `language` → the one `tag`; README via the `/src/<mainbranch>/<path>` route (no `/readme` endpoint, no `/raw/` route) — README.md-first then a root-listing fallback for a non-`.md` README; `BITBUCKET_TOKEN` (→`Authorization: Bearer`) lifts the limit; degrades to metadata-only | 0057 |
 | arxiv | `sources/arxiv.py` | Atom export API + `pypdf` full text | abstract → `summary`, taxonomy codes → `tags`, their display names → `concepts`, PDF → `media`, published `arxiv:doi` → `doi.org` `link` (preprint↔published edge, ADR 0038); degrades to abstract-only | 0008, 0010, 0012, 0038 |
 | biorxiv, medrxiv | `sources/biorxiv.py` | keyless `api.biorxiv.org/details/<server>/<doi>`, stdlib JSON, one request | arXiv's biology/medicine preprint siblings; **two distinct sources, one shared adapter** (it reads `item.source` to pick the `<server>`) — *not* one source with a server qualifier (the huggingface unify is rejected: a medRxiv paper does not live on bioRxiv, so labeling it `biorxiv` would be dishonest — ADR 0045's honesty value), the inverse of the doi/threadiverse one-source-many-adapters shape; identity `10.1101/<accession>`, every `vN`/`.full`/`.full.pdf`/early-access view deduping to it (arXiv `abs`/`pdf` dedupe); the **highest version** in the ascending `collection` is the current preprint; abstract → `summary` with **no `extracted_text`** and **no PDF media** (the `.full.pdf` 403s anonymous clients — the deliberate divergence from arXiv whose PDF serves freely, ADR 0010); subject `category` → the one `concept` (sentence-cased so `HIV/AIDS` survives), study `type` (space-bearing only, so medRxiv's `PUBLISHAHEADOFPRINT` sentinel drops) + `server` venue + recognized CC `license` → `tags`; `published` journal DOI → `doi.org` `link` (preprint↔published edge, arXiv's `arxiv:doi` analog ADR 0038, PubMed's biomedical sibling ADR 0065), unpublished preprints edgeless; `biorxiv`/`medrxiv → paper`; degrades to metadata-only | 0068 |
@@ -421,12 +428,13 @@ choice (ADRs 0004, 0005).
   second → user overrides always win". Precedence: curated platforms,
   then title patterns, then URL shape, then youtube → media. Unmatched
   items honestly stay unclassified. A curated source is usually a flat
-  source→category map, but five sources read a per-item fact instead:
+  source→category map, but six sources read a per-item fact instead:
   huggingface's repo kind (`tool`/`dataset`), crossref/zenodo's resource
-  type (ADR 0045/0083), and **github's and gitlab's content kind** — a repo
-  is a `project`, but an issue/PR (`owner/repo#<n>`) or an issue/MR
-  (`group/project#<n>`/`!<n>`) is a heterogeneous discussion thread left
-  unclassified like a Hacker News post (ADR 0084/0085).
+  type (ADR 0045/0083), and **github's, gitlab's, and gitea's content kind** —
+  a repo is a `project`, but an issue/PR (`owner/repo#<n>`), an issue/MR
+  (`group/project#<n>`/`!<n>`), or a gitea issue/PR (`<host>/<owner>/<repo>#<n>`)
+  is a heterogeneous discussion thread left unclassified like a Hacker News post
+  (ADR 0084/0085/0086).
   Batch runs never overwrite an existing category; `classify <id>`
   explicitly reclassifies (`tests/test_classify.py`).
 - **LLM classification** (`classify_llm.py`, ADR 0015) — layer two
@@ -786,22 +794,22 @@ Next steps already identified in decision records, in no required order:
   (the self-hosted product, a different `/rest/api/1.0/` API on arbitrary hosts)
   would be its own adapter, not a detection-only change like a new gitea host.
   *Issue/PR threads* are a second content kind on the github source (ADR 0084,
-  `owner/repo#<n>` dispatched on the `#`) and now on the **gitlab** source too
-  (ADR 0085): a `/-/issues/<n>` or `/-/merge_requests/<n>` URL becomes a thread
-  in GitLab's own cross-reference notation `group/project#<n>`/`!<n>`. GitLab
-  forced the first adaptation of the template — its issues and MRs keep
-  *separate* iid sequences, so the marker must distinguish them (github's `#<n>`
-  is a unified namespace), and the `#`/`!` doubles as the endpoint selector
-  (`GET /api/v4/projects/<id>/issues/<iid>` vs `/merge_requests/<iid>`, each
-  with `/notes`). The same gap remains for the last two hosts: a Gitea
-  `/issues/<n>` or `/pulls/<n>` URL and a Bitbucket `/issues/<n>` or
-  `/pull-requests/<n>` URL still collapse to the project. Each is the same slice
-  on a different API (Gitea `GET /api/v1/repos/<o>/<r>/issues/<n>` + `/comments`,
-  Bitbucket `GET /2.0/repositories/<ws>/<repo>/issues/<n>` + `/comments`), and
-  the marker rule is now decided per host: **Gitea unifies** issue/PR numbering
-  like github (one `/issues/<n>` endpoint serves both → one `#` marker), while
-  **Bitbucket splits** it like gitlab (`/issues/<n>` vs `/pull-requests/<n>` →
-  the `#`/`!` two-marker rule).
+  `owner/repo#<n>` dispatched on the `#`), now on the **gitlab** (ADR 0085) and
+  **gitea** (ADR 0086) sources too. GitLab forced the first adaptation of the
+  template — its issues and MRs keep *separate* iid sequences, so the marker must
+  distinguish them (github's `#<n>` is a unified namespace), and the `#`/`!`
+  doubles as the endpoint selector (`GET /api/v4/projects/<id>/issues/<iid>` vs
+  `/merge_requests/<iid>`, each with `/notes`). Gitea took github's rule
+  unchanged — it *unifies* issue/PR numbering like github (one
+  `/api/v1/repos/<o>/<r>/issues/<index>` serves both → one `#` marker), the only
+  divergence the plural web path `/pulls/<n>` vs github's singular, and unlike
+  gitlab its `/comments` endpoint is keyless so the common case reaches the whole
+  thread with no token. The same gap remains for the last host: a Bitbucket
+  `/issues/<n>` or `/pull-requests/<n>` URL still collapses to the repo. It is
+  the same slice on a different API (`GET /2.0/repositories/<ws>/<repo>/issues/<n>`
+  + `/comments`), and **Bitbucket splits** issue/PR numbering like gitlab
+  (`/issues/<n>` vs `/pull-requests/<n>` → the `#`/`!` two-marker rule), so it
+  follows gitlab's template, not github's.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs

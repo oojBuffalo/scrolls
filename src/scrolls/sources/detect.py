@@ -496,17 +496,27 @@ def _gitlab_id(path_parts: list[str]) -> str | None:
 
 
 def _gitea_id(host: str, path_parts: list[str]) -> str | None:
-    """`<host>/<owner>/<repo>` for a Gitea/Forgejo repo URL, else None.
+    """`<host>/<owner>/<repo>` for a Gitea/Forgejo repo URL, or `…#<n>` for a thread.
 
     Gitea/Forgejo repos use github's flat `<owner>/<repo>` shape, so the first
-    two segments are the repo and a deep link (`/issues/1`, `/src/branch/...`)
-    dedupes to it. Unlike github, the host rides in the identity: the Gitea API
-    lives on each instance's own host (`codeberg.org/api/v1`, `gitea.com/api/v1`),
-    so the adapter needs the host to fetch — the Fediverse identity shape
+    two segments are the repo and a deep link (`/src/branch/...`) dedupes to it.
+    Unlike github, the host rides in the identity: the Gitea API lives on each
+    instance's own host (`codeberg.org/api/v1`, `gitea.com/api/v1`), so the
+    adapter needs the host to fetch — the Fediverse identity shape
     (`<host>/<id>`, ADR 0049). The host is folded to its canonical form
     (`www.` stripped) so `www.gitea.com` and `gitea.com` dedupe; owner/repo are
     kept verbatim like github (Gitea routes case-insensitively but preserves
     display case, and the API resolves either).
+
+    An issue or pull-request URL is a discussion thread distinct from the repo
+    (ADR 0086): Gitea/Forgejo unify issue and PR numbering like github (one
+    `/issues/<index>` endpoint serves both), so one `#` marker suffices —
+    `<host>/<owner>/<repo>#<n>` — unlike gitlab's two (ADR 0085). The thread is
+    claimed from `/issues/<n>` and the web PR path `/pulls/<n>` (plural, Gitea's
+    UI route, unlike github's singular `/pull/<n>`) when the number is all
+    digits; a deep link into the thread (`/pulls/<n>/files`, a dropped `#issue…`
+    fragment) still dedupes to it, while the issue/PR *lists* (`/issues`,
+    `/pulls`, no number) and every other sub-resource collapse to the repo.
 
     A bare profile/org page (one segment) and the reserved site routes
     (`explore`, `issues`, `user`, …) carry no repo and resolve to the source
@@ -517,7 +527,10 @@ def _gitea_id(host: str, path_parts: list[str]) -> str | None:
     canonical_host = host[4:] if host.startswith("www.") else host
     if len(path_parts) < 2 or path_parts[0].lower() in GITEA_RESERVED:
         return None
-    return f"{canonical_host}/{path_parts[0]}/{path_parts[1]}"
+    repo = f"{canonical_host}/{path_parts[0]}/{path_parts[1]}"
+    if len(path_parts) >= 4 and path_parts[2] in ("issues", "pulls") and path_parts[3].isdigit():
+        return f"{repo}#{path_parts[3]}"
+    return repo
 
 
 def _bitbucket_id(path_parts: list[str]) -> str | None:

@@ -115,8 +115,29 @@ def test_gitlab_thread_still_obeys_title_rules():
 
 
 def test_gitea_is_project():
-    item = make_item(source="gitea", title="forgejo/forgejo")
+    item = make_item(source="gitea", source_id="codeberg.org/forgejo/forgejo",
+                     title="forgejo/forgejo")
     assert classify_item(item).category == "project"
+
+
+def test_gitea_issue_and_pull_request_are_not_projects():
+    # Gitea mirrors github (ADR 0086): an issue or PR (`<host>/<owner>/<repo>#<n>`)
+    # is a heterogeneous discussion thread, so it stays unclassified like the
+    # repo's siblings, not `project`. Gitea unifies numbering, so one `#` marker
+    # carves out (not gitlab's two).
+    issue = make_item(source="gitea", source_id="codeberg.org/forgejo/forgejo#7",
+                      title="FTS5 ranking returns stale results")
+    assert classify_item(issue).category is None
+    pr = make_item(source="gitea", source_id="codeberg.org/forgejo/forgejo#12",
+                   title="Add faceted search")
+    assert classify_item(pr).category is None
+
+
+def test_gitea_thread_still_obeys_title_rules():
+    # the curated `project` no longer pre-empts a "how to" thread title
+    item = make_item(source="gitea", source_id="codeberg.org/forgejo/forgejo#9",
+                     title="How to rebuild the FTS index")
+    assert classify_item(item).category == "tutorial"
 
 
 def test_bitbucket_is_project():

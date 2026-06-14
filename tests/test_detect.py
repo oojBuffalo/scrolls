@@ -135,13 +135,30 @@ CASES = [
     ("https://gitea.com/gitea/tea", "gitea", "gitea.com/gitea/tea"),
     # www. folds to the canonical host so it dedupes
     ("https://www.codeberg.org/forgejo/forgejo", "gitea", "codeberg.org/forgejo/forgejo"),
-    # deep links dedupe to the repo (github's flat owner/repo shape)
+    # an issue or pull request is a distinct discussion thread, not the repo
+    # (ADR 0086): Gitea unifies numbering like github, so one `#<n>` marker
+    # rides in the id; the PR web path is plural `/pulls/<n>` (unlike github)
     ("https://codeberg.org/forgejo/forgejo/issues/123", "gitea",
+     "codeberg.org/forgejo/forgejo#123"),
+    ("https://codeberg.org/forgejo/forgejo/pulls/456", "gitea",
+     "codeberg.org/forgejo/forgejo#456"),
+    # deep links into the thread (the diff tab, a comment fragment) dedupe to it
+    ("https://codeberg.org/forgejo/forgejo/pulls/456/files", "gitea",
+     "codeberg.org/forgejo/forgejo#456"),
+    ("https://codeberg.org/forgejo/forgejo/issues/123#issuecomment-9", "gitea",
+     "codeberg.org/forgejo/forgejo#123"),
+    # the issue/PR *list* (no number) and other sub-resources collapse to the repo
+    ("https://codeberg.org/forgejo/forgejo/issues", "gitea",
+     "codeberg.org/forgejo/forgejo"),
+    ("https://codeberg.org/forgejo/forgejo/pulls", "gitea",
      "codeberg.org/forgejo/forgejo"),
     ("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md", "gitea",
      "codeberg.org/forgejo/forgejo"),
     # owner/repo kept verbatim like github (Gitea preserves display case)
     ("https://codeberg.org/Codeberg/Community", "gitea", "codeberg.org/Codeberg/Community"),
+    # the thread marker rides on the verbatim-cased owner/repo too
+    ("https://codeberg.org/Codeberg/Community/issues/5", "gitea",
+     "codeberg.org/Codeberg/Community#5"),
     # profile, reserved routes, and the bare host carry no fetchable repo
     ("https://codeberg.org/forgejo", "gitea", None),
     ("https://codeberg.org/explore/repos", "gitea", None),

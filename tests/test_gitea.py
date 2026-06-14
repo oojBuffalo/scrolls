@@ -319,3 +319,210 @@ def test_api_headers_accept_forgejo_token_alias(monkeypatch):
 
 def test_gitea_adapter_is_registered():
     assert FETCH_ADAPTERS["gitea"] is fetch_item
+
+
+# --- issues and pull requests (ADR 0086) ----------------------------------
+#
+# A `/issues/<n>` or `/pulls/<n>` URL detects as `<host>/<owner>/<repo>#<n>`, a
+# discussion thread distinct from the repo. The same `gitea` source/adapter
+# serves it, dispatched on the `#` in the source id (the github one-source-many-
+# kinds shape, ADR 0084) — keeping the repo path byte-unchanged. Gitea/Forgejo
+# unify issue and PR numbering like github (one `/issues/<index>` endpoint
+# serves both, a PR carrying a `pull_request` object), so one `#` marker
+# suffices — unlike gitlab's two (ADR 0085).
+
+ISSUE = {
+    "number": 7,
+    "title": "FTS5 ranking returns stale results",
+    "body": "Rebuilding the index lags BM25 ranking.\n\nSee https://example.com/bug.",
+    "html_url": "https://codeberg.org/forgejo/forgejo/issues/7",
+    "user": {"login": "alice", "username": "alice"},
+    "state": "open",
+    "created_at": "2026-05-10T09:00:00+02:00",
+    "comments": 2,
+    "labels": [{"name": "bug"}, {"name": "search"}],
+}
+
+PR = {
+    "number": 12,
+    "title": "Add faceted search",
+    "body": "Implements `--source`/`--category` filters.",
+    "html_url": "https://codeberg.org/forgejo/forgejo/pulls/12",
+    "user": {"login": "bob", "username": "bob"},
+    "state": "closed",
+    "created_at": "2026-05-12T10:00:00+02:00",
+    "comments": 0,
+    "labels": [{"name": "enhancement"}],
+    "pull_request": {"merged": True, "merged_at": "2026-05-13T11:00:00+02:00"},
+}
+
+ISSUE_COMMENTS = [
+    {"user": {"login": "carol", "username": "carol"}, "body": "I can repro this on main."},
+    {"user": {"login": "alice", "username": "alice"}, "body": "Fixed by the rebuild trigger."},
+]
+
+
+def thread_item(source_id="codeberg.org/forgejo/forgejo#7", **overrides):
+    base = dict(
+        id=f"gitea:{source_id}",
+        source="gitea",
+        source_id=source_id,
+        url="https://codeberg.org/forgejo/forgejo/issues/7",
+        saved_at="2026-06-13T00:00:00+00:00",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def routed_thread(issue=ISSUE, comments=ISSUE_COMMENTS):
+    def get_json(url):
+        if "/comments" in url:
+            return [dict(c) for c in comments]
+        return dict(issue)
+
+    return get_json
+
+
+def test_fetch_thread_maps_fields():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+
+    # the title leads with the host-free cross-reference, like the repo title
+    assert fetched.title == "forgejo/forgejo#7: FTS5 ranking returns stale results"
+    assert fetched.author == "alice"
+    assert fetched.published_at == "2026-05-10T07:00:00+00:00"  # +02:00 normalized
+    assert fetched.canonical_url == "https://codeberg.org/forgejo/forgejo/issues/7"
+    # labels are the curated topical facet → concepts (the github-topics rule)
+    assert fetched.concepts == ("bug", "search")
+    # kind + state are the facet slot → tags
+    assert fetched.tags == ("issue", "open")
+    assert fetched.summary == "Rebuilding the index lags BM25 ranking."
+    assert fetched.provenance["adapter"] == "gitea"
+    assert fetched.provenance["extraction_method"] == "gitea-api:issue+comments"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_thread_body_and_comments_become_extracted_text():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    assert "Rebuilding the index lags BM25 ranking." in fetched.extracted_text
+    assert "Comment by carol" in fetched.extracted_text
+    assert "I can repro this on main." in fetched.extracted_text
+    assert "Comment by alice" in fetched.extracted_text
+
+
+def test_fetch_thread_links_carry_the_repo_edge_and_body_urls():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    # the thread belongs to its repo (thread↔repo edge, resolves to the repo item)
+    assert "https://codeberg.org/forgejo/forgejo" in fetched.links
+    # a URL referenced in the body becomes an outbound edge
+    assert "https://example.com/bug" in fetched.links
+    # the thread's own URL is never a self-link
+    assert fetched.canonical_url not in fetched.links
+
+
+def test_fetch_thread_keeps_raw_records_for_rebuilds():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    raw = json.loads(fetched.raw_text)
+    assert raw["issue"]["number"] == 7
+    assert len(raw["comments"]) == 2
+
+
+def test_fetch_pull_request_is_tagged_and_merge_aware():
+    fetched = fetch_item(
+        thread_item(source_id="codeberg.org/forgejo/forgejo#12"),
+        get_json=routed_thread(issue=PR),
+    )
+    assert fetched.title == "forgejo/forgejo#12: Add faceted search"
+    # a merged PR is distinguishable from a closed-unmerged one (pull_request.merged_at)
+    assert fetched.tags == ("pull request", "merged")
+    assert fetched.concepts == ("enhancement",)
+
+
+def test_fetch_thread_skips_comment_request_when_there_are_none():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return dict(PR)
+
+    fetch_item(thread_item(source_id="codeberg.org/forgejo/forgejo#12"), get_json=capture)
+    assert seen == ["https://codeberg.org/api/v1/repos/forgejo/forgejo/issues/12"]
+    assert not any(url.endswith("/comments") for url in seen[1:])
+
+
+def test_fetch_thread_requests_the_expected_api_urls():
+    seen = []
+    routed = routed_thread()
+
+    def capture(url):
+        seen.append(url)
+        return routed(url)
+
+    fetch_item(thread_item(), get_json=capture)
+    assert seen == [
+        "https://codeberg.org/api/v1/repos/forgejo/forgejo/issues/7",
+        "https://codeberg.org/api/v1/repos/forgejo/forgejo/issues/7/comments?per_page=100",
+    ]
+
+
+def test_fetch_thread_api_root_varies_by_instance_host():
+    # The host rides in the id (gitea's per-instance API), so a gitea.com thread
+    # hits gitea.com's API, not codeberg's — the host is data.
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return {"number": 5, "title": "t", "state": "open"}
+
+    fetch_item(
+        thread_item(
+            source_id="gitea.com/gitea/tea#5",
+            id="gitea:gitea.com/gitea/tea#5",
+        ),
+        get_json=capture,
+    )
+    assert seen[0] == "https://gitea.com/api/v1/repos/gitea/tea/issues/5"
+
+
+def test_fetch_thread_degrades_when_comments_fail():
+    def get_json(url):
+        if "/comments" in url:
+            raise OSError("HTTP Error 500: Server Error")
+        return dict(ISSUE)
+
+    fetched = fetch_item(thread_item(), get_json=get_json)
+    # the thread survives without its comments, body still extracted
+    assert "Rebuilding the index lags BM25 ranking." in fetched.extracted_text
+    assert "Comment by" not in (fetched.extracted_text or "")
+    assert fetched.provenance["extraction_method"] == "gitea-api:issue"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_thread_with_empty_body_summarizes_engagement():
+    issue = {**ISSUE, "body": "", "comments": 3}
+    fetched = fetch_item(thread_item(), get_json=routed_thread(issue=issue))
+    assert fetched.summary == "Gitea discussion: 3 comments."
+    # an empty body leaves only the comment thread as content
+    assert fetched.extracted_text.startswith("### Comments")
+
+
+def test_fetch_thread_wraps_request_errors():
+    def boom(url):
+        raise OSError("HTTP Error 404: Not Found")
+
+    with pytest.raises(FetchError, match="404"):
+        fetch_item(thread_item(), get_json=boom)
+
+
+def test_fetch_thread_rejects_a_malformed_thread_id():
+    # a host/owner id with no repo segment before the marker is not a thread
+    item = thread_item(source_id="codeberg.org/forgejo#7", id="gitea:codeberg.org/forgejo#7")
+    with pytest.raises(FetchError, match="cannot determine gitea thread"):
+        fetch_item(item, get_json=routed_thread())
+
+
+def test_fetch_thread_not_found_when_payload_lacks_a_number():
+    def get_json(url):
+        return {"message": "Not found."}
+
+    with pytest.raises(FetchError, match="gitea thread not found"):
+        fetch_item(thread_item(), get_json=get_json)
