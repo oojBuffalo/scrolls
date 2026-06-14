@@ -64,8 +64,28 @@ def test_rfc_classifies_as_reference():
 
 
 def test_github_is_project():
-    item = make_item(source="github", title="oojBuffalo/scrolls")
+    item = make_item(source="github", source_id="oojBuffalo/scrolls",
+                     title="oojBuffalo/scrolls")
     assert classify_item(item).category == "project"
+
+
+def test_github_issue_and_pr_are_not_projects():
+    # A discussion thread (`owner/repo#<n>`) is heterogeneous — bug, feature,
+    # question, design — so it stays unclassified like HN/Lobsters/Discourse,
+    # not the repo's `project` (ADR 0084). Title rules can still fire below.
+    issue = make_item(source="github", source_id="oojBuffalo/scrolls#7",
+                      title="FTS5 ranking returns stale results")
+    assert classify_item(issue).category is None
+    pr = make_item(source="github", source_id="oojBuffalo/scrolls#12",
+                   title="Add faceted search")
+    assert classify_item(pr).category is None
+
+
+def test_github_issue_still_obeys_title_rules():
+    # the curated `project` no longer pre-empts a "how to" thread title
+    item = make_item(source="github", source_id="oojBuffalo/scrolls#9",
+                     title="How to rebuild the FTS index")
+    assert classify_item(item).category == "tutorial"
 
 
 def test_gitlab_is_project():

@@ -196,7 +196,12 @@ Two small contracts make every platform the same kind of scroll
    `/wiki/Q42`, the RDF concept URI `/entity/Q42`, and the canonical
    `/wiki/Special:EntityData/Q42.json` all detect alike, uppercased to canonical
    so `/wiki/q42` dedupes; Properties/Lexemes deferred as schema/meta, ADR 0075),
-   `github`, `gist` (a `gist.github.com` URL — the developer code-snippet type,
+   `github` (a repo `owner/repo`, or — when the URL is `/issues/<n>` or the web
+   PR path `/pull/<n>` — an issue/pull-request *discussion thread*
+   `owner/repo#<n>`, a second content kind on the same source the adapter
+   dispatches on the `#`, deep thread links deduping while `/blob`/`/tree`/the
+   issue-and-PR lists collapse to the repo, ADR 0084),
+   `gist` (a `gist.github.com` URL — the developer code-snippet type,
    its own source since the host/API/content differ from a repo; the gist id
    alone is the `source_id` (`gist:<id>`) because the API is keyed by it and the
    owner login is decorative, so `/<owner>/<id>`, a bare `/<id>`, and a revision
@@ -337,6 +342,7 @@ Implemented fetch adapters, all keyless:
 | web | `sources/web.py` | `trafilatura` extraction | readable article text | 0001 (dep policy) |
 | youtube | `sources/youtube.py` | oEmbed + optional `youtube-transcript-api` | transcript → extracted text; degrades to metadata-only | 0003 |
 | github | `sources/github.py` | REST API + optional README | repo topics → `concepts`; `GITHUB_TOKEN` lifts rate limit | 0007 |
+| github (issue / PR) | `sources/github.py` | keyless `GET /repos/<o>/<r>/issues/<n>` + optional comments | a second content kind on the **same** source — an issue or pull-request *discussion thread* (the HN/Lobsters/Discourse family at where developers argue about code), identity `owner/repo#<n>` (GitHub's cross-ref notation), the adapter dispatching on the `#` (the huggingface one-source-many-kinds shape ADR 0041, *not* gist's own-source split — an issue lives on github.com/api.github.com and extends the repo's id); the issues endpoint serves both issues and PRs (a PR carries a `pull_request` object) so one GET fetches the thread, comments a second GET (`?per_page=100`) only when present, degrading to body-only; Markdown body + `#### Comment by <user>` bylined comments → `extracted_text` (Lobsters/SE economy, no HTML), labels → `concepts` (the github-topics rule), kind + state (`issue`/`pull request`, `open`/`closed`/`merged` via `pull_request.merged_at`) → `tags`, a `github.com/<owner>/<repo>` link → the **issue↔repo edge** + body-URL scan → outbound edges; title leads `owner/repo#<n>:` (RFC rule); **no category default** — a thread is heterogeneous, so `github → project` applies only to repos (a `#`-bearing id is unclassified, the HN/gist honesty); degrades to metadata-only | 0084 |
 | gist | `sources/gist.py` | keyless `GET /gists/<id>`, files inlined in one request | the developer code-snippet content type the repo adapter doesn't reach; identity is the gist id alone (`gist:<id>` — the owner login is decorative, the API resolves it, so `/<owner>/<id>`, bare `/<id>`, and revision URLs dedupe), hex id folded lowercase; one keyless GET returns the whole gist with each file's `content` inlined (Lobsters' economy, ADR 0046) → each file a sorted `### <filename>` fenced section in `extracted_text`; distinct file `language`s → `tags` (the bitbucket `language`→tag facet, ADR 0057), **`concepts` empty by design** (no topic facet); `title` = description else first filename, `summary` = a `"N files: …"` manifest, `author` = `owner.login`; **no category default** (a snippet is heterogeneous — the HN posture, ADR 0031); github's `GITHUB_TOKEN`/`GH_TOKEN` posture, all-blank-files → metadata-only | 0078 |
 | gitlab | `sources/gitlab.py` | keyless REST API + optional README via the `/-/raw/` route | the second code host (gitlab.com only); nested-group path URL-encoded whole + folded lowercase; `topics` → `concepts`, SPDX `license.key` → `tag`; `GITLAB_TOKEN` (→`PRIVATE-TOKEN`) lifts the rate limit; degrades to metadata-only | 0055 |
 | gitea (incl. Forgejo) | `sources/gitea.py` | keyless `GET /api/v1/repos/<o>/<r>` + optional README via the API raw route | the third code host (codeberg.org/gitea.com), and the first to carry the instance host *in the id* (`gitea:<host>/<owner>/<repo>`) because the API is per-host not a single service — one adapter for Gitea + its API-compatible fork Forgejo (the mastodon/forks pattern); inline `topics` → `concepts` like github (no second call), no inline license so `tags` empty; README is README.md-first via the API raw route (the web `download_url` login-gates anonymous gitea.com clients; listing a big root times out) with a root-listing fallback for a non-`.md` README; `GITEA_TOKEN`/`FORGEJO_TOKEN` (→`Authorization: token`) lifts the limit; degrades to metadata-only | 0056 |
@@ -407,9 +413,14 @@ choice (ADRs 0004, 0005).
   (`rules-v1`), layer one of IDEAS.md §8's "rules first → optional LLM
   second → user overrides always win". Precedence: curated platforms,
   then title patterns, then URL shape, then youtube → media. Unmatched
-  items honestly stay unclassified. Batch runs never overwrite an
-  existing category; `classify <id>` explicitly reclassifies
-  (`tests/test_classify.py`).
+  items honestly stay unclassified. A curated source is usually a flat
+  source→category map, but four sources read a fetch-time fact instead:
+  huggingface's repo kind (`tool`/`dataset`), crossref/zenodo's resource
+  type (ADR 0045/0083), and **github's content kind** — a repo is a
+  `project`, but an issue/PR (`owner/repo#<n>`) is a heterogeneous
+  discussion thread left unclassified like a Hacker News post (ADR 0084).
+  Batch runs never overwrite an existing category; `classify <id>`
+  explicitly reclassifies (`tests/test_classify.py`).
 - **LLM classification** (`classify_llm.py`, ADR 0015) — layer two
   (`llm-v1`), run explicitly via `classify --engine llm`: one Anthropic
   Messages call per item with structured outputs pinning `category` to

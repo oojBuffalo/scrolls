@@ -10,7 +10,9 @@ Precedence (first hit wins):
 
 1. curated-platform defaults — wikipedia/wikidata/rfc/arxiv/biorxiv/medrxiv/pubmed/
    crossref/zenodo/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
-   huggingface items are what their platform makes them, whatever the title says;
+   huggingface items are what their platform makes them, whatever the title says
+   (a github repo is a `project`, but a github issue/PR `owner/repo#<n>` is a
+   discussion thread left unclassified — ADR 0084);
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -47,7 +49,6 @@ _CURATED_SOURCE_CATEGORIES = {
     # PubMed indexes biomedical papers — the arXiv/Crossref paper sibling
     # (ADR 0065).
     "pubmed": "paper",
-    "github": "project",
     # GitLab repos are projects to read like github's, not packages to install
     # (ADR 0055).
     "gitlab": "project",
@@ -204,6 +205,12 @@ def _curated_category(item: ScrollItem) -> str | None:
         if source_id.startswith(("model:", "space:")):
             return "tool"
         return None
+    # GitHub serves two kinds under one source (ADR 0084): a repo (`owner/repo`)
+    # is a `project`, but an issue or pull request (`owner/repo#<n>`) is a
+    # heterogeneous discussion thread — unclassified by default like HN/Lobsters,
+    # leaving its title patterns free to decide (a "how to" issue is a tutorial).
+    if item.source == "github":
+        return None if "#" in (item.source_id or "") else "project"
     if item.source == "crossref":
         return _doi_category(item)
     # A Zenodo deposit's category depends on its resource type, a fetch-time

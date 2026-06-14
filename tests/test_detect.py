@@ -1,8 +1,9 @@
 """Contract tests for URL source detection (IDEAS.md §5: `scrolls add <url>`).
 
 Known simplifications, pinned deliberately for the first slice:
-- GitHub sub-resources (issues, PRs) collapse to `owner/repo`; richer IDs
-  are a future adapter concern.
+- GitHub issue/PR URLs detect as a distinct discussion thread
+  (`owner/repo#<n>`, ADR 0084); other sub-resources (/blob, /tree, …)
+  collapse to `owner/repo`.
 - Playlist IDs share the `youtube` namespace with video IDs.
 """
 
@@ -53,9 +54,22 @@ CASES = [
     ("https://www.wikidata.org/", "wikidata", None),
     # --- github ---
     ("https://github.com/oojBuffalo/scrolls", "github", "oojBuffalo/scrolls"),
-    ("https://github.com/owner/repo/issues/42", "github", "owner/repo"),
-    ("https://github.com/owner/repo/blob/main/README.md", "github", "owner/repo"),
     ("https://www.github.com/owner/repo", "github", "owner/repo"),
+    # an issue or pull request is a distinct discussion thread, not the repo
+    # (ADR 0084): the number rides in the id as `owner/repo#<n>`
+    ("https://github.com/owner/repo/issues/42", "github", "owner/repo#42"),
+    ("https://github.com/owner/repo/pull/1337", "github", "owner/repo#1337"),
+    # deep links into the thread (review tab, a comment fragment) dedupe to it
+    ("https://github.com/owner/repo/pull/1337/files", "github", "owner/repo#1337"),
+    ("https://github.com/owner/repo/issues/42#issuecomment-9", "github", "owner/repo#42"),
+    # other sub-resources still collapse to the repo
+    ("https://github.com/owner/repo/blob/main/README.md", "github", "owner/repo"),
+    ("https://github.com/owner/repo/tree/main/src", "github", "owner/repo"),
+    # the issue/PR *list* (no number) is part of the repo, not a thread
+    ("https://github.com/owner/repo/issues", "github", "owner/repo"),
+    ("https://github.com/owner/repo/pulls", "github", "owner/repo"),
+    # a non-numeric tail is not an issue number
+    ("https://github.com/owner/repo/pull/new", "github", "owner/repo"),
     # profile and reserved pages: source known, id unknown
     ("https://github.com/oojBuffalo", "github", None),
     ("https://github.com/orgs/anthropics/repositories", "github", None),

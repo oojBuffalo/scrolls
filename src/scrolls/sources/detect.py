@@ -384,9 +384,24 @@ def _wikidata_id(path_parts: list[str]) -> str | None:
 
 
 def _github_id(path_parts: list[str]) -> str | None:
+    """The `owner/repo` for a github.com URL, or `owner/repo#<n>` for a thread.
+
+    An issue or pull-request URL identifies a discussion thread distinct from
+    the repository (ADR 0084): `/issues/<n>` and the web PR path `/pull/<n>`
+    (singular) carry the number as `owner/repo#<n>` — GitHub's own cross-reference
+    notation — so a deep link into the thread (the review tab, a `#issuecomment`
+    fragment dropped by urlparse) still dedupes to it. The number must be all
+    digits, so the issue/PR *list* (`/issues`, `/pulls`) and the new-PR page
+    (`/pull/new`) fall through to the repo. Every other sub-resource (`/blob`,
+    `/tree`, `/releases`, …) likewise collapses to `owner/repo`, the rule a
+    saved code-browsing link has always followed.
+    """
     if len(path_parts) < 2 or path_parts[0] in GITHUB_RESERVED:
         return None
-    return f"{path_parts[0]}/{path_parts[1]}"
+    repo = f"{path_parts[0]}/{path_parts[1]}"
+    if len(path_parts) >= 4 and path_parts[2] in ("issues", "pull") and path_parts[3].isdigit():
+        return f"{repo}#{path_parts[3]}"
+    return repo
 
 
 # A gist id is a hexadecimal hash — modern gists use 32 hex chars, older ones

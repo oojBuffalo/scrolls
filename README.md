@@ -185,7 +185,21 @@ playlists degrade to metadata-only scrolls — see
 (keyless REST API: repo metadata plus optional README; author-curated
 repo topics become `concepts`, the first producer for the KB's concept
 pages; set `GITHUB_TOKEN`/`GH_TOKEN` to lift the rate limit — see
-`docs/adr/0007-github-adapter-topics-as-concepts.md`), **gist**
+`docs/adr/0007-github-adapter-topics-as-concepts.md`. A saved issue or
+pull-request URL is a second content kind on the same source — see
+`docs/adr/0084-github-issue-pr-adapter.md`: `github.com/<owner>/<repo>/issues/<n>`
+and `/pull/<n>` detect as `owner/repo#<n>`, a discussion thread distinct
+from the repo, and the adapter dispatches on the `#` in the id. The issues
+endpoint serves both issues and PRs, so one path fetches the thread and a
+second GET its conversation comments (degrading to body-only on failure);
+the Markdown body and bylined comments become the searchable
+`extracted_text`, the curated labels become `concepts`, the kind and state
+(`issue`/`pull request`, `open`/`closed`/`merged`) become `tags`, and a
+`github.com/<owner>/<repo>` link wires the issue↔repo edge. A thread gets
+*no* category default — a bug, a feature request, and a design discussion
+are too heterogeneous for one label — so it stays unclassified like a
+Hacker News post until a title rule or the LLM engine names it),
+**gist**
 (the developer code-snippet sibling of the repo adapter, its own source
 since `gist.github.com`'s host, API, and content all differ — see
 `docs/adr/0078-github-gist-adapter.md`: one keyless `GET /gists/<id>`
