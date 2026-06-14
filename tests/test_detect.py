@@ -172,11 +172,27 @@ CASES = [
     # deep links dedupe to the repo (github's flat shape)
     ("https://bitbucket.org/atlassian/python-bitbucket/src/master/", "bitbucket",
      "atlassian/python-bitbucket"),
+    # an issue or pull request is a distinct discussion thread (ADR 0087):
+    # Bitbucket splits numbering like gitlab, so the gitlab markers ride in the
+    # id — `#<n>` for an issue, `!<n>` for a PR (the web path is /pull-requests/)
+    ("https://bitbucket.org/atlassian/python-bitbucket/issues/42", "bitbucket",
+     "atlassian/python-bitbucket#42"),
     ("https://bitbucket.org/atlassian/python-bitbucket/pull-requests/1", "bitbucket",
+     "atlassian/python-bitbucket!1"),
+    # deep links into the thread (the diff tab) dedupe to it
+    ("https://bitbucket.org/atlassian/python-bitbucket/pull-requests/1/diff", "bitbucket",
+     "atlassian/python-bitbucket!1"),
+    # the issue/PR *lists* (no number) collapse to the repo
+    ("https://bitbucket.org/atlassian/python-bitbucket/issues", "bitbucket",
+     "atlassian/python-bitbucket"),
+    ("https://bitbucket.org/atlassian/python-bitbucket/pull-requests", "bitbucket",
      "atlassian/python-bitbucket"),
     # folded lowercase (Bitbucket auto-lowercases slugs, routes case-insensitively)
     ("https://bitbucket.org/Atlassian/Python-Bitbucket", "bitbucket",
      "atlassian/python-bitbucket"),
+    # the thread marker rides on the folded path too
+    ("https://bitbucket.org/Atlassian/Python-Bitbucket/pull-requests/7", "bitbucket",
+     "atlassian/python-bitbucket!7"),
     # workspace page, reserved routes, and the bare host carry no fetchable repo
     ("https://bitbucket.org/atlassian", "bitbucket", None),
     ("https://bitbucket.org/dashboard/overview", "bitbucket", None),

@@ -11,10 +11,10 @@ Precedence (first hit wins):
 1. curated-platform defaults — wikipedia/wikidata/rfc/arxiv/biorxiv/medrxiv/pubmed/
    crossref/zenodo/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
    huggingface items are what their platform makes them, whatever the title says
-   (a github/gitlab/gitea repo is a `project`, but a github issue/PR
-   `owner/repo#<n>`, gitlab issue/MR `group/project#<n>`/`!<n>`, or gitea
-   issue/PR `<host>/<owner>/<repo>#<n>` is a discussion thread left
-   unclassified — ADR 0084/0085/0086);
+   (a github/gitlab/gitea/bitbucket repo is a `project`, but a github issue/PR
+   `owner/repo#<n>`, gitlab issue/MR `group/project#<n>`/`!<n>`, gitea issue/PR
+   `<host>/<owner>/<repo>#<n>`, or bitbucket issue/PR `workspace/repo#<n>`/`!<n>`
+   is a discussion thread left unclassified — ADR 0084/0085/0086/0087);
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -227,6 +227,13 @@ def _curated_category(item: ScrollItem) -> str | None:
     # numbering like github, so one `#` marker carves out (not gitlab's two).
     if item.source == "gitea":
         return None if "#" in (item.source_id or "") else "project"
+    # Bitbucket serves the same two kinds (ADR 0087): a repo (`workspace/repo`)
+    # is a `project`, but an issue (`…#<n>`) or pull request (`…!<n>`) is a
+    # heterogeneous discussion thread — unclassified by default like github's.
+    # Bitbucket splits numbering like gitlab, so two markers (`#`/`!`) carve out.
+    if item.source == "bitbucket":
+        source_id = item.source_id or ""
+        return None if ("#" in source_id or "!" in source_id) else "project"
     if item.source == "crossref":
         return _doi_category(item)
     # A Zenodo deposit's category depends on its resource type, a fetch-time

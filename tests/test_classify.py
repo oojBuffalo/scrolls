@@ -141,8 +141,29 @@ def test_gitea_thread_still_obeys_title_rules():
 
 
 def test_bitbucket_is_project():
-    item = make_item(source="bitbucket", title="atlassian/python-bitbucket")
+    item = make_item(source="bitbucket", source_id="atlassian/python-bitbucket",
+                     title="atlassian/python-bitbucket")
     assert classify_item(item).category == "project"
+
+
+def test_bitbucket_issue_and_pull_request_are_not_projects():
+    # Bitbucket mirrors gitlab (ADR 0087): an issue (`workspace/repo#<n>`) or a
+    # pull request (`workspace/repo!<n>`) is a heterogeneous discussion thread,
+    # so it stays unclassified, not `project`. Bitbucket splits numbering, so the
+    # two markers (#/!) both carve out.
+    issue = make_item(source="bitbucket", source_id="atlassian/aui#7",
+                      title="FTS5 ranking returns stale results")
+    assert classify_item(issue).category is None
+    pr = make_item(source="bitbucket", source_id="atlassian/aui!42",
+                   title="Add faceted search")
+    assert classify_item(pr).category is None
+
+
+def test_bitbucket_thread_still_obeys_title_rules():
+    # the curated `project` no longer pre-empts a "how to" thread title
+    item = make_item(source="bitbucket", source_id="atlassian/aui!9",
+                     title="How to rebuild the FTS index")
+    assert classify_item(item).category == "tutorial"
 
 
 def test_crossref_is_paper():

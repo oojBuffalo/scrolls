@@ -315,3 +315,216 @@ def test_api_headers_use_bearer_token_when_set(monkeypatch):
 
 def test_bitbucket_adapter_is_registered():
     assert FETCH_ADAPTERS["bitbucket"] is fetch_item
+
+
+# --- issues and pull requests (ADR 0087) ----------------------------------
+#
+# A `/issues/<n>` or `/pull-requests/<n>` URL detects as a discussion thread.
+# Bitbucket splits issue/PR numbering like gitlab, so the gitlab markers ride in
+# the id — `workspace/repo#<n>` for an issue, `workspace/repo!<n>` for a PR — and
+# the marker also picks the endpoint (`/issues/<n>` vs `/pullrequests/<n>`). The
+# PR is the live-verified common case; the native issue tracker is deprecated.
+
+PR = {
+    "id": 42,
+    "type": "pullrequest",
+    "title": "Add faceted search",
+    "description": "Implements `--source`/`--category` filters.\n\nSee https://example.com/spec.",
+    "state": "MERGED",
+    "comment_count": 2,
+    "created_on": "2026-05-12T10:00:00.000000+00:00",
+    "author": {"display_name": "Bob Builder", "nickname": "bob"},
+    "links": {"html": {"href": "https://bitbucket.org/atlassian/aui/pull-requests/42"}},
+}
+
+ISSUE = {
+    "id": 7,
+    "type": "issue",
+    "title": "FTS5 ranking returns stale results",
+    "content": {"raw": "Rebuilding the index lags BM25 ranking.", "markup": "markdown"},
+    "state": "open",
+    "kind": "bug",
+    "priority": "major",
+    "created_on": "2026-05-10T09:00:00.000000+00:00",
+    "reporter": {"display_name": "Alice Dev", "nickname": "alice"},
+    "links": {"html": {"href": "https://bitbucket.org/atlassian/aui/issues/7"}},
+}
+
+PR_COMMENTS = {
+    "values": [
+        {"user": {"display_name": "Carol"}, "content": {"raw": "I can repro this."}, "deleted": False},
+        {"user": {"display_name": "Dave"}, "content": {"raw": "LGTM."}, "deleted": False},
+        # a deleted comment and an inline diff-line comment are both skipped
+        {"user": {"display_name": "Eve"}, "content": {"raw": "oops"}, "deleted": True},
+        {"user": {"display_name": "Frank"}, "content": {"raw": "nit: spacing"},
+         "inline": {"path": "x.js", "to": 10}},
+    ]
+}
+
+
+def thread_item(source_id="atlassian/aui!42", **overrides):
+    base = dict(
+        id=f"bitbucket:{source_id}",
+        source="bitbucket",
+        source_id=source_id,
+        url="https://bitbucket.org/atlassian/aui/pull-requests/42",
+        saved_at="2026-06-13T00:00:00+00:00",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def routed_thread(thread=PR, comments=PR_COMMENTS):
+    def get_json(url):
+        if "/comments" in url:
+            return {"values": [dict(c) for c in comments["values"]]}
+        return dict(thread)
+
+    return get_json
+
+
+def test_fetch_pull_request_maps_fields():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+
+    assert fetched.title == "atlassian/aui!42: Add faceted search"
+    assert fetched.author == "Bob Builder"
+    assert fetched.published_at == "2026-05-12T10:00:00+00:00"
+    assert fetched.canonical_url == "https://bitbucket.org/atlassian/aui/pull-requests/42"
+    # kind + state → tags (MERGED normalized to github's vocab)
+    assert fetched.tags == ("pull request", "merged")
+    # Bitbucket has no labels feature → concepts empty by design
+    assert fetched.concepts == ()
+    assert fetched.summary == "Implements `--source`/`--category` filters."
+    assert fetched.provenance["adapter"] == "bitbucket"
+    assert fetched.provenance["extraction_method"] == "bitbucket-api:pullrequest+comments"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_pull_request_body_and_comments_become_extracted_text():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    assert "Implements `--source`/`--category` filters." in fetched.extracted_text
+    assert "Comment by Carol" in fetched.extracted_text
+    assert "I can repro this." in fetched.extracted_text
+    assert "Comment by Dave" in fetched.extracted_text
+    # deleted and inline (diff-line) comments are skipped
+    assert "oops" not in fetched.extracted_text
+    assert "nit: spacing" not in fetched.extracted_text
+
+
+def test_fetch_pull_request_links_carry_the_repo_edge_and_body_urls():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    assert "https://bitbucket.org/atlassian/aui" in fetched.links
+    assert "https://example.com/spec" in fetched.links
+    assert fetched.canonical_url not in fetched.links
+
+
+def test_fetch_pull_request_keeps_raw_records_for_rebuilds():
+    fetched = fetch_item(thread_item(), get_json=routed_thread())
+    raw = json.loads(fetched.raw_text)
+    assert raw["thread"]["id"] == 42
+    assert len(raw["comments"]) == 4  # raw keeps all, formatting filters
+
+
+def test_declined_pull_request_is_closed_not_merged():
+    declined = {**PR, "state": "DECLINED", "comment_count": 0}
+    fetched = fetch_item(thread_item(), get_json=routed_thread(thread=declined))
+    assert fetched.tags == ("pull request", "closed")
+
+
+def test_open_pull_request_state():
+    open_pr = {**PR, "state": "OPEN"}
+    fetched = fetch_item(thread_item(), get_json=routed_thread(thread=open_pr))
+    assert fetched.tags == ("pull request", "open")
+
+
+def test_fetch_issue_uses_the_issues_endpoint_and_content_raw():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        if "/comments" in url:
+            return {"values": []}
+        return dict(ISSUE)
+
+    fetched = fetch_item(thread_item(source_id="atlassian/aui#7"), get_json=capture)
+    assert seen[0] == "https://api.bitbucket.org/2.0/repositories/atlassian/aui/issues/7"
+    assert fetched.title == "atlassian/aui#7: FTS5 ranking returns stale results"
+    assert fetched.author == "Alice Dev"  # the reporter, not a PR author
+    assert fetched.tags == ("issue", "open")
+    assert fetched.extracted_text == "Rebuilding the index lags BM25 ranking."
+    assert fetched.provenance["extraction_method"] == "bitbucket-api:issue"
+
+
+def test_fetch_issue_state_normalizes_to_closed():
+    for state in ("resolved", "wontfix", "invalid", "duplicate", "closed"):
+        issue = {**ISSUE, "state": state}
+        fetched = fetch_item(
+            thread_item(source_id="atlassian/aui#7"),
+            get_json=routed_thread(thread=issue, comments={"values": []}),
+        )
+        assert fetched.tags == ("issue", "closed"), state
+
+
+def test_fetch_pull_request_skips_comment_request_when_count_is_zero():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return {**PR, "comment_count": 0}
+
+    fetch_item(thread_item(), get_json=capture)
+    assert seen == ["https://api.bitbucket.org/2.0/repositories/atlassian/aui/pullrequests/42"]
+    assert not any("/comments" in u for u in seen[1:])
+
+
+def test_fetch_thread_dispatches_pr_marker_to_pullrequests_endpoint():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return {**PR, "comment_count": 0}
+
+    fetch_item(thread_item(source_id="atlassian/aui!42"), get_json=capture)
+    assert "/pullrequests/42" in seen[0]
+
+
+def test_fetch_thread_degrades_when_comments_fail():
+    def get_json(url):
+        if "/comments" in url:
+            raise OSError("HTTP Error 500: Server Error")
+        return dict(PR)
+
+    fetched = fetch_item(thread_item(), get_json=get_json)
+    assert "Implements `--source`/`--category` filters." in fetched.extracted_text
+    assert "Comment by" not in (fetched.extracted_text or "")
+    assert fetched.provenance["extraction_method"] == "bitbucket-api:pullrequest"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_pull_request_with_empty_body_summarizes_engagement():
+    pr = {**PR, "description": "", "comment_count": 3}
+    fetched = fetch_item(thread_item(), get_json=routed_thread(thread=pr))
+    assert fetched.summary == "Bitbucket discussion: 3 comments."
+    assert fetched.extracted_text.startswith("### Comments")
+
+
+def test_fetch_thread_wraps_request_errors():
+    def boom(url):
+        raise OSError("HTTP Error 410: Gone")  # the deprecated issue tracker
+
+    with pytest.raises(FetchError, match="410"):
+        fetch_item(thread_item(source_id="atlassian/aui#7"), get_json=boom)
+
+
+def test_fetch_thread_rejects_a_malformed_thread_id():
+    item = thread_item(source_id="atlassian#7", id="bitbucket:atlassian#7")
+    with pytest.raises(FetchError, match="cannot determine bitbucket thread"):
+        fetch_item(item, get_json=routed_thread())
+
+
+def test_fetch_thread_not_found_when_payload_lacks_an_id():
+    def get_json(url):
+        return {"type": "error", "error": {"message": "Not found"}}
+
+    with pytest.raises(FetchError, match="bitbucket thread not found"):
+        fetch_item(thread_item(), get_json=get_json)

@@ -534,25 +534,41 @@ def _gitea_id(host: str, path_parts: list[str]) -> str | None:
 
 
 def _bitbucket_id(path_parts: list[str]) -> str | None:
-    """`<workspace>/<repo>` for a Bitbucket Cloud repo URL, else None.
+    """`<workspace>/<repo>` for a Bitbucket repo URL, or `…#<n>`/`…!<n>` for a thread.
 
     Bitbucket repos use github's flat `<workspace>/<repo>` shape, so the first
-    two segments are the repo and a deep link (`/src/...`, `/pull-requests/1`,
-    `/issues`) dedupes to it. Unlike gitea, the host does *not* ride in the
-    identity: Bitbucket Cloud is a single hosted service (`api.bitbucket.org`),
-    so one fixed API host serves every repo (the github/gitlab rule).
+    two segments are the repo and a deep link (`/src/...`) dedupes to it. Unlike
+    gitea, the host does *not* ride in the identity: Bitbucket Cloud is a single
+    hosted service (`api.bitbucket.org`), so one fixed API host serves every repo
+    (the github/gitlab rule).
+
+    An issue or pull-request URL is a discussion thread distinct from the repo
+    (ADR 0087). Bitbucket — like gitlab — keeps *separate* numbering for issues
+    and PRs on separate endpoints, so a bare `#<n>` is ambiguous; the gitlab
+    cross-reference markers disambiguate — `workspace/repo#<n>` for an issue
+    (`/issues/<n>`), `workspace/repo!<n>` for a pull request (the web path
+    `/pull-requests/<n>`, hyphenated). The number must be all digits, so the
+    issue/PR *lists* and every other sub-resource collapse to the repo; a deep
+    link into the thread (`/pull-requests/<n>/diff`) still dedupes to it.
 
     The path is folded lowercase: Bitbucket auto-lowercases repo slugs, mints
     lowercase workspace ids, and routes case-insensitively (the live API
     resolves a mixed-case request), so `/Workspace/Repo` and `/workspace/repo`
     dedupe to one item — the gitlab/crates case-fold (ADR 0055/0036), not
-    github's verbatim `owner/repo`. A bare workspace page (one segment) and the
-    reserved site routes (`account`, `dashboard`, `snippets`, …) carry no repo
-    and resolve to the source with no fetchable item — github's pattern.
+    github's verbatim `owner/repo`; the `#`/`!` markers are safe since a slug is
+    lowercase ASCII. A bare workspace page (one segment) and the reserved site
+    routes (`account`, `dashboard`, `snippets`, …) carry no repo and resolve to
+    the source with no fetchable item — github's pattern.
     """
     if len(path_parts) < 2 or path_parts[0].lower() in BITBUCKET_RESERVED:
         return None
-    return f"{path_parts[0].lower()}/{path_parts[1].lower()}"
+    repo = f"{path_parts[0].lower()}/{path_parts[1].lower()}"
+    if len(path_parts) >= 4 and path_parts[3].isdigit():
+        if path_parts[2] == "issues":
+            return f"{repo}#{path_parts[3]}"
+        if path_parts[2] == "pull-requests":
+            return f"{repo}!{path_parts[3]}"
+    return repo
 
 
 def _arxiv_id(path_parts: list[str]) -> str | None:
