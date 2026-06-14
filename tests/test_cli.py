@@ -1918,6 +1918,78 @@ def test_import_items_malformed_line_is_an_error(scrolls_home, tmp_path, capsys)
     assert "error" in json.loads(captured.err)
 
 
+def test_export_items_then_restore_rebuilds_the_whole_library(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the disaster-recovery contract the ADR claims: a JSONL export alone is
+    # enough to reconstruct the library — index rows, then the derived scroll
+    # files (doctor --fix) and the compiled library/ (kb) — byte-for-byte.
+    main(["init"])
+    paths_a = get_paths()
+    items = [
+        ScrollItem(
+            id="wikipedia:en:SQLite",
+            source="wikipedia",
+            url="https://en.wikipedia.org/wiki/SQLite",
+            saved_at="2026-06-12T09:00:00+00:00",
+            source_id="en:SQLite",
+            title="SQLite",
+            extracted_text="SQLite is a C-language library.",
+            summary="An embedded SQL database engine.",
+            category="reference",
+            concepts=("Database software",),
+            markdown_path="scrolls/wikipedia/sqlite.md",
+            stage="rendered",
+        ),
+        ScrollItem(
+            id="github:sqlite/sqlite",
+            source="github",
+            url="https://github.com/sqlite/sqlite",
+            saved_at="2026-06-12T10:00:00+00:00",
+            source_id="sqlite/sqlite",
+            title="sqlite/sqlite",
+            extracted_text="The official SQLite mirror.",
+            category="project",
+            markdown_path="scrolls/github/sqlite-sqlite.md",
+            stage="rendered",
+        ),
+    ]
+    for item in items:
+        insert_item(paths_a.db_path, item)
+        write_scroll(paths_a, item)
+    main(["kb"])
+    original_scrolls = {
+        item.markdown_path: (paths_a.root / item.markdown_path).read_text(
+            encoding="utf-8"
+        )
+        for item in items
+    }
+    original_index = (paths_a.library_dir / "index.md").read_text(encoding="utf-8")
+
+    capsys.readouterr()
+    main(["export", "items"])
+    out_path = tmp_path / "library.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # restore into a fresh home from the export alone
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["import", "items", str(out_path)])
+    capsys.readouterr()
+
+    # FTS is trigger-maintained on insert, so search works before any rebuild
+    main(["search", "embedded SQL database"])
+    hits = json.loads(capsys.readouterr().out)
+    assert hits[0]["id"] == "wikipedia:en:SQLite"
+
+    # doctor --fix rewrites the missing scroll files; kb recompiles library/
+    main(["doctor", "--fix"])
+    main(["kb"])
+    paths_b = get_paths()
+    for relpath, text in original_scrolls.items():
+        assert (paths_b.root / relpath).read_text(encoding="utf-8") == text
+    assert (paths_b.library_dir / "index.md").read_text(encoding="utf-8") == original_index
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
