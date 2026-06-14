@@ -306,6 +306,32 @@ def list_items(
     return [_from_row(row) for row in rows]
 
 
+def item_to_dict(item: ScrollItem) -> dict[str, Any]:
+    """The item as a JSON-serializable dict — the lossless export shape (ADR 0082).
+
+    `asdict` already renders the tuple fields as lists and `provenance` as a
+    nested dict, so the result round-trips through `json.dumps`/`item_from_dict`
+    with every field intact, in dataclass field order (a stable line for diffs).
+    """
+    return asdict(item)
+
+
+def item_from_dict(data: dict[str, Any]) -> ScrollItem:
+    """Reconstruct an item from `item_to_dict` output, ignoring unknown keys.
+
+    The four JSON list fields come back as tuples (the dataclass shape; the
+    JSON form is a list). Keys the model doesn't define are dropped, so an
+    export written by a newer schema still loads under an older reader
+    (forward compatibility, ADR 0082). The caller must ensure the required
+    identity fields are present — `ScrollItem(**known)` raises otherwise.
+    """
+    known = {name: data[name] for name in _FIELD_NAMES if name in data}
+    for name in _JSON_LIST_FIELDS:
+        if known.get(name) is not None:
+            known[name] = tuple(known[name])
+    return ScrollItem(**known)
+
+
 def _to_row(item: ScrollItem) -> dict[str, Any]:
     row = asdict(item)
     for name in _JSON_LIST_FIELDS:

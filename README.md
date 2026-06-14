@@ -47,7 +47,7 @@ releases feed) and sync registers its new entries.
   scrolls/        # individual Markdown files, one per item, per source
   library/        # compiled interlinked KB (index, graph, works, sources, categories, concepts, tags)
   agents/         # generated agent instruction files (SKILL.md, AGENTS.md)
-  items/          # reserved: raw record exports (currently unused)
+  items/          # reserved (the raw record export is `scrolls export items`, to stdout)
   media/          # captured media files (PDFs, thumbnails, photos), per source
   config.toml     # settings; today: [classify] default_engine + llm_model
 ```
@@ -87,9 +87,11 @@ uv run scrolls import google-takeout <path>  # bulk-import YouTube watch history
 uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML export, as JSON
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
+uv run scrolls import items <path>  # restore items from a Scrolls JSONL export (lossless), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
+uv run scrolls export items   # export items as a lossless JSONL stream (back up / migrate), to stdout
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -969,6 +971,20 @@ second device — `scrolls export opml > feeds.opml`. The export is flat
 URL, and the round-trip is the contract: an export re-imports to the same
 feeds. With import and export, Scrolls is a way-station on a feed list's
 life rather than a sink.
+
+`scrolls export items` / `scrolls import items <path>` are the **lossless**
+export pair (see `docs/adr/0082-items-jsonl-export.md`): the export
+serializes the whole library to a JSON Lines stream on stdout
+(`scrolls export items > library.jsonl`) and the import restores it. Where
+`export bookmarks` and `export opml` round-trip against external tools — and
+so carry only a spine those formats can hold — this round-trips against
+Scrolls' own model, so it carries every field: extracted text, links, media
+refs, provenance, content hash, and stage. That makes it the backup,
+migration, and library-merge format. The import restores the index rows
+(`INSERT OR IGNORE` by id, so re-imports are cheap and never overwrite);
+the derived artifacts rebuild from them with `scrolls doctor --fix` and
+`scrolls kb`. The same `--source`/`--category`/`--tag` filters as
+`export bookmarks` scope a slice.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

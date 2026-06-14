@@ -6,7 +6,7 @@ see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
 Everything below describes code on this branch, verified by
-`uv run pytest` (1815 tests at the time of writing). The docs themselves
+`uv run pytest` (1834 tests at the time of writing). The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -90,6 +90,18 @@ each command moves items between stages or derives artifacts from them.
   the library's subscriptions back to an OPML document on stdout (the
   artifact-is-the-output convention), the round-trip that makes the import a
   way-station rather than a sink (ADR 0077).
+- `scrolls export items` / `scrolls import items <path>` are the **lossless**
+  export pair (`src/scrolls/items_export.py`, ADR 0082): where `export opml`
+  and `export bookmarks` round-trip against external tools and so carry only a
+  spine, this round-trips against Scrolls' own model and carries **every**
+  `ScrollItem` field (extracted text, links, media, provenance, content hash,
+  stage) as JSON Lines on stdout — one item per line via `items.item_to_dict`.
+  It is the back-up / migrate / merge format. `import items` restores the
+  index rows with `INSERT OR IGNORE` (dedupe by id) at whatever stage each item
+  carried; the derived scrolls/media/`library/` rebuild from those rows with
+  `scrolls doctor --fix` and `scrolls kb`. Malformed input is rejected loudly
+  (a backup must not restore silently incomplete), unknown keys tolerated
+  (forward compatibility).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters
@@ -139,7 +151,7 @@ $SCROLLS_HOME (default ~/.scrolls)
   scrolls/       # one Markdown scroll per rendered item, per source
   library/       # compiled KB: index.md, graph.md, sources/, categories/, concepts/
   agents/        # generated agent instruction files (claude/, codex/, hermes/)
-  items/         # reserved (raw record exports; currently unused)
+  items/         # reserved (the raw record export is `scrolls export items`, to stdout; dir unused)
   media/         # captured media files (PDFs, thumbnails, photos), per source
   config.toml    # settings; today: [classify] default_engine + llm_model
 ```

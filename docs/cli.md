@@ -477,6 +477,49 @@ $ scrolls import opml /tmp/scrolls-demo.BgrqMO/subscriptions.opml
 [exit 0]
 ```
 
+### `scrolls import items <path>`
+
+Import items from a Scrolls JSONL export (ADR 0082) — the inverse of
+`scrolls export items`, and the way a backed-up, migrated, or merged-in
+library is restored. `path` is a `.jsonl` file `scrolls export items`
+wrote: one JSON object per line, each a complete item record. A missing
+file, or any malformed line — invalid JSON, a non-object, or a record
+without the required identity fields (`id`, `source`, `url`, `saved_at`)
+— is an error envelope on stderr naming the line, so a corrupt backup
+fails loudly instead of restoring silently incomplete
+(`test_import_items_missing_file_is_an_error`,
+`test_import_items_malformed_line_is_an_error` in `tests/test_cli.py`;
+`test_load_malformed_json_line_raises_naming_the_line` in
+`tests/test_items_export.py`). Unknown keys are tolerated, so an export
+written by a newer schema still loads here
+(`test_load_ignores_unknown_keys`).
+
+Unlike the spine imports (bookmarks, Pocket), this restores **every**
+field — extracted text, links, media refs, provenance, content hash,
+stage — because the export carries them. It restores the index rows only;
+the derived artifacts rebuild from those rows — run `scrolls doctor --fix`
+to rewrite any missing scroll file and the FTS index, then `scrolls kb`
+to recompile the library. Existing items are never overwritten
+(`INSERT OR IGNORE` by id), so a re-import is cheap and a partial restore
+resumes safely (`test_import_items_is_idempotent`,
+`test_import_items_never_overwrites_existing_item`).
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new items inserted |
+| `skipped` | already present (id collision is the dedupe working) |
+| `items` | item records read from the file (blank lines excluded) |
+
+```console
+$ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
+{"imported": 6, "skipped": 0, "items": 6}
+[exit 0]
+
+$ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
+{"imported": 0, "skipped": 6, "items": 6}
+[exit 0]
+```
+
 ### `scrolls export opml`
 
 Export the library's feed subscriptions as an OPML 2.0 document (ADR 0077)
@@ -564,6 +607,44 @@ $ scrolls export bookmarks
     <DT><A HREF="https://en.wikipedia.org/wiki/SQLite" ADD_DATE="1781254800" TAGS="databases">SQLite</A>
     <DT><A HREF="https://www.youtube.com/watch?v=abc123xyz00" ADD_DATE="1781260200" TAGS="databases,search">How SQLite FTS Works</A>
 </DL><p>
+[exit 0]
+```
+
+### `scrolls export items`
+
+Export the library's items as a lossless JSON Lines stream (ADR 0082) —
+the inverse of `scrolls import items`, and the way a whole library is
+backed up, migrated to another machine, or merged into another. Where
+`export bookmarks` and `export opml` round-trip against external tools and
+so carry only a spine those formats can hold, this round-trips against
+Scrolls' own model, so it carries **every** field: extracted text, links,
+media refs, provenance, content hash, `markdown_path` (stored relative, so
+it is portable), and stage. The stream **is** the artifact, so it prints
+raw on stdout (the same exception `export opml`/`export bookmarks` make to
+the JSON-on-stdout rule) — redirect or pipe it:
+`scrolls export items > library.jsonl`. There is no path argument; the
+shell owns redirection.
+
+Each line is one complete item as a JSON object, in dataclass field order
+(a stable line for diffs), in `scrolls list` order (oldest save first). The
+same three durable item-property filters `export bookmarks` offers scope
+the export and AND together: `--source`, `--category` (an empty value
+selects unclassified items), and `--tag` (case-insensitive). So
+`scrolls export items --source arxiv > papers.jsonl` exports just the arXiv
+items (`test_export_items_source_filter_scopes_the_export` in
+`tests/test_cli.py`).
+
+The round-trip is the contract: an export re-imports to the same items,
+every field intact — into a fresh library it is a faithful restore, into
+the same one the import skips them as already-present
+(`test_export_items_round_trips_through_import` in `tests/test_cli.py`,
+`test_dump_then_load_is_a_lossless_round_trip` in
+`tests/test_items_export.py`). An empty library produces an empty document
+(zero lines), not an error (`test_export_items_empty_library_is_valid`).
+
+```console
+$ scrolls export items --source arxiv
+{"id": "arxiv:1706.03762", "source": "arxiv", "url": "https://arxiv.org/abs/1706.03762", "saved_at": "2026-06-12T08:00:00+00:00", "source_id": "1706.03762", "canonical_url": "http://arxiv.org/abs/1706.03762v7", "title": "Attention Is All You Need", "author": "Ashish Vaswani et al.", "published_at": "2017-06-12T17:57:34+00:00", "raw_text": "<the raw Atom entry>", "extracted_text": "The dominant sequence transduction models…", "summary": "We propose the Transformer.", "category": "paper", "domain": null, "tags": ["cs.CL", "cs.LG"], "concepts": [], "links": ["https://arxiv.org/pdf/1706.03762"], "media": [{"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": "media/arxiv/1706-03762-1.pdf"}], "content_hash": "sha256:6d2e1066…", "markdown_path": "scrolls/arxiv/attention-is-all-you-need.md", "provenance": {"adapter": "arxiv", "fetched_at": "2026-06-12T08:00:05+00:00", "extraction_method": "arxiv-atom+pypdf"}, "stage": "rendered"}
 [exit 0]
 ```
 

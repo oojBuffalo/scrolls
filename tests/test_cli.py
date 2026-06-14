@@ -1792,6 +1792,132 @@ def test_export_bookmarks_tag_filter_scopes_the_export(scrolls_home, capsys):
     assert "https://example.com/b" not in out
 
 
+def _seed_rich_item(scrolls_home):
+    """A fully-populated rendered item, so the lossless round-trip is real."""
+    main(["init"])
+    item = ScrollItem(
+        id="arxiv:1706.03762",
+        source="arxiv",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T08:00:00+00:00",
+        source_id="1706.03762",
+        title="Attention Is All You Need",
+        author="Ashish Vaswani et al.",
+        extracted_text="The dominant sequence transduction models…",
+        summary="We propose the Transformer.",
+        category="paper",
+        domain="machine learning",
+        tags=("cs.CL", "cs.LG"),
+        concepts=("Attention",),
+        links=("https://doi.org/10.5555/3295222",),
+        media=({"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762"},),
+        content_hash="sha256:abc",
+        markdown_path="scrolls/arxiv/attention-is-all-you-need.md",
+        provenance={"adapter": "arxiv", "extraction_method": "arxiv-atom+pypdf"},
+        stage="rendered",
+    )
+    insert_item(get_paths().db_path, item)
+    return item
+
+
+def test_export_items_emits_jsonl_to_stdout(scrolls_home, capsys):
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    exit_code = main(["export", "items"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # one JSON object per line, raw on stdout (not a JSON envelope), lossless
+    record = json.loads(out.splitlines()[0])
+    assert record["id"] == "arxiv:1706.03762"
+    assert record["extracted_text"] == "The dominant sequence transduction models…"
+    assert record["provenance"]["adapter"] == "arxiv"
+    assert record["media"][0]["type"] == "pdf"
+
+
+def test_export_items_round_trips_through_import(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    seeded = _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    main(["export", "items"])
+    exported = capsys.readouterr().out
+    out_path = tmp_path / "library.jsonl"
+    out_path.write_text(exported, encoding="utf-8")
+
+    # import into a *fresh* library: a full, faithful restore of the item
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored-home"))
+    exit_code = main(["import", "items", str(out_path)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"imported": 1, "skipped": 0, "items": 1}
+    restored = get_item(get_paths().db_path, "arxiv:1706.03762")
+    assert restored == seeded  # every field survived the round-trip
+
+
+def test_import_items_is_idempotent(scrolls_home, tmp_path, capsys):
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    main(["export", "items"])
+    out_path = tmp_path / "library.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    # re-importing into the same library skips the already-present item
+    exit_code = main(["import", "items", str(out_path)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"imported": 0, "skipped": 1, "items": 1}
+
+
+def test_import_items_never_overwrites_existing_item(scrolls_home, tmp_path, capsys):
+    seeded = _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    main(["export", "items"])
+    exported = capsys.readouterr().out
+    # mutate the stored row, then re-import the *old* export: INSERT OR IGNORE
+    # keeps the current row rather than reverting it
+    update_item(get_paths().db_path, dataclasses.replace(seeded, title="Edited"))
+    out_path = tmp_path / "library.jsonl"
+    out_path.write_text(exported, encoding="utf-8")
+    main(["import", "items", str(out_path)])
+    assert get_item(get_paths().db_path, "arxiv:1706.03762").title == "Edited"
+
+
+def test_export_items_empty_library_is_valid(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["export", "items"])
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""  # an empty JSONL document
+
+
+def test_export_items_source_filter_scopes_the_export(scrolls_home, capsys):
+    main(["add", "https://github.com/sqlite/sqlite"])
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+    exit_code = main(["export", "items", "--source", "github"])
+    assert exit_code == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["source"] == "github"
+
+
+def test_import_items_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    exit_code = main(["import", "items", str(tmp_path / "nowhere.jsonl")])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+def test_import_items_malformed_line_is_an_error(scrolls_home, tmp_path, capsys):
+    path = tmp_path / "bad.jsonl"
+    path.write_text("not json at all\n", encoding="utf-8")
+    exit_code = main(["import", "items", str(path)])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

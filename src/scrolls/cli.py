@@ -49,6 +49,8 @@ from scrolls.items import (
     list_items,
     update_item,
 )
+from scrolls.items_export import ItemsSourceError
+from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
@@ -322,6 +324,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="exported OPML feed list (from Feedly, Inoreader, NetNewsWire, "
         "and most RSS readers)",
     )
+    import_items_parser = import_sub.add_parser(
+        "items",
+        help="Import items from a Scrolls JSONL export (JSON output)",
+    )
+    import_items_parser.add_argument(
+        "path",
+        help="a JSONL items export written by `scrolls export items`",
+    )
 
     export_parser = subparsers.add_parser(
         "export", help="Export library data to a portable format (to stdout)"
@@ -345,6 +355,22 @@ def build_parser() -> argparse.ArgumentParser:
         "unclassified items",
     )
     export_bookmarks_parser.add_argument(
+        "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
+    )
+    export_items_parser = export_sub.add_parser(
+        "items",
+        help="Export items as a lossless JSONL stream (to stdout)",
+    )
+    export_items_parser.add_argument(
+        "--source", default=None, help="Only items from one source, e.g. web, github"
+    )
+    export_items_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only items with this category; an empty value selects "
+        "unclassified items",
+    )
+    export_items_parser.add_argument(
         "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
     )
 
@@ -569,10 +595,14 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_pocket(args.path)
         if args.import_command == "opml":
             return _cmd_import_opml(args.path)
+        if args.import_command == "items":
+            return _cmd_import_items(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
         if args.export_command == "bookmarks":
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
+        if args.export_command == "items":
+            return _cmd_export_items(args.source, args.category, args.tag)
         return _cmd_export_opml()
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -854,6 +884,30 @@ def _cmd_import_opml(path: str) -> int:
     return 0
 
 
+def _cmd_import_items(path: str) -> int:
+    try:
+        imported_items, stats = load_items_export(Path(path).expanduser())
+    except ItemsSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for item in imported_items:
+        # INSERT OR IGNORE: an existing item (earlier import, or a manual
+        # `add`/user edit) is never overwritten — re-imports stay cheap.
+        # Derived artifacts rebuild from these rows: `doctor --fix` rewrites
+        # missing scrolls and the FTS index, `kb` recompiles the library.
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    print(json.dumps({**counts, **stats}))
+    return 0
+
+
 def _cmd_export_opml() -> int:
     paths = get_paths()
     subscriptions = (
@@ -880,6 +934,24 @@ def _cmd_export_bookmarks(
     # the bookmark file *is* the artifact, like `export opml`, so it prints raw —
     # `scrolls export bookmarks > bookmarks.html` (the shell owns redirection)
     sys.stdout.write(dump_bookmark_export(items))
+    return 0
+
+
+def _cmd_export_items(
+    source: str | None, category: str | None, tag: str | None
+) -> int:
+    paths = get_paths()
+    # the same durable-property facets `export bookmarks` offers scope the
+    # export to a slice; they AND together and default to the whole library
+    # (the backup case), in `list_items` saved order
+    items = (
+        list_items(paths.db_path, source=source, category=category, tag=tag)
+        if paths.db_path.exists()
+        else []
+    )
+    # the JSONL stream *is* the artifact, like `export opml`/`export bookmarks`,
+    # so it prints raw — `scrolls export items > library.jsonl`
+    sys.stdout.write(dump_items_export(items))
     return 0
 
 
