@@ -40,6 +40,7 @@ from scrolls.sources import (  # noqa: E402
     lemmy,
     lobsters,
     mastodon,
+    maven,
     misskey,
     npm,
     nuget,
@@ -120,6 +121,14 @@ FETCH_ADAPTERS = {
     "lemmy": threadiverse.fetch_item,
     "lobsters": lobsters.fetch_item,
     "mastodon": mastodon.fetch_item,
+    # Maven Central is the JVM package registry (Java/Kotlin/Scala/Clojure/
+    # Android), the largest ecosystem the family had not reached; two plain
+    # requests against the flat repository (the maven-metadata.xml version index
+    # + the POM manifest, the NuGet shape), identity the coordinate
+    # `groupId:artifactId` verbatim, concepts empty by design like RubyGems/Go
+    # (a POM has no keyword facet), the publish date read from the index's
+    # lastUpdated (ADR 0092).
+    "maven": maven.fetch_item,
     # Misskey-family is Fediverse like mastodon but speaks its own API, so it
     # is a separate source/adapter, not a mastodon URL shape (ADR 0051).
     "misskey": misskey.fetch_item,

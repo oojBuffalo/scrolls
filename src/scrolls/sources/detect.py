@@ -67,6 +67,21 @@ NUGET_HOSTS = {"nuget.org", "www.nuget.org"}
 # hackage.haskell.org is the Haskell package registry; the fetch adapter reads
 # the package's cabal manifest from the same host.
 HACKAGE_HOSTS = {"hackage.haskell.org", "www.hackage.haskell.org"}
+# Maven Central is the JVM package registry. Two URL grammars detect alike: the
+# `/artifact/<group>/<artifact>` browse pages of the official UIs and the
+# popular third-party index, and the slash-encoded raw repository file tree. The
+# fetch adapter talks to the flat repository (repo1.maven.org/maven2) regardless
+# of which the saved URL named. mvnrepository.com indexes several repositories,
+# so an artifact it lists that is not on Central degrades to a failed fetch.
+MAVEN_ARTIFACT_HOSTS = {
+    "central.sonatype.com", "www.central.sonatype.com",
+    "search.maven.org", "www.search.maven.org",
+    "mvnrepository.com", "www.mvnrepository.com",
+}
+MAVEN_REPO_HOSTS = {
+    "repo1.maven.org", "www.repo1.maven.org",
+    "repo.maven.apache.org", "www.repo.maven.apache.org",
+}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
@@ -280,6 +295,12 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in HACKAGE_HOSTS:
         return DetectedSource("hackage", _hackage_id(path_parts))
+
+    if host in MAVEN_ARTIFACT_HOSTS:
+        return DetectedSource("maven", _maven_artifact_id(path_parts))
+
+    if host in MAVEN_REPO_HOSTS:
+        return DetectedSource("maven", _maven_repo_id(path_parts))
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
@@ -906,6 +927,77 @@ def _hackage_id(path_parts: list[str]) -> str | None:
         return None
     name = _HACKAGE_VERSION_SUFFIX.sub("", unquote(path_parts[1]).strip())
     return name or None
+
+
+# A Maven groupId/artifactId segment: alphanumerics plus `.`/`-`/`_` (the
+# coordinate naming rules); case-sensitive, so never folded. A version directory
+# in the raw repository starts with a digit (`1.0`, `33.4.0-jre`), which the
+# repo-path parser uses to find where the coordinate ends.
+_MAVEN_PART_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _maven_artifact_id(path_parts: list[str]) -> str | None:
+    """The `groupId:artifactId` for an `/artifact/<group>/<artifact>` URL, else None.
+
+    The official Central UIs (central.sonatype.com, search.maven.org) and the
+    third-party index (mvnrepository.com) share one unambiguous browse grammar:
+    `/artifact/<group>/<artifact>[/<version>]`. Identity is the coordinate only,
+    so a trailing version is ignored (the registry-family pattern), and the
+    coordinate is kept verbatim — Maven groupIds/artifactIds are case-sensitive
+    and the repository is a literal file tree (the npm/RubyGems/Hackage rule, ADR
+    0035/0040/0091). The artifact list and search pages carry no coordinate and
+    resolve to the source with no fetchable item.
+    """
+    if len(path_parts) < 3 or path_parts[0] != "artifact":
+        return None
+    group = unquote(path_parts[1]).strip()
+    artifact = unquote(path_parts[2]).strip()
+    if not _fullmatch(_MAVEN_PART_RE, group) or not _fullmatch(_MAVEN_PART_RE, artifact):
+        return None
+    return f"{group}:{artifact}"
+
+
+def _maven_repo_id(path_parts: list[str]) -> str | None:
+    """The `groupId:artifactId` for a raw `/maven2/<group-path>/<artifact>/…` URL.
+
+    The flat repository encodes the reverse-DNS group as a slash path
+    (`com/google/guava`), so the coordinate must be reassembled. The version
+    directory is the tell: the first segment after `maven2` that starts with a
+    digit is a version, so the segment before it is the artifact and everything
+    before that is the dotted group (this handles even a legacy single-segment
+    group like `junit/junit/4.13.2/…`). With no version segment a trailing file
+    (`maven-metadata.xml`, a `.pom`/`.jar`) is dropped and the last remaining
+    segment is the artifact. A bare directory listing with neither is ambiguous —
+    `/com/google/` could be the `com.google` group's listing or a `com:google`
+    artifact — so it is claimed only at the reverse-DNS group + artifact shape
+    (≥3 segments), leaving a 2-segment group listing unclaimed; the residual
+    boundary ambiguity of a deeper bare listing degrades to a benign failed fetch
+    (the Go sub-package posture, ADR 0042). The unambiguous `/artifact/` UI
+    grammar covers the cases this heuristic cannot.
+    """
+    if not path_parts or path_parts[0] != "maven2":
+        return None
+    segments = [unquote(p).strip() for p in path_parts[1:] if p.strip()]
+    artifact_index = next(
+        (i for i, seg in enumerate(segments) if seg[:1].isdigit()), None
+    )
+    if artifact_index is not None:
+        artifact_index -= 1  # the segment before the version directory
+    elif segments and ("." in segments[-1] or segments[-1] == "maven-metadata.xml"):
+        segments = segments[:-1]  # drop a trailing file, the artifact is last
+        artifact_index = len(segments) - 1
+    elif len(segments) >= 3:
+        artifact_index = len(segments) - 1  # a bare reverse-DNS artifact dir
+    else:
+        return None  # a 2-segment bare listing is a group, not an artifact
+    if artifact_index < 1:  # need at least one group segment before the artifact
+        return None
+    group_segments = segments[:artifact_index]
+    artifact = segments[artifact_index]
+    parts = [*group_segments, artifact]
+    if not all(_fullmatch(_MAVEN_PART_RE, part) for part in parts):
+        return None
+    return f"{'.'.join(group_segments)}:{artifact}"
 
 
 def _go_id(path_parts: list[str]) -> str | None:

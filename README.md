@@ -679,7 +679,53 @@ repository resolving to the package's github repo through `scrolls related`
 (the package↔repo edge). The cabal carries no upload date, so `published_at` is
 honestly left as the feed seed (Go's and NuGet's honest gap); a Hackage package
 classifies as `tool`, and a cabal with no `name` field is a fetch error rather
-than a junk scroll), and
+than a junk scroll), and **maven**
+(the keyless Maven Central flat repository — Haskell's JVM successor and the
+eleventh of the package family, reaching the largest ecosystem of all
+(Java, Kotlin, Scala, Clojure, Groovy, Android) — see
+`docs/adr/0092-maven-central-adapter.md`: a saved Maven artifact URL becomes a
+clean scroll from the static repository `repo1.maven.org/maven2`, what a build
+tool resolves against, rather than the rate-limited Solr search API or a
+`trafilatura` scrape. Two plain requests, the Go/NuGet "version index + manifest"
+shape (ADR 0042/0090): `GET /<group-path>/<artifact>/maven-metadata.xml` returns
+the `<versioning>` with the `<release>` pointer, the `<versions>` list, and a
+`<lastUpdated>` stamp, and the chosen version's `.pom` is the manifest, both
+parsed with stdlib ElementTree. Identity is the Maven **coordinate
+`groupId:artifactId`** — the family's only colon-joined coordinate (distinct from
+Packagist's `vendor/name` slash), a reverse-DNS `groupId` (`com.google.guava`)
+plus an `artifactId` (`guava`) — kept **verbatim** since the repository is a
+literal, case-sensitive file tree (the npm/RubyGems/Hackage rule), with the
+group **path-encoded** to address the directory (`com.google.guava` →
+`com/google/guava`, the structural cousin of Go's request case-encoding).
+Detection spans **two grammars**: the unambiguous `/artifact/<group>/<artifact>`
+browse pages of the official UIs (`central.sonatype.com`, `search.maven.org`)
+and the popular third-party index (`mvnrepository.com`, whose non-Central
+artifacts degrade to a failed fetch), and the raw `/maven2/<group-path>/<artifact>`
+file tree where the slash-encoded group is reassembled around the version
+directory. The latest **release** is preferred from the index `<release>` —
+which gets the stable build classifiers `-jre`/`-android` right where a "hyphen
+means pre-release" heuristic fails (Guava's versions are all suffixed) — with a
+SNAPSHOT-excluded numeric ranking the fallback. This is where Maven **diverges
+from NuGet on two axes**: a POM has no keyword/topic facet, so its `concepts`
+are empty *by design* (the RubyGems/Go/Hex posture — the JVM joins as a
+metadata-and-edges source, not a concept source), and its `published_at` is read
+from the **version index's `<lastUpdated>`** (`yyyyMMddHHmmss` UTC), the only
+adapter whose date lives outside its own content manifest. The POM is parsed
+namespace-agnostically (the nuspec lesson): `<name>` else the coordinate is the
+`title`, the `<description>` the searchable `summary` with no `extracted_text`
+(the README ships in the artifact jar — RubyGems'/NuGet's metadata-only
+situation), the `<organization>` name else the lead developer the `author`, the
+freeform `<licenses><license><name>` values the `tags` (kept verbatim, the
+Hackage license rule), and the `<url>` plus the `<scm>` repository the `links`
+— the SCM taken from `<scm><url>` or the `scm:<tool>:<url>`
+`<connection>`/`<developerConnection>` (the ssh `git@host:path` and `git://`
+forms normalized to https, the `.git` suffix stripped), the repository resolving
+to the package's github repo through `scrolls related` (the package↔repo edge).
+The POM *is* the metadata, so its failure is a fetch error rather than a
+metadata-only scroll (NuGet's posture, unlike Go's optional go.mod); a Maven
+artifact classifies as `tool` like every package, and parent-POM inheritance —
+a multi-module child that inherits its description/licenses/scm from a
+`<parent>` — is deferred), and
 **datacite** (the
 keyless DataCite JSON:API — see
 `docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a

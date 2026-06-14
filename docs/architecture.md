@@ -390,6 +390,7 @@ Implemented fetch adapters, all keyless:
 | hex | `sources/hex.py` | keyless `hex.pm/api/packages/<name>`, stdlib only, one request | the Elixir/Erlang package registry, eighth of the family and pub.dev's twin in field layout (a `meta` object of description/licenses/links); identity folded lowercase (the forgiving PyPI/crates/Packagist/pub rule — `packages/Ecto` 404s but the canonical name is always lowercase); `meta.description` → `summary` (no README in the JSON, so no `extracted_text`); **`concepts` empty *by design*** (Hex has no keywords — RubyGems'/Go's structural gap, the axis on which Hex *diverges* from its layout-twin pub.dev, whose topics feed the concept graph); SPDX `meta.licenses` → `tags`; the `meta.links` `{label: url}` **map's values** → `links` (a new shape — RubyGems/pub read named scalar fields; the `GitHub` entry wires the package↔repo edge); `published_at` from the release matching `latest_stable_version` (robust to a pre-release topping the list); author left `None` (no clean byline — `owners` carries emails); `hex → tool`; honestly metadata-only | 0089 |
 | nuget | `sources/nuget.py` | keyless `api.nuget.org` flat container — `GET /v3-flatcontainer/<id>/index.json` then the `<version>/<id>.nuspec`, stdlib JSON + ElementTree | the .NET package registry, ninth of the family and the one top-tier ecosystem it hadn't reached; **two plain requests** the Go "version index + manifest" shape (ADR 0042) rather than the registration API, which is **gzip even on a plain GET** (the UTF-8 `get_json` can't read it) and paginates — the flat container is plain JSON + a plain XML nuspec, no gzip/pagination; latest **stable** version picked by Packagist's numeric ranking (the top version is often a pre-release); the nuspec parsed **namespace-agnostically** (the namespace URI varies by schema generation, so children matched by *local* name); identity folded lowercase (the forgiving fold — NuGet ids are case-insensitive and the flat-container path requires lowercase), display casing read back from the nuspec `<id>`; `<tags>` → `concepts` (the github-topics/PyPI-keywords role — the .NET ecosystem joins the KB concept graph), `<description>` → `summary` (no README in the nuspec — it ships in the `.nupkg` — so no `extracted_text`, metadata-only), SPDX `<license type="expression">` → the one `tag`, `<projectUrl>`+`<repository url>` → `links` (package↔repo edge); `published_at` left as the seed (the nuspec carries no date — Go's honest gap); the nuspec **is** the metadata so its failure is a FetchError (no metadata-only fallback, unlike Go's optional go.mod); `nuget → tool` | 0090 |
 | hackage | `sources/hackage.py` | keyless `GET hackage.haskell.org/package/<name>/<name>.cabal`, stdlib only, one request | the Haskell package registry, tenth of the family; the endpoint serves the latest version's **cabal** manifest (no version selection — RubyGems' inline-latest), the family's first indentation-structured `field: value` manifest rather than JSON, so the one new thing is a small **cabal parser** (top-level fields at column 0 with indented continuations, section headers — `library`/`source-repository head` — whose body is skipped except the repo `location`, `--` comments dropped); identity is the name **verbatim** (case-sensitive like npm/RubyGems — `QuickCheck`, the singular `/package/<name>` claimed not the plural `/packages/` list, a trailing dotted-numeric version stripped); `category` → `concepts` (comma-split, the github-topics role — Haskell joins the concept graph), and **richer than the metadata-only registries**: the cabal's `description` → `extracted_text` (the prose body, the `.` line a blank-line marker) with `synopsis` → `summary` — the first registry whose own manifest carries prose; `license` → the one `tag` verbatim (SPDX on modern cabals, a legacy id like `BSD2` on older ones), `author` (`<email>` stripped) → byline, `homepage` + the repository `location` → `links` (`.git` folded, package↔repo edge); `published_at` left as the seed (the cabal has no date — Go/NuGet's honest gap); a cabal with no `name` → FetchError; `hackage → tool` | 0091 |
+| maven | `sources/maven.py` | keyless `repo1.maven.org/maven2` flat repository — `GET /<group-path>/<artifact>/maven-metadata.xml` then the `<version>/<artifact>-<version>.pom`, stdlib ElementTree | the JVM package registry (Java/Kotlin/Scala/Clojure/Android), eleventh of the family and the **largest** ecosystem it hadn't reached; **two plain requests** the Go/NuGet "version index + manifest" shape (ADR 0042/0090) against the flat repository (a static file tree) rather than the rate-limited Solr search API; identity is the Maven **coordinate `groupId:artifactId` verbatim** (case-sensitive like a literal file tree, npm/RubyGems' rule), the reverse-DNS group **path-encoded** (`com.google.guava`→`com/google/guava`, Go's request-encoding cousin); detection has **two grammars** — the unambiguous `/artifact/<g>/<a>` UI pages (central.sonatype.com, search.maven.org, mvnrepository.com) and the raw `/maven2/<group-path>/<artifact>` file tree (group reassembled around the version directory); latest **release** preferred from the index `<release>` (it gets stable build classifiers like `-jre`/`-android` right where a hyphen heuristic fails), a SNAPSHOT-excluded numeric ranking the fallback; the POM parsed **namespace-agnostically** (local-name match, the nuspec lesson); **diverges from NuGet on two axes** — `concepts=()` by design (a POM has no keyword facet — the RubyGems/Go/Hex posture, the JVM a metadata-and-edges source not a concept source) and `published_at` read from the **version index's `<lastUpdated>`** (the only adapter whose date lives outside its own manifest); `<name>` else coordinate → title, `<organization><name>` else first developer → author, `<description>` → `summary` (the README ships in the jar, so no `extracted_text` — metadata-only), `<licenses><license><name>` → `tags` verbatim (freeform names, the Hackage rule), `<url>`+the `<scm>` repository → `links` (ssh `git@host:path`/`git://` normalized, `.git` folded, package↔repo edge); the POM **is** the metadata so its failure is a FetchError (no metadata-only fallback, unlike Go's optional go.mod); `maven → tool` | 0092 |
 | bluesky | `sources/bluesky.py` | keyless AppView (`public.api.bsky.app`), stdlib only; `resolveHandle` GET for a handle URL, then one `getPostThread` | the open social-post source X couldn't be (IDEAS.md §6 deferred X; its API is now paywalled); a handle URL resolves to the DID the AT-URI needs (a `did:` URL skips it), then one call returns the post + its reply tree; post text + bylined replies (deleted/blocked/empty skipped) → `extracted_text`, image alt text the body of a textless post; external card / quoted post / inline `#link` facets → `links` (post↔post + cross-source edges), images → `photo` media, `#hashtag` facets → `concepts`; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default — unclassified like HN/Lobsters**; degrades to metadata-only | 0048 |
 | mastodon (incl. GoToSocial, Pleroma/Akkoma) | `sources/mastodon.py` | keyless Mastodon REST API, stdlib only; `GET /api/v1/statuses/<id>` then optional `.../context` | the Fediverse Mastodon-API family on one adapter, matched by URL *shape* not host (no shared host to key on); HTML `content` → text via stdlib `HTMLParser` (no trafilatura), flat `descendants` → bylined replies; card + body links → `links` (mentions/hashtags excluded), images → `photo`/videos → `thumbnail` media, `tags[].name` → `concepts`; `spoiler_text` content warning leads the body, a boost unwraps; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default**; degrades to metadata-only | 0049, 0050 |
 | misskey (incl. Sharkey, Firefish, Foundkey) | `sources/misskey.py` | keyless Misskey API, stdlib only; `POST /api/notes/show` (JSON body) then optional `notes/children` | the Fediverse Misskey-API family — *not* Mastodon-compatible, so its own source/adapter; the first POST-bodied adapter (new `http.post_json`); MFM `text` is already plain (no HTML parser, Lobsters' economy), links scanned from the text + a quote-renote's note → `links` (post↔post + cross-source edges), `files` → `photo`/video-`thumbnail` media (`comment` alt searchable), bare-string `tags` → `concepts`, `cw` content warning leads the body, a pure renote unwraps; synthesized title, `summary` = lead else alt else engagement status; **no category default**; degrades to metadata-only | 0051 |
@@ -833,10 +834,11 @@ Next steps already identified in decision records, in no required order:
   weighed and deferred has an obvious home in the shared `llm.py`.
 - **More package registries** — the PyPI adapter (ADR 0034) set the
   pattern and npm (0035), crates.io (0036), Packagist (0039), RubyGems
-  (0040), Go modules (0042), pub.dev (0088), Hex (0089), NuGet (0090), and
-  Hackage (0091) followed it, spanning Python, JavaScript, Rust, PHP, Ruby, Go,
-  Dart/Flutter, Elixir/Erlang, .NET, and Haskell — the ten cover every top-tier
-  language ecosystem. Go was the sparsest — the `proxy.golang.org` `@latest`
+  (0040), Go modules (0042), pub.dev (0088), Hex (0089), NuGet (0090),
+  Hackage (0091), and Maven Central (0092) followed it, spanning Python,
+  JavaScript, Rust, PHP, Ruby, Go, Dart/Flutter, Elixir/Erlang, .NET, Haskell,
+  and the JVM — the eleven cover every top-tier language ecosystem. Go was the
+  sparsest — the `proxy.golang.org` `@latest`
   carries no description, keywords, or license, so `summary`/`concepts`/
   `tags` are all empty and the go.mod manifest is the searchable content —
   while pub.dev and Hex are the family's pair of *twins in field layout*
@@ -859,17 +861,30 @@ Next steps already identified in decision records, in no required order:
   format, so the adapter carries the family's first cabal parser — and the
   cabal's `description` is real prose, making Hackage the first registry whose
   own manifest carries a searchable body (Go's go.mod is a dependency manifest,
-  not prose). The ten span the case-sensitivity axis on purpose —
-  PyPI/crates/Packagist/pub/Hex/NuGet fold, npm/RubyGems/**Hackage** preserve,
-  Go preserves with request case-encoding — pub, Hex, and NuGet the *forgiving*
-  end of the fold (their canonical names are always lowercase, so folding can
-  only rescue a mistyped URL, never miss). Packagist's comparator-free
-  "highest stable `version_normalized`" selection (ADR 0039, reused by NuGet's
-  pre-release-skipping ranking) and Go's request case-encoding (`X`→`!x`,
-  ADR 0042) are the techniques a future JSON-metadata registry can reuse;
-  **CPAN** (Perl, via the rich MetaCPAN JSON API, with a module→distribution
-  resolve for `/pod/` URLs) remains the obvious next candidate, unclaimed until
-  a saved URL needs one.
+  not prose). Maven Central — the largest ecosystem of all (Java/Kotlin/Scala/
+  Clojure/Android) — took the same flat-file shape: a `maven-metadata.xml`
+  version index then the `.pom` manifest (the family's second XML manifest,
+  parsed namespace-agnostically like the nuspec), two plain requests against the
+  static repository rather than the rate-limited Solr search API. It is
+  identity-distinct — the only **coordinate** (`groupId:artifactId`, the
+  reverse-DNS group path-encoded `com.google.guava`→`com/google/guava`, Go's
+  request-encoding cousin) — and *diverges from NuGet on two axes*: its POM has
+  no keyword facet, so `concepts` are empty by design (the RubyGems/Go/Hex
+  posture, the JVM a metadata-and-edges source not a concept source), and its
+  `published_at` is read from the **version index's `<lastUpdated>`**, making it
+  the only adapter whose date lives outside its own content manifest. The eleven
+  span the case-sensitivity axis on purpose —
+  PyPI/crates/Packagist/pub/Hex/NuGet fold, npm/RubyGems/Hackage/**Maven**
+  preserve, Go preserves with request case-encoding — pub, Hex, and NuGet the
+  *forgiving* end of the fold (their canonical names are always lowercase, so
+  folding can only rescue a mistyped URL, never miss). Packagist's
+  comparator-free "highest stable `version_normalized`" selection (ADR 0039,
+  reused by NuGet's pre-release-skipping ranking and Maven's SNAPSHOT-excluded
+  fallback) and Go's request case-encoding (`X`→`!x`, ADR 0042) are the
+  techniques a future JSON-metadata registry can reuse; **CPAN** (Perl, via the
+  rich MetaCPAN JSON API, with a module→distribution resolve for `/pod/` URLs),
+  **CRAN** (R), and **conda-forge** remain reachable on the same pattern,
+  unclaimed until a saved URL needs one.
 - **More DOI registration agencies** — Crossref (ADR 0037) and DataCite
   (ADR 0045) now share the `doi.org` detection through the `doi.py`
   fetch-time dispatch (Crossref first, DataCite fallback). A smaller

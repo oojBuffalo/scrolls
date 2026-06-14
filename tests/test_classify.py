@@ -303,6 +303,13 @@ def test_go_module_is_a_tool():
     assert classify_item(item).category == "tool"
 
 
+def test_maven_artifact_is_a_tool():
+    # A Maven Central artifact is a published JVM package you depend on (ADR 0092).
+    item = make_item(source="maven", source_id="com.google.guava:guava",
+                     title="Guava: Google Core Libraries for Java")
+    assert classify_item(item).category == "tool"
+
+
 def test_huggingface_model_is_a_tool():
     # A Hugging Face model is a published artifact you install and use,
     # like a package; the repo kind rides in the source id.

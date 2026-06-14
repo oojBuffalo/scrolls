@@ -535,6 +535,37 @@ CASES = [
     # a fetchable name (source known, item unknown)
     ("https://hackage.haskell.org/packages/", "hackage", None),
     ("https://hackage.haskell.org/", "hackage", None),
+    # --- maven central (JVM) ---
+    # the official UIs and the popular third-party index share one /artifact/
+    # browse grammar; identity is the `groupId:artifactId` coordinate, verbatim
+    ("https://central.sonatype.com/artifact/com.google.guava/guava", "maven",
+     "com.google.guava:guava"),
+    ("https://search.maven.org/artifact/com.google.guava/guava", "maven",
+     "com.google.guava:guava"),
+    ("https://mvnrepository.com/artifact/com.google.guava/guava", "maven",
+     "com.google.guava:guava"),
+    # a version page is the same artifact: identity is the coordinate only
+    ("https://mvnrepository.com/artifact/com.google.guava/guava/33.4.0-jre", "maven",
+     "com.google.guava:guava"),
+    # coordinates are case-sensitive (a literal file tree) — kept verbatim
+    ("https://central.sonatype.com/artifact/org.JetBrains.Kotlin/kotlin-stdlib",
+     "maven", "org.JetBrains.Kotlin:kotlin-stdlib"),
+    # the raw flat repository encodes the reverse-DNS group as a slash path; the
+    # coordinate is reassembled — the version directory marks where it ends
+    ("https://repo1.maven.org/maven2/com/google/guava/guava/33.4.0-jre/"
+     "guava-33.4.0-jre.pom", "maven", "com.google.guava:guava"),
+    # a maven-metadata.xml file at the artifact root dedupes to the coordinate
+    ("https://repo1.maven.org/maven2/com/google/guava/guava/maven-metadata.xml",
+     "maven", "com.google.guava:guava"),
+    # the bare artifact directory listing, no version, no file
+    ("https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/",
+     "maven", "org.apache.commons:commons-lang3"),
+    # the artifact and search lists carry no coordinate: source known, item unknown
+    ("https://central.sonatype.com/", "maven", None),
+    ("https://mvnrepository.com/artifact/com.google.guava", "maven", None),
+    ("https://search.maven.org/search?q=guava", "maven", None),
+    # a group-only repository listing has no artifact segment
+    ("https://repo1.maven.org/maven2/com/google/", "maven", None),
     # --- go modules (pkg.go.dev) ---
     ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
     # a version is attached with @; the module path is everything before it
