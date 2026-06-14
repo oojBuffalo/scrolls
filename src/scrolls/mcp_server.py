@@ -176,11 +176,20 @@ def list_facets(
 
 
 def get_scroll(item_id: str) -> dict[str, Any]:
-    """One saved item in full: metadata, summary, extracted text, links, media."""
+    """One saved item in full: metadata, summary, extracted text, links, media.
+
+    `item_id` is the item's id (`arxiv:1706.03762`) or, equivalently, the URL
+    that saved it — a search hit's `url`, a user's paste — resolved through the
+    same normalize → detect → mint chain `ingest_url` registers with (ADR 0028).
+    An unknown item is an error; if a URL was passed, the message names the id it
+    resolved to so the resolution stays visible.
+    """
     paths = get_paths()
-    item = get_item(paths.db_path, item_id) if paths.db_path.exists() else None
+    resolved = resolve_item_id(item_id)
+    item = get_item(paths.db_path, resolved) if paths.db_path.exists() else None
     if item is None:
-        raise ValueError(f"no such item: {item_id}")
+        suffix = f" (from {item_id})" if resolved != item_id else ""
+        raise ValueError(f"no such item: {resolved}{suffix}")
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
@@ -190,11 +199,16 @@ def get_scroll(item_id: str) -> dict[str, Any]:
 def get_related_scrolls(
     item_id: str, limit: int = DEFAULT_RELATED_LIMIT
 ) -> list[dict[str, Any]]:
-    """Items connected to one item — link edges, shared concepts/tags — with reasons."""
+    """Items connected to one item — link edges, shared concepts/tags — with reasons.
+
+    `item_id` is the item's id or the URL that saved it (ADR 0028), resolved like
+    `get_scroll`'s. An unknown item is an error.
+    """
     paths = get_paths()
+    resolved = resolve_item_id(item_id)
     if not paths.db_path.exists():
-        raise ValueError(f"no such item: {item_id}")
-    hits = [dataclasses.asdict(hit) for hit in find_related(paths.db_path, item_id, limit=limit)]
+        raise ValueError(f"no such item: {resolved}")
+    hits = [dataclasses.asdict(hit) for hit in find_related(paths.db_path, resolved, limit=limit)]
     for hit in hits:
         hit["reasons"] = list(hit["reasons"])
     return hits

@@ -1414,8 +1414,8 @@ The tools wrap the same engines as the CLI commands
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, optionally faceted |
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
-| `get_scroll(item_id)` | `scrolls show` | full item record |
-| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` |
+| `get_scroll(item_id)` | `scrolls show` | full item record; `item_id` is an id or the item's URL (ADR 0028) |
+| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
@@ -1430,7 +1430,10 @@ The tools wrap the same engines as the CLI commands
 
 Read tools follow the CLI conventions: an empty or uninitialized
 library yields empty results (`test_search_scrolls_before_init_returns_empty`),
-unknown ids are tool errors (`test_get_scroll_unknown_id_raises`).
+unknown ids are tool errors (`test_get_scroll_unknown_id_raises`), and the
+item-ref tools (`get_scroll`, `get_related_scrolls`, `get_works`) accept the
+item's URL as readily as its id, the same `resolve_item_id` chain the CLI uses
+(ADR 0028, `test_get_scroll_accepts_the_items_url`).
 
 ## Reproducing these examples
 

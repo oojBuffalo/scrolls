@@ -239,9 +239,29 @@ def test_get_scroll_unknown_id_raises(scrolls_home):
         mcp_server.get_scroll("x:9999")
 
 
+def test_get_scroll_accepts_the_items_url(scrolls_home, fake_wikipedia_api):
+    # the saved URL is a valid handle anywhere an id is, like the CLI (ADR 0028)
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
+    item = mcp_server.get_scroll("https://en.wikipedia.org/wiki/SQLite")
+    assert item["id"] == "wikipedia:en:SQLite"
+    assert item["title"] == "SQLite"
+
+
+def test_get_scroll_unknown_url_names_the_resolved_id(scrolls_home):
+    # a miss reports the id the URL resolved to, so the resolution stays visible
+    with pytest.raises(ValueError, match=r"no such item: wikipedia:en:SQLite \(from "):
+        mcp_server.get_scroll("https://en.wikipedia.org/wiki/SQLite")
+
+
 def test_get_related_scrolls_for_lonely_item_is_empty(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     assert mcp_server.get_related_scrolls("wikipedia:en:SQLite") == []
+
+
+def test_get_related_scrolls_accepts_the_items_url(scrolls_home, fake_wikipedia_api):
+    # resolving the present item's URL returns its (empty) related set, not an error
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
+    assert mcp_server.get_related_scrolls("https://en.wikipedia.org/wiki/SQLite") == []
 
 
 def test_get_link_graph_returns_directed_edges(scrolls_home):

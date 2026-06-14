@@ -35,6 +35,11 @@ id-taking command with URL handles was an inconsistency, not a feature.
 5. **MCP keeps plain ids for now.** `get_scroll`/`get_related_scrolls`
    could accept URL refs through the same resolver; deferred until an
    MCP client actually needs it, to keep this slice CLI-scoped.
+   *(Update: closed. `get_works` took URL refs when it landed — ADR 0072
+   — and `get_scroll`/`get_related_scrolls` now resolve them through the
+   same `pipeline.resolve_item_id`, so the whole MCP item-ref surface
+   matches the CLI; `get_scroll`'s miss carries the `(from <url>)` suffix
+   like the CLI's, `tests/test_mcp.py`.)*
 
 ## Consequences
 

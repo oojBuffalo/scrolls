@@ -688,7 +688,10 @@ recurring rules:
   item id also accepts the item's URL, resolved by
   `pipeline.resolve_item_id` through the same normalize → detect → mint
   chain `add` registers with, so the saved URL is always a valid handle
-  (`tests/test_pipeline.py`).
+  (`tests/test_pipeline.py`). The MCP item-ref tools — `get_scroll`,
+  `get_related_scrolls`, and `get_works` — share the same resolver, so an
+  agent that found an item's `url` can inspect, relate, or cluster it
+  without first learning its minted id (`tests/test_mcp.py`).
 - **Dependency posture** (ADR 0001): stdlib first; a third-party package
   must buy its feature something substantial. Today's full list:
   `trafilatura` (web), `youtube-transcript-api` (youtube), `pypdf`
