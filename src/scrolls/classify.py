@@ -11,8 +11,9 @@ Precedence (first hit wins):
 1. curated-platform defaults — wikipedia/wikidata/rfc/arxiv/biorxiv/medrxiv/pubmed/
    crossref/zenodo/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/
    huggingface items are what their platform makes them, whatever the title says
-   (a github repo is a `project`, but a github issue/PR `owner/repo#<n>` is a
-   discussion thread left unclassified — ADR 0084);
+   (a github/gitlab repo is a `project`, but a github issue/PR `owner/repo#<n>`
+   or gitlab issue/MR `group/project#<n>`/`!<n>` is a discussion thread left
+   unclassified — ADR 0084/0085);
 2. title patterns (tutorial, opinion);
 3. URL shape (documentation sites);
 4. weak source defaults (youtube → media, stackexchange → reference).
@@ -211,6 +212,13 @@ def _curated_category(item: ScrollItem) -> str | None:
     # leaving its title patterns free to decide (a "how to" issue is a tutorial).
     if item.source == "github":
         return None if "#" in (item.source_id or "") else "project"
+    # GitLab serves the same two kinds (ADR 0085): a project (`group/project`)
+    # is a `project`, but an issue (`…#<n>`) or merge request (`…!<n>`) is a
+    # heterogeneous discussion thread — unclassified by default like github's,
+    # leaving its title patterns free to decide.
+    if item.source == "gitlab":
+        source_id = item.source_id or ""
+        return None if ("#" in source_id or "!" in source_id) else "project"
     if item.source == "crossref":
         return _doi_category(item)
     # A Zenodo deposit's category depends on its resource type, a fetch-time

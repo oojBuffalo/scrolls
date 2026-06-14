@@ -89,8 +89,29 @@ def test_github_issue_still_obeys_title_rules():
 
 
 def test_gitlab_is_project():
-    item = make_item(source="gitlab", title="inkscape/inkscape")
+    item = make_item(source="gitlab", source_id="inkscape/inkscape",
+                     title="inkscape/inkscape")
     assert classify_item(item).category == "project"
+
+
+def test_gitlab_issue_and_merge_request_are_not_projects():
+    # GitLab mirrors github (ADR 0085): an issue (`group/project#<n>`) or a
+    # merge request (`group/project!<n>`) is a heterogeneous discussion thread,
+    # so it stays unclassified like the repo's siblings, not `project`. The two
+    # markers (#/!) both carve out — GitLab's separate iid sequences.
+    issue = make_item(source="gitlab", source_id="gitlab-org/gitlab#7",
+                      title="FTS5 ranking returns stale results")
+    assert classify_item(issue).category is None
+    mr = make_item(source="gitlab", source_id="gitlab-org/gitlab!42",
+                   title="Add faceted search")
+    assert classify_item(mr).category is None
+
+
+def test_gitlab_thread_still_obeys_title_rules():
+    # the curated `project` no longer pre-empts a "how to" thread title
+    item = make_item(source="gitlab", source_id="gitlab-org/gitlab#9",
+                     title="How to rebuild the FTS index")
+    assert classify_item(item).category == "tutorial"
 
 
 def test_gitea_is_project():

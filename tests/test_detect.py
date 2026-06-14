@@ -96,13 +96,35 @@ CASES = [
     ("https://gitlab.com/inkscape/inkscape", "gitlab", "inkscape/inkscape"),
     # nested groups: the whole path before any /-/ is the project
     ("https://gitlab.com/group/subgroup/project", "gitlab", "group/subgroup/project"),
-    # sub-resources hang off the reserved /-/ separator and dedupe to the project
-    ("https://gitlab.com/gitlab-org/gitlab/-/issues/1", "gitlab", "gitlab-org/gitlab"),
+    # an issue or merge request is a distinct discussion thread, not the project
+    # (ADR 0085): GitLab's own cross-reference notation rides in the id — `#<iid>`
+    # for an issue, `!<iid>` for a merge request (separate iid sequences)
+    ("https://gitlab.com/gitlab-org/gitlab/-/issues/1", "gitlab", "gitlab-org/gitlab#1"),
+    ("https://gitlab.com/gitlab-org/gitlab/-/merge_requests/42", "gitlab",
+     "gitlab-org/gitlab!42"),
+    # a thread under a nested group keeps the whole project path before the marker
+    ("https://gitlab.com/group/subgroup/project/-/issues/9", "gitlab",
+     "group/subgroup/project#9"),
+    # deep links into the thread (a designs/diffs subpath, a note fragment) dedupe
+    ("https://gitlab.com/gitlab-org/gitlab/-/issues/1/designs", "gitlab",
+     "gitlab-org/gitlab#1"),
+    ("https://gitlab.com/gitlab-org/gitlab/-/merge_requests/42/diffs", "gitlab",
+     "gitlab-org/gitlab!42"),
+    # the issue/MR *list* (no number) is part of the project, not a thread
+    ("https://gitlab.com/gitlab-org/gitlab/-/issues", "gitlab", "gitlab-org/gitlab"),
+    ("https://gitlab.com/gitlab-org/gitlab/-/merge_requests", "gitlab",
+     "gitlab-org/gitlab"),
+    # a non-numeric tail is not an iid (the `new` MR page)
+    ("https://gitlab.com/gitlab-org/gitlab/-/merge_requests/new", "gitlab",
+     "gitlab-org/gitlab"),
+    # other sub-resources hang off the reserved /-/ separator and dedupe to the project
     ("https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md", "gitlab",
      "gitlab-org/gitlab"),
     ("https://www.gitlab.com/gitlab-org/gitlab", "gitlab", "gitlab-org/gitlab"),
     # paths fold lowercase (GitLab forces lowercase slugs, routes case-insensitively)
     ("https://gitlab.com/Group/Project", "gitlab", "group/project"),
+    # the thread marker rides on the folded path too
+    ("https://gitlab.com/Group/Project/-/issues/3", "gitlab", "group/project#3"),
     # group/user pages and reserved routes: source known, id unknown
     ("https://gitlab.com/gitlab-org", "gitlab", None),
     ("https://gitlab.com/explore", "gitlab", None),

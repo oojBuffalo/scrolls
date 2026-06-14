@@ -58,6 +58,33 @@ def test_link_to_another_items_url_relates_them_both_ways(db):
     assert any("linked from it" in reason for reason in backward[0].reasons)
 
 
+def test_gitlab_thread_relates_to_its_project(db):
+    # The GitLab thread adapter (ADR 0085) stamps a gitlab.com/<project> link on
+    # an issue/MR, so the thread resolves to the saved project item the way a
+    # github issue resolves to its repo (ADR 0084) — the edge, not just the
+    # link string, surfacing in `find_related`.
+    insert_item(db, make_item(
+        "gitlab:gitlab-org/gitlab#7",
+        url="https://gitlab.com/gitlab-org/gitlab/-/issues/7",
+        links=("https://gitlab.com/gitlab-org/gitlab",),
+    ))
+    insert_item(db, make_item(
+        "gitlab:gitlab-org/gitlab",
+        url="https://gitlab.com/gitlab-org/gitlab",
+        category="project",
+    ))
+    insert_item(db, make_item("gitlab:other/project", url="https://gitlab.com/other/project"))
+
+    forward = find_related(db, "gitlab:gitlab-org/gitlab#7")
+    assert [hit.id for hit in forward] == ["gitlab:gitlab-org/gitlab"]
+    assert any("links to it" in reason for reason in forward[0].reasons)
+
+    # and the edge resolves both ways: the project finds its discussion thread
+    backward = find_related(db, "gitlab:gitlab-org/gitlab")
+    assert [hit.id for hit in backward] == ["gitlab:gitlab-org/gitlab#7"]
+    assert any("linked from it" in reason for reason in backward[0].reasons)
+
+
 def test_arxiv_preprint_relates_to_its_published_crossref_paper(db):
     # arXiv stamps the published DOI as a doi.org link (ADR 0038); it
     # resolves to the crossref item id even though the link's DOI case

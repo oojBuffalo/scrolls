@@ -221,3 +221,246 @@ def test_api_headers_use_gitlab_token_when_set(monkeypatch):
 
 def test_gitlab_adapter_is_registered():
     assert FETCH_ADAPTERS["gitlab"] is fetch_item
+
+
+# --- issues and merge requests (ADR 0085) ---------------------------------
+#
+# A `/-/issues/<n>` or `/-/merge_requests/<n>` URL detects as a discussion
+# thread in GitLab's own cross-reference notation — `group/project#<n>` for an
+# issue, `group/project!<n>` for a merge request (GitLab keeps separate iid
+# sequences, so the marker disambiguates). The same `gitlab` source/adapter
+# serves it, dispatched on the marker in the source id, which also picks the
+# endpoint (`/issues/<iid>` vs `/merge_requests/<iid>`).
+
+ISSUE = {
+    "iid": 7,
+    "title": "FTS5 ranking returns stale results",
+    "description": "Rebuilding the index lags BM25 ranking.\n\nSee https://example.com/bug.",
+    "web_url": "https://gitlab.com/gitlab-org/gitlab/-/issues/7",
+    "author": {"username": "alice", "name": "Alice A."},
+    "state": "opened",
+    "created_at": "2026-05-10T09:00:00.000Z",
+    "user_notes_count": 2,
+    "labels": ["bug", "search"],
+}
+
+MERGE_REQUEST = {
+    "iid": 42,
+    "title": "Add faceted search",
+    "description": "Implements `--source`/`--category` filters.",
+    "web_url": "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/42",
+    "author": {"username": "bob", "name": "Bob B."},
+    "state": "merged",
+    "created_at": "2026-05-12T10:00:00.000Z",
+    "user_notes_count": 0,
+    "labels": ["enhancement"],
+}
+
+NOTES = [
+    {"system": False, "author": {"username": "carol"}, "body": "I can repro this on main."},
+    # a system note (label change, assignment) is automated activity, not content
+    {"system": True, "author": {"username": "alice"}, "body": "changed the milestone to v2"},
+    {"system": False, "author": {"username": "alice"}, "body": "Fixed by the rebuild trigger."},
+]
+
+
+def thread_item(source_id="gitlab-org/gitlab#7", **overrides):
+    base = dict(
+        id=f"gitlab:{source_id}",
+        source="gitlab",
+        source_id=source_id,
+        url="https://gitlab.com/gitlab-org/gitlab/-/issues/7",
+        saved_at="2026-06-12T00:00:00+00:00",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def routed_thread(thread=ISSUE, notes=NOTES):
+    def get_json(url):
+        if "/notes" in url:
+            return [dict(n) for n in notes]
+        return dict(thread)
+
+    return get_json
+
+
+def fetch_thread(item=None, **kwargs):
+    return fetch_item(item or thread_item(), get_json=routed_thread(**kwargs))
+
+
+def test_fetch_issue_maps_thread_fields():
+    fetched = fetch_thread()
+
+    assert fetched.title == "gitlab-org/gitlab#7: FTS5 ranking returns stale results"
+    assert fetched.author == "alice"  # the username, not the display name
+    assert fetched.published_at == "2026-05-10T09:00:00+00:00"
+    assert fetched.canonical_url == "https://gitlab.com/gitlab-org/gitlab/-/issues/7"
+    # labels are the curated topical facet → concepts (the github-topics rule)
+    assert fetched.concepts == ("bug", "search")
+    # kind + state are the facet slot → tags; `opened` normalizes to github's `open`
+    assert fetched.tags == ("issue", "open")
+    assert fetched.summary == "Rebuilding the index lags BM25 ranking."
+    assert fetched.provenance["adapter"] == "gitlab"
+    assert fetched.provenance["extraction_method"] == "gitlab-api:issue+notes"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_issue_body_and_notes_become_extracted_text():
+    fetched = fetch_thread()
+    assert "Rebuilding the index lags BM25 ranking." in fetched.extracted_text
+    assert "Comment by carol" in fetched.extracted_text
+    assert "I can repro this on main." in fetched.extracted_text
+    assert "Comment by alice" in fetched.extracted_text
+    # the system note is dropped — it is automated activity, not discussion
+    assert "changed the milestone" not in fetched.extracted_text
+
+
+def test_fetch_thread_links_carry_the_project_edge_and_body_urls():
+    fetched = fetch_thread()
+    # the thread belongs to its project (thread↔project edge → gitlab:group/project)
+    assert "https://gitlab.com/gitlab-org/gitlab" in fetched.links
+    # a URL referenced in the description becomes an outbound edge
+    assert "https://example.com/bug" in fetched.links
+    # the thread's own URL is never a self-link
+    assert fetched.canonical_url not in fetched.links
+
+
+def test_fetch_thread_keeps_raw_records_for_rebuilds():
+    fetched = fetch_thread()
+    raw = json.loads(fetched.raw_text)
+    assert raw["thread"]["iid"] == 7
+    # the system note is preserved in raw_text for rebuilds, only filtered from content
+    assert len(raw["notes"]) == 3
+
+
+def test_fetch_merge_request_is_tagged_and_merge_aware():
+    item = thread_item(source_id="gitlab-org/gitlab!42",
+                       url="https://gitlab.com/gitlab-org/gitlab/-/merge_requests/42")
+    fetched = fetch_item(item, get_json=routed_thread(thread=MERGE_REQUEST))
+    assert fetched.title == "gitlab-org/gitlab!42: Add faceted search"
+    # GitLab reports a merged MR's state directly (no merged_at derivation needed)
+    assert fetched.tags == ("merge request", "merged")
+    assert fetched.concepts == ("enhancement",)
+    assert fetched.provenance["extraction_method"] == "gitlab-api:merge_request"
+
+
+def test_fetch_thread_dispatches_to_the_right_endpoint():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return dict(MERGE_REQUEST)
+
+    item = thread_item(source_id="gitlab-org/gitlab!42")
+    fetch_item(item, get_json=capture)
+    # the `!` marker routes to /merge_requests, and user_notes_count == 0 skips notes
+    assert seen == [
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab/merge_requests/42"
+    ]
+
+
+def test_fetch_issue_requests_the_expected_api_urls():
+    seen = []
+    routed = routed_thread()
+
+    def capture(url):
+        seen.append(url)
+        return routed(url)
+
+    fetch_item(thread_item(), get_json=capture)
+    assert seen == [
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab/issues/7",
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab/issues/7"
+        "/notes?per_page=100&sort=asc&order_by=created_at",
+    ]
+
+
+def test_fetch_thread_url_encodes_nested_group_path():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return {**ISSUE, "user_notes_count": 0}
+
+    item = thread_item(source_id="group/subgroup/project#9")
+    fetch_item(item, get_json=capture)
+    assert seen[0] == (
+        "https://gitlab.com/api/v4/projects/group%2Fsubgroup%2Fproject/issues/9"
+    )
+
+
+def test_fetch_thread_degrades_when_notes_fail():
+    def get_json(url):
+        if "/notes" in url:
+            raise OSError("HTTP Error 500")
+        return dict(ISSUE)
+
+    fetched = fetch_item(thread_item(), get_json=get_json)
+    # the thread survives without its notes, body still extracted
+    assert "Rebuilding the index lags BM25 ranking." in fetched.extracted_text
+    assert "Comment by" not in (fetched.extracted_text or "")
+    assert fetched.provenance["extraction_method"] == "gitlab-api:issue"
+
+
+def test_fetch_thread_degrades_on_anonymous_notes_gate():
+    # gitlab.com serves issue/MR *metadata* keyless but gates the /notes
+    # endpoint behind auth — a keyless caller gets 401 on notes (verified live).
+    # So the common keyless case is body-only; GITLAB_TOKEN reaches the
+    # conversation. The body still extracts and the method records the degrade.
+    from urllib.error import HTTPError
+
+    def get_json(url):
+        if "/notes" in url:
+            raise HTTPError(url, 401, "Unauthorized", {}, None)
+        return dict(ISSUE)
+
+    fetched = fetch_item(thread_item(), get_json=get_json)
+    assert "Rebuilding the index lags BM25 ranking." in fetched.extracted_text
+    assert "Comment by" not in (fetched.extracted_text or "")
+    assert fetched.provenance["extraction_method"] == "gitlab-api:issue"
+    assert fetched.stage == "fetched"
+
+
+def test_fetch_thread_with_empty_description_summarizes_engagement():
+    thread = {**ISSUE, "description": "", "user_notes_count": 3}
+    fetched = fetch_thread(thread=thread)
+    assert fetched.summary == "GitLab discussion: 3 comments."
+
+
+def test_fetch_thread_without_title_degrades_to_the_bare_reference():
+    thread = {**ISSUE, "title": ""}
+    fetched = fetch_thread(thread=thread)
+    assert fetched.title == "gitlab-org/gitlab#7"
+
+
+def test_fetch_thread_with_label_objects_reads_names():
+    # `?with_labels_details=true` returns objects, not bare strings; both read
+    thread = {**ISSUE, "labels": [{"name": "bug"}, {"name": "search"}]}
+    fetched = fetch_thread(thread=thread)
+    assert fetched.concepts == ("bug", "search")
+
+
+def test_fetch_thread_skips_notes_when_none():
+    seen = []
+
+    def capture(url):
+        seen.append(url)
+        return {**ISSUE, "user_notes_count": 0}
+
+    fetch_item(thread_item(), get_json=capture)
+    assert not any("/notes" in url for url in seen)
+
+
+def test_fetch_thread_requires_a_numeric_iid():
+    item = thread_item(source_id="gitlab-org/gitlab#notanumber")
+    with pytest.raises(FetchError, match="cannot determine gitlab thread"):
+        fetch_item(item, get_json=routed_thread())
+
+
+def test_fetch_thread_raises_when_not_found():
+    def get_json(url):
+        return {}  # no iid
+
+    with pytest.raises(FetchError, match="gitlab thread not found"):
+        fetch_item(thread_item(), get_json=get_json)

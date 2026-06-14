@@ -457,6 +457,19 @@ def _gitlab_id(path_parts: list[str]) -> str | None:
     user page, and the reserved top-level routes (`explore`, `help`, …) carry
     no project, so both resolve to the source with no fetchable item.
 
+    An issue or merge-request URL is a discussion thread distinct from the
+    project (ADR 0085), identified in GitLab's own cross-reference notation:
+    `group/project#<iid>` for an issue, `group/project!<iid>` for a merge
+    request. GitLab keeps *separate* iid sequences for issues and MRs, so —
+    unlike github's unified `owner/repo#<n>` (ADR 0084) — a bare `#<n>` is
+    ambiguous and the marker must distinguish them; GitLab's own `#`/`!`
+    notation does exactly that, and the fetch adapter dispatches on it. The
+    thread hangs off the `/-/` separator (`/-/issues/<n>`,
+    `/-/merge_requests/<n>`), so its number is the segment after the kind; a
+    deeper link (`/-/issues/<n>/designs`, a `#note_…` fragment dropped by
+    urlparse) dedupes to the thread, while the issue/MR *list* (no number)
+    collapses to the project — the github rule.
+
     The path is folded lowercase: GitLab forces lowercase path slugs and routes
     case-insensitively, so `/Group/Project` and `/group/project` dedupe to one
     item (the crates/Packagist case-fold, ADR 0036/0039) — unlike github's
@@ -467,11 +480,19 @@ def _gitlab_id(path_parts: list[str]) -> str | None:
     the fetch adapter re-encodes the whole path for the API, so a stray
     encoded segment would simply 404 rather than mis-resolve.
     """
+    project_parts, sub = path_parts, []
     if "-" in path_parts:
-        path_parts = path_parts[: path_parts.index("-")]
-    if len(path_parts) < 2 or path_parts[0].lower() in GITLAB_RESERVED:
+        sep = path_parts.index("-")
+        project_parts, sub = path_parts[:sep], path_parts[sep + 1 :]
+    if len(project_parts) < 2 or project_parts[0].lower() in GITLAB_RESERVED:
         return None
-    return "/".join(p.lower() for p in path_parts) or None
+    project = "/".join(p.lower() for p in project_parts)
+    if len(sub) >= 2 and sub[1].isdigit():
+        if sub[0] == "issues":
+            return f"{project}#{sub[1]}"
+        if sub[0] == "merge_requests":
+            return f"{project}!{sub[1]}"
+    return project or None
 
 
 def _gitea_id(host: str, path_parts: list[str]) -> str | None:

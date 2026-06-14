@@ -226,7 +226,27 @@ metadata-only scroll), **gitlab**
 fetched from the project's `/-/raw/` route; `topics` become `concepts`
 like github's, the SPDX license key becomes a `tag`; nested-group project
 paths are URL-encoded whole and folded lowercase; set `GITLAB_TOKEN` to
-lift the rate limit and reach private projects), and **gitea**
+lift the rate limit and reach private projects. A saved issue or
+merge-request URL is a second content kind on the same source, the github
+thread template applied to GitLab — see
+`docs/adr/0085-gitlab-issue-mr-adapter.md`: `/-/issues/<n>` and
+`/-/merge_requests/<n>` detect as a discussion thread in GitLab's own
+cross-reference notation, `group/project#<n>` for an issue and
+`group/project!<n>` for a merge request. GitLab keeps *separate* iid
+sequences for issues and MRs — so unlike github's unified `owner/repo#<n>`
+the `#`/`!` marker must distinguish them, and it doubles as the endpoint
+selector (`#` → `/issues/<iid>`, `!` → `/merge_requests/<iid>`). The
+adapter dispatches on the marker, fetches the thread and its notes, and
+maps the Markdown description and bylined comments to `extracted_text` —
+dropping GitLab's automated *system* notes — while labels become
+`concepts`, the kind and state become `tags`
+(the state normalized to github's vocabulary, so `--tag merged`/`open`
+spans both hosts), and a `gitlab.com/<project>` link wires the
+thread↔project edge. gitlab.com serves the issue/MR metadata keyless but
+gates the notes endpoint behind auth (anonymous callers get a 401), so a
+keyless fetch degrades to body-only and `GITLAB_TOKEN` is what reaches the
+conversation. Like a github thread it gets *no* category default and stays
+unclassified until a title rule or the LLM engine names it), and **gitea**
 (the third code host — Codeberg and gitea.com, one adapter for Gitea and
 its API-compatible fork Forgejo (Codeberg runs Forgejo) the way the
 mastodon adapter serves its forks — see
