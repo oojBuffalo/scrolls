@@ -293,6 +293,41 @@ def test_get_link_graph_empty_library(scrolls_home):
     }
 
 
+def test_github_issue_thread_is_reachable_through_mcp(scrolls_home):
+    # An issue/PR thread carries a '#' in its id (ADR 0084), a novel character
+    # for the id<->URL resolver — confirm the agent-facing surface handles it:
+    # the thread is fetchable by id and by URL, and its issue↔repo edge surfaces.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="github:owner/repo#7", source="github", source_id="owner/repo#7",
+        url="https://github.com/owner/repo/issues/7",
+        saved_at="2026-06-12T00:00:00+00:00", title="owner/repo#7: A bug",
+        links=("https://github.com/owner/repo",), stage="rendered",
+    ))
+    insert_item(db, ScrollItem(
+        id="github:owner/repo", source="github", source_id="owner/repo",
+        url="https://github.com/owner/repo",
+        saved_at="2026-06-12T00:00:00+00:00", title="owner/repo", stage="rendered",
+    ))
+
+    # fetchable by the '#'-bearing id, and by the saved issue URL (resolve_item_id)
+    assert mcp_server.get_scroll("github:owner/repo#7")["title"] == "owner/repo#7: A bug"
+    by_url = mcp_server.get_scroll("https://github.com/owner/repo/issues/7")
+    assert by_url["id"] == "github:owner/repo#7"
+
+    # the issue↔repo edge surfaces in both per-item relate and the whole graph
+    related = mcp_server.get_related_scrolls("https://github.com/owner/repo/issues/7")
+    assert [r["id"] for r in related] == ["github:owner/repo"]
+    assert mcp_server.get_link_graph()["edges"] == [
+        {"from": "github:owner/repo#7", "to": "github:owner/repo",
+         "via": "https://github.com/owner/repo"}
+    ]
+
+
 def test_get_works_clusters_by_shared_doi(scrolls_home):
     from scrolls.cli import main
     from scrolls.items import ScrollItem, insert_item

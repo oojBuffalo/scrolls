@@ -777,6 +777,16 @@ Next steps already identified in decision records, in no required order:
   host allowlist or an explicit source hint. *Bitbucket Server/Data Center*
   (the self-hosted product, a different `/rest/api/1.0/` API on arbitrary hosts)
   would be its own adapter, not a detection-only change like a new gitea host.
+  *Issue/PR threads* are now a second content kind on the github source
+  (ADR 0084) — `owner/repo#<n>` dispatched on the `#`. The same gap remains for
+  the other hosts: a GitLab `/-/issues/<n>` or `/-/merge_requests/<n>` URL and a
+  Gitea/Bitbucket `/issues/<n>` or `/pull(-requests)/<n>` URL still collapse to
+  the project, discarding the discussion. Each is the same shape of slice on a
+  different API (GitLab `GET /api/v4/projects/<id>/issues/<iid>` + `/notes`,
+  Gitea `GET /api/v1/repos/<o>/<r>/issues/<n>` + `/comments`, Bitbucket
+  `GET /2.0/repositories/<ws>/<repo>/issues/<n>` + `/comments`), with the
+  github slice as the template — detect the thread shape, dispatch on the `#`,
+  map the body+comments, leave the thread unclassified.
 - **Two-phase batch submit/collect** — both `--batch` paths (ADR 0022,
   ADR 0032) block and poll until the batch ends. If a real batch ever
   outgrows a terminal wait, the persisted-batch-id design those ADRs
