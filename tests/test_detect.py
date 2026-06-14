@@ -520,6 +520,21 @@ CASES = [
     ("https://www.nuget.org/packages", "nuget", None),
     ("https://www.nuget.org/profiles/dotnetfoundation", "nuget", None),
     ("https://www.nuget.org/stats", "nuget", None),
+    # --- hackage (Haskell) ---
+    ("https://hackage.haskell.org/package/aeson", "hackage", "aeson"),
+    # a version-suffixed page dedupes to the name (the trailing dotted-numeric
+    # version is stripped)
+    ("https://hackage.haskell.org/package/aeson-2.3.0.0", "hackage", "aeson"),
+    # a hyphen before a non-digit is part of the name, not a version
+    ("https://hackage.haskell.org/package/aeson-pretty", "hackage", "aeson-pretty"),
+    # a subpage dedupes to the package
+    ("https://hackage.haskell.org/package/aeson/dependencies", "hackage", "aeson"),
+    # Hackage names are case-sensitive — preserved verbatim (npm/RubyGems rule)
+    ("https://hackage.haskell.org/package/QuickCheck", "hackage", "QuickCheck"),
+    # the browse list is the *plural* /packages/; only singular /package/ carries
+    # a fetchable name (source known, item unknown)
+    ("https://hackage.haskell.org/packages/", "hackage", None),
+    ("https://hackage.haskell.org/", "hackage", None),
     # --- go modules (pkg.go.dev) ---
     ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
     # a version is attached with @; the module path is everything before it

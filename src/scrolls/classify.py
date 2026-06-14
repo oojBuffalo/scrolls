@@ -10,7 +10,7 @@ Precedence (first hit wins):
 
 1. curated-platform defaults — wikipedia/wikidata/rfc/arxiv/biorxiv/medrxiv/pubmed/
    crossref/zenodo/github/gitlab/gitea/bitbucket/pypi/npm/crates/packagist/rubygems/go/pub/hex/
-   nuget/
+   nuget/hackage/
    huggingface items are what their platform makes them, whatever the title says
    (a github/gitlab/gitea/bitbucket repo is a `project`, but a github issue/PR
    `owner/repo#<n>`, gitlab issue/MR `group/project#<n>`/`!<n>`, gitea issue/PR
@@ -61,8 +61,8 @@ _CURATED_SOURCE_CATEGORIES = {
     "bitbucket": "project",
     # A published package is something you install and use — distinct from a
     # github repo (a "project" to read). PyPI, npm, crates.io, Packagist,
-    # RubyGems, Go modules, pub.dev, Hex, and NuGet all ship packages, the rules
-    # that produce "tool".
+    # RubyGems, Go modules, pub.dev, Hex, NuGet, and Hackage all ship packages,
+    # the rules that produce "tool".
     "pypi": "tool",
     "npm": "tool",
     "crates": "tool",
@@ -72,6 +72,7 @@ _CURATED_SOURCE_CATEGORIES = {
     "pub": "tool",
     "hex": "tool",
     "nuget": "tool",
+    "hackage": "tool",
 }
 
 # Ordered: first matching pattern decides.

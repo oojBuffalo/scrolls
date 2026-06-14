@@ -64,6 +64,9 @@ HEX_HOSTS = {"hex.pm", "www.hex.pm"}
 # nuget.org is the .NET package registry; the fetch adapter talks to the keyless
 # permanent host api.nuget.org (the flat container + nuspec), not the web host.
 NUGET_HOSTS = {"nuget.org", "www.nuget.org"}
+# hackage.haskell.org is the Haskell package registry; the fetch adapter reads
+# the package's cabal manifest from the same host.
+HACKAGE_HOSTS = {"hackage.haskell.org", "www.hackage.haskell.org"}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
@@ -274,6 +277,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in NUGET_HOSTS:
         return DetectedSource("nuget", _nuget_id(path_parts))
+
+    if host in HACKAGE_HOSTS:
+        return DetectedSource("hackage", _hackage_id(path_parts))
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
@@ -876,6 +882,30 @@ def _nuget_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip().lower()
     return name if _fullmatch(_NUGET_NAME_RE, name) else None
+
+
+# A Hackage version suffix is a trailing `-<dotted-numeric>` (`aeson-2.3.0.0`);
+# a hyphen followed by a non-digit (`aeson-pretty`) is part of the name.
+_HACKAGE_VERSION_SUFFIX = re.compile(r"-\d[\d.]*$")
+
+
+def _hackage_id(path_parts: list[str]) -> str | None:
+    """The package name for a `hackage.haskell.org/package/<name>` URL, else None.
+
+    Identity is the package name, preserved **verbatim**: Hackage names are
+    case-sensitive (`QuickCheck`, `HUnit`) and the cabal endpoint only resolves
+    the exact case, so the name is not folded (the npm/RubyGems rule, ADR
+    0035/0040). A version-suffixed page (`/package/aeson-2.3.0.0`) and a subpage
+    (`/package/aeson/dependencies`) dedupe to the name — the trailing
+    `-<dotted-numeric>` version is stripped, while a hyphen before a non-digit
+    (`aeson-pretty`) stays part of the name. The browse list lives at the
+    *plural* `/packages/`, so only the singular `/package/<name>` is claimed;
+    other routes carry no fetchable package.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "package":
+        return None
+    name = _HACKAGE_VERSION_SUFFIX.sub("", unquote(path_parts[1]).strip())
+    return name or None
 
 
 def _go_id(path_parts: list[str]) -> str | None:

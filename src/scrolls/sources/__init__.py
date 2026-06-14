@@ -33,6 +33,7 @@ from scrolls.sources import (  # noqa: E402
     github,
     gitlab,
     go,
+    hackage,
     hackernews,
     hex,
     huggingface,
@@ -102,6 +103,10 @@ FETCH_ADAPTERS = {
     # URL-encoded whole (ADR 0055).
     "gitlab": gitlab.fetch_item,
     "go": go.fetch_item,
+    # Hackage is the Haskell package registry, the tenth of the family; one
+    # plain GET returns the latest version's cabal manifest, whose `category`
+    # becomes concepts and `description` the searchable body (ADR 0091).
+    "hackage": hackage.fetch_item,
     "hackernews": hackernews.fetch_item,
     # Hex is the Elixir/Erlang package registry, pub.dev's closest twin in
     # field layout (a `meta` object of description/licenses/links); no

@@ -650,6 +650,36 @@ carries no publish date, so `published_at` is honestly left as the feed seed
 (Go's honest-empty posture); a NuGet package classifies as `tool` like every
 other package, and because the nuspec *is* the metadata its failure is a fetch
 error rather than a metadata-only scroll, unlike Go's optional go.mod), and
+**hackage** (the keyless Haskell package registry — see
+`docs/adr/0091-hackage-adapter.md`: a saved `hackage.haskell.org/package/<name>`
+page becomes a clean scroll, the tenth of the package family and the one that
+breaks the JSON mold. One plain `GET hackage.haskell.org/package/<name>/<name>.cabal`
+returns the latest version's **cabal** manifest — no API host and no version to
+select (RubyGems' inline-latest economy) — but the cabal is an
+indentation-structured `field: value` format, not JSON, so the adapter carries
+a small cabal parser: top-level package fields sit at column 0 with
+more-indented continuation lines, a column-0 line with no `field:` shape is a
+section header (`library`, `source-repository head`) whose body is skipped
+except the repository `location`, and `--` comments are dropped. Identity is the
+package name preserved **verbatim** — Hackage names are case-sensitive
+(`QuickCheck`, `HUnit`) and the cabal endpoint only resolves the exact case, the
+npm/RubyGems rule — with the singular `/package/<name>` claimed (the browse list
+is the *plural* `/packages/`) and a trailing dotted-numeric version stripped so
+`/package/aeson-2.3.0.0` dedupes to `aeson` while `aeson-pretty` stays whole.
+The `category` field is comma-separated curated keywords that become `concepts`
+like github repo topics, so Haskell joins the KB concept graph; and unlike the
+metadata-only registries, the cabal's `description` is a real prose body that
+becomes the searchable `extracted_text` (the `.`-only line is cabal's
+blank-line marker), with the `synopsis` the short `summary` — the first registry
+whose own manifest carries prose. The `license` becomes the one `tag`, taken
+verbatim (an SPDX id on modern cabals, a legacy cabal id like `BSD2` on older
+ones); the `author`'s `<email>` is stripped to a clean byline; and the
+`homepage` plus the `source-repository` `location` become `links`, the
+repository resolving to the package's github repo through `scrolls related`
+(the package↔repo edge). The cabal carries no upload date, so `published_at` is
+honestly left as the feed seed (Go's and NuGet's honest gap); a Hackage package
+classifies as `tool`, and a cabal with no `name` field is a fetch error rather
+than a junk scroll), and
 **datacite** (the
 keyless DataCite JSON:API — see
 `docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a
