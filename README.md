@@ -544,7 +544,7 @@ and bare profiles register but have no repo to fetch), and
 `docs/adr/0042-go-modules-adapter.md`: a saved `pkg.go.dev/<module>` page
 becomes a clean scroll from `proxy.golang.org` instead of a `trafilatura`
 scrape of a JS-rendered docs page, the Go sibling of the package-registry
-family and the last on the JSON-metadata pattern. Identity is the module
+family on the JSON-metadata pattern. Identity is the module
 path kept verbatim — module paths are case-sensitive, and the proxy
 *case-encodes* the request (`github.com/Masterminds/squirrel` →
 `github.com/!masterminds/squirrel`), so the escaping touches the request,
@@ -565,7 +565,37 @@ derived from the module path for the well-known VCS hosts, resolving
 through `scrolls related` to a saved github repo (the package↔repo edge).
 A Go module classifies as `tool` like the other packages; the standard
 library, search, and site routes register but have no module to fetch),
-and **datacite** (the keyless DataCite JSON:API — see
+and **pub** (the keyless pub.dev JSON API — see
+`docs/adr/0088-pub-dev-adapter.md`: a saved `pub.dev/packages/<name>` page
+becomes a clean scroll from the package's latest-version metadata, the
+Dart/Flutter sibling of the package-registry family. One keyless `GET
+pub.dev/api/packages/<name>` returns the whole package, `latest.pubspec`
+its `pubspec.yaml` as JSON, so there is no version to select. Identity is
+the package name folded lowercase — pub names are lowercase Dart
+identifiers (`[a-z0-9_]`) and the API is case-sensitive (`packages/Provider`
+404s, `packages/provider` resolves), so folding is the *forgiving* choice
+the case-sensitive npm/RubyGems rule isn't: the canonical name is always
+lowercase, so a mistyped capital is rescued, never missed, and version,
+publisher, and search pages dedupe or register without a fetchable item.
+What sets pub apart from its siblings RubyGems and Go — whose registries
+carry no keywords — is that `pubspec.topics` become `concepts` like github
+repo topics, so a saved package joins the KB concept graph; the package
+description is the searchable `summary` with no `extracted_text` (the
+README ships only in the package archive, not the JSON — RubyGems'
+metadata-only situation). pub exposes no license or classifier facet, but
+it does carry the one signal that matters across the ecosystem: a package
+that declares the Flutter SDK (`environment.flutter` or a `flutter`
+dependency) is tagged `flutter` — the family's first *derived* tag — so
+`--tag flutter` separates Flutter plugins from pure-Dart packages, while a
+pure-Dart package is left untagged rather than given a synthesized `dart`
+label (Go's honest-empty posture). The `repository` and `homepage` become
+`links`, the repository's `git+`/`.git` folded so it resolves to the
+package's github repo through `scrolls related` (the package↔repo edge)
+even when it points into a monorepo tree
+(`github.com/flutter/packages/tree/main/packages/url_launcher`); a pub
+package classifies as `tool` like every other package, and a package whose
+pubspec lists no topics simply contributes empty `concepts`), and
+**datacite** (the keyless DataCite JSON:API — see
 `docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a
 fetch-time fallback behind `crossref`'s `doi.org` detection, the second
 DOI registration agency. The `doi.py` dispatcher tries Crossref first and

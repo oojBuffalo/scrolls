@@ -386,6 +386,7 @@ Implemented fetch adapters, all keyless:
 | huggingface | `sources/huggingface.py` | keyless Hub JSON API, stdlib only; second GET for the card README | one adapter for models + datasets + Spaces (kind in `source_id`, a `_PATH_SEGMENT` map routes the endpoint); card README (frontmatter stripped) → `extracted_text`, its lead paragraph → `summary` (dataset `description` the fallback); concepts from structured fields (`pipeline_tag`/`task_categories` + `cardData.tags`), *not* the flat tag soup; framework facet + license → `tags` (`library_name` for a model, `sdk` for a Space); `arxiv:`→arxiv.org `link` (model↔paper edge), `dataset:`/`base_model:`→Hub `link`, a Space's `cardData.models`/`datasets`→Hub `link` (space↔model/dataset edge); `model`/`space → tool`, `dataset → dataset`; degrades to metadata-only | 0041, 0043 |
 | lobsters | `sources/lobsters.py` | keyless `lobste.rs/s/<id>.json`, stdlib only, one request | story + tags + the *entire* comment thread in one GET (HN defers comments, SE spends a second GET); `description_plain`/`comment_plain` already plain, no HTML grammar; body + bylined comments (deleted/moderated skipped, all kept) → searchable `extracted_text`; link submission's article → bare `links` (HN pattern), `summary` = body lead else "N points, M comments"; tags → `concepts`; **no category default — unclassified like HN**; degrades to metadata-only | 0046 |
 | go | `sources/go.py` | keyless `proxy.golang.org`, stdlib only; second GET for the go.mod | module-path identity (case-sensitive, verbatim; module = path before `@`); `/@latest` → version+time, `/@v/<v>.mod` → the go.mod manifest as searchable `extracted_text`; the sparsest adapter — no description (`summary` None), no keywords (`concepts=()`), no license/classifier facet (`tags=()`); repo `link` from `Origin.URL` else derived from the module path for known VCS hosts (package↔repo edge); request case-encoded (`X`→`!x`); `go → tool`; degrades to metadata-only | 0042 |
+| pub | `sources/pub.py` | keyless `pub.dev/api/packages/<name>`, stdlib only, one request | the Dart/Flutter package registry, seventh of the family; `latest.pubspec` is the manifest (no version selection); identity folded lowercase — the *forgiving* fold (PyPI/crates/Packagist rule, since pub's canonical name is always lowercase, so a case-sensitive-API miss can only be *rescued*, never caused); `pubspec.topics` → `concepts` (the github-topics role — pub *feeds* the concept graph, unlike keyword-less RubyGems/Go), description → `summary` (no README in the JSON, so no `extracted_text`); a Flutter-SDK dependency (`environment.flutter`/a `flutter` dep) → the **derived** `flutter` tag (a pure-Dart package left untagged, Go's honest-empty posture); repository+homepage → `links`, the monorepo-tree repository URL resolving to the repo via `detect_source` (package↔repo edge); `latest.published` → `published_at`; `pub → tool`; honestly metadata-only | 0088 |
 | bluesky | `sources/bluesky.py` | keyless AppView (`public.api.bsky.app`), stdlib only; `resolveHandle` GET for a handle URL, then one `getPostThread` | the open social-post source X couldn't be (IDEAS.md §6 deferred X; its API is now paywalled); a handle URL resolves to the DID the AT-URI needs (a `did:` URL skips it), then one call returns the post + its reply tree; post text + bylined replies (deleted/blocked/empty skipped) → `extracted_text`, image alt text the body of a textless post; external card / quoted post / inline `#link` facets → `links` (post↔post + cross-source edges), images → `photo` media, `#hashtag` facets → `concepts`; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default — unclassified like HN/Lobsters**; degrades to metadata-only | 0048 |
 | mastodon (incl. GoToSocial, Pleroma/Akkoma) | `sources/mastodon.py` | keyless Mastodon REST API, stdlib only; `GET /api/v1/statuses/<id>` then optional `.../context` | the Fediverse Mastodon-API family on one adapter, matched by URL *shape* not host (no shared host to key on); HTML `content` → text via stdlib `HTMLParser` (no trafilatura), flat `descendants` → bylined replies; card + body links → `links` (mentions/hashtags excluded), images → `photo`/videos → `thumbnail` media, `tags[].name` → `concepts`; `spoiler_text` content warning leads the body, a boost unwraps; synthesized title, `summary` = lead else alt else card title else engagement status; **no category default**; degrades to metadata-only | 0049, 0050 |
 | misskey (incl. Sharkey, Firefish, Foundkey) | `sources/misskey.py` | keyless Misskey API, stdlib only; `POST /api/notes/show` (JSON body) then optional `notes/children` | the Fediverse Misskey-API family — *not* Mastodon-compatible, so its own source/adapter; the first POST-bodied adapter (new `http.post_json`); MFM `text` is already plain (no HTML parser, Lobsters' economy), links scanned from the text + a quote-renote's note → `links` (post↔post + cross-source edges), `files` → `photo`/video-`thumbnail` media (`comment` alt searchable), bare-string `tags` → `concepts`, `cw` content warning leads the body, a pure renote unwraps; synthesized title, `summary` = lead else alt else engagement status; **no category default**; degrades to metadata-only | 0051 |
@@ -829,14 +830,26 @@ Next steps already identified in decision records, in no required order:
   weighed and deferred has an obvious home in the shared `llm.py`.
 - **More package registries** — the PyPI adapter (ADR 0034) set the
   pattern and npm (0035), crates.io (0036), Packagist (0039), RubyGems
-  (0040), and Go modules (0042) followed it, completing the family across
-  Python, JavaScript, Rust, PHP, Ruby, and Go. Go was the sparsest — the
-  `proxy.golang.org` `@latest` carries no description, keywords, or
-  license, so `summary`/`concepts`/`tags` are all empty and the go.mod
-  manifest is the searchable content. Packagist's comparator-free "highest
-  stable `version_normalized`" selection (ADR 0039) and Go's request
-  case-encoding (`X`→`!x`, ADR 0042) are the techniques a future
-  JSON-metadata registry can reuse.
+  (0040), Go modules (0042), and pub.dev (0088) followed it, spanning
+  Python, JavaScript, Rust, PHP, Ruby, Go, and Dart/Flutter. Go was the
+  sparsest — the `proxy.golang.org` `@latest` carries no description,
+  keywords, or license, so `summary`/`concepts`/`tags` are all empty and
+  the go.mod manifest is the searchable content — while pub.dev is the
+  family's counter-example on the concept signal: its `pubspec.topics`
+  feed the KB concept graph like PyPI's keywords, where RubyGems and Go
+  contribute none, and its `flutter` tag is the family's first *derived*
+  facet (computed from the SDK dependency, not read from a declared
+  license/classifier field). The seven now span the case-sensitivity axis
+  on purpose — PyPI/crates/Packagist/pub fold, npm/RubyGems preserve, Go
+  preserves with request case-encoding — pub the *forgiving* end of the
+  fold (its canonical name is always lowercase, so folding can only rescue
+  a mistyped URL, never miss). Packagist's comparator-free "highest stable
+  `version_normalized`" selection (ADR 0039) and Go's request case-encoding
+  (`X`→`!x`, ADR 0042) are the techniques a future JSON-metadata registry
+  can reuse; Hex (Elixir/Erlang) — pub's closest twin in shape,
+  `meta.description`/`meta.licenses`/`meta.links` — NuGet (.NET), and
+  Hackage (Haskell) remain the obvious next candidates, none claimed until
+  a saved URL needs one.
 - **More DOI registration agencies** — Crossref (ADR 0037) and DataCite
   (ADR 0045) now share the `doi.org` detection through the `doi.py`
   fetch-time dispatch (Crossref first, DataCite fallback). A smaller

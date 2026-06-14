@@ -44,6 +44,7 @@ from scrolls.sources import (  # noqa: E402
     packagist,
     pdf,
     piefed,
+    pub,
     pubmed,
     pypi,
     rfc,
@@ -119,6 +120,11 @@ FETCH_ADAPTERS = {
     "openlibrary": openlibrary.fetch_item,
     "packagist": packagist.fetch_item,
     "pdf": pdf.fetch_item,
+    # Pub.dev is the Dart/Flutter package registry, the seventh of the
+    # package family; `pubspec.topics` become concepts (the github-topics
+    # role) so a saved package joins the KB concept graph, and a Flutter
+    # plugin is tagged `flutter` (ADR 0088).
+    "pub": pub.fetch_item,
     # PubMed indexes the biomedical literature, the arXiv/Crossref paper sibling;
     # MeSH descriptors become concepts and the article DOI links to its Crossref
     # scroll (the preprint↔published edge's biomedical analog, ADR 0065).

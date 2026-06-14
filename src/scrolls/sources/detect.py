@@ -50,6 +50,14 @@ NPM_HOSTS = {"npmjs.com", "www.npmjs.com"}
 CRATES_HOSTS = {"crates.io", "www.crates.io"}
 PACKAGIST_HOSTS = {"packagist.org", "www.packagist.org"}
 RUBYGEMS_HOSTS = {"rubygems.org", "www.rubygems.org"}
+# pub.dev is the Dart/Flutter package registry; pub.dartlang.org is the
+# legacy host (it 301s to pub.dev, but a saved old link still detects).
+PUB_HOSTS = {
+    "pub.dev",
+    "www.pub.dev",
+    "pub.dartlang.org",
+    "www.pub.dartlang.org",
+}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
@@ -251,6 +259,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in RUBYGEMS_HOSTS:
         return DetectedSource("rubygems", _rubygems_id(path_parts))
+
+    if host in PUB_HOSTS:
+        return DetectedSource("pub", _pub_id(path_parts))
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
@@ -780,6 +791,32 @@ def _rubygems_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip()
     return name or None
+
+
+# A pub package name is a lowercase Dart identifier: lowercase letters,
+# digits, and underscores (the pub.dev naming rules; no hyphens, which are
+# not valid Dart identifiers).
+_PUB_NAME_RE = re.compile(r"[a-z0-9_]+")
+
+
+def _pub_id(path_parts: list[str]) -> str | None:
+    """The package name for a `pub.dev/packages/<name>[/versions/<v>]` URL, else None.
+
+    Identity is the package name only: `/packages/provider` and the version
+    page `/packages/provider/versions/6.1.5` are the same package, so a
+    trailing version (or `/changelog`, `/example`) is ignored. Pub names are
+    lowercase Dart identifiers (`[a-z0-9_]`, enforced by the registry) and
+    the API is case-sensitive — `packages/Provider` 404s while
+    `packages/provider` resolves — so the name is folded lowercase: a
+    mistyped capital still resolves and dedupes (the PyPI/crates/Packagist
+    fold, not RubyGems' verbatim rule, since the canonical form is always
+    lowercase). The package list, publisher, and search pages carry no
+    package name and resolve to the source with no fetchable item.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "packages":
+        return None
+    name = unquote(path_parts[1]).strip().lower()
+    return name if _fullmatch(_PUB_NAME_RE, name) else None
 
 
 def _go_id(path_parts: list[str]) -> str | None:

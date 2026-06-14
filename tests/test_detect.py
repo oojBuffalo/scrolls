@@ -470,6 +470,24 @@ CASES = [
     ("https://rubygems.org/", "rubygems", None),
     ("https://rubygems.org/gems", "rubygems", None),
     ("https://rubygems.org/search?query=http", "rubygems", None),
+    # --- pub.dev (Dart/Flutter) ---
+    ("https://pub.dev/packages/provider", "pub", "provider"),
+    # a version page is the same package: identity is the name only
+    ("https://pub.dev/packages/provider/versions/6.1.5", "pub", "provider"),
+    # pub names are lowercase Dart identifiers; the case-sensitive API only
+    # resolves the lowercase form, so a mistyped capital folds (PyPI's rule)
+    ("https://pub.dev/packages/Provider", "pub", "provider"),
+    ("https://pub.dev/packages/url_launcher", "pub", "url_launcher"),
+    ("https://www.pub.dev/packages/http", "pub", "http"),
+    # the legacy host still detects (it 301s to pub.dev)
+    ("https://pub.dartlang.org/packages/path", "pub", "path"),
+    # the package list, publisher, and search pages: source known, item unknown
+    ("https://pub.dev/", "pub", None),
+    ("https://pub.dev/packages", "pub", None),
+    ("https://pub.dev/publishers/dart.dev/packages", "pub", None),
+    ("https://pub.dev/help", "pub", None),
+    # a hyphen is not a valid Dart identifier — not a real package name
+    ("https://pub.dev/packages/foo-bar", "pub", None),
     # --- go modules (pkg.go.dev) ---
     ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
     # a version is attached with @; the module path is everything before it
