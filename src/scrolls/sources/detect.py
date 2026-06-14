@@ -61,6 +61,9 @@ PUB_HOSTS = {
 # hex.pm is the Elixir/Erlang package registry; hexdocs.pm (the docs host)
 # is left to `web`, since it serves rendered docs, not the package metadata.
 HEX_HOSTS = {"hex.pm", "www.hex.pm"}
+# nuget.org is the .NET package registry; the fetch adapter talks to the keyless
+# permanent host api.nuget.org (the flat container + nuspec), not the web host.
+NUGET_HOSTS = {"nuget.org", "www.nuget.org"}
 # pkg.go.dev is the canonical Go module browse host; the fetch adapter
 # talks to proxy.golang.org, deriving the module path from the URL.
 GO_HOSTS = {"pkg.go.dev", "www.pkg.go.dev"}
@@ -268,6 +271,9 @@ def detect_source(url: str) -> DetectedSource:
 
     if host in HEX_HOSTS:
         return DetectedSource("hex", _hex_id(path_parts))
+
+    if host in NUGET_HOSTS:
+        return DetectedSource("nuget", _nuget_id(path_parts))
 
     if host in GO_HOSTS:
         return DetectedSource("go", _go_id(path_parts))
@@ -845,6 +851,31 @@ def _hex_id(path_parts: list[str]) -> str | None:
         return None
     name = unquote(path_parts[1]).strip().lower()
     return name if _fullmatch(_HEX_NAME_RE, name) else None
+
+
+# A NuGet package id is alphanumeric runs joined by single `.`/`-`/`_`
+# separators (the registry's id rules); case-insensitive, so folded lowercase.
+_NUGET_NAME_RE = re.compile(r"[a-z0-9]+([._-][a-z0-9]+)*")
+
+
+def _nuget_id(path_parts: list[str]) -> str | None:
+    """The package id for a `nuget.org/packages/<id>[/<version>]` URL, else None.
+
+    Identity is the package id only: `/packages/Newtonsoft.Json` and the version
+    page `/packages/Newtonsoft.Json/13.0.3` are the same package, so a trailing
+    version is ignored (the PyPI/npm/crates pattern). NuGet package ids are
+    case-insensitive — the registry routes `Newtonsoft.Json` and
+    `newtonsoft.json` alike, and the flat-container API *requires* the lowercase
+    form — so the id is folded lowercase: the forgiving PyPI/crates/pub/Hex fold
+    (ADR 0034/0036/0088/0089), since the canonical form is always lowercase, and
+    the display casing is read back from the nuspec `<id>`. The packages list,
+    `/profiles/<user>`, `/stats`, and search carry no package id and resolve to
+    the source with no fetchable item — the registry-family pattern.
+    """
+    if len(path_parts) < 2 or path_parts[0] != "packages":
+        return None
+    name = unquote(path_parts[1]).strip().lower()
+    return name if _fullmatch(_NUGET_NAME_RE, name) else None
 
 
 def _go_id(path_parts: list[str]) -> str | None:

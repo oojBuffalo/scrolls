@@ -41,6 +41,7 @@ from scrolls.sources import (  # noqa: E402
     mastodon,
     misskey,
     npm,
+    nuget,
     openlibrary,
     packagist,
     pdf,
@@ -118,6 +119,12 @@ FETCH_ADAPTERS = {
     # is a separate source/adapter, not a mastodon URL shape (ADR 0051).
     "misskey": misskey.fetch_item,
     "npm": npm.fetch_item,
+    # NuGet is the .NET package registry, the ninth of the family and the one
+    # major-language ecosystem it had not reached; two plain requests (the
+    # flat-container version index + the nuspec manifest, the Go shape), and
+    # `<tags>` become concepts so the .NET package joins the KB concept graph
+    # like PyPI/pub (ADR 0090).
+    "nuget": nuget.fetch_item,
     # Open Library is the keyless bibliographic catalog for books — a content
     # type with no prior home; subjects become concepts (the github-topics role)
     # so a saved book joins the KB concept graph a `web` scrape never could, and

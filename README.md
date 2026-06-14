@@ -619,7 +619,38 @@ read named scalar fields), the `GitHub` entry resolving to the package's
 github repo through `scrolls related` (the package↔repo edge). The publish
 date is read from the release matching `latest_stable_version`, robust to a
 pre-release topping the list; the author is left unset, since Hex exposes
-only an owner list with emails and no clean byline), and **datacite** (the
+only an owner list with emails and no clean byline), and **nuget**
+(the keyless .NET package registry — see `docs/adr/0090-nuget-adapter.md`:
+a saved `nuget.org/packages/<id>` page becomes a clean scroll, the ninth of
+the package family and the one top-tier ecosystem it had not reached. NuGet's
+rich registration API is **gzip-encoded even on a plain GET** — the shared
+UTF-8 transport can't read it — and paginates for large packages, so the
+adapter takes the **flat container** instead, the Go module shape (ADR 0042)
+of two plain requests: `GET api.nuget.org/v3-flatcontainer/<id>/index.json`
+returns the ascending version list, and the chosen version's `.nuspec`
+manifest carries the metadata, parsed with stdlib ElementTree. The highest
+listed version is often a pre-release, so the **latest stable** version is
+selected by Packagist's comparator-free numeric ranking (ADR 0039). Identity
+is the package id folded lowercase — the forgiving fold (PyPI/crates/pub/Hex
+rule), since NuGet ids are case-insensitive and the flat-container path
+*requires* the lowercase form — while the registrant's display casing
+(`Newtonsoft.Json`) is read back from the nuspec `<id>` for the title and
+canonical URL. The nuspec namespace URI varies by schema generation, so its
+children are matched by *local* name. Author-curated `<tags>` (whitespace-,
+comma-, or semicolon-separated) become `concepts` like PyPI keywords and
+github topics, so the .NET ecosystem joins the KB concept graph a `web` scrape
+would have left it out of; the `<description>` is the searchable `summary`
+with no `extracted_text` (the README ships in the `.nupkg`, not the nuspec —
+RubyGems' and Hex's metadata-only situation); the SPDX
+`<license type="expression">` becomes the one `tag` (a `type="file"` names a
+package file, not an SPDX id, so it is skipped); and `<projectUrl>` plus the
+`<repository url>` become `links`, the repository resolving to the package's
+github repo through `scrolls related` (the package↔repo edge). The nuspec
+carries no publish date, so `published_at` is honestly left as the feed seed
+(Go's honest-empty posture); a NuGet package classifies as `tool` like every
+other package, and because the nuspec *is* the metadata its failure is a fetch
+error rather than a metadata-only scroll, unlike Go's optional go.mod), and
+**datacite** (the
 keyless DataCite JSON:API — see
 `docs/adr/0045-datacite-doi-fallback.md`: not a new detected source but a
 fetch-time fallback behind `crossref`'s `doi.org` detection, the second

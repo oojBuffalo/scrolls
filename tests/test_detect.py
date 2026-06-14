@@ -503,6 +503,23 @@ CASES = [
     ("https://hex.pm/dashboard", "hex", None),
     # hexdocs.pm is the docs host, not the package metadata — left to web
     ("https://hexdocs.pm/ecto/Ecto.html", "web", None),
+    # --- nuget (.NET) ---
+    ("https://www.nuget.org/packages/Newtonsoft.Json", "nuget", "newtonsoft.json"),
+    # a version page is the same package: identity is the id only
+    ("https://www.nuget.org/packages/Newtonsoft.Json/13.0.3", "nuget",
+     "newtonsoft.json"),
+    # NuGet ids are case-insensitive and the flat-container API requires the
+    # lowercase form, so the id folds lowercase (the forgiving pub/Hex fold)
+    ("https://www.nuget.org/packages/polly", "nuget", "polly"),
+    ("https://nuget.org/packages/Microsoft.Extensions.Logging", "nuget",
+     "microsoft.extensions.logging"),
+    ("https://www.nuget.org/packages/xunit.runner.visualstudio", "nuget",
+     "xunit.runner.visualstudio"),
+    # the package list, profiles, stats, and search: source known, item unknown
+    ("https://www.nuget.org/", "nuget", None),
+    ("https://www.nuget.org/packages", "nuget", None),
+    ("https://www.nuget.org/profiles/dotnetfoundation", "nuget", None),
+    ("https://www.nuget.org/stats", "nuget", None),
     # --- go modules (pkg.go.dev) ---
     ("https://pkg.go.dev/github.com/gin-gonic/gin", "go", "github.com/gin-gonic/gin"),
     # a version is attached with @; the module path is everything before it
