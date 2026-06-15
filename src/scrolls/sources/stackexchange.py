@@ -31,6 +31,7 @@ from typing import Any, Callable
 from scrolls.dates import epoch_to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 API_ROOT = "https://api.stackexchange.com/2.3"
@@ -131,10 +132,11 @@ def _format_answers(answers: list[dict[str, Any]], accepted_id: Any) -> str:
 
     Returns "" when there is nothing to show. The accepted answer leads
     (stable sort keeps the rest in their incoming vote order), and each
-    answer's byline records who wrote it and its score.
+    answer's byline records who wrote it and its score; the `### Top Answers`
+    subsection is assembled by the shared thread renderer (ADR 0093).
     """
     ordered = sorted(answers, key=lambda a: a.get("answer_id") != accepted_id)
-    blocks = []
+    rendered = []
     for answer in ordered:
         text = _html_to_text(answer.get("body") or "")
         if not text:
@@ -146,10 +148,8 @@ def _format_answers(answers: list[dict[str, Any]], accepted_id: Any) -> str:
         score = answer.get("score")
         if score is not None:
             byline += f" (score {score})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Top Answers\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Top Answers")
 
 
 def _summary(body_text: str, question: dict[str, Any]) -> str | None:

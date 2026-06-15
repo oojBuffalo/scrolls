@@ -53,6 +53,7 @@ from urllib.parse import urlparse
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 # Comments to request: bounded so a huge thread stays a tractable scroll, the
@@ -182,9 +183,10 @@ def _format_comments(comments: list[Any] | None) -> str:
     segments puts a parent immediately before its replies. Deleted and
     moderator-removed comments carry no usable text and are skipped (Lobsters'
     rule, ADR 0046); every other comment is bylined with its author and score the
-    way Stack Exchange bylines an answer (ADR 0033). The comment text is in
-    `body` (Lemmy's field is `content`). The threading `path` is not rendered into
-    the text but survives in `raw_text` for a future nested render.
+    way Stack Exchange bylines an answer (ADR 0033) and assembled by the shared
+    thread renderer (ADR 0093). The comment text is in `body` (Lemmy's field is
+    `content`). The threading `path` is not rendered into the text but survives in
+    `raw_text` for a future nested render.
     """
     rows: list[tuple[tuple[int, ...], dict[str, Any], str]] = []
     for view in comments or []:
@@ -199,17 +201,15 @@ def _format_comments(comments: list[Any] | None) -> str:
         rows.append((_path_key(comment.get("path")), view, text))
     rows.sort(key=lambda r: r[0])
 
-    blocks = []
+    rendered = []
     for _, view, text in rows:
         name = _name(view.get("creator") or {})
         byline = f"Comment by {name}" if name else "Comment"
         score = (view.get("counts") or {}).get("score")
         if score is not None:
             byline += f" (score {score})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 def _path_key(path: Any) -> tuple[int, ...]:

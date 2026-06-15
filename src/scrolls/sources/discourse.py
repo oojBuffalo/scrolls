@@ -59,6 +59,7 @@ from urllib.parse import urlparse
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 # The Discourse "like" action's id in a post's `actions_summary` list.
@@ -190,8 +191,10 @@ def _format_replies(replies: list[dict[str, Any]]) -> str:
     The posts arrive already in thread order (by `post_number`), so one pass
     renders them — Discourse's flat-with-`reply_to_post_number` tree is not
     re-nested here (the indentation is deferred to `raw_text`, Lemmy's posture).
+    The `### Replies` subsection is assembled by the shared thread renderer
+    (ADR 0093).
     """
-    blocks = []
+    rendered = []
     for post in replies:
         text = _html_to_text(post.get("cooked"))
         if not text:
@@ -200,10 +203,8 @@ def _format_replies(replies: list[dict[str, Any]]) -> str:
         likes = _likes(post)
         if likes:
             byline += f" ({likes} {_plural(likes, 'like')})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Replies\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Replies")
 
 
 def _likes(post: dict[str, Any]) -> int:

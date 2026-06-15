@@ -54,6 +54,7 @@ from typing import Any, Callable
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 _TITLE_SNIPPET = 100
@@ -373,9 +374,10 @@ def _format_replies(children: list[Any] | None) -> str:
     Misskey's `notes/children` returns direct replies as a flat list, so one
     pass renders them — each bylined with its author and reaction count
     (Mastodon's reply format, ADR 0049). A reply with no text (e.g. media-only)
-    is skipped.
+    is skipped; the `### Replies` subsection is assembled by the shared thread
+    renderer (ADR 0093).
     """
-    blocks: list[str] = []
+    rendered: list[discussion.Comment] = []
     for reply in children or []:
         if not isinstance(reply, dict):
             continue
@@ -386,10 +388,8 @@ def _format_replies(children: list[Any] | None) -> str:
         reactions = _reaction_total(reply)
         if reactions is not None:
             byline += f" ({reactions} {_plural(reactions, 'reaction')})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Replies\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Replies")
 
 
 def _clean(value: Any) -> str | None:

@@ -46,6 +46,7 @@ from urllib.parse import urlencode
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 # The keyless AppView (read-only, no auth) and the public web app whose URLs
@@ -331,17 +332,16 @@ def _format_replies(reply_nodes: list[Any]) -> str:
 
     Deleted, blocked, and not-found reply nodes carry no usable post and
     are skipped (Lobsters' deleted/moderated handling, ADR 0046); every
-    other reply is bylined with its author and like count. Threading
-    survives in `raw_text` for a future nested render.
+    other reply is bylined with its author and like count, and the depth-first
+    `### Replies` subsection is assembled by the shared thread renderer
+    (ADR 0093). Threading survives in `raw_text` for a future nested render.
     """
-    blocks: list[str] = []
-    _walk_replies(reply_nodes, blocks)
-    if not blocks:
-        return ""
-    return "### Replies\n\n" + "\n\n".join(blocks)
+    rendered: list[discussion.Comment] = []
+    _walk_replies(reply_nodes, rendered)
+    return discussion.format_thread(rendered, heading="Replies")
 
 
-def _walk_replies(nodes: list[Any], blocks: list[str]) -> None:
+def _walk_replies(nodes: list[Any], rendered: list[discussion.Comment]) -> None:
     for node in nodes or []:
         if not isinstance(node, dict):
             continue
@@ -353,8 +353,8 @@ def _walk_replies(nodes: list[Any], blocks: list[str]) -> None:
                 likes = post.get("likeCount")
                 if likes is not None:
                     byline += f" ({likes} {_plural(likes, 'like')})"
-                blocks.append(f"#### {byline}\n\n{text}")
-        _walk_replies(node.get("replies") or [], blocks)
+                rendered.append(discussion.Comment(byline, text))
+        _walk_replies(node.get("replies") or [], rendered)
 
 
 def _dedupe(values: list[str]) -> tuple[str, ...]:

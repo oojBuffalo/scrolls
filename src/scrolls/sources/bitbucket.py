@@ -60,6 +60,7 @@ from urllib.parse import quote
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 API_ROOT = "https://api.bitbucket.org/2.0"
@@ -364,10 +365,10 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
     Deleted comments and **inline** diff-line review comments are skipped — the
     inline thread is the PR-review-comments slice deferred like github/gitlab's
     (ADR 0084/0085), and a deleted comment carries no body. The rest are bylined
-    with the commenter's display name (ADR 0084/0046). Returns "" when nothing
-    remains.
+    with the commenter's display name (ADR 0084/0046) and assembled by the shared
+    thread renderer (ADR 0093). Returns "" when nothing remains.
     """
-    blocks = []
+    rendered = []
     for comment in comments:
         if comment.get("deleted") or "inline" in comment:
             continue
@@ -376,10 +377,8 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
             continue
         who = _login(comment.get("user"))
         byline = f"Comment by {who}" if who else "Comment"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 def _login(account: Any) -> str | None:

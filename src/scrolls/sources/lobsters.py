@@ -37,6 +37,7 @@ from typing import Any, Callable
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 API_ROOT = "https://lobste.rs"
@@ -120,11 +121,12 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
 
     Deleted and moderated comments carry no usable text and are skipped;
     every other comment is bylined with its author and score the way Stack
-    Exchange bylines an answer (ADR 0033). Returns "" when nothing remains.
-    Threading `depth` is not rendered into the plain text but survives in
-    `raw_text` for a future enrichment, the way Hacker News keeps `kids`.
+    Exchange bylines an answer (ADR 0033) and assembled by the shared thread
+    renderer (ADR 0093). Returns "" when nothing remains. Threading `depth` is
+    not rendered into the plain text but survives in `raw_text` for a future
+    enrichment, the way Hacker News keeps `kids`.
     """
-    blocks = []
+    rendered = []
     for comment in comments:
         if comment.get("is_deleted") or comment.get("is_moderated"):
             continue
@@ -136,10 +138,8 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
         score = comment.get("score")
         if score is not None:
             byline += f" (score {score})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 def _username(value: Any) -> str | None:

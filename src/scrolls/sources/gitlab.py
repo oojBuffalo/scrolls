@@ -47,6 +47,7 @@ from urllib.parse import quote
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 API_ROOT = "https://gitlab.com/api/v4"
@@ -315,9 +316,10 @@ def _format_notes(notes: list[dict[str, Any]]) -> str:
     milestone edits) carry `system: true` and are not discussion, so they are
     dropped — the Discourse mod-action skip (ADR 0054). Notes without an author
     or body carry nothing usable and are skipped too; the rest are bylined with
-    the commenter (ADR 0084/0046). Returns "" when nothing remains.
+    the commenter (ADR 0084/0046) and assembled by the shared thread renderer
+    (ADR 0093). Returns "" when nothing remains.
     """
-    blocks = []
+    rendered = []
     for note in notes:
         if note.get("system"):
             continue
@@ -326,10 +328,8 @@ def _format_notes(notes: list[dict[str, Any]]) -> str:
             continue
         who = (note.get("author") or {}).get("username")
         byline = f"Comment by {who}" if who else "Comment"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 # A plain URL run in Markdown body text, stopping at whitespace or an angle

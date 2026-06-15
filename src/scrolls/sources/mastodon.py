@@ -61,6 +61,7 @@ from typing import Any, Callable
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 _TITLE_SNIPPET = 100
@@ -362,10 +363,11 @@ def _format_replies(context: dict[str, Any] | None) -> str:
     Mastodon's context endpoint returns descendants already flattened in
     thread order, so one pass renders them — each bylined with its author
     and favourite count (Bluesky's reply format, ADR 0048). A reply with no
-    text (e.g. media-only) is skipped.
+    text (e.g. media-only) is skipped; the `### Replies` subsection is assembled
+    by the shared thread renderer (ADR 0093).
     """
     descendants = context.get("descendants") if isinstance(context, dict) else None
-    blocks: list[str] = []
+    rendered: list[discussion.Comment] = []
     for reply in descendants or []:
         if not isinstance(reply, dict):
             continue
@@ -376,10 +378,8 @@ def _format_replies(context: dict[str, Any] | None) -> str:
         favourites = reply.get("favourites_count")
         if favourites is not None:
             byline += f" ({favourites} {_plural(favourites, 'favourite')})"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Replies\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Replies")
 
 
 def _clean(value: Any) -> str | None:

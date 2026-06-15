@@ -60,6 +60,7 @@ from urllib.parse import quote
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 GetJson = Callable[[str], Any]
@@ -337,20 +338,18 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
     """The conversation as a Markdown subsection, bylined like a github thread.
 
     Comments without an author or body carry nothing usable and are skipped; the
-    rest are bylined with the commenter (ADR 0084/0046). Returns "" when nothing
-    remains.
+    rest are bylined with the commenter (ADR 0084/0046) and assembled by the
+    shared thread renderer (ADR 0093). Returns "" when nothing remains.
     """
-    blocks = []
+    rendered = []
     for comment in comments:
         text = _plain(comment.get("body") or "")
         if not text:
             continue
         who = _login(comment.get("user"))
         byline = f"Comment by {who}" if who else "Comment"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 def _login(user: Any) -> str | None:

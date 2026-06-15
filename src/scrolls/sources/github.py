@@ -33,6 +33,7 @@ from typing import Any, Callable
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
+from scrolls.sources import discussion
 from scrolls.sources import http
 
 API_ROOT = "https://api.github.com"
@@ -223,19 +224,18 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
 
     Comments without an author or body carry nothing usable and are skipped;
     the rest are bylined with the commenter the way Lobsters/Stack Exchange
-    byline a reply (ADR 0046/0033). Returns "" when nothing remains.
+    byline a reply (ADR 0046/0033). The `### Comments` subsection is assembled
+    by the shared thread renderer (ADR 0093). Returns "" when nothing remains.
     """
-    blocks = []
+    rendered = []
     for comment in comments:
         text = _plain(comment.get("body") or "")
         if not text:
             continue
         who = (comment.get("user") or {}).get("login")
         byline = f"Comment by {who}" if who else "Comment"
-        blocks.append(f"#### {byline}\n\n{text}")
-    if not blocks:
-        return ""
-    return "### Comments\n\n" + "\n\n".join(blocks)
+        rendered.append(discussion.Comment(byline, text))
+    return discussion.format_thread(rendered, heading="Comments")
 
 
 # A plain URL run in Markdown body text, stopping at whitespace or an angle
