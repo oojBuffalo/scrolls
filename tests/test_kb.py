@@ -626,7 +626,7 @@ def test_kb_source_pages_do_not_consolidate(scrolls_home, capsys):
         links=(f"https://doi.org/{doi}",)))
     insert_item(db, make_rendered(
         "arxiv:9", "arxiv", "Source Page Other", category="paper", source_id=doi,
-        url=f"https://example.org/arxiv:9"))
+        url="https://example.org/arxiv:9"))
     capsys.readouterr()
 
     run_kb(capsys)

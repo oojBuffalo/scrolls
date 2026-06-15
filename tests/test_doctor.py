@@ -19,7 +19,7 @@ import pytest
 from scrolls.cli import main
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
-from scrolls.items import ScrollItem, get_item, insert_item, list_items, make_item_id
+from scrolls.items import ScrollItem, insert_item, list_items, make_item_id
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
 from scrolls.search import search_items
