@@ -21,7 +21,7 @@ uv run scrolls --help  # run the CLI from source
 
 ## Current working branch
 
-The autonomous hourly work happens on `work/scrolls-dev`, or branches/worktrees created from it. Keep `main` stable.
+The autonomous work happens on `work/scrolls-dev`, or branches/worktrees created from it. Treat `work/scrolls-dev` as the agents' main/integration trunk. Keep repository `main` stable and do not open PRs to `main` or merge into `main` unless Elijah explicitly asks.
 
 Before editing:
 
@@ -89,6 +89,6 @@ Avoid trivial progress: typo-only edits, README reshuffling, formatting-only chu
 
 - Do not commit secrets.
 - Do not force-push unless explicitly instructed by the user.
-- Do not rewrite `main` history.
+- Do not rewrite `main` history, and do not touch repository `main` beyond fetch/compare operations unless Elijah explicitly asks.
 - Do not let multiple agents write the same checkout at the same time.
 - If a tool, install, auth, or network failure blocks useful progress, stop and report the blocker rather than fabricating results.
