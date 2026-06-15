@@ -56,7 +56,11 @@ Use the default Matt Pocock triage vocabulary. See `docs/agents/triage-labels.md
 
 ### Domain docs
 
-This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order. Also read `docs/agents/last30days-inspiration.md`; Scrolls should take product and architecture inspiration from `mvanhorn/last30days-skill`.
+This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order.
+
+**Primary north star:** Read `docs/agents/vision.md` first. It defines the first-principles product vision synthesized from Scrolls and last30days-skill. All autonomous decisions must be justified against it.
+
+Secondary references: `docs/agents/last30days-inspiration.md` (specific patterns to adapt) and `docs/agents/domain.md`.
 
 ### Last30Days inspiration
 
@@ -83,7 +87,7 @@ The user has authorized autonomous, practical decisions on architecture, design,
 
 Prefer small vertical slices over broad rewrites, but each autonomous run should do real work until it reaches a natural, coherent stopping point.
 
-Current autonomous priority: prefer consolidation, hardening, integration, full-test reliability, doctor/repair, export/import, MCP/search/list consistency, deep works merge, threaded/comment rendering, end-to-end dogfood workflows, and Last30Days-inspired product polish over more one-off adapters.
+Current autonomous priority (from vision.md): deep works merge, explainable ranking & confidence, evidence clustering, MCP/search/list consistency, doctor/repair, lossless export/import + shareable bundles, threaded rendering, fixtures/evals, and dogfood workflows. New adapters only when they validate a broader abstraction.
 
 The goal is not to check a box once the hourly automation fires. A run should complete an isolated feature, vertical slice, schema/module, CLI path, adapter, test-backed behavior, or decision-grade architecture step that future runs can build on without first finishing half-done work.
 

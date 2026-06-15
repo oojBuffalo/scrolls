@@ -14,6 +14,8 @@ Where:
 - **Library** = compiled interlinked KB / concept map.
 - **Agents** = Claude Code, Codex, Hermes, shell tools, future MCP server.
 
+**Read `docs/agents/vision.md` for the authoritative product vision.** This IDEAS.md captures early thinking; the vision document is the current north star.
+
 ## 0. Product inspiration: Last30Days
 
 Scrolls should take inspiration from [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill): not as code to copy, but as a product bar for agent-facing usefulness. Relevant patterns:
