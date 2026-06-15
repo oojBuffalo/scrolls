@@ -390,7 +390,10 @@ Compiled from a rendered arXiv preprint that names its published DOI as a
 link and the rendered Crossref record whose `source_id` *is* that DOI (the
 preprint↔published edge of ADR [0038](adr/0038-arxiv-published-doi-link.md);
 the fourth and fifth fixtures in `tests/test_docs.py`,
-`test_library_format_works_page_example_matches_compiler_output`):
+`test_library_format_works_page_example_matches_compiler_output`). The
+representation that stands for the whole work — the registered published
+record over the preprint, by `Work.canonical`
+(ADR [0095](adr/0095-canonical-representation.md)) — is marked `· canonical`:
 
 <!-- pinned: example-works-page -->
 ```markdown
@@ -403,7 +406,7 @@ the fourth and fifth fixtures in `tests/test_docs.py`,
 [doi.org/10.5555/3295222](https://doi.org/10.5555/3295222) — 2 representations.
 
 - [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md) — arxiv
-- [Attention Is All You Need](../scrolls/crossref/attention-is-all-you-need.md) — crossref
+- [Attention Is All You Need](../scrolls/crossref/attention-is-all-you-need.md) — crossref · canonical
 ```
 
 ## Captured media files: `media/`

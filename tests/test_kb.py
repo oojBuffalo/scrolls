@@ -467,6 +467,27 @@ def test_kb_works_page_clusters_representations_by_shared_doi(scrolls_home, caps
     assert "[Works](works.md) — 1 work held as 2 representations." in index
 
 
+def test_kb_works_page_marks_the_canonical_representation(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    # crossref (the registered published record) outranks the arXiv preprint,
+    # so the crossref representation is the work's canonical one (ADR 0095).
+    doi = "10.5555/3295222"
+    insert_item(db, make_rendered(
+        "arxiv:1706.03762", "arxiv", "Attention Is All You Need",
+        links=(f"https://doi.org/{doi}",)))
+    insert_item(db, _crossref_rep(doi, "Attention Is All You Need"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    # the canonical (crossref) bullet is marked; the preprint bullet is not
+    assert ("- [Attention Is All You Need](../scrolls/crossref/"
+            "attention-is-all-you-need.md) — crossref · canonical") in works
+    assert ("- [Attention Is All You Need](../scrolls/arxiv/"
+            "attention-is-all-you-need.md) — arxiv\n") in works
+
+
 def test_kb_works_page_is_empty_when_no_shared_doi(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path

@@ -229,6 +229,58 @@ def test_works_over_takes_a_given_item_set():
     assert works[0].doi == "10.1000/x"
 
 
+# --- the canonical representation -----------------------------------------
+
+
+def test_canonical_prefers_the_published_record_over_the_preprint():
+    # crossref (registered published work) outranks the arXiv preprint, so
+    # the published record is the work's canonical representation regardless
+    # of which item was saved first or sorts first by id.
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.5555/x",)),
+        make_item("crossref:10.5555/x", url="https://doi.org/10.5555/x"),
+    ]
+    work = works_over(items)[0]
+    assert work.canonical.id == "crossref:10.5555/x"
+    # the canonical is one of the work's own representations
+    assert work.canonical in work.representations
+
+
+def test_canonical_follows_the_source_precedence_order():
+    # pubmed outranks biorxiv outranks arxiv: the highest-ranked source wins
+    # even when a lower-ranked id sorts first alphabetically.
+    items = [
+        make_item("arxiv:zzz", links=("https://doi.org/10.1000/y",)),
+        make_item("biorxiv:10.1101/2021.01.01.000001",
+                  url="https://www.biorxiv.org/content/10.1101/2021.01.01.000001v1",
+                  links=("https://doi.org/10.1000/y",)),
+        make_item("pubmed:aaa",
+                  url="https://pubmed.ncbi.nlm.nih.gov/aaa/",
+                  links=("https://doi.org/10.1000/y",)),
+    ]
+    work = works_over(items)[0]
+    assert work.canonical.source == "pubmed"
+
+
+def test_canonical_breaks_source_ties_by_id():
+    # two representations from the same (out-of-table) source: the lower id
+    # is the deterministic canonical choice.
+    items = [
+        make_item("web:zeta", url="https://example.org/zeta",
+                  links=("https://doi.org/10.1000/z",)),
+        make_item("web:alpha", url="https://example.org/alpha",
+                  links=("https://doi.org/10.1000/z",)),
+    ]
+    work = works_over(items)[0]
+    assert work.canonical.id == "web:alpha"
+
+
+def test_works_for_item_solo_work_canonical_is_the_item_itself():
+    preprint, _ = _attention_pair()
+    work = works_for_item([preprint], "arxiv:1706.03762")[0]
+    assert work.canonical.id == "arxiv:1706.03762"
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -263,6 +315,8 @@ def test_cli_works_reports_clusters(db, capsys):
         "url": "https://arxiv.org/abs/1706.03762",
         "stage": "fetched",
     }
+    # the canonical representation is named by id (the published record, here)
+    assert work["canonical"] == "crossref:10.5555/3295222"
 
 
 def test_cli_works_min_flag(db, capsys):

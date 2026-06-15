@@ -60,6 +60,26 @@ DEFAULT_MIN_REPRESENTATIONS = 2
 # work key never depends on the detector's internal regex.
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")
 
+# Paper-source precedence for picking a work's *canonical* representation —
+# the one form that stands for the whole work (ADR 0095). The registered
+# published work (crossref) ranks first, then the indexed published record
+# (pubmed), then the preprint servers (biorxiv/medrxiv/arxiv), then the
+# standards track (rfc): published over pre-publication. A work's
+# representations usually share a title, so the exact order rarely changes
+# what an agent sees; the point is a single deterministic choice every
+# surface agrees on. Sources outside this map rank last, ties broken by id.
+# `kb.py`'s category-page consolidation (ADR 0071) reads `Work.canonical`
+# instead of re-deriving this, so the rank lives here, with the work model.
+CANONICAL_SOURCE_RANK = {
+    "crossref": 0,
+    "pubmed": 1,
+    "biorxiv": 2,
+    "medrxiv": 3,
+    "arxiv": 4,
+    "rfc": 5,
+}
+_RANK_OTHER = len(CANONICAL_SOURCE_RANK)
+
 
 @dataclass(frozen=True)
 class Representation:
@@ -78,12 +98,16 @@ class Work:
 
     `doi` is the lowercased DOI that names the work and `url` its canonical
     `https://doi.org/<doi>` resolver link. `representations` are the items
-    bound to it, sorted by id.
+    bound to it, sorted by id. `canonical` is the one representation that
+    stands for the whole work (ADR 0095) — the published record over a
+    preprint by `CANONICAL_SOURCE_RANK` — and is always one of
+    `representations` (a single-representation work is its own canonical).
     """
 
     doi: str
     url: str
     representations: tuple[Representation, ...]
+    canonical: Representation
 
 
 def find_works(
@@ -116,20 +140,24 @@ def works_over(
         for doi in _item_dois(item):
             by_doi.setdefault(doi, {})[item.id] = item
 
-    works = [
-        Work(
-            doi=doi,
-            url=f"{DOI_RESOLVER}/{doi}",
-            representations=tuple(
-                sorted(
-                    (_representation(item) for item in members.values()),
-                    key=lambda rep: rep.id,
-                )
-            ),
+    works = []
+    for doi, members in by_doi.items():
+        if len(members) < min_representations:
+            continue
+        reps = tuple(
+            sorted(
+                (_representation(item) for item in members.values()),
+                key=lambda rep: rep.id,
+            )
         )
-        for doi, members in by_doi.items()
-        if len(members) >= min_representations
-    ]
+        works.append(
+            Work(
+                doi=doi,
+                url=f"{DOI_RESOLVER}/{doi}",
+                representations=reps,
+                canonical=_canonical(reps),
+            )
+        )
     works.sort(key=lambda work: (-len(work.representations), work.doi))
     return works
 
@@ -173,13 +201,16 @@ def to_payload(works: list[Work], item_count: int) -> dict:
 
     `stats.items` is the library total (the denominator the works count is
     against), `stats.works` the number reported — the same `stats` shape
-    `scrolls graph` uses.
+    `scrolls graph` uses. `canonical` names the work's canonical
+    representation by id (ADR 0095), a pointer into its own `representations`
+    so a consumer can highlight the one form that stands for the work.
     """
     return {
         "works": [
             {
                 "doi": work.doi,
                 "url": work.url,
+                "canonical": work.canonical.id,
                 "representations": [
                     {
                         "id": rep.id,
@@ -195,6 +226,21 @@ def to_payload(works: list[Work], item_count: int) -> dict:
         ],
         "stats": {"items": item_count, "works": len(works)},
     }
+
+
+def _canonical(representations: tuple[Representation, ...]) -> Representation:
+    """The representation that stands for the whole work (ADR 0095).
+
+    Picked by `CANONICAL_SOURCE_RANK` — the registered published record over a
+    preprint — with the item id as a deterministic tiebreak, so the choice is
+    stable run to run and identical to the one `kb.py`'s page consolidation
+    once derived inline. `representations` is non-empty by construction (a work
+    has at least one representation).
+    """
+    return min(
+        representations,
+        key=lambda rep: (CANONICAL_SOURCE_RANK.get(rep.source, _RANK_OTHER), rep.id),
+    )
 
 
 def _item_dois(item: ScrollItem) -> set[str]:

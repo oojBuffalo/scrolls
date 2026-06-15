@@ -325,26 +325,12 @@ def _write_page(paths: LibraryPaths, relpath: str, title: str,
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# Paper-source precedence for picking a work's *canonical* representation —
-# the one whose title heads a consolidated entry. The registered published
-# work (crossref) ranks first, then the indexed published record (pubmed),
-# then the preprint servers (biorxiv/medrxiv/arxiv), then standards (rfc):
-# published over pre-publication. The exact order rarely matters since a
-# work's representations usually share a title; the point is a deterministic
-# choice. Sources outside this map rank last, ties broken by id.
-_PAPER_SOURCE_RANK = {
-    "crossref": 0,
-    "pubmed": 1,
-    "biorxiv": 2,
-    "medrxiv": 3,
-    "arxiv": 4,
-    "rfc": 5,
-}
-_RANK_OTHER = len(_PAPER_SOURCE_RANK)
+def _entry_sort_key(item) -> tuple[str, str]:
+    """A group page's bullet order: case-folded title, item id as tiebreak.
 
-
-def _entry_sort_key(item: ScrollItem) -> tuple[str, str]:
-    """A group page's bullet order: case-folded title, item id as tiebreak."""
+    Takes anything carrying `.title`/`.id` — a `ScrollItem` for a singleton
+    bullet, a work's canonical `Representation` for a consolidated entry.
+    """
     return ((item.title or item.id).casefold(), item.id)
 
 
@@ -362,17 +348,14 @@ def _consolidated_body(
     multi-representation work on this page render as ordinary bullets, exactly
     as the other group pages do. Works and singletons interleave in one
     case-folded title order; a work sorts by its *canonical* representation's
-    title (`_PAPER_SOURCE_RANK`), so the published record's title heads it.
+    title (`Work.canonical`, ADR 0095), so the published record's title heads it.
     """
     works = works_over(members)
     consolidated_ids = {rep.id for work in works for rep in work.representations}
     entries: list[tuple[tuple[str, str], list[str]]] = []
     for work in works:
         reps = [items_by_id[rep.id] for rep in work.representations]
-        canonical = min(
-            reps,
-            key=lambda item: (_PAPER_SOURCE_RANK.get(item.source, _RANK_OTHER), item.id),
-        )
+        canonical = work.canonical
         block = [
             f"- **{canonical.title or canonical.id}** — "
             f"{_representation_count(len(reps))} "
@@ -496,9 +479,10 @@ def _write_works_page(
     representations isn't shown — the same rendered-only rule the graph page
     and the rest of the KB follow). Each work is a `## <doi>` section: the
     resolver link and a representation count, then every representation as a
-    bullet linking to its scroll. Always written, like the index; a library
-    with no DOI held in two-plus representations says so, so the page is a
-    stable entry point.
+    bullet linking to its scroll — the *canonical* one (`Work.canonical`,
+    ADR 0095) marked, so the form that stands for the work is visible at a
+    glance. Always written, like the index; a library with no DOI held in
+    two-plus representations says so, so the page is a stable entry point.
     """
     page_dir = "library"
     lines = ["# Scrolls Works", ""]
@@ -517,7 +501,10 @@ def _write_works_page(
             ]
             for rep in work.representations:  # already sorted by id
                 item = items_by_id[rep.id]
-                lines.append(_item_line(item, page_dir, note=item.source))
+                note = item.source
+                if rep.id == work.canonical.id:
+                    note = f"{note} · canonical"
+                lines.append(_item_line(item, page_dir, note=note))
     (paths.library_dir / "works.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
     )

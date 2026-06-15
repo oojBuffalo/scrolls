@@ -355,6 +355,8 @@ def test_get_works_clusters_by_shared_doi(scrolls_home):
         "arxiv:1706.03762",
         "crossref:10.5555/3295222",
     ]
+    # the published record is the work's canonical representation (ADR 0095)
+    assert work["canonical"] == "crossref:10.5555/3295222"
 
 
 def test_get_works_empty_library(scrolls_home):

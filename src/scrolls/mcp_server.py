@@ -241,7 +241,10 @@ def get_works(
     only when one's link resolves to another already in the library, this
     clusters by shared DOI, so two representations bind into one work even
     when the Crossref item that links them is absent. Each work carries its
-    `doi`, `url`, and `representations` (the same node shape as the graph).
+    `doi`, `url`, `representations` (the same node shape as the graph), and
+    `canonical` — the id of the one representation that stands for the whole
+    work (the registered published record over a preprint), a pointer into
+    its own `representations` so a caller can cite or display that form.
     Works with fewer than `min_representations` items are omitted (default 2,
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.
