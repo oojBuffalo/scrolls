@@ -14,6 +14,20 @@ Where:
 - **Library** = compiled interlinked KB / concept map.
 - **Agents** = Claude Code, Codex, Hermes, shell tools, future MCP server.
 
+## 0. Product inspiration: Last30Days
+
+Scrolls should take inspiration from [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill): not as code to copy, but as a product bar for agent-facing usefulness. Relevant patterns:
+
+- a clear contract between the agent-facing instructions and the executable engine,
+- multi-source fanout that tolerates partial failures and reports degraded states,
+- evidence clustering/dedupe so repeated representations collapse into one useful story,
+- signal-aware ranking that explains why an item matters,
+- shareable artifacts in addition to chat/CLI output,
+- fixtures/evals/regression tests as product infrastructure,
+- dogfood workflows that prove agents can actually use the system end to end.
+
+For the detailed adaptation notes, see `docs/agents/last30days-inspiration.md`. Near-term autonomous work should prefer these cross-cutting product patterns over adding more one-off adapters unless a new adapter validates a broader abstraction.
+
 ## 1. Core abstraction: source adapters
 
 Each platform should be a small adapter implementing the same interface.

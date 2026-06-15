@@ -56,7 +56,11 @@ Use the default Matt Pocock triage vocabulary. See `docs/agents/triage-labels.md
 
 ### Domain docs
 
-This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order.
+This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order. Also read `docs/agents/last30days-inspiration.md`; Scrolls should take product and architecture inspiration from `mvanhorn/last30days-skill`.
+
+### Last30Days inspiration
+
+Use `/Users/claw/.hermes/gh-repos/last30days-skill` as a reference checkout for inspiration only. Adapt its patterns to Scrolls' local-first library model: agent-facing contracts, multi-source fanout with graceful degradation, evidence clustering/dedupe, signal-aware ranking, shareable artifacts, fixtures/evals, and dogfood workflows. Do not copy secrets, vendored code, or implementation details blindly.
 
 ## Development process
 
@@ -78,6 +82,8 @@ The user has authorized autonomous, practical decisions on architecture, design,
 4. verified with tests or concrete command output when possible.
 
 Prefer small vertical slices over broad rewrites, but each autonomous run should do real work until it reaches a natural, coherent stopping point.
+
+Current autonomous priority: prefer consolidation, hardening, integration, full-test reliability, doctor/repair, export/import, MCP/search/list consistency, deep works merge, threaded/comment rendering, end-to-end dogfood workflows, and Last30Days-inspired product polish over more one-off adapters.
 
 The goal is not to check a box once the hourly automation fires. A run should complete an isolated feature, vertical slice, schema/module, CLI path, adapter, test-backed behavior, or decision-grade architecture step that future runs can build on without first finishing half-done work.
 
