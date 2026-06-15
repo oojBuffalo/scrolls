@@ -51,7 +51,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -63,6 +62,7 @@ from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
 from scrolls.sources import urls
+from scrolls.sources.text import normalize_markdown
 
 GetJson = Callable[[str], Any]
 GetText = Callable[[str], str]
@@ -378,9 +378,7 @@ def _thread_links(host: str, repo: str, issue: dict[str, Any], body: str) -> tup
 
 def _plain(text: str) -> str:
     """Normalize a Markdown body: CRLF to LF, collapse blank runs (the github rule)."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_markdown(text)
 
 
 def _api_headers() -> dict[str, str]:

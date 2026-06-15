@@ -25,7 +25,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -36,6 +35,7 @@ from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
 from scrolls.sources import urls
+from scrolls.sources.text import normalize_markdown
 
 API_ROOT = "https://api.github.com"
 WEB_ROOT = "https://github.com"
@@ -254,9 +254,7 @@ def _issue_links(repo: str, issue: dict[str, Any], body: str) -> tuple[str, ...]
 
 def _plain(text: str) -> str:
     """Normalize a Markdown body: CRLF to LF, collapse blank runs (Lobsters' rule)."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_markdown(text)
 
 
 def _api_headers() -> dict[str, str]:

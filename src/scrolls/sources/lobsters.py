@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -39,6 +38,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources.text import normalize_markdown
 
 API_ROOT = "https://lobste.rs"
 
@@ -161,9 +161,7 @@ def _plain(text: str) -> str:
     from Markdown, so there is no HTML to strip (contrast HN and Stack
     Exchange) — only line-ending and blank-line normalization.
     """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_markdown(text)
 
 
 def _plural(count: int, noun: str) -> str:

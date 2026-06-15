@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -46,6 +45,7 @@ from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import http
+from scrolls.sources.text import normalize_markdown
 
 API_ROOT = "https://dev.to/api/articles"
 
@@ -202,9 +202,7 @@ def _plain(text: str) -> str:
     adapter), so only line-ending and blank-line normalization is needed —
     Lobsters' `*_plain` economy (ADR 0046).
     """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_markdown(text)
 
 
 _get_json = http.get_json
