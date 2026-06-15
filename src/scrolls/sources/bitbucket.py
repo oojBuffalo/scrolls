@@ -62,6 +62,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources import urls
 
 API_ROOT = "https://api.bitbucket.org/2.0"
 
@@ -393,28 +394,16 @@ def _login(account: Any) -> str | None:
     )
 
 
-# A plain URL run in Markdown body text, stopping at whitespace or an angle
-# bracket; trailing prose/`[label](url)` punctuation is trimmed (the github
-# thread scan, ADR 0084).
-_URL_RE = re.compile(r"https?://[^\s<>]+")
-_URL_TRAILING = ".,;:!?\"')]}>"
-
-
 def _thread_links(repo: str, thread: dict[str, Any], body: str) -> tuple[str, ...]:
     """The repo edge plus any URLs referenced in the body.
 
     A thread belongs to its repository, so a `bitbucket.org/<workspace>/<repo>`
     link makes the thread↔repo edge `scrolls related`/`graph` resolves to the
     saved repo item (the github issue↔repo edge, ADR 0084). URLs in the body
-    become outbound edges, deduped and never self-linking the thread.
+    become outbound edges, deduped and never self-linking the thread — the
+    shared body-link grammar (ADR 0094).
     """
-    self_url = _html_url(thread) or ""
-    links = [f"{WEB_ROOT}/{repo}"]
-    for match in _URL_RE.finditer(body):
-        url = match.group(0).rstrip(_URL_TRAILING)
-        if url and url != self_url and url not in links:
-            links.append(url)
-    return tuple(links)
+    return urls.body_edge_links(f"{WEB_ROOT}/{repo}", _html_url(thread) or "", body)
 
 
 def _plain(text: str) -> str:

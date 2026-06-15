@@ -60,6 +60,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources import urls
 
 # Comments to request: bounded so a huge thread stays a tractable scroll, the
 # deeper tail surviving in raw_text for a future render (Bluesky's depth cap,
@@ -314,28 +315,15 @@ def _name(user: dict[str, Any]) -> str | None:
     return _clean(user.get("display_name")) or _clean(user.get("name"))
 
 
-# A plain URL run in Markdown body text, stopping at whitespace or an angle
-# bracket; trailing punctuation a prose scan over-captures is trimmed (Misskey's
-# `_content_links`, ADR 0051).
-_URL_RE = re.compile(r"https?://[^\s<>]+")
-_URL_TRAILING = ".,;:!?\"')]}>"
-
-
 def _content_links(body: Any) -> list[str]:
     """Plain `http(s)` URLs in the post body, trailing punctuation trimmed.
 
-    The body is Markdown, so an outbound URL is read straight from it (Misskey's
-    URL scan, ADR 0051): a post pointing at an arXiv paper or github repo wires
-    to it through `scrolls related`/`graph` (the cross-source edges, ADR 0044).
+    The body is Markdown, so an outbound URL is read straight from it by the
+    shared body-URL scan (ADR 0094): a post pointing at an arXiv paper or github
+    repo wires to it through `scrolls related`/`graph` (cross-source edges,
+    ADR 0044).
     """
-    if not isinstance(body, str):
-        return []
-    links = []
-    for match in _URL_RE.finditer(body):
-        url = match.group(0).rstrip(_URL_TRAILING)
-        if url:
-            links.append(url)
-    return links
+    return urls.scan_urls(body)
 
 
 def _text(value: Any) -> str | None:

@@ -35,6 +35,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources import urls
 
 API_ROOT = "https://api.github.com"
 WEB_ROOT = "https://github.com"
@@ -238,13 +239,6 @@ def _format_comments(comments: list[dict[str, Any]]) -> str:
     return discussion.format_thread(rendered, heading="Comments")
 
 
-# A plain URL run in Markdown body text, stopping at whitespace or an angle
-# bracket; trailing prose/`[label](url)` punctuation is trimmed (the misskey
-# scan, ADR 0051).
-_URL_RE = re.compile(r"https?://[^\s<>]+")
-_URL_TRAILING = ".,;:!?\"')]}>"
-
-
 def _issue_links(repo: str, issue: dict[str, Any], body: str) -> tuple[str, ...]:
     """The repo edge plus any URLs referenced in the body.
 
@@ -252,15 +246,10 @@ def _issue_links(repo: str, issue: dict[str, Any], body: str) -> tuple[str, ...]
     makes the issue↔repo edge `scrolls related`/`graph` resolves to the saved
     repo item. URLs in the body (cross-references to other issues, PRs, docs)
     become outbound edges the way a social post's body links do (ADR 0051),
-    deduped and never self-linking the thread.
+    deduped and never self-linking the thread — the shared body-link grammar
+    (ADR 0094).
     """
-    self_url = issue.get("html_url") or ""
-    links = [f"{WEB_ROOT}/{repo}"]
-    for match in _URL_RE.finditer(body):
-        url = match.group(0).rstrip(_URL_TRAILING)
-        if url and url != self_url and url not in links:
-            links.append(url)
-    return tuple(links)
+    return urls.body_edge_links(f"{WEB_ROOT}/{repo}", issue.get("html_url") or "", body)
 
 
 def _plain(text: str) -> str:

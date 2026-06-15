@@ -56,6 +56,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources import urls
 
 _TITLE_SNIPPET = 100
 # Direct replies to render; deeper descendants stay in raw_text for a future
@@ -179,30 +180,14 @@ def _text(text: Any) -> str | None:
     return "\n\n".join(p for p in paragraphs if p) or None
 
 
-# A plain URL run in MFM text, stopping at whitespace or an angle bracket.
-_URL_RE = re.compile(r"https?://[^\s<>]+")
-# Trailing punctuation a URL scan over prose over-captures — sentence
-# punctuation and the closing bracket of a `[label](url)` MFM/markdown link.
-_URL_TRAILING = ".,;:!?\"')]}>"
-
-
 def _content_links(text: Any) -> list[str]:
     """Plain `http(s)` URLs in the note text, trailing punctuation trimmed.
 
     Misskey has no Bluesky-style facet list or Mastodon-style link card, so
-    outbound links are read straight from the MFM text. The trailing-punctuation
-    trim handles a URL at the end of a sentence and the `)` of a `[label](url)`
-    markdown link; a URL that legitimately ends in such a character (rare in a
-    social post) loses it — a benign miss that just doesn't resolve an edge.
+    outbound links are read straight from the MFM text by the shared body-URL
+    scan (ADR 0094).
     """
-    if not isinstance(text, str):
-        return []
-    links = []
-    for match in _URL_RE.finditer(text):
-        url = match.group(0).rstrip(_URL_TRAILING)
-        if url:
-            links.append(url)
-    return links
+    return urls.scan_urls(text)
 
 
 def _body(text: str | None, cw: Any, media: tuple) -> str | None:

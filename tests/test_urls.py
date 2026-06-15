@@ -8,7 +8,7 @@ than the duplicate it prevents. Hence the asymmetry below: known
 tracking names go, everything else stays byte-identical.
 """
 
-from scrolls.sources.urls import normalize_url
+from scrolls.sources.urls import body_edge_links, normalize_url, scan_urls
 
 
 def test_strips_utm_params():
@@ -96,3 +96,70 @@ def test_non_http_input_passes_through_stripped():
 def test_normalization_is_idempotent():
     once = normalize_url("HTTPS://Example.com:443/post?utm_source=x&page=2#top")
     assert normalize_url(once) == once
+
+
+# scan_urls / body_edge_links — the body-link grammar shared by the thread and
+# Fediverse adapters (ADR 0094).
+
+
+def test_scan_urls_finds_http_and_https_in_order():
+    text = "see https://a.example/x and http://b.example/y for more"
+    assert scan_urls(text) == ["https://a.example/x", "http://b.example/y"]
+
+
+def test_scan_urls_trims_trailing_sentence_and_markdown_punctuation():
+    assert scan_urls("read https://a.example/doc.") == ["https://a.example/doc"]
+    # the closing `)` of a `[label](url)` link and a wrapping paren both trim
+    assert scan_urls("[docs](https://a.example/p)") == ["https://a.example/p"]
+    assert scan_urls("(see https://a.example/p)") == ["https://a.example/p"]
+
+
+def test_scan_urls_stops_at_whitespace_and_angle_brackets():
+    assert scan_urls("a <https://a.example/p> b") == ["https://a.example/p"]
+
+
+def test_scan_urls_keeps_duplicates_and_does_not_dedupe():
+    text = "https://a.example/p then again https://a.example/p"
+    assert scan_urls(text) == ["https://a.example/p", "https://a.example/p"]
+
+
+def test_scan_urls_ignores_non_string_and_textless_input():
+    assert scan_urls(None) == []
+    assert scan_urls(42) == []
+    assert scan_urls("no links here") == []
+
+
+def test_body_edge_links_leads_with_the_seed_then_body_urls():
+    out = body_edge_links(
+        "https://github.com/o/r",
+        "https://github.com/o/r/issues/5",
+        "compare https://github.com/o/r/issues/3 and https://docs.example/g",
+    )
+    assert out == (
+        "https://github.com/o/r",
+        "https://github.com/o/r/issues/3",
+        "https://docs.example/g",
+    )
+
+
+def test_body_edge_links_excludes_the_self_url_and_dedupes_against_the_seed():
+    out = body_edge_links(
+        "https://github.com/o/r",
+        "https://github.com/o/r/issues/5",
+        # the thread links to itself and back to its own repo — both dropped
+        "self https://github.com/o/r/issues/5 repo https://github.com/o/r end",
+    )
+    assert out == ("https://github.com/o/r",)
+
+
+def test_body_edge_links_dedupes_repeated_body_urls():
+    out = body_edge_links(
+        "https://github.com/o/r",
+        "",
+        "https://x.example/a https://x.example/a https://x.example/b",
+    )
+    assert out == (
+        "https://github.com/o/r",
+        "https://x.example/a",
+        "https://x.example/b",
+    )

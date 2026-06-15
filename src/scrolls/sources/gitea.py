@@ -62,6 +62,7 @@ from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
 from scrolls.sources import discussion
 from scrolls.sources import http
+from scrolls.sources import urls
 
 GetJson = Callable[[str], Any]
 GetText = Callable[[str], str]
@@ -363,13 +364,6 @@ def _login(user: Any) -> str | None:
     return user.get("login") or user.get("username") or None
 
 
-# A plain URL run in Markdown body text, stopping at whitespace or an angle
-# bracket; trailing prose/`[label](url)` punctuation is trimmed (the github
-# thread scan, ADR 0084).
-_URL_RE = re.compile(r"https?://[^\s<>]+")
-_URL_TRAILING = ".,;:!?\"')]}>"
-
-
 def _thread_links(host: str, repo: str, issue: dict[str, Any], body: str) -> tuple[str, ...]:
     """The repo edge plus any URLs referenced in the body.
 
@@ -377,15 +371,9 @@ def _thread_links(host: str, repo: str, issue: dict[str, Any], body: str) -> tup
     the thread↔repo edge `scrolls related`/`graph` resolves to the saved repo
     item (the github issue↔repo edge, ADR 0084). URLs in the body (cross-
     references to other issues, PRs, docs) become outbound edges, deduped and
-    never self-linking the thread.
+    never self-linking the thread — the shared body-link grammar (ADR 0094).
     """
-    self_url = issue.get("html_url") or ""
-    links = [f"https://{host}/{repo}"]
-    for match in _URL_RE.finditer(body):
-        url = match.group(0).rstrip(_URL_TRAILING)
-        if url and url != self_url and url not in links:
-            links.append(url)
-    return tuple(links)
+    return urls.body_edge_links(f"https://{host}/{repo}", issue.get("html_url") or "", body)
 
 
 def _plain(text: str) -> str:
