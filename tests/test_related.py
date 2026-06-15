@@ -109,6 +109,62 @@ def test_arxiv_preprint_relates_to_its_published_crossref_paper(db):
     assert any("linked from it" in reason for reason in backward[0].reasons)
 
 
+def test_same_work_relates_representations_with_no_hub_present(db):
+    # The case `scrolls graph` cannot catch (ADR 0069): an arXiv preprint and
+    # a PubMed record both name the same published DOI, but no Crossref hub
+    # item owns that DOI as its identity, so no realized link edge binds them.
+    # They are still the same work, and `related` says so.
+    insert_item(db, make_item(
+        "arxiv:2310.06825",
+        url="https://arxiv.org/abs/2310.06825",
+        links=("https://doi.org/10.1109/example.2024.12345",),
+    ))
+    insert_item(db, make_item(
+        "pubmed:99887766",
+        url="https://pubmed.ncbi.nlm.nih.gov/99887766/",
+        links=("https://doi.org/10.1109/example.2024.12345",),
+    ))
+    insert_item(db, make_item("web:other", url="https://example.com/elsewhere"))
+
+    hits = find_related(db, "arxiv:2310.06825")
+    assert [hit.id for hit in hits] == ["pubmed:99887766"]
+    assert hits[0].reasons == ("same work: https://doi.org/10.1109/example.2024.12345",)
+    # neither item's identity is the DOI, so there is no link reason at all
+    assert not any("link" in reason for reason in hits[0].reasons)
+
+
+def test_same_work_outranks_a_one_way_link(db):
+    # target links to a citee (one-way link, 5 pts) and is the same work as a
+    # sibling sharing its DOI (6 pts). Identity beats a citation: the sibling
+    # ranks first.
+    insert_item(db, make_item(
+        "arxiv:2310.06825",
+        url="https://arxiv.org/abs/2310.06825",
+        source_id="2310.06825",
+        links=(
+            "https://doi.org/10.1109/example.2024.12345",  # the work DOI
+            "https://example.com/cited",                    # a one-way citation
+        ),
+    ))
+    insert_item(db, make_item(
+        "crossref:10.1109/example.2024.12345",
+        source_id="10.1109/example.2024.12345",
+        url="https://doi.org/10.1109/example.2024.12345",
+    ))
+    insert_item(db, make_item("web:cited", url="https://example.com/cited"))
+
+    hits = find_related(db, "arxiv:2310.06825")
+    assert [hit.id for hit in hits] == [
+        "crossref:10.1109/example.2024.12345",  # same work + link, ranks first
+        "web:cited",                             # one-way link only
+    ]
+    # the hub-present sibling carries both the same-work and the link reason
+    same_work = hits[0]
+    assert any("same work" in reason for reason in same_work.reasons)
+    assert any("links to it" in reason for reason in same_work.reasons)
+    assert same_work.score > hits[1].score
+
+
 def test_exact_url_match_relates_web_items(db):
     insert_item(db, make_item(
         "x:1111",

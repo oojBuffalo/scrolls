@@ -502,7 +502,12 @@ choice (ADRs 0004, 0005).
   (`scrolls facets concepts --source arxiv`), and the dimension reuses
   `items.item_filters`.
 - **Related items** (`related.py`, IDEAS.md §10) — explainable scoring,
-  no LLM: link connections in either direction (resolved through source
+  no LLM: a *same-work* sibling first (a shared DOI binds a preprint to its
+  published article — the `works` lens, ADR 0069/0096 — outranking a one-way
+  link because identity beats citation, and catching the hub-absent case the
+  link graph cannot: two representations both naming `doi.org/D` with no
+  Crossref item present share no edge yet are one work), then link
+  connections in either direction (resolved through source
   detection, so `arxiv.org/pdf/X` finds item `arxiv:X`, an arXiv
   preprint's published `doi.org` link finds its `crossref:<doi>` paper —
   ADR 0038 — and a Hugging Face model's `arxiv:` tag finds the
@@ -515,8 +520,9 @@ choice (ADRs 0004, 0005).
   `crossref:<doi>` paper and its `obsoletes`/`updates` links find the RFCs it
   supersedes — ADR 0066, the standards-lineage analog), shared concepts
   (merged by slug), shared tags, same category/domain as weak
-  corroboration. Every hit carries its `reasons`
-  (`tests/test_related.py`).
+  corroboration. A genuine same-work pair whose hub is present scores both
+  the same-work and the link edge — complementary facts, not double counting.
+  Every hit carries its `reasons` (`tests/test_related.py`).
 - **Link graph** (`graph.py`, ADR 0044) — `scrolls graph` resolves *every*
   item's links into directed edges across the whole library, the
   whole-library complement to `related`'s per-item lens. The link-resolution

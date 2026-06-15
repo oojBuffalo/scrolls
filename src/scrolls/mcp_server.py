@@ -199,10 +199,15 @@ def get_scroll(item_id: str) -> dict[str, Any]:
 def get_related_scrolls(
     item_id: str, limit: int = DEFAULT_RELATED_LIMIT
 ) -> list[dict[str, Any]]:
-    """Items connected to one item — link edges, shared concepts/tags — with reasons.
+    """Items connected to one item — same-work, link edges, shared concepts/tags — with reasons.
 
-    `item_id` is the item's id or the URL that saved it (ADR 0028), resolved like
-    `get_scroll`'s. An unknown item is an error.
+    Ranked best-first by explainable signals: a *same-work* sibling (a
+    preprint and its published article, bound by a shared DOI — the strongest
+    signal, and one that binds representations even when no link edge does),
+    then link edges, shared concepts, shared tags, and same category/domain.
+    Each hit's `reasons` say why it matched. `item_id` is the item's id or the
+    URL that saved it (ADR 0028), resolved like `get_scroll`'s. An unknown
+    item is an error.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)

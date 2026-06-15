@@ -137,7 +137,7 @@ def works_over(
     # DOI twice (a duplicate link) counts once, in first-seen (oldest) order.
     by_doi: dict[str, dict[str, ScrollItem]] = {}
     for item in items:
-        for doi in _item_dois(item):
+        for doi in item_dois(item):
             by_doi.setdefault(doi, {})[item.id] = item
 
     works = []
@@ -183,7 +183,7 @@ def works_for_item(items: list[ScrollItem], item_id: str) -> list[Work]:
     target = next((item for item in items if item.id == item_id), None)
     if target is None:
         raise ValueError(f"no such item: {item_id}")
-    target_dois = _item_dois(target)
+    target_dois = item_dois(target)
     if not target_dois:
         return []
     # cluster over the whole set with no floor (min 1), then keep the works
@@ -243,11 +243,15 @@ def _canonical(representations: tuple[Representation, ...]) -> Representation:
     )
 
 
-def _item_dois(item: ScrollItem) -> set[str]:
+def item_dois(item: ScrollItem) -> set[str]:
     """The DOIs that name the work(s) this item represents.
 
     The item's own `source_id` when it is itself a DOI (crossref,
     biorxiv/medrxiv), plus the DOI of every `doi.org` link it carries.
+
+    Public so `related` can score a *same-work* edge with the same
+    DOI-extraction rule the work clustering uses — an item is a sibling
+    representation of another exactly when they share one of these DOIs.
     """
     dois: set[str] = set()
     if item.source_id and _DOI_RE.match(item.source_id):

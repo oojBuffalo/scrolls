@@ -3,6 +3,13 @@
 `scrolls related <id>` answers "what else in my library belongs next to
 this?" without an LLM, scoring explainable signals:
 
+- same work (6 points per shared DOI): the two items are the same
+  scholarly work — a preprint and its published article, an indexing
+  record — bound by a shared DOI (the `works` lens, ADR 0069). This
+  outranks a one-way link because identity is stronger than a citation,
+  and it catches the case `scrolls graph` cannot: two representations
+  that both name `doi.org/D` with no Crossref hub item present share no
+  realized link edge, yet they are siblings of one work.
 - link connections (5 points per direction): one item's extracted links
   resolve to the other's identity — a bookmarked tweet pointing at a
   saved arXiv paper, a saved article both ways. Links are matched by
@@ -13,6 +20,10 @@ this?" without an LLM, scoring explainable signals:
 - shared tags (2 each, case-insensitive).
 - same category / same domain (1 each): weak corroboration, never enough
   to rank an item without a stronger overlap... unless that's all there is.
+
+A genuine same-work pair whose binding hub *is* present scores both the
+same-work edge and the link edge — complementary facts (these are the
+same work, *and* one points at the other), not double counting.
 
 Every hit carries human/agent-readable `reasons`, so downstream callers
 (and the future MCP `get_related_scrolls`) can show *why* — same spirit
@@ -27,9 +38,11 @@ from pathlib import Path
 from scrolls.graph import identity_tokens, link_tokens
 from scrolls.items import ScrollItem, get_item, list_items
 from scrolls.render import slugify
+from scrolls.works import DOI_RESOLVER, item_dois
 
 DEFAULT_LIMIT = 10
 
+_WORK_POINTS = 6
 _LINK_POINTS = 5
 _CONCEPT_POINTS = 3
 _TAG_POINTS = 2
@@ -63,6 +76,7 @@ def find_related(
     item_urls = _own_urls(item)
     item_concepts = {slugify(c): c for c in item.concepts if slugify(c)}
     item_tags = {t.lower(): t for t in item.tags}
+    item_work_dois = item_dois(item)
 
     hits = []
     for other in list_items(db_path):
@@ -70,6 +84,14 @@ def find_related(
             continue
         score = 0
         reasons = []
+
+        shared_dois = sorted(item_work_dois & item_dois(other))
+        if shared_dois:
+            score += _WORK_POINTS * len(shared_dois)
+            reasons.append(
+                "same work: "
+                + ", ".join(f"{DOI_RESOLVER}/{doi}" for doi in shared_dois)
+            )
 
         if other.id in item_targets or _own_urls(other) & item_targets:
             score += _LINK_POINTS
