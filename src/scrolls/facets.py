@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from scrolls.items import ScrollItem, item_filters, register_facet_functions
+from scrolls.doctor import get_fidelity
 from scrolls.kb import group_concepts, group_tags
 
-FIELDS = ("sources", "categories", "tags", "concepts")
+FIELDS = ("sources", "categories", "tags", "concepts", "fidelity")
 
 DEFAULT_LIMIT = 20
 
@@ -78,6 +79,9 @@ def compute_facets(
                 facets["concepts"] = _grouped_counts(
                     group_concepts(items), limit, slug=True
                 )
+        if "fidelity" in wanted:
+            items = _load_facet_columns(conn, where, params)
+            facets["fidelity"] = _fidelity_counts(items, limit)
     finally:
         conn.close()
     return {"facets": {name: facets[name] for name in wanted}}
@@ -166,3 +170,13 @@ def _grouped_counts(
 def _rank(entries: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:
     entries.sort(key=lambda record: (-record["count"], record["value"]))
     return entries[:limit] if limit is not None else entries
+
+def _fidelity_counts(items: list[ScrollItem], limit: int | None) -> list[dict[str, Any]]:
+    """Count items by derived fidelity tier."""
+    from collections import Counter
+    counts = Counter(get_fidelity(item) for item in items)
+    results = [{"value": tier, "count": count} for tier, count in counts.items()]
+    results.sort(key=lambda x: (-x["count"], x["value"]))
+    if limit is not None:
+        results = results[:limit]
+    return results

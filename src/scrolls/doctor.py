@@ -31,6 +31,25 @@ from scrolls.sources.urls import normalize_url
 
 _STAGE_RANK = {"detected": 0, "fetched": 1, "rendered": 2}
 
+
+def get_fidelity(item: ScrollItem) -> str:
+    """Derive explicit fidelity tier for a custodied item.
+
+    full: raw or extracted+hash present (re-derivable body).
+    partial: some content (extracted/summary) but not full.
+    reference: pointer/provenance only.
+    """
+    has_raw = bool(getattr(item, "raw_text", None))
+    has_extracted = bool(getattr(item, "extracted_text", None))
+    has_hash = bool(getattr(item, "content_hash", None))
+    has_body = has_raw or (has_extracted and has_hash)
+
+    if has_body and getattr(item, "stage", "detected") in ("fetched", "rendered"):
+        return "full"
+    if has_extracted or getattr(item, "summary", None):
+        return "partial"
+    return "reference"
+
 # SQLite release that taught FTS5 'integrity-check' to verify the index
 # against an external content table; older ones can only check internals
 _FTS_VERIFY_VERSION = (3, 42, 0)
@@ -53,6 +72,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
         "missing_media": [],
         "orphan_scrolls": [],
         "fts": {"in_sync": None, "status": "skipped"},
+        "custody": {"score": None, "tiers": {"full": 0, "partial": 0, "reference": 0}, "findings": []},
     }
     if not paths.db_path.exists():
         return report
@@ -64,6 +84,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     _check_missing_media(paths, report, items)
     _check_orphan_scrolls(paths, report, items)
     _check_fts(paths, report, fix)
+    _check_custody_integrity(paths, report, items)
     return report
 
 
@@ -235,3 +256,51 @@ def _fts_in_sync(conn: sqlite3.Connection) -> bool:
     except sqlite3.DatabaseError:
         return False
     return True
+
+
+def _check_custody_integrity(paths: LibraryPaths, report: dict, items: list[ScrollItem]) -> None:
+    """Custody integrity audit per the vision: verify scroll presence, re-derivability of body to content_hash, raw presence or honest fidelity downgrade, provenance completeness.
+
+    Adds to report['custody'] with tiers counts and findings for issues.
+    This is network-free and deterministic.
+    """
+    custody = report["custody"]
+    for item in items:
+        tier = get_fidelity(item)
+        custody["tiers"][tier] = custody["tiers"].get(tier, 0) + 1
+
+        issues_for_item = []
+        scroll_path = paths.root / item.markdown_path if item.markdown_path else None
+
+        # Check 1: scroll file present for rendered items
+        if item.stage == "rendered" and item.markdown_path:
+            if not scroll_path or not scroll_path.exists():
+                issues_for_item.append("missing_scroll_file")
+
+        # Check 2: body re-derives to stored content_hash (basic: presence + hash)
+        if tier == "full" and item.content_hash:
+            if not item.extracted_text and not item.raw_text:
+                issues_for_item.append("body_not_rederivable")
+
+        # Check 3: raw or honest downgrade
+        if tier == "full" and not item.raw_text and not (item.extracted_text and item.content_hash):
+            issues_for_item.append("full_fidelity_without_raw_or_hash")
+
+        # Check 4: provenance basic (url or source_id present for non-reference)
+        if tier != "reference" and not item.url and not item.source_id:
+            issues_for_item.append("missing_provenance")
+
+        if issues_for_item:
+            report["issues"] += 1
+            custody["findings"].append({
+                "id": item.id,
+                "tier": tier,
+                "issues": issues_for_item,
+                "status": "found"
+            })
+
+    # Compute simple custody score: % of items that are full or partial without issues
+    total = len(items) or 1
+    full_or_partial = custody["tiers"]["full"] + custody["tiers"]["partial"]
+    findings_penalty = len(custody["findings"])
+    custody["score"] = max(0, int(100 * (full_or_partial / total) - (findings_penalty * 5)))

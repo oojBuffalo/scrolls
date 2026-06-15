@@ -450,3 +450,57 @@ def test_doctor_fix_exits_one_when_unfixable_drift_remains(paths, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["issues"] == 1
     assert payload["fixed"] == 0
+
+
+def test_get_fidelity_tiers(paths):
+    from scrolls.doctor import get_fidelity
+    from scrolls.items import ScrollItem
+
+    now = "2026-06-15T00:00:00+00:00"
+    # full: has extracted + hash + rendered stage
+    full_item = ScrollItem(
+        id="test:full", source="web", url="https://ex.com", saved_at=now, stage="rendered",
+        extracted_text="body", content_hash="sha256:abc", markdown_path="scrolls/web/test.md"
+    )
+    assert get_fidelity(full_item) == "full"
+
+    # partial: has extracted but no full hash
+    partial_item = ScrollItem(id="test:partial", source="web", url="https://ex.com", saved_at=now, stage="fetched", extracted_text="some")
+    assert get_fidelity(partial_item) == "partial"
+
+    # reference: no content
+    ref_item = ScrollItem(id="test:ref", source="web", url="https://ex.com", saved_at=now, stage="detected")
+    assert get_fidelity(ref_item) == "reference"
+
+
+def test_doctor_includes_custody_report(paths, capsys):
+    from scrolls.items import insert_item
+
+    # Insert a mix
+    insert_item(paths.db_path, _web_item("https://example.com/full", fetched=True, extracted_text="full body", content_hash="sha256:123"))
+    insert_item(paths.db_path, _web_item("https://example.com/partial", extracted_text="partial"))
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))
+
+    main(["doctor"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert "custody" in payload
+    assert payload["custody"]["tiers"]["full"] >= 1
+    assert payload["custody"]["tiers"]["partial"] >= 1
+    assert payload["custody"]["tiers"]["reference"] >= 1
+    assert payload["custody"]["score"] is not None
+    # basic check that findings list exists
+    assert "findings" in payload["custody"]
+
+
+def test_fidelity_facet(paths):
+    from scrolls.facets import compute_facets
+    from scrolls.items import insert_item
+
+    insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True, extracted_text="a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _web_item("https://example.com/b", extracted_text="b"))
+
+    facets = compute_facets(paths.db_path)
+    assert "fidelity" in facets["facets"]
+    values = {f["value"] for f in facets["facets"]["fidelity"]}
+    assert "reference" in values or "partial" in values or "full" in values
