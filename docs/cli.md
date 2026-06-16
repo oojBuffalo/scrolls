@@ -2224,15 +2224,17 @@ an arXiv preprint and a PubMed record that both name `doi.org/D` are one
 work even when the `crossref:D` item that would link them is absent
 (`test_clusters_without_the_crossref_hub_present`). Each work carries its
 `doi`, canonical `url`, and `representations` (the `id`/`source`/`title`/
-`url`/`stage` node shape plus **both per-item custody axes** — `fidelity`
-(how much is held, ADR 0100) and `drift` (whether the source moved, roadmap
-H64) — so each representation reports the custody tier it is held at *and*
-its drift posture: the preprint may be full while the published record is a
-bare reference, and either may have drifted since capture. The same
-`custody.drift_posture` over `latest_events` every other per-item surface
-reads, so a representation's `drift` equals that item's `list` row by
-construction, `unverified` when never re-checked —
-`test_cli_works_representation_drift_matches_the_list_row`), sorted by
+`url`/`stage` node shape plus the **full per-item custody picture** — `fidelity`
+(how much is held, ADR 0100), `drift` (whether the source moved, roadmap H64),
+and `last_checked` (as of when, roadmap H87, `null` when never re-checked) — so
+each representation reports the custody tier it is held at, its drift posture,
+*and* when that verdict was taken: the preprint may be full while the published
+record is a bare reference, and either may have drifted since capture. The same
+`custody.drift_posture`/`custody.last_checked` over `latest_events` every other
+per-item surface reads, so a representation's `drift` and `last_checked` equal
+that item's `list` row by construction, `unverified`/`null` when never re-checked
+— `test_cli_works_representation_drift_matches_the_list_row`,
+`test_cli_works_representation_last_checked_matches_the_list_row`), sorted by
 id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
@@ -2259,11 +2261,11 @@ item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 ```
 
@@ -2539,7 +2541,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)) |
-| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
+| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |

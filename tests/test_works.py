@@ -348,6 +348,50 @@ def test_representation_drift_defaults_to_unverified_without_a_ledger():
     )
 
 
+def test_representation_payload_carries_per_item_last_checked():
+    # H87: the time axis (last_checked) rides each representation beside `drift`,
+    # from the same `last_checked`/`latest_events` ledger — the time-axis sibling
+    # of the H64 drift split, completing the seventh per-item surface.
+    from scrolls.custody import CustodyEvent, last_checked
+
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.1000/x",)),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+    ]
+    (work,) = works_over(items)
+    verdicts = {
+        "arxiv:1706.03762": CustodyEvent(
+            item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+            status="drifted", prior_hash="a", observed_hash="b"),
+        # crossref:10.1000/x left out of the ledger → null
+    }
+    payload = to_payload(
+        [work], len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    by_id = {r["id"]: r for r in payload["works"][0]["representations"]}
+    assert by_id["arxiv:1706.03762"]["last_checked"] == "2026-06-14T00:00:00+00:00"
+    assert by_id["crossref:10.1000/x"]["last_checked"] is None  # honest absence
+    # the shared primitive, not a re-derivation
+    assert by_id["arxiv:1706.03762"]["last_checked"] == last_checked(
+        verdicts["arxiv:1706.03762"]
+    )
+
+
+def test_representation_last_checked_defaults_to_null_without_a_ledger():
+    # the pure caller (no verdicts) reads `null` for every representation —
+    # honest never-checked, never a fabricated timestamp (last_checked(None))
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.1000/x",)),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+    ]
+    (work,) = works_over(items)
+    payload = to_payload([work], len(items), scope={"min_representations": 2})
+    assert all(
+        rep["last_checked"] is None
+        for rep in payload["works"][0]["representations"]
+    )
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -385,6 +429,8 @@ def test_cli_works_reports_clusters(db, capsys):
         "fidelity": "reference",
         # never re-checked against its source — the honest never-verified posture
         "drift": "unverified",
+        # …so no timestamp to report (H87, the time-axis null counterpart)
+        "last_checked": None,
     }
     # the canonical representation is named by id (the published record, here)
     assert work["canonical"] == "crossref:10.5555/3295222"
@@ -417,6 +463,36 @@ def test_cli_works_representation_drift_matches_the_list_row(db, capsys):
         assert reps[item_id]["drift"] == rows[item_id]["drift"]
     assert reps["arxiv:1706.03762"]["drift"] == "drifted"
     assert reps["crossref:10.1000/x"]["drift"] == "unverified"
+
+
+def test_cli_works_representation_last_checked_matches_the_list_row(db, capsys):
+    # H87 per-item parity: the last_checked a `works` representation shows for an
+    # item is exactly the timestamp its `list` row shows — same `last_checked`/
+    # `latest_events`, the time-axis sibling of the H64 drift parity.
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item(
+        "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.1000/x",),
+        raw_text="the preprint body", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, make_item(
+        "crossref:10.1000/x", url="https://doi.org/10.1000/x", stage="rendered"))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+    assert main(["works"]) == 0
+    reps = {
+        r["id"]: r
+        for r in json.loads(capsys.readouterr().out)["works"][0]["representations"]
+    }
+    assert main(["list"]) == 0
+    rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+
+    for item_id in ("arxiv:1706.03762", "crossref:10.1000/x"):
+        assert reps[item_id]["last_checked"] == rows[item_id]["last_checked"]
+    assert reps["arxiv:1706.03762"]["last_checked"] == "2026-06-14T00:00:00+00:00"
+    assert reps["crossref:10.1000/x"]["last_checked"] is None
 
 
 def test_cli_works_min_flag(db, capsys):

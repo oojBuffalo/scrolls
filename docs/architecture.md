@@ -146,19 +146,20 @@ each command moves items between stages or derives artifacts from them.
   a given item reads the same posture wherever an agent reaches it, and the
   posture a `list` row shows is exactly the one its `--drift` filter selects on.
   Every surface that carries the `drift` posture also carries the *time* axis of
-  it (roadmap H84/H86): a `last_checked` field beside `drift`, the `checked_at` of
-  the same latest verdict via the `custody.last_checked` sibling of
+  it (roadmap H84/H86/H87): a `last_checked` field beside `drift`, the `checked_at`
+  of the same latest verdict via the `custody.last_checked` sibling of
   `drift_posture` (`null` when never re-checked) — on the primary browse/inspect
-  rows (`list`/`search`/`show`, H84) *and* the node-shape surfaces (`related`
-  hits, `graph` nodes, H86, the H56 payload-enrichment split lifted to the time
-  axis), each from the same passed-in `latest_events`. So an agent reaching an
-  item by relation or graph traversal reads not just whether a source moved but as
-  of when — at parity with the browse rows — and can pick a `verify
-  --stale-before <ISO>` boundary by inspection. That per-item agreement is pinned
-  across all seven surfaces by the per-item invariant in
-  `tests/test_custody_convergence.py` (roadmap H59/H64), which also ties
-  `last_checked` (on `list`/`search`/`show` *and* `related`/`graph`) to the head
-  of the `history` ledger (H84/H86). Where
+  rows (`list`/`search`/`show`, H84), the node-shape surfaces (`related` hits,
+  `graph` nodes, H86, the H56 payload-enrichment split lifted to the time axis),
+  *and* the `works` representations (H87) — each from the same passed-in
+  `latest_events`. So all seven per-item surfaces carry the time axis at the parity
+  the drift posture already had: an agent reaching an item by relation, graph
+  traversal, or as a work representation reads not just whether a source moved but
+  as of when, and can pick a `verify --stale-before <ISO>` boundary by inspection.
+  That per-item agreement is pinned across all seven surfaces by the per-item
+  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64), which also
+  ties `last_checked` (on `list`/`search`/`show`, `related`/`graph`, and `works`)
+  to the head of the `history` ledger (H84/H86/H87). Where
   every surface above carries only the *latest* posture, `scrolls history <id>`
   (+ the MCP `get_scroll_history` twin, roadmap H66) reads the *full* per-item
   ledger back — the complete append-only timeline `verify` writes, each
@@ -852,11 +853,12 @@ choice (ADRs 0004, 0005).
   absent — a cluster the graph structurally cannot form. Only 2+-member
   works are reported by default (`--min N`); the `{works, stats}` payload
   carries the same node shape and `stats.items` total as `graph` — each
-  representation reporting **both** per-item custody axes, the item-intrinsic
+  representation reporting the **full** per-item custody picture, the item-intrinsic
   `fidelity` tier on the `Representation` dataclass and the ledger-derived
-  `drift` posture added in `to_payload` from the passed-in `latest_events`
-  (the H56 graph-node split, roadmap H64), so a reader of a multi-representation
-  work sees which form is held in full *and* which have drifted — and
+  `drift` posture and `last_checked` timestamp added in `to_payload` from the
+  passed-in `latest_events` (the H56 graph-node split, roadmap H64/H87), so a
+  reader of a multi-representation work sees which form is held in full, which
+  have drifted, *and as of when* — and
   `works_over(items)` mirrors `graph_over(items)` so the KB works page
   (`library/works.md`, ADR 0070) reuses it over rendered items
   (`tests/test_works.py`). `scrolls works <ref>` is the per-item lens

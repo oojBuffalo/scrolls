@@ -431,15 +431,24 @@ def test_works_representation_agrees_on_an_items_drift_posture(scrolls_home, cap
     assert set(canonical.values()) == {"drifted", "unverified"}
 
     assert main(["works"]) == 0
-    reps = {
-        r["id"]: r["drift"]
-        for r in json.loads(capsys.readouterr().out)["works"][0]["representations"]
-    }
+    rep_rows = json.loads(capsys.readouterr().out)["works"][0]["representations"]
+    reps = {r["id"]: r["drift"] for r in rep_rows}
+    reps_ts = {r["id"]: r["last_checked"] for r in rep_rows}
     assert main(["list"]) == 0
-    list_drift = {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)}
+    list_rows = json.loads(capsys.readouterr().out)
+    list_drift = {r["id"]: r["drift"] for r in list_rows}
+    list_ts = {r["id"]: r["last_checked"] for r in list_rows}
 
     assert reps == canonical
     assert reps == list_drift
+    # H87: the time axis travels with the representation too, at parity with the
+    # `list` row — the drifted preprint carries the verdict's timestamp, the
+    # never-checked record `null`.
+    assert reps_ts == list_ts
+    assert reps_ts == {
+        "arxiv:1706.03762": "2026-06-14T00:00:00+00:00",
+        "crossref:10.5555/3295222": None,
+    }
 
 
 def _posture_from_history(events):

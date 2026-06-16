@@ -978,7 +978,11 @@ def test_get_works_representation_carries_drift_at_parity_with_list(scrolls_home
     rows = {r["id"]: r for r in mcp_server.list_scrolls()}
     for item_id in ("arxiv:1706.03762", "crossref:10.5555/3295222"):
         assert reps[item_id]["drift"] == rows[item_id]["drift"]
+        # H87: the time axis travels too, at parity with the list row
+        assert reps[item_id]["last_checked"] == rows[item_id]["last_checked"]
     assert reps["arxiv:1706.03762"]["drift"] == "verified"
+    assert reps["arxiv:1706.03762"]["last_checked"] == "2026-06-14T00:00:00+00:00"
+    assert reps["crossref:10.5555/3295222"]["last_checked"] is None
 
 
 def test_get_works_empty_library(scrolls_home):
