@@ -564,8 +564,15 @@ choice (ADRs 0004, 0005).
   `get_works(item=...)`.
 - **KB compiler** (`kb.py`, ADR 0005) — rebuilds `library/index.md`,
   `library/graph.md`, `library/works.md`, plus per-source, per-category,
-  per-concept, and per-tag pages from scratch each run so stale groups can't
-  linger; other files under `library/` are left alone. **Category pages
+  per-concept, and per-tag pages each run so stale groups can't linger; other
+  files under `library/` are left alone. **Regeneration is refresh-safe**
+  (`generated.py`, ADR 0102): each page wraps its content in a sentinel
+  `@generated`…`@end` fence, and a recompile replaces only the fenced region —
+  so a hand annotation outside the fence survives, enacting custody-vision §2
+  ("views are regenerable") without clobbering edits. A page whose group
+  vanishes is removed unless it carries such an annotation, in which case it is
+  kept with the generated region tombstoned (the annotation is never silently
+  dropped). **Category pages
   consolidate works** (ADR 0071): a category page is the one group page where
   a scholarly work's near-duplicate representations co-occur (they share a
   category like `paper` but span sources), so each 2+-representation work

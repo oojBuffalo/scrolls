@@ -430,6 +430,47 @@ def test_kb_stale_annotated_page_is_kept_with_a_tombstone(scrolls_home, capsys):
     assert "no longer part of the compiled library" in generated_body(text)
 
 
+def test_kb_recompile_preserves_an_annotation_on_a_group_page(scrolls_home, capsys):
+    """Preservation is not index-only: a source page keeps its note too."""
+    main(["init"])
+    db = get_paths().db_path
+    item = make_rendered("web:abc", "web", "First", category="tool")
+    insert_item(db, item)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = scrolls_home / "library" / "sources" / "web.md"
+    page.write_text(page.read_text(encoding="utf-8") + "\n<!-- @user --> see also notes.md\n",
+                    encoding="utf-8")
+
+    # the page's membership grows; the source page stays generated and refreshes
+    insert_item(db, make_rendered("web:def", "web", "Second", category="tool"))
+    run_kb(capsys)
+    text = page.read_text(encoding="utf-8")
+    assert text.rstrip().endswith("<!-- @user --> see also notes.md")
+    assert "Second" in generated_body(text)  # generated region refreshed
+    assert "2 scrolls." in generated_body(text)
+
+
+def test_kb_double_recompile_is_byte_stable_and_keeps_annotation(scrolls_home, capsys):
+    """Recompiling twice with no data change is idempotent and note-preserving."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:abc", "web", "Only Post"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = scrolls_home / "library" / "index.md"
+    index.write_text("<!-- @user --> top note\n\n" + index.read_text(encoding="utf-8"),
+                     encoding="utf-8")
+    run_kb(capsys)
+    once = index.read_text(encoding="utf-8")
+    run_kb(capsys)
+    twice = index.read_text(encoding="utf-8")
+    assert once == twice  # stable across redundant recompiles
+    assert once.startswith("<!-- @user --> top note\n")
+
+
 def test_kb_empty_initialized_library_writes_empty_index(scrolls_home, capsys):
     main(["init"])
     capsys.readouterr()
