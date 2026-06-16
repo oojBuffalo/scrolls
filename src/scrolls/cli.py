@@ -1614,13 +1614,18 @@ def _cmd_works(min_representations: int, ref: str | None = None) -> int:
     items = list_items(paths.db_path) if paths.db_path.exists() else []
     if ref is not None:  # the per-item lens: this item's work(s) and siblings
         try:
-            works = works_for_item(items, resolve_item_id(ref))
+            resolved = resolve_item_id(ref)
+            works = works_for_item(items, resolved)
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
+        # the per-item lens ignores --min, so the echoed scope is the anchor
+        # alone (the resolved id, not the URL a caller may have passed) — G2
+        scope = {"ref": resolved}
     else:
         works = works_over(items, min_representations=min_representations)
-    print(json.dumps(works_payload(works, len(items))))
+        scope = {"min_representations": min_representations}
+    print(json.dumps(works_payload(works, len(items), scope=scope)))
     return 0
 
 

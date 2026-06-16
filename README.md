@@ -117,7 +117,7 @@ uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, 
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
-uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; with an id/URL, that item's work + siblings (ADR 0069, 0072)
+uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; echoes its scope (the --min floor or ref anchor) so the payload is completeness-honest (G2); with an id/URL, that item's work + siblings (ADR 0069, 0072)
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
@@ -127,7 +127,7 @@ uv run scrolls facets concepts --source arxiv  # one dimension, scoped by the sa
 uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price
-uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8)
+uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8); a Coverage: line marks "all N" vs "top N of M" so a capped bundle is never read as library-wide absence (G2)
 uv run scrolls context <query> --source arxiv  # scope the bundle (same --source/--category/--stage/--tag/--concept facets as search)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON

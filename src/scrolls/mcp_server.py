@@ -287,10 +287,13 @@ def get_works(
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
     if item is not None:
-        works = works_for_item(items, resolve_item_id(item))
+        resolved = resolve_item_id(item)
+        works = works_for_item(items, resolved)
+        scope: dict[str, Any] = {"ref": resolved}
     else:
         works = works_over(items, min_representations=min_representations)
-    return works_payload(works, len(items))
+        scope = {"min_representations": min_representations}
+    return works_payload(works, len(items), scope=scope)
 
 
 def get_context_bundle(

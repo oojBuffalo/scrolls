@@ -462,6 +462,8 @@ def test_get_works_clusters_by_shared_doi(scrolls_home):
 
     payload = mcp_server.get_works()
     assert payload["stats"] == {"items": 2, "works": 1}
+    # the floor travels with the result, same scope echo the CLI emits (G2)
+    assert payload["scope"] == {"min_representations": 2}
     work = payload["works"][0]
     assert work["doi"] == "10.5555/3295222"
     assert [r["id"] for r in work["representations"]] == [
@@ -473,7 +475,11 @@ def test_get_works_clusters_by_shared_doi(scrolls_home):
 
 
 def test_get_works_empty_library(scrolls_home):
-    assert mcp_server.get_works() == {"works": [], "stats": {"items": 0, "works": 0}}
+    assert mcp_server.get_works() == {
+        "scope": {"min_representations": 2},
+        "works": [],
+        "stats": {"items": 0, "works": 0},
+    }
 
 
 def test_get_works_item_lens_reports_one_items_work(scrolls_home):
@@ -504,7 +510,10 @@ def test_get_works_item_lens_reports_one_items_work(scrolls_home):
     payload = mcp_server.get_works(item="arxiv:1706.03762")
     assert payload["stats"] == {"items": 3, "works": 1}  # items = whole library
     assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
-    # the saved URL resolves the same as the id (ADR 0028)
+    # the per-item lens echoes the resolved anchor, not the floor it ignores
+    assert payload["scope"] == {"ref": "arxiv:1706.03762"}
+    # the saved URL resolves the same as the id (ADR 0028) — including the
+    # scope echo, which names the resolved id rather than the URL passed
     by_url = mcp_server.get_works(item="https://arxiv.org/abs/1706.03762")
     assert by_url == payload
 
@@ -522,6 +531,9 @@ def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     bundle = mcp_server.get_context_bundle("database engine")
     assert bundle.startswith("# Scrolls Context Bundle: database engine")
     assert "wikipedia:en:SQLite" in bundle
+    # the coverage line travels on the MCP twin too (completeness contract G2):
+    # one match, under the cap, so the bundle states it is complete
+    assert "Coverage: all 1 matching scrolls" in bundle
 
 
 def test_get_context_bundle_honors_facets(scrolls_home, fake_wikipedia_api):

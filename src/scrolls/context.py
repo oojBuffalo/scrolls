@@ -36,7 +36,7 @@ from pathlib import Path
 
 from scrolls.graph import build_graph
 from scrolls.items import ScrollItem, get_item
-from scrolls.search import SearchHit, search_items
+from scrolls.search import SearchHit, count_matches, search_items
 
 _EXCERPT_CHARS = 700
 DEFAULT_LIMIT = 8
@@ -90,6 +90,23 @@ def build_context(
     if not items:
         lines.append("No matching scrolls.")
         return "\n".join(lines) + "\n"
+
+    # How much of the library this bundle saw: every match under the cap, or
+    # the top-ranked slice of more (completeness contract G2). `count_matches`
+    # is the same past-the-cap denominator `scrolls search --stats` uses, under
+    # the same facets, so the bundle's coverage claim and a `--stats` search
+    # over the same scope agree. The query is already validated by the
+    # search_items call above, so this never raises on a blank query.
+    matched = count_matches(
+        db_path,
+        query,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
+    )
+    lines += [_coverage_line(matched, len(hits)), ""]
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):
@@ -153,6 +170,29 @@ def _collapse_by_work(
             owner[doi] = hit.id
         seen_dois |= hit_dois
     return kept, folded
+
+
+def _coverage_line(matched: int, returned: int) -> str:
+    """The bundle's scope-honest coverage note (completeness contract G2).
+
+    States whether the bundle was built from every matching scroll or only the
+    top-ranked slice of more, so a reader holding *only* the bundle can tell
+    "this is everything my library knows about X" from "the top N — there is
+    more" and never reads a capped bundle as library-wide absence. `matched`
+    is the past-the-cap match total (`search.count_matches`); `returned` is
+    how many the cap let the bundle see (`<= matched`); the bundle is truncated
+    exactly when `matched > returned`, the same arithmetic the `--stats`
+    envelope pins (`src/scrolls/scope.py`). The count is of matching *scrolls*
+    (raw matches): a same-work duplicate folded into its best-ranked sibling
+    (ADR 0101) is still covered — it is named in that sibling's note — so a
+    collapsed bundle is complete, not truncated.
+    """
+    if matched > returned:
+        return (
+            f"_Coverage: the top {returned} of {matched} matching scrolls — "
+            "raise `--limit` or narrow the query to see the rest._"
+        )
+    return f"_Coverage: all {matched} matching scrolls._"
 
 
 def _work_note(hit: SearchHit, folded_ids: list[str]) -> str:

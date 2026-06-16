@@ -362,6 +362,54 @@ def test_context_before_init_prints_empty_bundle(scrolls_home, capsys):
     assert not scrolls_home.exists()  # context never creates a library
 
 
+# --- coverage / truncation honesty: completeness contract G2 ---------------
+
+
+def test_context_marks_truncation_when_matches_exceed_the_limit(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(5):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}",
+            "Every page mentions databases.",
+        ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "databases", "--limit", "2")
+    # the bundle is built from the top 2 of 5 matches and says so, so absence
+    # below the cap is never read as absence in the library (G2 truncation)
+    assert "Coverage: the top 2 of 5 matching scrolls" in out
+    assert "--limit" in out  # names the lever to see the rest
+
+
+def test_context_states_full_coverage_when_nothing_is_truncated(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(2):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}",
+            "Every page mentions databases.",
+        ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "databases")
+    # every match fits under the cap: the bundle states it is complete, the
+    # G2 "this is every match" half of the same distinction
+    assert "Coverage: all 2 matching scrolls" in out
+    assert "top " not in out  # not the truncated phrasing
+
+
+def test_context_empty_bundle_has_no_coverage_line(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+
+    out = run_context(capsys, "nothingmatcheshere")
+    # the G1-locked empty form is untouched: no coverage line where there are
+    # no matches to be honest about the completeness of
+    assert "No matching scrolls." in out
+    assert "Coverage:" not in out
+
+
 def test_context_blank_query_is_an_error(scrolls_home, capsys):
     exit_code = main(["context", '""'])
     assert exit_code == 1

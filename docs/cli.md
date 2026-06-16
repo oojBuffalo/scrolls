@@ -114,7 +114,7 @@ shape rather than erroring, so the payload shape never varies between "no
 library yet" and "library, no matches"
 (`test_before_init_is_empty_in_shape_across_surfaces`).
 
-### G2 — Honest scope, honest completeness *(`search`/`list`/`related` enforced via `--stats`; `context`/`works`/`doctor` target: M2 H7–H8)*
+### G2 — Honest scope, honest completeness *(`search`/`list`/`related` enforced via `--stats`; `context`/`works` enforced; `doctor` target: M2 H8)*
 
 A scoped or `--limit`-capped result must let a reader that holds *only the
 result* — not the call that produced it — recover the scope it covered and
@@ -131,10 +131,20 @@ inventing a new one:
   (source=arxiv)`) and `works`/`graph` already carry a `stats` companion.
   A scoped result names the filters it honored; an empty scoped result
   names them too, so "honest about scope" holds for the empty case.
+  `scrolls works` echoes its scope explicitly: a `scope` companion naming the
+  `min_representations` floor it clustered above, or the `ref` anchor of the
+  per-item lens. Because `works` is uncapped — every work at or above the
+  floor is reported — the floor *is* its truncation story: a work missing
+  from the payload was below the reported floor, not absent from the library.
 - **Truncation is explicit.** A capped result distinguishes "this is every
   match" from "top-N of more" — so absence below the cap is never read as
   absence in the library. `--limit 0` already means *zero rows*, not
-  *unbounded*, so the cap is always meaningful.
+  *unbounded*, so the cap is always meaningful. `scrolls context` renders this
+  as a `Coverage:` line — `all N matching scrolls` when the bundle saw every
+  match, `the top N of M matching scrolls` (with the lever to see the rest)
+  when the cap hid some — over the same `count_matches` denominator the
+  `--stats` envelope uses, so a bundle and a `--stats` search over the same
+  scope agree on the match total.
 - **`doctor` states what it verified.** The custody report distinguishes
   what it confirmed network-free *this run* (scroll present, body
   re-derives to the stored hash, provenance complete) from what only
@@ -160,17 +170,20 @@ honesty is later preferred, flipping the default is one line atop the same
 builder.
 
 The enforcement order is fixed by the roadmap: **H6 (done)** adds the
-`--stats` scope + truncation envelope to `search` and `list`; H7 extends
-the same companion to `related` (**done** — `count_related` is the
-past-the-cap denominator), `context`, and `works`; H8 sharpens
+`--stats` scope + truncation envelope to `search` and `list`; **H7 (done)**
+extends the same honesty to `related` (`count_related` is the past-the-cap
+denominator), `works` (a `scope` companion naming the floor/anchor, always
+on — `works` already emits an object, so there is no bare array to protect),
+and `context` (the `Coverage:` line, over `count_matches`); H8 sharpens
 `doctor`'s verified-now-vs-as-of-last-check report
 (`docs/agents/autonomous-roadmap.md`). Each lands with its own tests in the
 matching suite and flips this section's status marker for those surfaces
-from *target* to *enforced*. The MCP twins (`search_scrolls`/`list_scrolls`)
-keep returning the bare list for now; their G2 parity (an envelope option)
-follows once the CLI shape has stabilized across H6–H8. G1 is the half that
-is already true across every surface and is locked now so it cannot regress
-while G2 lands.
+from *target* to *enforced*. The MCP twins read from the same builders, so
+`get_works`/`get_context_bundle` carry the scope echo and coverage line too;
+the bare-list `search_scrolls`/`list_scrolls` twins keep returning the bare
+list for now, their G2 parity (an envelope option) following once the CLI
+shape has stabilized. G1 is the half that is already true across every
+surface and is locked now so it cannot regress while G2 lands.
 
 ## Library lifecycle
 
@@ -1470,7 +1483,13 @@ full while the published record is a bare reference, ADR 0100), sorted by
 id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
-library total. An empty or uninitialized library is no works, exit 0.
+library total. A `scope` companion echoes the floor it clustered above
+(`{"min_representations": N}`) so a reader holding only the payload can tell
+"these are every multi-representation work" from "every work of 3+
+representations" — the completeness contract's G2 honesty, and since `works`
+is uncapped the floor *is* its truncation story: a work missing from the
+payload was below the reported floor, not absent. An empty or uninitialized
+library is no works, exit 0 — with the scope still named.
 
 With a `ref` (an item id or URL — the saved URL is a valid handle wherever
 an id is, ADR 0028), `works` reports the *per-item* lens instead: the
@@ -1481,15 +1500,17 @@ agent that found one form of a work (a search hit, a scroll) learns which
 other forms are in the library. In this form `--min` is ignored and a work
 is reported even with a single representation (just that item), so "no
 sibling saved" is an explicit answer; an item that names no DOI is no
-works, and an unknown item is a JSON error on stderr, exit 1.
+works, and an unknown item is a JSON error on stderr, exit 1. The `scope`
+companion here names the resolved `ref` anchor (`{"ref": "arxiv:…"}`, the
+item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 ```
 
@@ -1508,6 +1529,19 @@ match and direction that pulled it in
 no such connections. Default limit 8. Errors are still JSON on stderr
 (blank query, as with `search`).
 
+A `Coverage:` line under the title states how much of the library the bundle
+saw (the completeness contract's G2 truncation honesty,
+`test_context_marks_truncation_when_matches_exceed_the_limit`): `all N
+matching scrolls` when every match fit under the cap, or `the top N of M
+matching scrolls — raise \`--limit\` …` when the cap hid some, so absence
+below the cap is never read as absence in the library. The count is over the
+same `count_matches` denominator `scrolls search --stats` uses, so a bundle
+and a `--stats` search of the same scope agree on the total; a same-work
+duplicate folded into its best-ranked sibling (ADR 0101) is still *covered*
+(named in that sibling's note), so a collapsed bundle reads as complete, not
+truncated. The line appears only when there are matches — the empty bundle
+keeps its G1-locked `No matching scrolls.` form untouched.
+
 `--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
 bundle exactly as they scope `scrolls search` (ADRs 0058/0059,
 `test_context_facets_scope_the_bundle`,
@@ -1523,6 +1557,8 @@ matching scrolls.` bundle, with the scope note intact.
 ```console
 $ scrolls context "local search"
 # Scrolls Context Bundle: local search
+
+_Coverage: all 1 matching scrolls._
 
 ## Best Matches
 

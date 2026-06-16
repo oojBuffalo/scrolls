@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
@@ -282,7 +283,7 @@ def membership_payload(refs: tuple[WorkRef, ...]) -> list[dict]:
     ]
 
 
-def to_payload(works: list[Work], item_count: int) -> dict:
+def to_payload(works: list[Work], item_count: int, *, scope: dict[str, Any]) -> dict:
     """Works as the JSON object the CLI and MCP tool both emit.
 
     `stats.items` is the library total (the denominator the works count is
@@ -290,8 +291,21 @@ def to_payload(works: list[Work], item_count: int) -> dict:
     `scrolls graph` uses. `canonical` names the work's canonical
     representation by id (ADR 0095), a pointer into its own `representations`
     so a consumer can highlight the one form that stands for the work.
+
+    `scope` echoes what the call was scoped to — the `min_representations`
+    floor for the whole-library clustering, or the `ref` anchor for the
+    per-item lens — so a reader holding *only* this payload can recover it
+    (completeness contract G2, `docs/cli.md`). A `None` value is pruned the
+    way `scope.scope_envelope` prunes search/list/related, so the echoed
+    scope names exactly what was applied and never a facet the call left open
+    — the per-item lens ignores the floor, so its scope carries `ref` alone.
+    Unlike a capped browse result, `works` is uncapped (every work at or above
+    the floor is reported), so the floor *is* the truncation story: a work
+    missing from the payload was below the reported floor, not absent from the
+    library, and `stats` already counts what cleared it.
     """
     return {
+        "scope": {key: value for key, value in scope.items() if value is not None},
         "works": [
             {
                 "doi": work.doi,

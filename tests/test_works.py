@@ -20,6 +20,7 @@ from scrolls.paths import get_paths
 from scrolls.works import (
     find_works,
     membership_payload,
+    to_payload,
     work_membership,
     works_for_item,
     works_over,
@@ -361,9 +362,72 @@ def test_cli_works_min_flag(db, capsys):
 def test_cli_works_empty_library(scrolls_home, capsys):
     assert main(["works"]) == 0
     assert json.loads(capsys.readouterr().out) == {
+        "scope": {"min_representations": 2},
         "works": [],
         "stats": {"items": 0, "works": 0},
     }
+
+
+# --- the scope echo: completeness contract G2 -----------------------------
+
+
+def test_to_payload_echoes_the_applied_scope():
+    # the self-describing scope companion names exactly the filters honored,
+    # pruning None the way scope_envelope does (search/list/related)
+    payload = to_payload([], 3, scope={"min_representations": 2, "ref": None})
+    assert payload["scope"] == {"min_representations": 2}
+    assert payload["stats"] == {"items": 3, "works": 0}
+    assert payload["works"] == []
+
+
+def test_cli_works_echoes_the_min_floor_as_scope(db, capsys):
+    insert_item(db, make_item(
+        "arxiv:1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",),
+    ))
+    insert_item(db, make_item(
+        "crossref:10.5555/3295222", url="https://doi.org/10.5555/3295222"
+    ))
+
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # the default floor travels with the result so a reader holding only the
+    # output knows works below it were hidden by scope, not absent (G2)
+    assert payload["scope"] == {"min_representations": 2}
+    assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
+
+    assert main(["works", "--min", "5"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # nothing clears a floor of 5, but the scope is honest about why it is
+    # empty: the floor hid the 2-representation work, the library is not bare
+    assert payload["scope"] == {"min_representations": 5}
+    assert payload["works"] == []
+
+
+def test_cli_works_ref_scope_names_the_anchor_not_the_floor(db, capsys):
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+
+    assert main(["works", "arxiv:1706.03762"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # the per-item lens echoes the anchor it was scoped to; --min is ignored
+    # in this form (a solo work is still reported), so it must not appear
+    assert payload["scope"] == {"ref": "arxiv:1706.03762"}
+    assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
+
+
+def test_cli_works_ref_scope_resolves_a_url_to_the_item_id(db, capsys):
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+
+    assert main(["works", "https://arxiv.org/abs/1706.03762"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # the saved URL is a valid handle (ADR 0028), but the echoed scope names
+    # the resolved item id, not the URL the caller happened to pass
+    assert payload["scope"] == {"ref": "arxiv:1706.03762"}
 
 
 # --- the per-item lens: works_for_item ------------------------------------
