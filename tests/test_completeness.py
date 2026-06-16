@@ -2,9 +2,17 @@
 
 `docs/cli.md` → "The completeness contract" promises that every browse and
 audit surface (`search`, `list`, `related`, `works`, `context`, `doctor`,
-`maintain`) is scope-honest and completeness-honest: "nothing found" is never
-confused with "not checked," and nothing is fabricated for content the library
-does not hold (PRD cap 7, MVP M2, custody-vision §6).
+`maintain`, `export bundle`) is scope-honest and completeness-honest: "nothing
+found" is never confused with "not checked," and nothing is fabricated for
+content the library does not hold (PRD cap 7, MVP M2, custody-vision §6).
+
+`export bundle` (the shareable custody artifact, roadmap H12–H15) is the same
+shape of promise on the *export* side: an empty scope yields a *valid,
+importable* bundle that says ``No matching scrolls.`` — never an error and never
+a fabricated entry — and an uninitialized library exports that same valid empty
+bundle, never crashing on a missing store. A blank query is unparseable input,
+so it errors loudly (the could-not-check half). Folding it here pins the
+shareable artifact into the same G1 invariant every read surface satisfies.
 
 `maintain` (the scheduled custody pass, roadmap H34) is an audit-shaped surface
 too: run network-free with `--no-recheck`, its report must never fabricate a
@@ -104,6 +112,11 @@ CHECKED_EMPTY_CASES = {
         lambda out: json.loads(out)["issues"] == 0
         and json.loads(out)["delta"]["first_run"] is True,
     ),
+    # a query no item matches → a valid, importable bundle that says so
+    "export_bundle": (
+        ["export", "bundle", "zzznotatoken"],
+        lambda out: "No matching scrolls." in out,
+    ),
 }
 
 
@@ -128,6 +141,7 @@ def test_checked_and_empty_is_exit_zero_in_normal_shape(populated, capsys, name)
 COULD_NOT_CHECK_CASES = {
     "search_blank": ["search", '""'],
     "context_blank": ["context", '""'],
+    "export_bundle_blank": ["export", "bundle", '""'],
     "related_unknown_id": ["related", "web:does-not-exist"],
     "works_unknown_ref": ["works", "web:does-not-exist"],
     "show_unknown_id": ["show", "web:does-not-exist"],
@@ -210,6 +224,11 @@ BEFORE_INIT_CASES = {
         lambda out: json.loads(out)["issues"] == 0
         and json.loads(out)["custody"]["score"] is None
         and json.loads(out)["delta"]["first_run"] is True,
+    ),
+    # no library → a valid empty importable bundle, never a crash on a missing store
+    "export_bundle": (
+        ["export", "bundle", "anything"],
+        lambda out: "No matching scrolls." in out,
     ),
 }
 
