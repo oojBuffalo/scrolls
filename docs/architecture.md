@@ -228,6 +228,21 @@ each command moves items between stages or derives artifacts from them.
   `scrolls doctor --fix` and `scrolls kb`. Malformed input is rejected loudly
   (a backup must not restore silently incomplete), unknown keys tolerated
   (forward compatibility).
+- `scrolls export events` / `scrolls import events <path>` are the **custody**
+  sibling of that pair (`src/scrolls/events_export.py`, roadmap H72): the verify
+  ledger (`custody_events`) as lossless JSON Lines, so a whole-library backup
+  carries not just the items but their *custody record* — every recorded
+  `verify` check. Export resolves the matching items (the same
+  `--source`/`--category`/`--tag` facets `export items` offers) and streams
+  *their* events via `custody.events_for_items`/`dump_events_export`; import
+  restores them through the same idempotent `custody.import_events` the bundle
+  import uses (dedup by the content 5-tuple, never the per-library autoincrement
+  id), so re-importing a backup is a custody no-op. This is the **whole-library**
+  portability counterpart of the *scoped* portable custody `export bundle`
+  carries in its second `@generated` region (H67): same restore primitive, a
+  machine stream rather than a readable briefing. Restore order is free (the
+  ledger is keyed by `item_id` string), typically `import items` then `import
+  events`.
 - `scrolls export bundle <query>` / `scrolls import bundle <path>` are the
   **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
   self-contained Markdown file that is both a readable topic *briefing* (per

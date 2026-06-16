@@ -2591,6 +2591,112 @@ def test_export_items_then_restore_rebuilds_the_whole_library(
     assert (paths_b.library_dir / "index.md").read_text(encoding="utf-8") == original_index
 
 
+# --- export/import events: whole-library portable custody (H72) -------------
+
+
+def _seed_item_with_events(scrolls_home, item_id="web:demo", source="web"):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id=item_id, source=source, url=f"https://ex.org/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=item_id,
+        extracted_text="A held scroll.", content_hash="h",
+        markdown_path=f"scrolls/{source}/x.md", stage="rendered",
+    ))
+    record_events(db, [
+        CustodyEvent(item_id, "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent(item_id, "2026-06-15T00:00:00+00:00", "drifted", "h", "h2"),
+    ])
+    return db
+
+
+def test_export_events_emits_the_ledger_as_jsonl(scrolls_home, capsys):
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    assert main(["export", "events"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # raw JSONL on stdout (not a JSON envelope), one row per check, item_id named
+    assert len(lines) == 2
+    assert json.loads(lines[0]) == {
+        "item_id": "web:demo", "checked_at": "2026-06-13T00:00:00+00:00",
+        "status": "unchanged", "prior_hash": "h", "observed_hash": "h",
+        "detail": None,
+    }
+
+
+def test_export_events_round_trips_into_a_fresh_library(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    main(["export", "events"])
+    out_path = tmp_path / "ledger.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "events", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "imported": 2, "skipped": 0, "events": 2
+    }
+    # the ledger landed, newest-first, so the restored library reads the posture
+    from scrolls.custody import item_events
+    restored = item_events(get_paths().db_path, "web:demo")
+    assert [e.status for e in restored] == ["drifted", "unchanged"]
+
+
+def test_import_events_is_idempotent(scrolls_home, tmp_path, capsys):
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    main(["export", "events"])
+    out_path = tmp_path / "ledger.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    # re-importing into the same library dedups every event — a custody no-op
+    assert main(["import", "events", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "imported": 0, "skipped": 2, "events": 2
+    }
+
+
+def test_export_events_source_filter_scopes_to_the_items_facet(scrolls_home, capsys):
+    _seed_item_with_events(scrolls_home, item_id="web:w", source="web")
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="github:g/g", source="github", url="https://github.com/g/g",
+        saved_at="2026-06-12T00:00:00+00:00", title="g", content_hash="hg",
+        markdown_path="scrolls/github/g.md", stage="rendered",
+    ))
+    record_events(db, [CustodyEvent("github:g/g", "2026-06-14T00:00:00+00:00", "rotted", "hg", None, "404")])
+    capsys.readouterr()
+    assert main(["export", "events", "--source", "github"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # only the github item's events travel (scoped by the same items facet)
+    assert len(lines) == 1
+    assert json.loads(lines[0])["item_id"] == "github:g/g"
+
+
+def test_export_events_empty_library_is_valid(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    assert main(["export", "events"]) == 0
+    assert capsys.readouterr().out == ""  # an empty JSONL document, never a crash
+
+
+def test_export_events_before_init_is_an_empty_document(scrolls_home, capsys):
+    capsys.readouterr()
+    assert main(["export", "events"]) == 0
+    assert capsys.readouterr().out == ""
+    assert not scrolls_home.exists()  # export never creates a library
+
+
+def test_import_events_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    assert main(["import", "events", str(tmp_path / "nowhere.jsonl")]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

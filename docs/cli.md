@@ -1090,6 +1090,39 @@ $ scrolls export items --source arxiv
 [exit 0]
 ```
 
+### `scrolls export events [--source S] [--category C] [--tag T]`
+
+Export the verify ledger (`custody_events`) as a lossless JSON Lines stream —
+**whole-library portable custody** (roadmap H72), the custody sibling of
+`export items`. Where `export items` backs up the library's *items*, this backs
+up its *custody record* — every recorded `verify` check — so a machine that has
+neither can reconstruct both: `scrolls export items > library.jsonl` and
+`scrolls export events > ledger.jsonl`, then `import items` followed by
+`import events`. It is the backup-path counterpart of `export bundle`'s H67
+portable custody (which carries a *scoped* topic's ledger inside a readable
+briefing); this is the *whole* ledger as a machine stream.
+
+Each line is one custody event as a JSON object — the full row
+(`item_id`/`checked_at`/`status`/`prior_hash`/`observed_hash`/`detail`), the
+`item_id` included because the stream spans many items (unlike `scrolls
+history`, scoped to one). The stream **is** the artifact, so it prints raw on
+stdout (the `export items` exception to the JSON-on-stdout rule); there is no
+path argument. The same three durable item-property filters `export items`
+offers scope it and AND together — `--source`, `--category` (empty selects
+unclassified), `--tag` — by resolving the matching items and exporting *their*
+events, so a slice's custody travels with the slice
+(`test_export_events_source_filter_scopes_to_the_items_facet`). An empty (or
+pre-`init`) library produces an empty document, never an error
+(`test_export_events_empty_library_is_valid`,
+`test_export_events_before_init_is_an_empty_document`). Restore with
+`scrolls import events`.
+
+```console
+$ scrolls export events --source arxiv
+{"item_id": "arxiv:1706.03762", "checked_at": "2026-06-14T00:00:00+00:00", "status": "drifted", "prior_hash": "sha256:6d2e1066", "observed_hash": "sha256:a1b2c3d4", "detail": null}
+[exit 0]
+```
+
 ### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
@@ -1192,6 +1225,39 @@ $ scrolls export bundle "database engine" > briefing.md
 
 $ scrolls import bundle briefing.md
 {"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0}}
+[exit 0]
+```
+
+### `scrolls import events <path>`
+
+Restore custody events from a JSONL export — the inverse of `scrolls export
+events`, the custody sibling of `import items` (roadmap H72). `path` is a file
+`export events` wrote; each line is parsed exactly as `import bundle`'s events
+are (`event_from_dict`, required identity `item_id`/`checked_at`/`status`,
+unknown keys — including the per-library autoincrement `id` — tolerated) and
+restored through the same idempotent `custody.import_events`. Restore is
+**deduped by content** — the 5-tuple `(item_id, checked_at, status, prior_hash,
+observed_hash)`, never the autoincrement id — so re-importing a backup is a
+custody no-op (`test_import_events_is_idempotent`); the whole-library
+export→import round-trip into a fresh library is verified end to end
+(`test_export_events_round_trips_into_a_fresh_library`). A missing file or a
+malformed line is a JSON error on stderr naming the line, so a corrupt backup
+fails loudly rather than restoring silently incomplete
+(`test_import_events_missing_file_is_an_error`). Events restore independently of
+items (the ledger is keyed by `item_id` string), so the order is yours —
+typically `import items` then `import events`.
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new custody events appended |
+| `skipped` | already present (content dedupe working) |
+| `events` | custody-event rows read from the export |
+
+```console
+$ scrolls export events > ledger.jsonl
+
+$ scrolls import events ledger.jsonl
+{"imported": 5, "skipped": 0, "events": 5}
 [exit 0]
 ```
 

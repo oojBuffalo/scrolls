@@ -88,10 +88,12 @@ uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML e
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
 uv run scrolls import items <path>  # restore items from a Scrolls JSONL export (lossless), as JSON
+uv run scrolls import events <path>  # restore the verify ledger from a JSONL export, deduped (whole-library portable custody, H72), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
 uv run scrolls export items   # export items as a lossless JSONL stream (back up / migrate), to stdout
+uv run scrolls export events  # export the verify ledger (custody events) as a lossless JSONL stream (back up custody, H72), to stdout
 uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block + verify-ledger events, shareable & re-importable
 uv run scrolls import bundle <path>  # restore scrolls AND their custody ledger from a bundle, losslessly (the "take it with me" half); events dedup on re-import (H67), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
@@ -1234,6 +1236,11 @@ the rebuilt scrolls, `library/`, re-export, and search match the original,
 with captured media blobs the one thing a JSONL backup can't carry (doctor
 reports them for `scrolls media` to re-download). The same
 `--source`/`--category`/`--tag` filters as `export bookmarks` scope a slice.
+`scrolls export events` / `scrolls import events <path>` are the **custody**
+companion (H72): the verify ledger as a lossless JSONL stream, so a whole-library
+backup carries the *custody record* — every `verify` check — alongside the items.
+Import dedups by content (the same idempotent restore the bundle uses), so
+re-importing a backup is a custody no-op.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

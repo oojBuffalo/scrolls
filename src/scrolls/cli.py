@@ -27,6 +27,8 @@ from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     drift_posture,
+    dump_events_export,
+    events_for_items,
     import_events,
     item_events,
     item_history,
@@ -78,6 +80,7 @@ from scrolls.items import (
     list_items,
     update_item,
 )
+from scrolls.events_export import EventsSourceError, load_events_export
 from scrolls.items_export import ItemsSourceError
 from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
@@ -412,6 +415,14 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="a custody bundle written by `scrolls export bundle`",
     )
+    import_events_parser = import_sub.add_parser(
+        "events",
+        help="Restore custody events from a JSONL export, deduped (JSON output)",
+    )
+    import_events_parser.add_argument(
+        "path",
+        help="a JSONL custody-events export written by `scrolls export events`",
+    )
 
     export_parser = subparsers.add_parser(
         "export", help="Export library data to a portable format (to stdout)"
@@ -452,6 +463,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_items_parser.add_argument(
         "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
+    )
+    export_events_parser = export_sub.add_parser(
+        "events",
+        help="Export the verify ledger (custody events) as a lossless JSONL "
+        "stream (to stdout)",
+    )
+    export_events_parser.add_argument(
+        "--source", default=None, help="Only events for items from one source"
+    )
+    export_events_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only events for items with this category; an empty value selects "
+        "unclassified items",
+    )
+    export_events_parser.add_argument(
+        "--tag",
+        default=None,
+        help="Only events for items carrying this tag (case-insensitive)",
     )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
@@ -829,12 +859,16 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_items(args.path)
         if args.import_command == "bundle":
             return _cmd_import_bundle(args.path)
+        if args.import_command == "events":
+            return _cmd_import_events(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
         if args.export_command == "bookmarks":
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
         if args.export_command == "items":
             return _cmd_export_items(args.source, args.category, args.tag)
+        if args.export_command == "events":
+            return _cmd_export_events(args.source, args.category, args.tag)
         if args.export_command == "bundle":
             return _cmd_export_bundle(
                 args.query,
@@ -1280,6 +1314,24 @@ def _cmd_import_items(path: str) -> int:
     return 0
 
 
+def _cmd_import_events(path: str) -> int:
+    # whole-library portable custody (H72): restore the verify ledger from a
+    # JSONL export through the same idempotent `import_events` the bundle import
+    # uses, so re-importing a backup is a custody no-op (dedup by content, never
+    # the per-library autoincrement id).
+    try:
+        events, stats = load_events_export(Path(path).expanduser())
+    except EventsSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    imported, skipped = import_events(paths.db_path, events)
+    print(json.dumps({"imported": imported, "skipped": skipped, **stats}))
+    return 0
+
+
 def _cmd_export_opml() -> int:
     paths = get_paths()
     subscriptions = (
@@ -1324,6 +1376,28 @@ def _cmd_export_items(
     # the JSONL stream *is* the artifact, like `export opml`/`export bookmarks`,
     # so it prints raw — `scrolls export items > library.jsonl`
     sys.stdout.write(dump_items_export(items))
+    return 0
+
+
+def _cmd_export_events(
+    source: str | None, category: str | None, tag: str | None
+) -> int:
+    # whole-library portable custody (H72): the verify ledger as a lossless JSONL
+    # stream, the custody sibling of `export items`. Scoped by the same
+    # item-facet set (source/category/tag) — resolve the items, then their
+    # events — so a slice's custody travels with the slice's items.
+    paths = get_paths()
+    items = (
+        list_items(paths.db_path, source=source, category=category, tag=tag)
+        if paths.db_path.exists()
+        else []
+    )
+    events = (
+        events_for_items(paths.db_path, [item.id for item in items]) if items else []
+    )
+    # the JSONL stream *is* the artifact (the `export items` rule) —
+    # `scrolls export events > ledger.jsonl`
+    sys.stdout.write(dump_events_export(events))
     return 0
 
 
