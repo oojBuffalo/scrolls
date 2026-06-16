@@ -25,6 +25,7 @@ from scrolls.custody import (
     item_history,
     items_checked_before,
     items_in_posture,
+    last_checked,
     latest_events,
     live_recapture,
     parse_since,
@@ -414,6 +415,22 @@ def test_latest_events_empty_ledger(tmp_path):
     db_path = tmp_path / "db.sqlite"
     init_db(db_path)
     assert latest_events(db_path) == {}
+
+
+# --- last_checked primitive (the time axis of the per-item picture, H84) ---
+
+
+def test_last_checked_reports_the_verdicts_timestamp():
+    # the time-axis sibling of drift_posture: it reports *when* the latest
+    # verdict was taken, verbatim from the event's checked_at.
+    event = CustodyEvent("web:a", "2026-06-14T09:30:00+00:00", "drifted", "h", "h2")
+    assert last_checked(event) == "2026-06-14T09:30:00+00:00"
+
+
+def test_last_checked_is_none_when_never_verified():
+    # no verdict ⇒ no timestamp — the null counterpart of drift_posture(None)'s
+    # `unverified` posture, never a fabricated wall-clock time (honest absence).
+    assert last_checked(None) is None
 
 
 # --- unverified_items predicate (held − verdicts) ------------------------

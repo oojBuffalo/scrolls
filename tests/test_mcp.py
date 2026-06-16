@@ -320,10 +320,11 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
     assert [r["id"] for r in rows] == ["arxiv:2401.0001", "web:abc"]
     assert set(rows[0]) == {
         "id", "source", "url", "title", "category", "stage", "saved_at",
-        "fidelity", "drift", "works",
+        "fidelity", "drift", "last_checked", "works",
     }
     assert rows[0]["works"] == []  # neither item shares a work (ADR 0101)
     assert rows[0]["drift"] == "unverified"  # never re-checked (H58)
+    assert rows[0]["last_checked"] is None  # …so no timestamp to report (H84)
 
     # facets AND together, mirroring scrolls list (incl. the tag membership facet)
     assert [r["id"] for r in mcp_server.list_scrolls(source="arxiv", tag="EFFICIENT")] == [
@@ -604,6 +605,39 @@ def test_get_scroll_carries_the_two_custody_axes_at_parity_with_list(scrolls_hom
     assert (scroll["fidelity"], scroll["drift"]) == (row["fidelity"], row["drift"])
     # honest never-checked default for an item with no verdict
     assert mcp_server.get_scroll("web:b")["drift"] == "unverified"
+
+
+def test_mcp_surfaces_carry_last_checked_at_parity(scrolls_home):
+    # H84: the time axis of the custody picture rides every MCP browse/inspect
+    # twin — `get_scroll`, `list_scrolls`, `search_scrolls` — and reads the same
+    # timestamp for the same item (one ledger, one `last_checked` primitive),
+    # null when never re-checked.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A database scroll",
+        extracted_text="a database body", raw_text="<raw>db</raw>",
+        content_hash="sha256:a", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="Never checked",
+        extracted_text="body", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T09:30:00+00:00", "drifted", "h", "x", None),
+    ])
+
+    scroll = mcp_server.get_scroll("web:a")
+    row = next(r for r in mcp_server.list_scrolls() if r["id"] == "web:a")
+    hit = next(h for h in mcp_server.search_scrolls("database") if h["id"] == "web:a")
+    assert scroll["last_checked"] == row["last_checked"] == hit["last_checked"]
+    assert scroll["last_checked"] == "2026-06-14T09:30:00+00:00"
+    # honest never-checked default for an item with no verdict
+    assert mcp_server.get_scroll("web:b")["last_checked"] is None
 
 
 def test_get_scroll_and_list_surface_the_classification_method(

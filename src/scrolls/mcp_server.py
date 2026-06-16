@@ -26,6 +26,7 @@ from scrolls.custody import (
     drift_posture,
     item_events,
     item_history,
+    last_checked,
     latest_events,
     live_recapture,
     parse_since,
@@ -95,11 +96,12 @@ def search_scrolls(
     """Full-text search over the library; hits are best-first with snippets.
 
     `score` is SQLite bm25(): more negative means a stronger match. Each hit
-    also carries the two per-item custody axes — its `fidelity` tier (full/
-    partial/reference, ADR 0097) and its `drift` posture (verified/unverified/
-    drifted/rotted/error, from the verify ledger) — so a result says not just
-    *what* matched but at what fidelity the library still holds it and whether
-    that source has drifted out from under the capture; the same two axes
+    also carries the per-item custody axes — its `fidelity` tier (full/
+    partial/reference, ADR 0097), its `drift` posture (verified/unverified/
+    drifted/rotted/error, from the verify ledger), and `last_checked` (when that
+    posture was taken, or null when never re-checked) — so a result says not just
+    *what* matched but at what fidelity the library still holds it, whether that
+    source has drifted out from under the capture, and as of when; the same axes
     `list_scrolls` rows and `get_related_scrolls` hits report. The
     optional facets scope the ranked match (they AND together): `source`
     limits to one source (e.g. arxiv, github, web), `category` to one
@@ -158,10 +160,11 @@ def list_scrolls(
     total `list_facets("drift")`'s count for that posture, so you can drill from
     the aggregate to the rows. Items come oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
-    summary (id, source, url, title, category, stage, saved_at, the two custody
-    axes — the `fidelity` tier (full/partial/reference, ADR 0097) and the `drift`
+    summary (id, source, url, title, category, stage, saved_at, the custody
+    axes — the `fidelity` tier (full/partial/reference, ADR 0097), the `drift`
     posture (verified/unverified/drifted/rotted/error) the same row's `--drift`
-    filter selects on — and the scholarly `works` it represents, ADR 0101: empty
+    filter selects on, and `last_checked` (when that posture was taken, or null
+    when never re-checked) — and the scholarly `works` it represents, ADR 0101: empty
     unless the item is one of several saved forms of one work, in which case each
     entry names the work's DOI and canonical form); follow up with get_scroll for
     the full record. Use it for
@@ -185,13 +188,15 @@ def list_scrolls(
     # annotate the rows shown — the same approach `scrolls list` takes.
     membership = work_membership(list_items(paths.db_path))
     # One ledger read for the whole listing (the CLI twin's approach): each row's
-    # `drift` posture is `drift_posture` over the same `latest_events`.
+    # `drift` posture is `drift_posture` over the same `latest_events`, and
+    # `last_checked` the same verdict's timestamp (the H84 time axis).
     verdicts = latest_events(paths.db_path)
     return [
         item_summary(
             item,
             membership_payload(membership.get(item.id, ())),
             drift=drift_posture(verdicts.get(item.id)),
+            last_checked=last_checked(verdicts.get(item.id)),
         )
         for item in items
     ]
@@ -244,12 +249,13 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     An unknown item is an error; if a URL was passed, the message names the id it
     resolved to so the resolution stays visible.
 
-    Beside the raw record, the payload carries the two derived per-item custody
-    axes the browse surfaces report (roadmap H61) — `fidelity` (the custody tier,
-    full/partial/reference) and `drift` (the verify-ledger posture, verified/
-    unverified/drifted/rotted/error) — plus the `classification` view (omitted on
-    honest absence), so the inspect surface reads at parity with `list_scrolls`/
-    `search_scrolls`.
+    Beside the raw record, the payload carries the derived per-item custody
+    axes the browse surfaces report (roadmap H61/H84) — `fidelity` (the custody
+    tier, full/partial/reference), `drift` (the verify-ledger posture, verified/
+    unverified/drifted/rotted/error), and `last_checked` (when that posture was
+    taken, or null when never re-checked) — plus the `classification` view
+    (omitted on honest absence), so the inspect surface reads at parity with
+    `list_scrolls`/`search_scrolls`.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
@@ -260,12 +266,15 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
-    # The two derived per-item custody axes (roadmap H61), matching the CLI
-    # `show` payload and the `list`/`search` rows: `fidelity` (how much is held)
-    # and `drift` (whether the source moved, from the latest ledger verdict).
+    # The derived per-item custody axes (roadmap H61/H84), matching the CLI
+    # `show` payload and the `list`/`search` rows: `fidelity` (how much is held),
+    # and from the latest ledger verdict both `drift` (whether the source moved)
+    # and `last_checked` (as of when, or null when never re-checked).
     payload["fidelity"] = get_fidelity(item)
     events = item_events(paths.db_path, resolved)
-    payload["drift"] = drift_posture(events[0] if events else None)
+    latest = events[0] if events else None
+    payload["drift"] = drift_posture(latest)
+    payload["last_checked"] = last_checked(latest)
     # The derived classification view alongside raw provenance, matching the CLI
     # `show` payload so both inspect surfaces present how the category was made.
     classification = classification_provenance(item)

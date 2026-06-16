@@ -602,12 +602,14 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     assert hit["title"] == "SQLite"
     assert set(hit) == {
         "id", "source", "title", "url", "stage", "score", "snippet", "fidelity",
-        "drift", "works",
+        "drift", "last_checked", "works",
     }
     # a freshly fetched Wikipedia article holds a re-derivable body — full custody
     assert hit["fidelity"] == "full"
     # never re-verified against its live source — the honest never-checked posture (H58)
     assert hit["drift"] == "unverified"
+    # …and so no last-checked timestamp to report (H84 honest absence)
+    assert hit["last_checked"] is None
     # a lone item is no duplicate of any saved work (ADR 0101)
     assert hit["works"] == []
 
@@ -973,6 +975,61 @@ def test_show_custody_axes_match_the_list_row(scrolls_home, capsys):
     shown = json.loads(capsys.readouterr().out)
     assert (shown["fidelity"], shown["drift"]) == (row["fidelity"], row["drift"])
     assert shown["drift"] == "rotted"
+
+
+def test_show_carries_the_last_checked_timestamp(scrolls_home, capsys):
+    # H84: the inspect surface carries `last_checked` beside `drift` — *when* the
+    # latest verdict was taken, verbatim, or null when the item was never checked.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="Checked",
+        extracted_text="body", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="Never checked",
+        extracted_text="body", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T09:30:00+00:00", "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    main(["show", "web:a"])
+    assert json.loads(capsys.readouterr().out)["last_checked"] == "2026-06-14T09:30:00+00:00"
+    main(["show", "web:b"])
+    assert json.loads(capsys.readouterr().out)["last_checked"] is None  # honest absence
+
+
+def test_last_checked_reads_the_same_across_list_search_show(scrolls_home, capsys):
+    # H84 parity: the timestamp a `list` row, a `search` hit, and `show` report
+    # for the same item are identical — one ledger read, one `last_checked`
+    # primitive, the per-item time axis reading the same everywhere.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="Searchable database scroll",
+        extracted_text="a database body", raw_text="<raw>db</raw>",
+        content_hash="sha256:a", stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T09:30:00+00:00", "unchanged", "sha256:a", "sha256:a", None),
+    ])
+    capsys.readouterr()
+
+    main(["list"])
+    list_ts = json.loads(capsys.readouterr().out)[0]["last_checked"]
+    main(["search", "database"])
+    search_ts = json.loads(capsys.readouterr().out)[0]["last_checked"]
+    main(["show", "web:a"])
+    show_ts = json.loads(capsys.readouterr().out)["last_checked"]
+    assert list_ts == search_ts == show_ts == "2026-06-14T09:30:00+00:00"
 
 
 def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
@@ -2796,10 +2853,11 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
         assert entry["stage"] == "detected"
         assert entry["fidelity"] == "reference"  # detected, no content held yet
         assert entry["drift"] == "unverified"  # never re-checked (H58)
+        assert entry["last_checked"] is None  # …so no timestamp to report (H84)
         assert entry["works"] == []  # neither is a saved form of a shared work
         assert set(entry) == {
             "id", "source", "url", "title", "category", "stage", "saved_at",
-            "fidelity", "drift", "works",
+            "fidelity", "drift", "last_checked", "works",
         }
 
 

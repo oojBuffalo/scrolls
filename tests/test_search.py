@@ -163,6 +163,40 @@ def test_search_hit_drift_matches_the_drift_posture_primitive(db_path):
     assert hit.drift == "drifted"
 
 
+def test_search_hits_carry_their_last_checked_timestamp(db_path):
+    # the time axis of the custody picture travels with a hit (H84): when the
+    # latest verdict was taken, or None when never re-checked — from the same
+    # ledger read as `drift`, matching the `custody.last_checked` primitive.
+    from scrolls.custody import (
+        CustodyEvent,
+        last_checked,
+        latest_events,
+        record_events,
+    )
+
+    insert_item(db_path, make_item(
+        "wikipedia:en:Checked", "Checked database engine",
+        "A database engine re-checked at a known time.",
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Never", "Never-checked database engine",
+        "A database engine never re-checked.",
+    ))
+    record_events(db_path, [
+        CustodyEvent("wikipedia:en:Checked", "2026-06-14T09:30:00+00:00",
+                     "unchanged", "h", "h", None),
+        # wikipedia:en:Never left with no verdict
+    ])
+
+    by_id = {hit.id: hit for hit in search_items(db_path, "database engine")}
+    verdicts = latest_events(db_path)
+    assert by_id["wikipedia:en:Checked"].last_checked == "2026-06-14T09:30:00+00:00"
+    assert by_id["wikipedia:en:Checked"].last_checked == last_checked(
+        verdicts.get("wikipedia:en:Checked")
+    )
+    assert by_id["wikipedia:en:Never"].last_checked is None  # honest absence
+
+
 def test_search_hits_carry_the_work_they_represent(db_path):
     # two hits that are the same scholarly work — an arXiv preprint and its
     # published Crossref record — each carry the work they represent (ADR 0101),

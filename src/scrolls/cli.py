@@ -35,6 +35,7 @@ from scrolls.custody import (
     item_history,
     items_checked_before,
     items_in_posture,
+    last_checked,
     latest_events,
     live_recapture,
     parse_since,
@@ -2132,13 +2133,15 @@ def _cmd_list(
     # One ledger read for the whole listing (the way `related`/`graph`/`search`
     # read it once): each row's `drift` posture is `drift_posture` over the same
     # `latest_events` `--drift` filtered on, so a row's shown posture matches the
-    # `--drift X` it would be selected by, and the `facets drift` count for X.
+    # `--drift X` it would be selected by, and the `facets drift` count for X. The
+    # `last_checked` time axis (H84) reads the same verdict's timestamp.
     verdicts = latest_events(paths.db_path)
     rows = [
         item_summary(
             item,
             membership_payload(membership.get(item.id, ())),
             drift=drift_posture(verdicts.get(item.id)),
+            last_checked=last_checked(verdicts.get(item.id)),
         )
         for item in items
     ]
@@ -2411,13 +2414,16 @@ def _cmd_show(item_id: str) -> int:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
-    # The two derived per-item custody axes, so the inspect surface carries the
-    # same picture `list`/`search` rows do (roadmap H61): `fidelity` (how much is
-    # held) from the item alone, and `drift` (whether the source moved) from the
-    # item's latest verify-ledger verdict — `unverified` when never re-checked.
+    # The derived per-item custody axes, so the inspect surface carries the same
+    # picture `list`/`search` rows do (roadmap H61/H84): `fidelity` (how much is
+    # held) from the item alone, and from the item's latest verify-ledger verdict
+    # both `drift` (whether the source moved) and `last_checked` (as of when, or
+    # null when never re-checked) — one ledger read, the same verdict.
     payload["fidelity"] = get_fidelity(item)
     events = item_events(paths.db_path, item.id)
-    payload["drift"] = drift_posture(events[0] if events else None)
+    latest = events[0] if events else None
+    payload["drift"] = drift_posture(latest)
+    payload["last_checked"] = last_checked(latest)
     # The derived classification view alongside the raw provenance, so `show`
     # presents how the category was produced at parity with `list` (and MCP).
     classification = classification_provenance(item)

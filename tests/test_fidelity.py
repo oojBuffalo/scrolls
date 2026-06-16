@@ -150,6 +150,7 @@ def test_summary_carries_the_browse_fields_plus_fidelity():
         "saved_at": NOW,
         "fidelity": "full",
         "drift": "unverified",  # drift posture defaults to never-checked (H58)
+        "last_checked": None,  # no verdict ⇒ no timestamp (H84 honest absence)
         "works": [],  # work membership defaults empty when none is passed
     }
 
@@ -159,6 +160,16 @@ def test_summary_carries_the_drift_posture_passed_in():
     # from the ledger, the way it passes `works` membership.
     item = _item("s", title="A Title", raw_text="body", stage="fetched")
     assert item_summary(item, drift="drifted")["drift"] == "drifted"
+
+
+def test_summary_carries_the_last_checked_timestamp_passed_in():
+    # the time axis of the custody picture (H84): the caller passes the latest
+    # verdict's timestamp it read from the same ledger as `drift`.
+    item = _item("s", title="A Title", raw_text="body", stage="fetched")
+    summary = item_summary(item, drift="drifted", last_checked="2026-06-14T00:00:00+00:00")
+    assert summary["last_checked"] == "2026-06-14T00:00:00+00:00"
+    # …and the default is the honest never-checked null, beside `unverified`
+    assert item_summary(item)["last_checked"] is None
 
 
 def test_summary_reports_a_reference_only_item_honestly():

@@ -38,7 +38,10 @@ H66) reads the *full* per-item ledger back. The per-item section also pins the
 tie (roadmap H70): the posture the head of the ledger `history` returns implies
 — `drift_posture` of its newest event — equals the `drift` every latest-posture
 surface shows for that item (and `[]` ⇒ `unverified`), so the full-timeline
-surface can never silently disagree with the postures that summarize it.
+surface can never silently disagree with the postures that summarize it. The
+time-axis counterpart (roadmap H84) is pinned the same way: the `last_checked`
+timestamp `list`/`search`/`show` carry beside `drift` equals the `checked_at` of
+that `history` head (and `None` ⇔ the empty timeline ⇔ never re-checked).
 
 Finally, the **portable-custody** section (roadmap H73) lifts the per-item
 invariant *across libraries*: H67/H72 make the verify ledger travel (in the
@@ -490,6 +493,48 @@ def test_history_head_agrees_with_the_per_item_drift_posture(scrolls_home, capsy
     assert main(["history", "web:4"]) == 0
     assert json.loads(capsys.readouterr().out) == []
     assert canonical["web:4"] == "unverified"
+
+
+def test_last_checked_agrees_with_the_history_head_checked_at(scrolls_home, capsys):
+    # roadmap H84: the per-item `drift` posture has a time sibling — `last_checked`,
+    # *when* that verdict was taken — riding `list`/`search`/`show`. The tie this
+    # pins (the time-axis counterpart of the H70 posture tie): the timestamp every
+    # latest-posture surface shows equals the `checked_at` of the head of the
+    # `history` ledger for that item, and `None` ⇔ the honest empty timeline ⇔
+    # never re-checked. So the staleness an agent reads off a browse row can never
+    # silently disagree with the ledger `history` reads back.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    items = [item.id for item in list_items(db)]
+
+    # the canonical last-checked per item: the head of its `history` ledger
+    canonical = {}
+    for item_id in items:
+        assert main(["history", item_id]) == 0
+        events = json.loads(capsys.readouterr().out)
+        canonical[item_id] = events[0]["checked_at"] if events else None
+    # sanity: three were checked at the fixture timestamp, web:4 never
+    assert canonical == {
+        "web:1": "2026-06-14T00:00:00+00:00",
+        "web:2": "2026-06-14T00:00:00+00:00",
+        "web:3": "2026-06-14T00:00:00+00:00",
+        "web:4": None,
+    }
+
+    # list rows + search hits carry the same timestamp (H84)
+    assert main(["list"]) == 0
+    assert {r["id"]: r["last_checked"] for r in json.loads(capsys.readouterr().out)} == canonical
+    assert main(["search", "topic"]) == 0
+    assert {h["id"]: h["last_checked"] for h in json.loads(capsys.readouterr().out)} == canonical
+    # …and the inspect surface, one item at a time
+    show_ts = {}
+    for item_id in items:
+        assert main(["show", item_id]) == 0
+        show_ts[item_id] = json.loads(capsys.readouterr().out)["last_checked"]
+    assert show_ts == canonical
 
 
 # --- portable custody: the posture survives export→import (roadmap H73) ------

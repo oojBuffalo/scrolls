@@ -228,6 +228,7 @@ def item_summary(
     item: ScrollItem,
     works: list[dict[str, Any]] | None = None,
     drift: str = "unverified",
+    last_checked: str | None = None,
 ) -> dict[str, Any]:
     """The compact browse record shared by `scrolls list` and MCP `list_scrolls`.
 
@@ -248,12 +249,17 @@ def item_summary(
 
     `drift` is the item's custody drift posture (`verified`/`unverified`/
     `drifted`/`rotted`/`error`), the `custody.drift_posture` value over the
-    item's latest verify-ledger verdict. It is passed in for the same reason as
-    `works`: this module stays free of the verify ledger (which `custody` reads
-    by importing items), and the caller reads `latest_events` *once* per `list`,
-    not per row. The default `"unverified"` is `drift_posture(None)` — the honest
-    never-checked posture, so a caller that reads an empty ledger and one that
-    omits the argument agree, and neither silently claims "clean".
+    item's latest verify-ledger verdict. `last_checked` is *when* that verdict
+    was taken (the verdict's `checked_at`, `custody.last_checked`), or `None`
+    when the item has never been re-checked — the time axis of the same
+    custody picture, so an agent reads not just whether a source moved but as of
+    when (and can pick a `verify --stale-before <ISO>` boundary by inspection,
+    roadmap H84). Both are passed in for the same reason as `works`: this module
+    stays free of the verify ledger (which `custody` reads by importing items),
+    and the caller reads `latest_events` *once* per `list`, not per row. The
+    defaults (`"unverified"` = `drift_posture(None)`, `last_checked=None`) are
+    the honest never-checked pair, so a caller that reads an empty ledger and one
+    that omits the arguments agree, and neither silently claims "clean".
     """
     summary = {
         "id": item.id,
@@ -265,6 +271,7 @@ def item_summary(
         "saved_at": item.saved_at,
         "fidelity": get_fidelity(item),
         "drift": drift,
+        "last_checked": last_checked,
         "works": works or [],
     }
     # How the category was derived, when an engine recorded it — so a browse row

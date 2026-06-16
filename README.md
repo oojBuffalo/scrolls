@@ -1683,7 +1683,12 @@ already window by), and `--drift <posture>` only those at a given drift posture
 (the suspect set `scrolls list --drift` enumerates — `drifted`/`error`/`rotted`). `scrolls history <id>` reads that
 ledger back per item — the full timeline of every check, newest first — so an
 agent can see *when* a source drifted and *how often* it has been re-checked,
-not just its current posture. That custody record is **portable**: a
+not just its current posture. Every browse/inspect row (`scrolls list`/`search`/
+`show` + their MCP twins) carries the per-item custody picture inline: the
+`fidelity` tier, the `drift` posture, and `last_checked` — *when* that posture
+was taken, or `null` when never re-checked — so an agent reads how much is held,
+whether the source moved, and as of when, then picks a `verify --stale-before
+<ISO>` boundary straight from a row (H84). That custody record is **portable**: a
 `scrolls export bundle` carries the in-scope items' verify ledger alongside
 their canonical rows, and `scrolls import bundle` restores it — deduped so a
 re-import is a custody no-op — so a recipient inherits the drift *history*, not

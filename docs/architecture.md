@@ -138,8 +138,15 @@ each command moves items between stages or derives artifacts from them.
   moved), each through the same `custody.drift_posture` over `latest_events`, so
   a given item reads the same posture wherever an agent reaches it, and the
   posture a `list` row shows is exactly the one its `--drift` filter selects on.
-  That per-item agreement is pinned across all seven surfaces by the per-item
-  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64). Where
+  The primary browse/inspect rows (`list`/`search`/`show` + their MCP twins) also
+  carry the *time* axis of that posture (roadmap H84): a `last_checked` field
+  beside `drift`, the `checked_at` of the same latest verdict via the
+  `custody.last_checked` sibling of `drift_posture` (`null` when never
+  re-checked), so an agent reads not just whether a source moved but as of when —
+  and can pick a `verify --stale-before <ISO>` boundary by inspection. That
+  per-item agreement is pinned across all seven surfaces by the per-item
+  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64), which also
+  ties `last_checked` to the head of the `history` ledger (H84). Where
   every surface above carries only the *latest* posture, `scrolls history <id>`
   (+ the MCP `get_scroll_history` twin, roadmap H66) reads the *full* per-item
   ledger back — the complete append-only timeline `verify` writes, each

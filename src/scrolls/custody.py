@@ -466,6 +466,25 @@ def drift_posture(event: CustodyEvent | None) -> str:
     return "verified" if event.status == "unchanged" else event.status
 
 
+def last_checked(event: CustodyEvent | None) -> str | None:
+    """When an item was last verified — the `checked_at` of its latest verdict.
+
+    The time-axis sibling of `drift_posture` over the *same* `latest_events`
+    verdict: where `drift_posture` answers "has the source moved", this answers
+    "as of when do we know that" (roadmap H84). ``None`` when the ledger holds no
+    verdict for the item — never re-checked, so there is no timestamp to report
+    (the honest-absence shape, the `null` counterpart of the ``unverified``
+    posture `drift_posture(None)` returns; never a fabricated wall-clock time).
+    The stored timestamp is reported verbatim, so it is deterministic and
+    idempotent (the H21 posture — a row never shows a moving "x ago"), and it
+    equals the `checked_at` of the head of the per-item `scrolls history` ledger
+    by construction (both read the chronologically-latest event), so an agent
+    can pick a `verify --stale-before <ISO>` boundary (H79) straight from a
+    browse row.
+    """
+    return event.checked_at if event is not None else None
+
+
 def unverified_items(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> list[ScrollItem]:
