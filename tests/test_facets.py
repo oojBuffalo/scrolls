@@ -182,6 +182,48 @@ def test_method_facet_empty_library_is_well_shaped(db_path):
     assert compute_facets(db_path, field="method") == {"facets": {"method": []}}
 
 
+def test_method_facet_is_the_aggregate_of_the_per_item_confidence_level(db_path):
+    # H21 carries no new `confidence` facet on purpose: the level axis aggregate
+    # *is* `facets method` (and the freshness aggregate is doctor's
+    # custody.enrichment). This pins that they agree — both derive from
+    # `classification_view`, so the facet's engine buckets are exactly the rollup
+    # of each held item's per-item `confidence.level` (rules-v1↔deterministic,
+    # llm-v1↔inferred), with user-set/unclassified the view's honest-absence None.
+    from collections import Counter
+
+    from scrolls.classify import classify_item
+    from scrolls.items import classification_provenance, list_items
+
+    seed(
+        db_path,
+        [
+            classify_item(make_item("wiki:1", source="wikipedia", category=None,
+                                    title="SQLite")),
+            classify_item(make_item("wiki:2", source="wikipedia", category=None,
+                                    title="Postgres")),
+            make_item("web:llm", category="tutorial",
+                      provenance={"classified_by": "llm-v1", "classified_model": "x"}),
+            make_item("web:user", category="opinion"),
+            make_item("web:bare"),
+        ],
+    )
+    level_for_engine = {"rules-v1": "deterministic", "llm-v1": "inferred"}
+
+    # roll up each held item's own per-item confidence level (or absence)
+    rolled = Counter()
+    for item in list_items(db_path):
+        view = classification_provenance(item)
+        if view is None:
+            rolled["user-set" if item.category is not None else "unclassified"] += 1
+        else:
+            rolled[view["by"]] += 1
+            # the level the per-item marker reports matches the engine bucket
+            assert view["confidence"]["level"] == level_for_engine[view["by"]]
+
+    method = compute_facets(db_path, field="method")["facets"]["method"]
+    assert {entry["value"]: entry["count"] for entry in method} == dict(rolled)
+
+
 def test_scoping_filter_restricts_the_vocabulary(db_path):
     seed(
         db_path,
