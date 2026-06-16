@@ -1635,4 +1635,17 @@ client-credentials token dance, and is deferred (ADR 0054). A native `x` fetch a
 remains out of reach while X's read API stays paywalled; `x` enriches only
 through the Field Theory import (ADR 0009).
 
+Custody integrity is a first-class, network-free report: `scrolls doctor`
+carries a `custody` block with each item's **fidelity** tier — `full` (a
+re-derivable body is held), `partial` (degraded but honest), or `reference`
+(pointer and provenance only) — and a percent-clean integrity **score** over
+per-item findings, with `fidelity` queryable as its own facet (ADR 0097). On
+top of that, `scrolls verify` re-captures a held item through its adapter and
+records a drift/rot **custody event** — `unchanged`, `drifted` (the source
+changed since capture), `rotted` (HTTP 404/410, gone), or `error` (could not
+check) — into an append-only ledger *without* overwriting the original
+capture, and `scrolls doctor` aggregates the latest verdict per item into its
+`custody.drift` report, so the library can always answer "what have I lost, or
+what changed, since I saved it?" (ADR 0098).
+
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

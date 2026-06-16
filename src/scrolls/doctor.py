@@ -18,6 +18,7 @@ import sqlite3
 from dataclasses import replace
 from typing import Any, Iterable
 
+from scrolls.custody import CUSTODY_STATUSES, latest_events
 from scrolls.items import (
     ScrollItem,
     get_fidelity,
@@ -64,6 +65,14 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
             "issues": 0,
             "tiers": {"full": 0, "partial": 0, "reference": 0},
             "findings": [],
+            "drift": {
+                "checked": 0,
+                "unchanged": 0,
+                "drifted": 0,
+                "rotted": 0,
+                "error": 0,
+                "events": [],
+            },
         },
     }
     if not paths.db_path.exists():
@@ -77,6 +86,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     _check_orphan_scrolls(paths, report, items)
     _check_fts(paths, report, fix)
     _check_custody_integrity(paths, report, items)
+    _check_custody_drift(paths, report, items)
     return report
 
 
@@ -302,3 +312,41 @@ def _check_custody_integrity(
     total = len(items)
     clean = total - custody["issues"]
     custody["score"] = 100 if total == 0 else round(100 * clean / total)
+
+
+def _check_custody_drift(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem]
+) -> None:
+    """Aggregate the custody ledger's latest verdict per item (ADR 0098).
+
+    Where the integrity audit is the offline "do we still hold it?" view, this
+    is the network-derived "has the source drifted or rotted out from under our
+    capture?" view, read from the events `scrolls verify` records. Only the
+    most recent event per *currently held* item counts — a verdict for a since-
+    deleted item is not this library's drift. ``drifted``/``rotted`` are the
+    actionable losses, listed in ``events``; ``unchanged``/``error`` stay as
+    counts. Like the integrity findings, drift is a *report*: it never feeds the
+    structural ``issues``/``fixed`` or the exit code, because doctor cannot
+    repair a source that changed upstream.
+    """
+    drift = report["custody"]["drift"]
+    held = {item.id for item in items}
+    latest = {
+        item_id: event
+        for item_id, event in latest_events(paths.db_path).items()
+        if item_id in held
+    }
+    drift["checked"] = len(latest)
+    for status in CUSTODY_STATUSES:
+        drift[status] = sum(1 for e in latest.values() if e.status == status)
+    drift["events"] = [
+        {
+            "id": event.item_id,
+            "status": event.status,
+            "checked_at": event.checked_at,
+            "prior_hash": event.prior_hash,
+            "observed_hash": event.observed_hash,
+        }
+        for _, event in sorted(latest.items())
+        if event.status in ("drifted", "rotted")
+    ]

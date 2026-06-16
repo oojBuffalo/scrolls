@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -108,6 +108,26 @@ CREATE TABLE concept_summaries (
 )
 """
 
+# Custody event ledger for drift/rot detection (ADR 0098). `scrolls verify`
+# re-captures a rendered item and appends one row here — prior vs observed
+# content hash and a verdict — *without* clobbering the original capture, so
+# the library can always answer "what changed or rotted since I saved it?".
+# Append-only by design; the monotonic `id` orders events and breaks
+# same-second `checked_at` ties when reading the latest verdict per item.
+_CUSTODY_EVENTS_TABLE = (
+    """\
+CREATE TABLE custody_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    prior_hash TEXT,
+    observed_hash TEXT,
+    detail TEXT
+)""",
+    "CREATE INDEX custody_events_item ON custody_events(item_id)",
+)
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
@@ -115,6 +135,7 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
     4: (_SUBSCRIPTIONS_TABLE,),
     5: _SUBSCRIPTION_VALIDATORS,
     6: (_CONCEPT_SUMMARIES_TABLE,),
+    7: _CUSTODY_EVENTS_TABLE,
 }
 
 

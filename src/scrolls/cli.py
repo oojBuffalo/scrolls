@@ -10,6 +10,7 @@ import argparse
 import dataclasses
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scrolls import __version__
@@ -18,9 +19,10 @@ from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
 from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.classify import classify_item
 from scrolls.config import ConfigError, load_config, resolve_llm_model
+from scrolls.custody import live_recapture, record_events, verify_item
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
-from scrolls.db import read_schema_version
+from scrolls.db import init_db, read_schema_version
 from scrolls.doctor import run_doctor
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import FIELDS as FACET_FIELDS
@@ -543,6 +545,29 @@ def build_parser() -> argparse.ArgumentParser:
         "id", help="Subscription id (from `scrolls follow`), or the feed URL"
     )
 
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Re-capture items and record drift/rot custody events (JSON output)",
+    )
+    verify_parser.add_argument(
+        "id",
+        nargs="?",
+        help="Verify one item by id or URL; use --all for every held item with "
+        "a captured content hash",
+    )
+    verify_parser.add_argument(
+        "--all",
+        dest="verify_all",
+        action="store_true",
+        help="Verify every item that has a captured content hash to diff against",
+    )
+    verify_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Attempt at most N re-captures this run (--all only), oldest saved first",
+    )
+
     return parser
 
 
@@ -647,6 +672,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_sync(args.id)
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
+    if args.command == "verify":
+        return _cmd_verify(args.id, args.verify_all, args.limit)
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
@@ -1042,6 +1069,82 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
 
     print(json.dumps({**counts, "results": results}))
     return 1 if counts["failed"] else 0
+
+
+def _cmd_verify(ref: str | None, verify_all: bool, limit: int | None = None) -> int:
+    """Re-capture items and record drift/rot custody events (ADR 0098).
+
+    Verifying re-fetches an item through its adapter, diffs the fresh content
+    hash against the stored one, and appends a custody event — never touching
+    the original capture, so proving the source changed can't lose what we
+    held. Exactly one of an item ref or `--all` is required: `--all` re-checks
+    every held item that carries a captured hash to diff against; a single ref
+    must itself have one. `error` (could-not-check) drives a nonzero exit;
+    `drifted`/`rotted` are successful checks that found a custody event.
+    """
+    paths = get_paths()
+    if (ref is None) == (not verify_all):
+        print(
+            json.dumps({"error": "verify needs exactly one of an item id or --all"}),
+            file=sys.stderr,
+        )
+        return 1
+
+    if ref is not None:
+        if limit is not None:
+            print(
+                json.dumps(
+                    {"error": "--limit paces --all runs; drop it when verifying one item"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        item, error = _find_item(paths, ref)
+        if item is None:
+            print(json.dumps({"error": error}), file=sys.stderr)
+            return 1
+        if not item.content_hash:
+            print(
+                json.dumps(
+                    {"error": f"item {item.id!r} holds no content hash to verify against"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        items = [item]
+    else:
+        # --all re-checks only items with a captured baseline hash: a
+        # reference-only or detected item has nothing to diff a re-fetch against.
+        all_items = list_items(paths.db_path) if paths.db_path.exists() else []
+        items = [item for item in all_items if item.content_hash]
+
+    if paths.db_path.exists():
+        init_db(paths.db_path)  # ensure the ledger table exists before recording
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    counts = {"unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
+    events = []
+    results = []
+    attempted = 0
+    for item in items:
+        if limit is not None and attempted >= limit:
+            break
+        attempted += 1
+        event = verify_item(item, live_recapture, now=now)
+        events.append(event)
+        counts[event.status] += 1
+        results.append(
+            {
+                "id": event.item_id,
+                "status": event.status,
+                "prior_hash": event.prior_hash,
+                "observed_hash": event.observed_hash,
+                "detail": event.detail,
+            }
+        )
+    record_events(paths.db_path, events)
+    print(json.dumps({"checked": len(results), **counts, "results": results}))
+    return 1 if counts["error"] else 0
 
 
 def _cmd_classify(

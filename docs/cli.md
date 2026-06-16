@@ -6,7 +6,7 @@ consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
 Every example below is real output captured from `scrolls 0.1.0`
-(schema version 6) on this branch — see
+(schema version 7) on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
 `tests/test_cli.py`.
@@ -170,6 +170,61 @@ $ scrolls doctor --fix
 `fts.status` is `ok`, `found`, `rebuilt`, `unsupported` (SQLite older
 than 3.42 cannot verify the index against the table —
 `test_fts_check_degrades_on_old_sqlite`), or `skipped` (no database).
+
+Beyond those five repairable checks, every run also carries a `custody`
+block — a network-free integrity *report* that never affects the
+`issues`/`fixed` counts or the exit code (it records state doctor cannot
+repair). It holds the fidelity `tiers` distribution, per-item integrity
+`findings` with a percent-clean `score` (ADR 0097; cited tests in
+`tests/test_doctor.py`), and a `drift` sub-block aggregating the latest
+`scrolls verify` verdict per held item — `checked`, the
+`unchanged`/`drifted`/`rotted`/`error` counts, and the actionable
+`drifted`/`rotted` `events` themselves (ADR 0098;
+`test_drift_report_counts_each_verdict`).
+
+### `scrolls verify [id] [--all] [--limit N]`
+
+Re-capture held items and record whether the live source still matches the
+copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
+`tests/test_custody.py`). Verifying re-fetches an item through the same
+adapter `scrolls fetch` uses, recomputes its content hash, diffs it against
+the stored one, and appends a **custody event** to the ledger — it never
+overwrites the original capture, so proving a source changed can never lose
+what was held.
+
+One of an item `id`/URL or `--all` is required, never both
+(`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`).
+`--all` re-checks every held item carrying a captured `content_hash` to diff
+against — a reference-only or still-`detected` item has no baseline and is
+skipped — and `--limit N` paces a large run (oldest saved first), like
+`scrolls fetch`. A single `id` must itself hold a content hash
+(`test_verify_item_without_content_hash_is_an_error`).
+
+Each result carries a `status`:
+
+| `status` | Meaning |
+| --- | --- |
+| `unchanged` | the re-captured hash equals the stored one — the source still matches custody |
+| `drifted` | the hashes differ — the source changed since capture (the original is still held) |
+| `rotted` | the resource is gone (HTTP 404/410) — custody may hold the last copy |
+| `error` | the re-capture failed for another reason (transient network, no adapter) — not a verdict, just "could not check" |
+
+`scrolls doctor` aggregates the latest event per item into its
+`custody.drift` block (`test_verify_feeds_the_doctor_drift_report`). Exit
+is 0 when every item was checked — `drifted` and `rotted` are *successful*
+checks that recorded a real custody event — and 1 when any `error` left an
+item unchecked, mirroring `scrolls fetch`
+(`test_verify_transient_failure_is_error_and_exits_nonzero`).
+
+```console
+$ scrolls verify web:af2e70e87b6d        # source rewritten since capture
+{"checked": 1, "unchanged": 0, "drifted": 1, "rotted": 0, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "drifted", "prior_hash": "sha256:1f3c…", "observed_hash": "sha256:9c20…", "detail": null}]}
+[exit 0]
+
+$ scrolls verify --all
+{"checked": 2, "unchanged": 1, "drifted": 0, "rotted": 1, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}, {"id": "x:1111", "status": "rotted", "prior_hash": "sha256:77ab…", "observed_hash": null, "detail": "web request failed: HTTP Error 404: Not Found"}]}
+[exit 0]
+```
 
 ## Getting items in
 

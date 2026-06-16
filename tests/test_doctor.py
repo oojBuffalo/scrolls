@@ -17,6 +17,7 @@ import sqlite3
 import pytest
 
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, insert_item, list_items, make_item_id
@@ -67,6 +68,13 @@ def _rendered(paths, item):
     rendered = write_scroll(paths, item)
     insert_item(paths.db_path, rendered)
     return rendered
+
+
+def insert_and_id(paths, url):
+    """Insert a fetched web item for `url` and return its id (for drift tests)."""
+    item = _web_item(url, fetched=True)
+    insert_item(paths.db_path, item)
+    return item.id
 
 
 # --- clean and empty libraries ---
@@ -565,4 +573,93 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
     assert custody == {
         "score": 100, "issues": 0,
         "tiers": {"full": 1, "partial": 0, "reference": 0}, "findings": [],
+        "drift": {
+            "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0,
+            "error": 0, "events": [],
+        },
     }
+
+
+# --- custody drift/rot aggregation (ADR 0098) ---
+
+
+def _record(paths, item_id, status, *, prior="sha256:old", observed="sha256:old",
+            detail=None):
+    record_events(paths.db_path, [
+        CustodyEvent(item_id, "2026-06-15T00:00:00+00:00", status, prior, observed, detail),
+    ])
+
+
+def test_drift_report_is_empty_without_any_verification(paths):
+    insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True))
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift == {
+        "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0,
+        "error": 0, "events": [],
+    }
+
+
+def test_drift_report_counts_each_verdict(paths):
+    a = insert_and_id(paths, "https://example.com/a")
+    b = insert_and_id(paths, "https://example.com/b")
+    c = insert_and_id(paths, "https://example.com/c")
+    _record(paths, a, "unchanged")
+    _record(paths, b, "drifted", observed="sha256:new")
+    _record(paths, c, "rotted", observed=None, detail="gone")
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 3
+    assert (drift["unchanged"], drift["drifted"], drift["rotted"], drift["error"]) == (
+        1, 1, 1, 0,
+    )
+    # only the actionable losses (drift + rot) are itemized, sorted by id
+    assert [e["id"] for e in drift["events"]] == sorted([b, c])
+    assert {e["status"] for e in drift["events"]} == {"drifted", "rotted"}
+
+
+def test_drift_report_uses_only_the_latest_event_per_item(paths):
+    a = insert_and_id(paths, "https://example.com/a")
+    _record(paths, a, "drifted", observed="sha256:new")
+    _record(paths, a, "unchanged")  # a later re-verify found it back in sync
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 1
+    assert drift["unchanged"] == 1
+    assert drift["drifted"] == 0
+    assert drift["events"] == []
+
+
+def test_drift_report_ignores_events_for_deleted_items(paths):
+    # a verdict for an item no longer in the library is not this library's drift
+    _record(paths, "web:ghost", "rotted", observed=None, detail="gone")
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 0
+    assert drift["events"] == []
+
+
+def test_doctor_survives_a_library_without_the_ledger_table(paths):
+    # a v6 library never migrated to v7 has no custody_events table; doctor's
+    # drift aggregation must read it as empty, not crash
+    insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True))
+    conn = sqlite3.connect(paths.db_path)
+    with conn:
+        conn.execute("DROP TABLE custody_events")
+    conn.close()
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 0
+    assert drift["events"] == []
+
+
+def test_drift_does_not_affect_issues_or_exit_code(paths, capsys):
+    a = insert_and_id(paths, "https://example.com/a")
+    _record(paths, a, "drifted", observed="sha256:new")
+    _record(paths, insert_and_id(paths, "https://example.com/b"), "rotted",
+            observed=None, detail="gone")
+
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0  # drift/rot are reported, not repairable drift
+    assert report["issues"] == 0
+    assert report["custody"]["drift"]["drifted"] == 1
+    assert report["custody"]["drift"]["rotted"] == 1
