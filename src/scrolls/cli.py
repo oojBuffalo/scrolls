@@ -73,7 +73,8 @@ from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
-from scrolls.search import search_items
+from scrolls.scope import scope_envelope
+from scrolls.search import count_matches, search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
@@ -435,6 +436,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only items carrying this concept (matched by slug)",
     )
+    list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Return at most N items, oldest saved first; default is "
+        "uncapped (every item in scope). With --stats, a capped listing "
+        "reports whether it was truncated",
+    )
+    list_parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Wrap the array in a scope-honest {scope, stats, results} "
+        "envelope: the filters honored, how many matched in scope, and "
+        "whether the result was truncated below --limit",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -514,6 +530,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--concept",
         default=None,
         help="Only hits carrying this concept (matched by slug)",
+    )
+    search_parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Wrap the array in a scope-honest {scope, stats, results} "
+        "envelope: the query and filters honored, how many matched in "
+        "scope, and whether the ranked result was truncated below --limit",
     )
 
     set_parser = subparsers.add_parser(
@@ -644,7 +667,13 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_kb(args.engine, args.batch)
     if args.command == "list":
         return _cmd_list(
-            args.source, args.stage, args.category, args.tag, args.concept
+            args.source,
+            args.stage,
+            args.category,
+            args.tag,
+            args.concept,
+            args.limit,
+            args.stats,
         )
     if args.command == "mcp":
         return _cmd_mcp()
@@ -667,6 +696,7 @@ def main(argv: list[str] | None = None) -> int:
             args.stage,
             args.tag,
             args.concept,
+            args.stats,
         )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
@@ -1420,10 +1450,24 @@ def _cmd_list(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    limit: int | None = None,
+    stats: bool = False,
 ) -> int:
     paths = get_paths()
+    scope = {
+        "source": source,
+        "category": category,
+        "stage": stage,
+        "tag": tag,
+        "concept": concept,
+        "limit": limit,
+    }
     if not paths.db_path.exists():
-        print(json.dumps([]))
+        # Empty in the surface's own shape, capped or not — never an error
+        # (completeness contract G1). The --stats envelope says so explicitly:
+        # a checked-and-empty library, scoped to the same facets.
+        empty = scope_envelope([], scope=scope, matched=0) if stats else []
+        print(json.dumps(empty))
         return 0
     items = list_items(
         paths.db_path,
@@ -1433,19 +1477,19 @@ def _cmd_list(
         tag=tag,
         concept=concept,
     )
+    matched = len(items)
+    if limit is not None:
+        items = items[:limit]
     # Work membership is a whole-library property (ADR 0101): a filtered listing
     # (e.g. source=arxiv) hides an item's sibling representation, so clustering
     # over the filtered rows would undercount it. Cluster over every item, then
     # annotate the rows this listing shows.
     membership = work_membership(list_items(paths.db_path))
-    print(
-        json.dumps(
-            [
-                item_summary(item, membership_payload(membership.get(item.id, ())))
-                for item in items
-            ]
-        )
-    )
+    rows = [
+        item_summary(item, membership_payload(membership.get(item.id, ())))
+        for item in items
+    ]
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched) if stats else rows))
     return 0
 
 
@@ -1596,6 +1640,7 @@ def _cmd_search(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    stats: bool = False,
 ) -> int:
     paths = get_paths()
     try:
@@ -1612,7 +1657,33 @@ def _cmd_search(
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
-    print(json.dumps([dataclasses.asdict(hit) for hit in hits]))
+    rows = [dataclasses.asdict(hit) for hit in hits]
+    if not stats:
+        print(json.dumps(rows))
+        return 0
+    # The honest denominator behind the truncation marker (G2): count every
+    # match in scope, ignoring the cap, so `len(rows) == limit` no longer has
+    # to mean "exactly the library's matches". The query already parsed above,
+    # so this count never re-raises.
+    matched = count_matches(
+        paths.db_path,
+        query,
+        source=source,
+        category=category,
+        stage=stage,
+        tag=tag,
+        concept=concept,
+    )
+    scope = {
+        "query": query,
+        "source": source,
+        "category": category,
+        "stage": stage,
+        "tag": tag,
+        "concept": concept,
+        "limit": limit,
+    }
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched)))
     return 0
 
 

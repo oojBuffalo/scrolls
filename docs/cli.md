@@ -114,16 +114,17 @@ shape rather than erroring, so the payload shape never varies between "no
 library yet" and "library, no matches"
 (`test_before_init_is_empty_in_shape_across_surfaces`).
 
-### G2 — Honest scope, honest completeness *(enforcement target: M2 H6–H8)*
+### G2 — Honest scope, honest completeness *(`search`/`list` enforced via `--stats`; `context`/`related`/`works`/`doctor` target: M2 H7–H8)*
 
 A scoped or `--limit`-capped result must let a reader that holds *only the
 result* — not the call that produced it — recover the scope it covered and
-whether it was truncated. Today a bare `search`/`related`/`list` array is
-silent about both: a 20-row answer to `search "x" --source arxiv --limit
-20` cannot be told from "those are all 200 arXiv matches" by an agent that
-didn't make the call, and every search is `LIMIT`-capped, so `len ==
-limit` is genuinely ambiguous. The contract closes that, building on
-mechanisms already in the codebase rather than inventing a new one:
+whether it was truncated. A bare `search`/`related`/`list` array is silent
+about both: a 20-row answer to `search "x" --source arxiv --limit 20`
+cannot be told from "those are all 200 arXiv matches" by an agent that
+didn't make the call, and every search is `LIMIT`-capped, so `len == limit`
+is genuinely ambiguous. The contract closes that with a self-describing
+companion, building on a shape already in the codebase rather than
+inventing a new one:
 
 - **Applied scope travels with the result**, the way `context` already
   prints its facets in the bundle title (`# Scrolls Context Bundle: <query>
@@ -141,15 +142,34 @@ mechanisms already in the codebase rather than inventing a new one:
   the last verify" is not "verified now" (ADR 0098). Drift the report has
   not re-checked is named as un-rechecked, not as clean.
 
-The enforcement order is fixed by the roadmap: H6 adds scope + truncation
-honesty to `search` and `list`; H7 extends it to `context`, `related`, and
-`works`; H8 sharpens `doctor`'s verified-now-vs-as-of-last-check report
+**Why the companion is opt-in, not the default shape.** G1 (above) locks
+the bare array as the *empty form* of `search`/`list` — `[]`, exit 0 — and
+that bare array is also the established CLI/MCP agent contract (every
+`search_scrolls`/`list_scrolls` consumer reads a list, custody-vision §6
+surface parity). So G2 is delivered as a **deliberate, documented evolution
+that adds** rather than replaces: `scrolls search --stats` / `scrolls list
+--stats` wrap the array in a `{scope, stats, results}` envelope consistent
+with the `stats` companion `works`/`graph` emit, while the default output
+stays the G1-locked bare array. A reader that needs scope/truncation
+honesty asks for it; nothing existing breaks. The envelope builder
+(`src/scrolls/scope.py` `scope_envelope`) is pure, so the load-bearing
+truncation arithmetic — `truncated` iff `matched > returned` — is pinned in
+isolation (`tests/test_scope.py`); the surface wiring and scope echo are
+pinned in `tests/test_cli.py` and `tests/test_search.py`. If always-on
+honesty is later preferred, flipping the default is one line atop the same
+builder.
+
+The enforcement order is fixed by the roadmap: **H6 (done)** adds the
+`--stats` scope + truncation envelope to `search` and `list`; H7 extends
+the same companion to `context`, `related`, and `works`; H8 sharpens
+`doctor`'s verified-now-vs-as-of-last-check report
 (`docs/agents/autonomous-roadmap.md`). Each lands with its own tests in the
-matching suite and updates this section's status marker from *target* to
-*enforced*. The mechanism (a scope/completeness companion consistent with
-the existing `stats` envelope) is a deliberate, documented evolution of the
-bare-array convention for the ranked and capped surfaces; G1 is the half
-that is already true and is locked now so it cannot regress while G2 lands.
+matching suite and flips this section's status marker for those surfaces
+from *target* to *enforced*. The MCP twins (`search_scrolls`/`list_scrolls`)
+keep returning the bare list for now; their G2 parity (an envelope option)
+follows once the CLI shape has stabilized across H6–H8. G1 is the half that
+is already true across every surface and is locked now so it cannot regress
+while G2 lands.
 
 ## Library lifecycle
 
@@ -1160,7 +1180,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -1191,6 +1211,14 @@ concepts (matched by slug, so "BM25" and "bm25" agree), the same way
 `test_list_items_filters_by_concept`). They carry no empty-string
 overload — a value that nothing has prints `[]`.
 
+By default the listing is uncapped — every item in scope, oldest saved
+first. `--limit N` caps it to the first `N`; `--stats` then wraps the
+array in the scope-honest `{scope, stats, results}` envelope (the
+completeness contract G2) so a reader holding only the result can tell a
+capped slice from the whole scope. `--stats` is opt-in: without it the
+output is the bare array unchanged (`test_list_stats_is_opt_in_default_stays_a_bare_array`).
+See the contract section above for the envelope's shape and guarantees.
+
 ```console
 $ scrolls list
 [{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00", "fidelity": "full", "works": []}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
@@ -1199,10 +1227,15 @@ $ scrolls list
 $ scrolls list --source x --category technique
 [{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00", "fidelity": "full", "works": []}]
 [exit 0]
+
+$ scrolls list --source x --limit 1 --stats
+{"scope": {"source": "x", "limit": 1}, "stats": {"returned": 1, "matched": 2, "truncated": true}, "results": [{"id": "x:1111", ...}]}
+[exit 0]
 ```
 
-*(in the first call, array entries after the first are elided here for
-width — every entry has the same nine keys)*
+*(in the bare-array calls, entries after the first are elided here for
+width — every entry has the same nine keys. In the `--stats` call,
+`matched: 2 > returned: 1` marks the listing truncated below the cap.)*
 
 ### `scrolls facets [field] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
@@ -1276,7 +1309,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--stats]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -1313,6 +1346,17 @@ follows the canonical instead of treating the two as unrelated matches.
 Membership is the whole-library DOI clustering `scrolls works` reports, so
 a hit knows its work even when its sibling ranks below the limit.
 
+`--stats` wraps the ranked array in the scope-honest `{scope, stats,
+results}` envelope (the completeness contract G2): `scope` echoes the
+query and every facet honored, and `stats` reports `returned`, `matched`
+(every match in scope, counted past the cap — `src/scrolls/search.py`
+`count_matches`), and `truncated` (`matched > returned`). It resolves the
+`len == limit` ambiguity — "the top 20 of 200" is no longer indistinguishable
+from "all 20 matches" to a reader that didn't make the call. Opt-in:
+without it the output is the bare array unchanged
+(`test_search_stats_is_opt_in_default_stays_a_bare_array`,
+`test_search_stats_envelope_echoes_scope_and_marks_truncation`).
+
 ```console
 $ scrolls search "sqlite fts5"
 [{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": []}]
@@ -1326,10 +1370,22 @@ $ scrolls search "sqlite fts5" --source arxiv
 []
 [exit 0]
 
+$ scrolls search "sqlite fts5" --limit 1 --stats
+{"scope": {"query": "sqlite fts5", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true}, "results": [{"id": "x:1111", ...}]}
+[exit 0]
+
+$ scrolls search "sqlite fts5" --source arxiv --stats
+{"scope": {"query": "sqlite fts5", "source": "arxiv", "limit": 20}, "stats": {"returned": 0, "matched": 0, "truncated": false}, "results": []}
+[exit 0]
+
 $ scrolls search "   "
 {"error": "search query has no searchable tokens"}
 [exit 1]
 ```
+
+The last `--stats` call is the honest empty: nothing matched, but the
+result still names the scope it checked (`query`, `source=arxiv`), so it
+can never be misread as "the library holds nothing about sqlite."
 
 ### `scrolls related <id> [--limit N]`
 

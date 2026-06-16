@@ -609,6 +609,165 @@ def test_search_and_list_filter_by_tag_and_concept(
     assert json.loads(capsys.readouterr().out) == []
 
 
+# --- The completeness contract G2: --stats scope echo + truncation honesty ---
+#
+# `docs/cli.md` G2: a scoped or --limit-capped result must let a reader holding
+# *only the result* recover the scope it covered and whether it was truncated.
+# The bare array (G1-locked default) cannot; `--stats` opts into the
+# self-describing {scope, stats, results} envelope. These pin H6 (search+list).
+
+
+def _stats_item(item_id, **overrides):
+    base = dict(
+        id=item_id,
+        source=item_id.split(":")[0],
+        url=f"https://example.org/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title=item_id,
+        extracted_text="alpha beta gamma delta",
+        summary="alpha beta gamma delta",
+        stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def test_search_stats_envelope_echoes_scope_and_marks_truncation(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(5):
+        insert_item(db, _stats_item(f"web:page{index}"))
+    capsys.readouterr()
+
+    exit_code = main(["search", "alpha", "--limit", "2", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload) == ["scope", "stats", "results"]
+    # the scope a reader recovers from the result alone
+    assert payload["scope"] == {"query": "alpha", "limit": 2}
+    # 2 of 5 → truncated: absence below the cap is NOT library-wide absence
+    assert payload["stats"] == {"returned": 2, "matched": 5, "truncated": True}
+    assert len(payload["results"]) == 2
+
+
+def test_search_stats_is_opt_in_default_stays_a_bare_array(scrolls_home, capsys):
+    """Without --stats the result is the G1-locked bare array, unchanged."""
+    main(["init"])
+    insert_item(get_paths().db_path, _stats_item("web:one"))
+    capsys.readouterr()
+
+    main(["search", "alpha"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+
+    main(["search", "alpha", "--stats"])
+    assert isinstance(json.loads(capsys.readouterr().out), dict)
+
+
+def test_search_stats_empty_scope_is_scope_honest_not_truncated(scrolls_home, capsys):
+    """The dangerous empty case: nothing matched, but the scope is named.
+
+    An empty scoped result must say *which* scope it checked, so it can never
+    be misread as "the library holds nothing about this".
+    """
+    main(["init"])
+    insert_item(get_paths().db_path, _stats_item("web:one"))
+    capsys.readouterr()
+
+    exit_code = main(["search", "alpha", "--source", "arxiv", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"] == []
+    assert payload["scope"] == {"query": "alpha", "source": "arxiv", "limit": 20}
+    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+
+
+def test_search_stats_not_truncated_when_every_match_is_returned(scrolls_home, capsys):
+    main(["init"])
+    insert_item(get_paths().db_path, _stats_item("web:one"))
+    capsys.readouterr()
+
+    main(["search", "alpha", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stats"] == {"returned": 1, "matched": 1, "truncated": False}
+
+
+def test_search_stats_keeps_the_unclassified_pool_in_scope(scrolls_home, capsys):
+    """An empty-string `--category` is a real applied facet, not an absent one."""
+    main(["init"])
+    insert_item(get_paths().db_path, _stats_item("web:one"))
+    capsys.readouterr()
+
+    main(["search", "alpha", "--category", "", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == {"query": "alpha", "category": "", "limit": 20}
+
+
+def test_list_stats_echoes_applied_facets_and_marks_truncation(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _stats_item("web:one"))
+    insert_item(db, _stats_item("web:two"))
+    capsys.readouterr()
+
+    exit_code = main(["list", "--source", "web", "--limit", "1", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == {"source": "web", "limit": 1}
+    assert payload["stats"] == {"returned": 1, "matched": 2, "truncated": True}
+    assert len(payload["results"]) == 1
+
+
+def test_list_stats_is_opt_in_default_stays_a_bare_array(scrolls_home, capsys):
+    main(["init"])
+    insert_item(get_paths().db_path, _stats_item("web:one"))
+    capsys.readouterr()
+
+    main(["list"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+
+    main(["list", "--stats"])
+    assert isinstance(json.loads(capsys.readouterr().out), dict)
+
+
+def test_list_stats_uncapped_omits_limit_and_never_truncates(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _stats_item("web:one"))
+    insert_item(db, _stats_item("web:two"))
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert "limit" not in payload["scope"]  # uncapped: returned everything
+    assert payload["stats"] == {"returned": 2, "matched": 2, "truncated": False}
+
+
+def test_list_limit_caps_the_bare_array_too(scrolls_home, capsys):
+    """`--limit` is a real cap, not a --stats-only knob: it bounds the array."""
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, _stats_item(f"web:item{index}"))
+    capsys.readouterr()
+
+    main(["list", "--limit", "2"])
+    rows = json.loads(capsys.readouterr().out)
+    assert isinstance(rows, list)
+    assert len(rows) == 2  # oldest two, no envelope
+
+
+def test_list_stats_before_init_is_the_empty_envelope_not_an_error(scrolls_home, capsys):
+    """Before init, --stats still answers in shape — G1 parity across surfaces."""
+    exit_code = main(["list", "--source", "web", "--limit", "5", "--stats"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["results"] == []
+    assert payload["scope"] == {"source": "web", "limit": 5}
+    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+
+
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     main(["fetch"])

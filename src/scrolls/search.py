@@ -66,6 +66,17 @@ ORDER BY bm25(items_fts, {_BM25_WEIGHTS})
 LIMIT ?
 """
 
+# The same match + facets as `_QUERY`, but counting rather than ranking and
+# with no LIMIT — the denominator behind G2's truncation marker (`docs/cli.md`,
+# completeness contract): how many items the query matches *in scope* before
+# the cap, so `scrolls search --stats` can say "top 20 of 200", not just 20.
+_COUNT_QUERY = """\
+SELECT COUNT(*)
+FROM items_fts
+JOIN items ON items.rowid = items_fts.rowid
+WHERE items_fts MATCH ?{filters}
+"""
+
 
 DEFAULT_LIMIT = 20
 
@@ -130,6 +141,39 @@ def search_items(
     # works`, which list_items the library the same way.
     membership = work_membership(list_items(db_path))
     return [replace(hit, works=membership.get(hit.id, ())) for hit in hits]
+
+
+def count_matches(
+    db_path: Path,
+    query: str,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+) -> int:
+    """Total items matching `query` in scope, ignoring the result cap.
+
+    The honest denominator for `scrolls search --stats` (completeness
+    contract G2): `search_items` returns at most `limit` hits, so on its own
+    `len(hits)` cannot tell "those are all the matches" from "the top N of
+    more". This counts every match under the *same* FTS query and facets,
+    with no `LIMIT`, so the caller can mark a result truncated exactly when
+    `count_matches > len(hits)`. Validates the query the same way
+    `search_items` does; a missing database is an empty library (0 matches).
+    """
+    match = _escape_query(query)
+    if not db_path.exists():
+        return 0
+    clauses, params = item_filters(source, category, stage, tag, concept)
+    sql = _COUNT_QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))
+    conn = sqlite3.connect(db_path)
+    register_facet_functions(conn)
+    try:
+        (count,) = conn.execute(sql, (match, *params)).fetchone()
+    finally:
+        conn.close()
+    return count
 
 
 def _hit(row: tuple) -> SearchHit:

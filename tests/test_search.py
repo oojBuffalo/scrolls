@@ -7,7 +7,7 @@ import pytest
 
 from scrolls.db import MIGRATIONS, init_db
 from scrolls.items import ScrollItem, insert_item, update_item
-from scrolls.search import search_items
+from scrolls.search import count_matches, search_items
 
 
 @pytest.fixture
@@ -385,6 +385,48 @@ def test_search_tag_filter_excludes_items_without_the_tag(db_path):
 def test_search_blank_query_still_rejected_with_filters(db_path):
     with pytest.raises(ValueError):
         search_items(db_path, "   ", source="arxiv")
+
+
+# --- count_matches: the honest denominator behind G2's truncation marker ----
+
+
+def test_count_matches_counts_every_match_ignoring_the_cap(db_path):
+    """`count_matches` is `search_items` without the LIMIT — the total in scope.
+
+    A capped `search` cannot tell "all the matches" from "the top N of more";
+    this is the count that resolves it (completeness contract G2).
+    """
+    for index in range(5):
+        insert_item(db_path, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}",
+            "Every page mentions databases.",
+        ))
+    # the cap hides two, but the count sees all five
+    assert len(search_items(db_path, "databases", limit=3)) == 3
+    assert count_matches(db_path, "databases") == 5
+
+
+def test_count_matches_honors_the_same_facets_as_search(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.", source="wikipedia",
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.", source="arxiv",
+    ))
+    assert count_matches(db_path, "database") == 2
+    assert count_matches(db_path, "database", source="arxiv") == 1
+    # a scope that excludes everything counts zero — never an error
+    assert count_matches(db_path, "database", source="github") == 0
+
+
+def test_count_matches_validates_query_and_tolerates_missing_db(tmp_path):
+    missing = tmp_path / "absent.sqlite"
+    assert count_matches(missing, "anything") == 0
+    with pytest.raises(ValueError):
+        count_matches(missing, "   ")
+    assert not missing.exists()  # counting never creates a library
 
 
 def test_migration_backfills_fts_for_existing_rows(tmp_path):

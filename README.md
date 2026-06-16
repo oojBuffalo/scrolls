@@ -113,6 +113,7 @@ uv run scrolls rm <id-or-url> [...]  # remove items and the files they own, as J
 uv run scrolls search <query> [--limit N]  # BM25-ranked full-text search, as JSON (default 20)
 uv run scrolls search <query> --source arxiv --category paper  # scope the ranked match; filters AND, "" = unclassified
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
+uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
@@ -120,6 +121,7 @@ uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; with a
 uv run scrolls list           # list items, as JSON
 uv run scrolls list --source web --stage detected --category ""  # filters AND together; "" = unclassified
 uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
+uv run scrolls list --limit 50 --stats  # cap the listing + wrap it in the scope-honest envelope (completeness contract G2)
 uv run scrolls facets         # the filterable vocabulary (sources/categories/tags/concepts) with counts, as JSON
 uv run scrolls facets concepts --source arxiv  # one dimension, scoped by the same facets as search (ADR 0080)
 uv run scrolls kb             # compile the interlinked library pages, as JSON
