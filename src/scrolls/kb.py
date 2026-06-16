@@ -27,7 +27,13 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, drift_posture, last_checked, latest_events
+from scrolls.custody import (
+    CustodyEvent,
+    custody_headline,
+    drift_posture,
+    last_checked,
+    latest_events,
+)
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, get_fidelity, list_items
@@ -335,6 +341,12 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
     if lead:  # synthesized concept summary (ADR 0025) leads the page
         lines += [lead, ""]
     lines += [f"{_count(len(members))}.", ""]
+    # the scope-level custody headline for this page's members (roadmap H95) — the
+    # human-readable counterpart of the bundle/context scope headlines (H45/H47),
+    # over the same shared `custody.custody_headline` so the line is byte-identical
+    # across surfaces and its tier/posture totals equal this page's per-row markers
+    # by construction (every scroll has one fidelity tier and one drift posture)
+    lines += [custody_headline(members, verdicts), ""]
     if consolidate_works is not None:  # category pages collapse works (ADR 0071)
         lines += _consolidated_body(members, page_dir, note, consolidate_works, verdicts)
     else:

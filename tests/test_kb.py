@@ -491,6 +491,125 @@ def test_kb_index_and_graph_pages_omit_the_custody_marker(scrolls_home, capsys):
     assert "· full · drifted" not in recent  # index Recent teaser stays a bare row
 
 
+# --- scope custody headline on the compiled group list pages (roadmap H95) ---
+
+
+def test_kb_group_pages_carry_a_scope_custody_headline(scrolls_home, capsys):
+    """Each group list page carries a `_Custody:_` headline under its count line,
+    summarising how custody stands across that page's members — totals equal to
+    the page's own per-row markers, via the shared `custody.custody_headline`."""
+    from scrolls.custody import custody_headline, latest_events
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # a fidelity/drift mix on one source page: a full+drifted and a reference+never
+    insert_item(db, make_rendered(
+        "web:moved", "web", "Moved post", category="news",
+        raw_text="body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:pointer", "web", "A pointer", category="news"))  # reference fidelity
+    _drift(db, "web:moved", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "sources" / "web.md").read_text(encoding="utf-8")
+    # the headline reads byte-identically to the shared primitive over the page's
+    # members — so the human-readable scope summary can never disagree with the
+    # bundle/context/`status` headlines that share `custody_headline`
+    members = [i for i in list_items(db) if i.source == "web"]
+    expected = custody_headline(members, latest_events(db))
+    assert expected == (
+        "_Custody: 2 scroll(s) · fidelity full 1, reference 1"
+        " · drift unverified 1, drifted 1._")
+    # under the count line, before the first bullet
+    body = page.split("2 scrolls.\n\n")[1]
+    assert body.startswith(expected + "\n\n- [")
+
+
+def test_kb_group_page_headline_totals_match_the_per_row_markers(scrolls_home, capsys):
+    """The headline's tier/posture totals equal the sum of the page's per-row
+    `· <fidelity> · <drift>` markers — convergence by construction (H89 ↔ H95)."""
+    import re
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:b", "web", "Beta", category="news", raw_text="b", content_hash="h2"))
+    insert_item(db, make_rendered("web:c", "web", "Gamma", category="news"))
+    _drift(db, "web:a", "drifted")
+    _drift(db, "web:b", "unchanged")  # reads as `verified`
+    capsys.readouterr()
+    run_kb(capsys)
+
+    body = generated_body(
+        (scrolls_home / "library" / "categories" / "news.md").read_text(encoding="utf-8"))
+    headline = next(l for l in body.splitlines() if l.startswith("_Custody:"))
+    # tally the per-row markers off the page
+    rows = re.findall(r"· (\w+) · (\w+) · (?:checked \S+|never checked)", body)
+    fid_total = {}
+    drift_total = {}
+    for fid, drift in rows:
+        fid_total[fid] = fid_total.get(fid, 0) + 1
+        drift_total[drift] = drift_total.get(drift, 0) + 1
+    assert fid_total == {"full": 2, "reference": 1}
+    assert drift_total == {"drifted": 1, "verified": 1, "unverified": 1}
+    # the headline names exactly those non-zero totals
+    assert headline == (
+        "_Custody: 3 scroll(s) · fidelity full 2, reference 1"
+        " · drift verified 1, unverified 1, drifted 1._")
+
+
+def test_kb_group_page_headline_is_refresh_safe(scrolls_home, capsys):
+    """A re-verify refreshes the headline on recompile; an annotation survives."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:x", "web", "A post", category="news", raw_text="body", content_hash="h1"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page_path = scrolls_home / "library" / "categories" / "news.md"
+    page = page_path.read_text(encoding="utf-8")
+    assert "_Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._" in page
+    assert "_Custody: 1 scroll(s)" in generated_body(page)  # inside the fence
+    page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    _drift(db, "web:x", "drifted")
+    run_kb(capsys)
+    refreshed = page_path.read_text(encoding="utf-8")
+    # the posture count moved unverified → drifted; the headline refreshed in-fence
+    assert "_Custody: 1 scroll(s) · fidelity full 1 · drift drifted 1._" in refreshed
+    assert "drift unverified 1" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
+def test_kb_rollup_pages_omit_the_scope_custody_headline(scrolls_home, capsys):
+    """The scope headline is scoped to the four group list pages, not the
+    index/`graph`/`works` rollups (those are not member lists — H96 is the
+    separate whole-library landing headline)."""
+    main(["init"])
+    db = get_paths().db_path
+    doi_url = "https://doi.org/10.1234/abc"
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper (preprint)", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "crossref:1", "crossref", "A Paper", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="h2"))
+    _drift(db, "arxiv:1", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    for rollup in ("index.md", "graph.md", "works.md"):
+        assert "_Custody:" not in (library / rollup).read_text(encoding="utf-8"), rollup
+    # but the group pages do carry it
+    assert "_Custody:" in (library / "categories" / "ml.md").read_text(encoding="utf-8")
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -1049,6 +1168,8 @@ def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home
         "How BM25 shows up here.\n"
         "\n"
         "2 scrolls.\n"
+        "\n"
+        "_Custody: 2 scroll(s) · fidelity reference 2 · drift unverified 2._\n"
         "\n"
         "- [A](../../scrolls/web/a.md) — web · reference · unverified · never checked\n"
         "- [B](../../scrolls/web/b.md) — web · reference · unverified · never checked\n"

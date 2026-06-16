@@ -222,11 +222,28 @@ inside the fence); on disk each page is wrapped as above.
 
 1 scroll.
 
+_Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
+
 - [SQLite](../../scrolls/wikipedia/sqlite.md) — reference · full · unverified · never checked
 ```
 
 - The H1 is `Source: <name>`, `Category: <name>`,
   `Concept: <display spelling>`, or `Tag: <display spelling>`.
+- Under the count line, a **scope custody headline** — `_Custody: N
+  scroll(s) · fidelity <tier counts> · drift <posture counts>._` — summarising
+  how custody stands across *this page's* members (roadmap H95). It is the
+  human-readable counterpart of the bundle briefing (H45) and `scrolls context`
+  (H47) scope headlines, emitted through the same shared
+  `custody.custody_headline`, so the line is byte-identical across surfaces and
+  its tier/posture totals equal the page's per-row markers by construction
+  (every scroll has one fidelity tier and one drift posture). Only the non-zero
+  tiers/postures show, in canonical order; an empty page is the honest
+  `_Custody: 0 scroll(s)._`. Like the row markers it is a derived read inside
+  the `@generated` fence (refreshed each compile, never a stored field). It is
+  scoped to the four group list pages; the index/`graph`/`works` rollup pages do
+  not carry it (a whole-library custody headline on the landing `index.md` is
+  the separate roadmap H96) (`test_kb_group_pages_carry_a_scope_custody_headline`,
+  `test_kb_rollup_pages_omit_the_scope_custody_headline`).
 - One bullet per member — the title as a Markdown link to its scroll
   file — sorted by case-folded title with the item id as tiebreak. The
   ` — note` suffix is the item's category on source pages, and its
@@ -310,6 +327,8 @@ representation as a **nested** bullet linking to its own scroll:
 # Category: paper
 
 2 scrolls.
+
+_Custody: 2 scroll(s) · fidelity reference 2 · drift unverified 2._
 
 - **Attention Is All You Need** — 2 representations ([doi.org/10.5555/3295222](https://doi.org/10.5555/3295222))
   - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv · reference · unverified · never checked

@@ -915,7 +915,17 @@ choice (ADRs 0004, 0005).
   report-only — never a stored or mutated field (custody-vision §2.4). The bold
   work heading and the `index`/`graph`/`works` rollup rows carry no marker (they
   are not per-item rows); this is the human-readable surface the per-item
-  custody picture previously skipped. Concept pages merge spellings by
+  custody picture previously skipped. **Under each group page's count line a
+  scope custody headline** — `_Custody: N scroll(s) · fidelity <tier counts> ·
+  drift <posture counts>._` (roadmap H95) — summarises how custody stands across
+  *that page's* members, the human-readable counterpart of the bundle (H45) and
+  `context` (H47) scope headlines, emitted through the same shared
+  `custody.custody_headline` so the line is byte-identical across surfaces and
+  its totals equal the page's per-row markers by construction. It is scoped to
+  the four group list pages (`_write_page`); the `index`/`graph`/`works` rollup
+  pages, rendered by their own functions, carry no page-scoped headline (a
+  whole-library custody headline on the landing `index.md` is the separate
+  roadmap H96). Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,
