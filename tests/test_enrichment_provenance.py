@@ -18,9 +18,13 @@ The contract, across every engine that writes an enriched field:
    - rules → ``classified_by = "rules-v1"``
    - llm  → ``classified_by`` + ``classified_model``
    - kb_llm summaries → ``engine`` + a ``members_hash`` fingerprint of the
-     scrolls synthesized from (the re-derivation key; locked in
-     `test_kb_llm.py::test_members_hash_is_order_independent_but_content_sensitive`
-     and the skip-when-unchanged tests — referenced here, not duplicated).
+     scrolls synthesized from (the re-derivation key; the fingerprint's
+     determinism is locked in
+     `test_kb_llm.py::test_members_hash_is_order_independent_but_content_sensitive`,
+     and section 7 below pins the summary engine into this cross-engine contract
+     the way sections 1-6 pin the classification engines — recorded method,
+     deterministic-in-the-fingerprint re-derivation, honest absence, and a
+     freshness view convergent with doctor / `kb --stale`).
 
 2. **Re-derivation is deterministic.** Re-running the rules engine on the same
    item reproduces the identical enriched item, field-for-field — so a
@@ -69,6 +73,13 @@ from scrolls.classify import classification_freshness
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.classify_llm import classify_item_llm
 from scrolls.items import ScrollItem, classification_provenance
+from scrolls.kb import ConceptSummary
+from scrolls.kb_llm import ENGINE as KB_LLM_ENGINE
+from scrolls.kb_llm import (
+    is_stale_summary,
+    summary_freshness,
+    summary_provenance,
+)
 from scrolls.overrides import apply_overrides
 
 
@@ -311,3 +322,69 @@ def test_llm_confidence_claims_no_fabricated_freshness():
     classified = classify_item_llm(make_item(), complete=fake_completer(_LLM_PAYLOAD))
     confidence = classification_provenance(classified)["confidence"]
     assert confidence == {"level": "inferred"}
+
+
+# --- 7. the summary axis is provenance-complete and re-derivable too (H29) -
+#
+# The classification axis above is mirrored on the LLM concept-summary axis: a
+# stored summary records its engine + the members fingerprint it was synthesized
+# from, its freshness view reads from the one primitive doctor and `kb --stale`
+# share, and an unsynthesized concept claims no provenance (honest absence). The
+# per-engine generation behavior (eligibility, incremental skip, pruning) is in
+# `test_kb_llm.py`; this pins the summary engine into the *cross-engine* contract
+# the classification engines obey, so cap 8 holds on both enrichment axes.
+
+
+def _summary(members_hash, *, engine=KB_LLM_ENGINE):
+    return ConceptSummary(
+        slug="bm25", display="BM25", summary="How BM25 shows up across these scrolls.",
+        members_hash=members_hash, engine=engine, model="claude-test",
+        generated_at="2026-06-16T00:00:00+00:00")
+
+
+def test_summary_records_its_method_and_members_fingerprint():
+    """Clause 1 on the summary axis: a stored summary names the engine that wrote
+    it and the membership fingerprint it was synthesized from — the re-derivation
+    key, the kb_llm counterpart of `classified_by` + `classified_ruleset`."""
+    view = summary_provenance(_summary("live-digest"), "live-digest")
+    assert view["by"] == KB_LLM_ENGINE
+    assert view["members_hash"] == "live-digest"
+
+
+def test_summary_re_derivation_is_deterministic_in_the_members_fingerprint():
+    """Clause 2 on the summary axis: recency is the members fingerprint, not a
+    wall-clock timestamp, so an unchanged concept re-derives `current` (a no-op)
+    while changed members read `stale` — enrichment regenerates from raw, it does
+    not accrete. The fingerprint's determinism is locked in `test_kb_llm.py`."""
+    assert summary_provenance(_summary("d"), "d")["freshness"] == "current"
+    assert summary_provenance(_summary("old"), "d")["freshness"] == "stale"
+
+
+def test_unsynthesized_concept_claims_no_summary_provenance():
+    """Clause 4 on the summary axis: no stored summary → no provenance claimed
+    (honest absence), never a fabricated marker for a synthesis that never ran —
+    the `summary_provenance`-returns-None posture, mirroring `classification_view`
+    on the classification axis."""
+    assert summary_provenance(None, "live-digest") is None
+
+
+def test_summary_freshness_view_is_exactly_the_doctor_primitive():
+    """Clause 6 on the summary axis: the view's freshness is `summary_freshness`
+    verbatim — the same derivation doctor's `custody.summaries` aggregate and
+    `kb --stale` (`is_stale_summary`) read — so the per-concept marker, the
+    aggregate count, and the refresh pool converge by construction, and
+    `is_stale_summary` is exactly freshness == 'stale'."""
+    cases = [
+        (_summary("d"), "d"),                       # current
+        (_summary("old"), "d"),                     # members changed → stale
+        (_summary("d", engine="kb-llm-v0"), "d"),   # superseded engine → stale
+        (None, "d"),                                # never synthesized
+    ]
+    for stored, live in cases:
+        view = summary_provenance(stored, live)
+        freshness = summary_freshness(stored, live)
+        if view is None:
+            assert freshness == "never"  # honest absence, not a present view
+        else:
+            assert view["freshness"] == freshness
+        assert is_stale_summary(stored, live) == (freshness == "stale")
