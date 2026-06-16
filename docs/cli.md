@@ -1527,9 +1527,15 @@ Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
 (`test_list_after_adds_prints_summaries`,
 `test_list_before_init_prints_empty_array`). Summary keys: `id`,
-`source`, `url`, `title`, `category`, `stage`, `saved_at`, `fidelity`
-(the custody tier — `full`/`partial`/`reference`, ADR 0097/0100 — the same
-tier `scrolls search`/`scrolls facets fidelity` report), and `works`
+`source`, `url`, `title`, `category`, `stage`, `saved_at`, the two per-item
+custody axes — `fidelity` (the custody tier — `full`/`partial`/`reference`,
+ADR 0097/0100 — the same tier `scrolls search`/`scrolls facets fidelity` report)
+and `drift` (the custody **drift posture** — `verified`/`unverified`/`drifted`/
+`rotted`/`error`, roadmap H58 — read from the verify ledger, the same posture
+`scrolls related` hits and the `scrolls graph` node shape carry, and the exact
+posture this row's `--drift` filter selects on; `unverified` when never
+re-checked — `test_list_rows_carry_the_drift_posture`,
+`test_list_row_drift_matches_the_drift_filter_value`) — and `works`
 (ADR 0101): the scholarly work(s) the item represents, `[]` unless it is
 one of several saved forms of one work, in which case each entry names the
 work's `doi`/`url`, the `canonical` form's id, whether this item
@@ -1730,11 +1736,16 @@ case-insensitive, `--concept` by slug, as `scrolls related` compares them
 `[]`, not an error.
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
-(matches bracketed, `…` for elided context), `fidelity` — the custody
-tier (`full`/`partial`/`reference`, ADR 0097/0100) at which the library
-still holds the match, the same tier `scrolls list` and `scrolls facets
-fidelity` report, so a hit says not just *what* matched but how much of it
-you hold — and `works` (ADR 0101): the scholarly work(s) the hit
+(matches bracketed, `…` for elided context), the two per-item custody axes —
+`fidelity` (the custody tier — `full`/`partial`/`reference`, ADR 0097/0100 — at
+which the library still holds the match, the same tier `scrolls list` and
+`scrolls facets fidelity` report) and `drift` (the custody **drift posture** —
+`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H58 — read from the
+verify ledger, the same posture `scrolls list` rows, `scrolls related` hits, and
+the `scrolls graph` node shape carry; `unverified` when never re-checked —
+`test_search_hits_carry_their_custody_drift_posture`) — so a hit says not just
+*what* matched but how much of it you hold *and* whether the source has drifted
+out from under the capture — and `works` (ADR 0101): the scholarly work(s) the hit
 represents, `[]` for most hits but, when two hits are the same work (an
 arXiv preprint and its published Crossref record), each carries the work's
 `doi`/`url`, the `canonical` form's id, whether this hit `is_canonical`,
@@ -2164,8 +2175,8 @@ The tools wrap the same engines as the CLI commands
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None, budget="full")` | `scrolls context` | Markdown bundle, optionally faceted; `budget` (`index`/`connected`/`full`) bounds depth |
-| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, custody `fidelity`, and `works` membership (ADR 0101), optionally faceted |
-| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet (with `fidelity` and `works` membership, ADR 0101), no query (ADR 0060) |
+| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, the two custody axes (`fidelity` + `drift`, H58), and `works` membership (ADR 0101), optionally faceted |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |

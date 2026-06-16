@@ -602,10 +602,12 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     assert hit["title"] == "SQLite"
     assert set(hit) == {
         "id", "source", "title", "url", "stage", "score", "snippet", "fidelity",
-        "works",
+        "drift", "works",
     }
     # a freshly fetched Wikipedia article holds a re-derivable body — full custody
     assert hit["fidelity"] == "full"
+    # never re-verified against its live source — the honest never-checked posture (H58)
+    assert hit["drift"] == "unverified"
     # a lone item is no duplicate of any saved work (ADR 0101)
     assert hit["works"] == []
 
@@ -2542,10 +2544,11 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     for entry in payload:
         assert entry["stage"] == "detected"
         assert entry["fidelity"] == "reference"  # detected, no content held yet
+        assert entry["drift"] == "unverified"  # never re-checked (H58)
         assert entry["works"] == []  # neither is a saved form of a shared work
         assert set(entry) == {
             "id", "source", "url", "title", "category", "stage", "saved_at",
-            "fidelity", "works",
+            "fidelity", "drift", "works",
         }
 
 
@@ -2671,6 +2674,99 @@ def test_list_rejects_an_unknown_drift_posture(scrolls_home):
     with pytest.raises(SystemExit) as excinfo:
         main(["list", "--drift", "drited"])
     assert excinfo.value.code == 2
+
+
+def test_list_rows_carry_the_drift_posture(scrolls_home, capsys):
+    # H58: every browse row shows the second custody axis — the drift posture —
+    # not just `fidelity`, so a plain `list` reads the same posture `--drift`
+    # filters on (the filter no longer being the only place the posture appears)
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["list"])
+    rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+    assert rows["web:0"]["drift"] == "verified"  # re-checked unchanged
+    assert rows["web:1"]["drift"] == "drifted"  # source changed
+    assert rows["web:2"]["drift"] == "unverified"  # never re-checked
+
+
+def test_list_row_drift_matches_the_drift_filter_value(scrolls_home, capsys):
+    # H58: the posture a row *shows* is exactly the posture it would be
+    # *selected* by — `list --drift X` returns precisely the rows whose shown
+    # `drift` is X. The filter (H54) and the field (H58) can never disagree.
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["list"])
+    all_rows = json.loads(capsys.readouterr().out)
+    for row in all_rows:
+        main(["list", "--drift", row["drift"]])
+        selected = {r["id"] for r in json.loads(capsys.readouterr().out)}
+        assert row["id"] in selected, f"{row['id']} shows {row['drift']} but isn't selected by it"
+
+
+def test_search_hit_echoes_the_drift_posture(scrolls_home, capsys):
+    # H58: the drift posture rides ranked hits on the CLI too (the search ≡ list
+    # parity on the new axis). The seeded titles all carry "Post", so the FTS
+    # query matches every item.
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["search", "Post"])
+    hits = {h["id"]: h for h in json.loads(capsys.readouterr().out)}
+    assert hits["web:0"]["drift"] == "verified"
+    assert hits["web:1"]["drift"] == "drifted"
+    assert hits["web:2"]["drift"] == "unverified"
+
+
+def test_list_search_related_graph_agree_on_an_items_drift(scrolls_home, capsys):
+    # H58: the per-item drift posture reads identically on every surface that
+    # carries it — list rows, search hits, related hits, and graph nodes — the
+    # per-item parity H56 began on the node shape, now completed on the primary
+    # browse rows. (The full cross-surface invariant is pinned in H59.)
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # two linked items so `related`/`graph` actually produce a hit/node for each
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="Alpha post about topic",
+        extracted_text="alpha topic", links=("https://ex.com/b",), stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T00:01:00+00:00", title="Beta post about topic",
+        extracted_text="beta topic", links=("https://ex.com/a",), stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:b", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    # list
+    main(["list"])
+    list_drift = {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)}
+    # search
+    main(["search", "topic"])
+    search_drift = {h["id"]: h["drift"] for h in json.loads(capsys.readouterr().out)}
+    # related (neighbours of web:a → web:b)
+    main(["related", "web:a"])
+    related_drift = {h["id"]: h["drift"] for h in json.loads(capsys.readouterr().out)}
+    # graph nodes
+    main(["graph"])
+    graph_drift = {n["id"]: n["drift"] for n in json.loads(capsys.readouterr().out)["nodes"]}
+
+    # web:b reads `drifted` on every surface that carries it
+    assert list_drift["web:b"] == "drifted"
+    assert search_drift["web:b"] == "drifted"
+    assert related_drift["web:b"] == "drifted"
+    assert graph_drift["web:b"] == "drifted"
+    # and web:a reads the honest never-checked default everywhere
+    assert list_drift["web:a"] == "unverified"
+    assert search_drift["web:a"] == "unverified"
 
 
 # --- scrolls facets (ADR 0080) ---

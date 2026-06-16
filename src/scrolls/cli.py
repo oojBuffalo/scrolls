@@ -21,6 +21,7 @@ from scrolls.bundle import BundleError, build_bundle, parse_bundle
 from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
+    drift_posture,
     latest_events,
     live_recapture,
     record_events,
@@ -1912,8 +1913,17 @@ def _cmd_list(
     # over the filtered rows would undercount it. Cluster over every item, then
     # annotate the rows this listing shows.
     membership = work_membership(list_items(paths.db_path))
+    # One ledger read for the whole listing (the way `related`/`graph`/`search`
+    # read it once): each row's `drift` posture is `drift_posture` over the same
+    # `latest_events` `--drift` filtered on, so a row's shown posture matches the
+    # `--drift X` it would be selected by, and the `facets drift` count for X.
+    verdicts = latest_events(paths.db_path)
     rows = [
-        item_summary(item, membership_payload(membership.get(item.id, ())))
+        item_summary(
+            item,
+            membership_payload(membership.get(item.id, ())),
+            drift=drift_posture(verdicts.get(item.id)),
+        )
         for item in items
     ]
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched) if stats else rows))

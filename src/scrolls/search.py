@@ -13,11 +13,14 @@ to scope a search, not just a flat listing. Filters AND with the FTS match
 and never reorder it; the empty-string `category` selects the unclassified
 pool, mirroring `list_items`/`scrolls set`.
 
-Each hit also carries its custody `fidelity` tier (full/partial/reference,
-ADR 0097), so a search result tells an agent not just *what* matched but at
-what fidelity the library still holds it — the same tier `scrolls list` and
-the facets surface, now travelling with ranked hits too. It is derived from
-content *presence* read in SQL, never by hauling each match's body text.
+Each hit also carries the two per-item custody axes: its `fidelity` tier
+(full/partial/reference, ADR 0097) — derived from content *presence* read in
+SQL, never by hauling each match's body text — and its `drift` posture
+(verified/unverified/drifted/rotted/error, roadmap H58) read from the verify
+ledger. So a search result tells an agent not just *what* matched but at what
+fidelity the library still holds it *and* whether that source has drifted out
+from under the capture — the same two-axis custody picture `scrolls list` rows,
+`scrolls related` hits, and the `scrolls graph` node shape report.
 
 A hit also carries the scholarly work(s) it represents (ADR 0101): when two
 ranked hits are the same work — an arXiv preprint and its published Crossref
@@ -44,6 +47,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from scrolls.custody import drift_posture, latest_events
 from scrolls.items import (
     classification_view,
     fidelity_tier,
@@ -104,6 +108,12 @@ class SearchHit:
     score: float
     snippet: str
     fidelity: str
+    # The hit's custody drift posture (verified/unverified/drifted/rotted/error,
+    # roadmap H58) — `custody.drift_posture` over its latest verify-ledger
+    # verdict. `_hit` builds the hit with the honest never-checked default; the
+    # `search_items` annotation pass (which reads the ledger once) sets the real
+    # posture, the same shape `related`/`graph` carry alongside `fidelity`.
+    drift: str = "unverified"
     works: tuple[WorkRef, ...] = field(default_factory=tuple)
     # How the hit's category was produced, when an engine recorded it (H26); None
     # for a user-set or unclassified hit. `hit_payload` drops the key in that
@@ -157,7 +167,19 @@ def search_items(
     # Only computed when there are hits to annotate; the cost mirrors `scrolls
     # works`, which list_items the library the same way.
     membership = work_membership(list_items(db_path))
-    return [replace(hit, works=membership.get(hit.id, ())) for hit in hits]
+    # …and with its custody drift posture (roadmap H58), from one `latest_events`
+    # read for the whole result (the way `related`/`graph` read the ledger once),
+    # so a search hit carries the same two custody axes — `fidelity` (how much is
+    # held) and `drift` (whether the source moved) — every browse surface reports.
+    verdicts = latest_events(db_path)
+    return [
+        replace(
+            hit,
+            works=membership.get(hit.id, ()),
+            drift=drift_posture(verdicts.get(hit.id)),
+        )
+        for hit in hits
+    ]
 
 
 def count_matches(

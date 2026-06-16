@@ -101,7 +101,19 @@ each command moves items between stages or derives artifacts from them.
   `unverified_items`, over the same `drift_posture`/`latest_events`), so the rows
   it returns total `facets drift`'s count for that posture — drill from the
   aggregate to the items, the read-side companion of `verify --unverified`'s
-  act-side selection. The cross-engine contract — method is recorded,
+  act-side selection. Beyond filtering, the per-item drift posture *rides* the
+  primary browse rows themselves (roadmap H58): `items.item_summary` (→ `scrolls
+  list` + MCP `list_scrolls`) and `search.SearchHit`/`hit_payload` (→ `scrolls
+  search` + MCP `search_scrolls`) each carry a `drift` field beside `fidelity`,
+  populated from one `latest_events` read per call passed in (the way `works`
+  membership is, so the surface reads the ledger once, not per row). So every
+  browse/landing surface — `list` rows, `search` hits, `related` hits (H56),
+  `graph` nodes (H56), and the bundle briefing (H42) — reports the *same*
+  two-axis per-item custody picture (`fidelity` = how much is held, `drift` =
+  whether the source moved), each through the same `custody.drift_posture` over
+  `latest_events`, so a given item reads the same posture wherever an agent
+  reaches it, and the posture a `list` row shows is exactly the one its `--drift`
+  filter selects on. The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

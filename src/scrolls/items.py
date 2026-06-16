@@ -200,20 +200,35 @@ def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
 
 
 def item_summary(
-    item: ScrollItem, works: list[dict[str, Any]] | None = None
+    item: ScrollItem,
+    works: list[dict[str, Any]] | None = None,
+    drift: str = "unverified",
 ) -> dict[str, Any]:
     """The compact browse record shared by `scrolls list` and MCP `list_scrolls`.
 
     Enough to scan and pick an item — id, source, url, title, category, stage,
-    saved_at — plus its custody `fidelity` tier, so an agent browsing the
-    library sees at a glance which items it holds in full and which are
-    reference-only. One definition keeps the CLI and MCP surfaces identical.
+    saved_at — plus the two per-item custody axes: its `fidelity` tier (how much
+    of the item the library still holds, ADR 0097) and its `drift` posture
+    (whether the source has moved out from under the capture). So an agent
+    browsing the library sees at a glance which items it holds in full, which are
+    reference-only, and which have drifted — the same two-axis picture `scrolls
+    related` hits and the `scrolls graph` node shape carry (roadmap H58). One
+    definition keeps the CLI and MCP surfaces identical.
 
     `works` is the item's scholarly-work membership (ADR 0101): the JSON the
     caller builds with `works.membership_payload`, or `None`/`[]` when the item
     belongs to no multi-representation work. It is passed in rather than derived
     here so this module stays free of the `works` clustering (which itself reads
     items), and so a `list` over the whole library clusters once, not per row.
+
+    `drift` is the item's custody drift posture (`verified`/`unverified`/
+    `drifted`/`rotted`/`error`), the `custody.drift_posture` value over the
+    item's latest verify-ledger verdict. It is passed in for the same reason as
+    `works`: this module stays free of the verify ledger (which `custody` reads
+    by importing items), and the caller reads `latest_events` *once* per `list`,
+    not per row. The default `"unverified"` is `drift_posture(None)` — the honest
+    never-checked posture, so a caller that reads an empty ledger and one that
+    omits the argument agree, and neither silently claims "clean".
     """
     summary = {
         "id": item.id,
@@ -224,6 +239,7 @@ def item_summary(
         "stage": item.stage,
         "saved_at": item.saved_at,
         "fidelity": get_fidelity(item),
+        "drift": drift,
         "works": works or [],
     }
     # How the category was derived, when an engine recorded it — so a browse row

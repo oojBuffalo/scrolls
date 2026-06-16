@@ -111,6 +111,58 @@ def test_search_fidelity_matches_get_fidelity(db_path):
     assert hit.fidelity == get_fidelity(get_item(db_path, "wikipedia:en:SQLite"))
 
 
+def test_search_hits_carry_their_custody_drift_posture(db_path):
+    # the second custody axis travels with a ranked hit (H58): whether the
+    # source has moved (drift), read from the verify ledger — the same posture
+    # `scrolls list` rows, `related` hits, and `graph` nodes carry.
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db_path, make_item(
+        "wikipedia:en:Drifted", "Drifted database engine",
+        "A database engine whose source moved.",
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Checked", "Checked database engine",
+        "A database engine re-checked unchanged.",
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Never", "Never-checked database engine",
+        "A database engine never re-checked.",
+    ))
+    record_events(db_path, [
+        CustodyEvent("wikipedia:en:Drifted", "t", "drifted", "h", "x", None),
+        CustodyEvent("wikipedia:en:Checked", "t", "unchanged", "h", "h", None),
+        # wikipedia:en:Never left with no verdict
+    ])
+
+    by_id = {hit.id: hit for hit in search_items(db_path, "database engine")}
+    assert by_id["wikipedia:en:Drifted"].drift == "drifted"
+    assert by_id["wikipedia:en:Checked"].drift == "verified"  # unchanged → verified
+    assert by_id["wikipedia:en:Never"].drift == "unverified"  # honest default
+
+
+def test_search_hit_drift_matches_the_drift_posture_primitive(db_path):
+    # the hit derives the same posture `custody.drift_posture` would from the
+    # item's latest verdict — one rule across every browse surface (H58).
+    from scrolls.custody import (
+        CustodyEvent,
+        drift_posture,
+        latest_events,
+        record_events,
+    )
+
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    record_events(db_path, [
+        CustodyEvent("wikipedia:en:SQLite", "t", "drifted", "h", "x", None),
+    ])
+    (hit,) = search_items(db_path, "database")
+    verdicts = latest_events(db_path)
+    assert hit.drift == drift_posture(verdicts.get("wikipedia:en:SQLite"))
+    assert hit.drift == "drifted"
+
+
 def test_search_hits_carry_the_work_they_represent(db_path):
     # two hits that are the same scholarly work — an arXiv preprint and its
     # published Crossref record — each carry the work they represent (ADR 0101),

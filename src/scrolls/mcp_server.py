@@ -23,6 +23,7 @@ from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.custody import (
+    drift_posture,
     latest_events,
     live_recapture,
     record_events,
@@ -90,9 +91,12 @@ def search_scrolls(
     """Full-text search over the library; hits are best-first with snippets.
 
     `score` is SQLite bm25(): more negative means a stronger match. Each hit
-    also carries its custody `fidelity` tier (full/partial/reference,
-    ADR 0097), so a result says not just *what* matched but at what fidelity
-    the library still holds it — the same tier `list_scrolls` reports. The
+    also carries the two per-item custody axes — its `fidelity` tier (full/
+    partial/reference, ADR 0097) and its `drift` posture (verified/unverified/
+    drifted/rotted/error, from the verify ledger) — so a result says not just
+    *what* matched but at what fidelity the library still holds it and whether
+    that source has drifted out from under the capture; the same two axes
+    `list_scrolls` rows and `get_related_scrolls` hits report. The
     optional facets scope the ranked match (they AND together): `source`
     limits to one source (e.g. arxiv, github, web), `category` to one
     category (an empty string selects unclassified items), `stage` to one
@@ -150,11 +154,13 @@ def list_scrolls(
     total `list_facets("drift")`'s count for that posture, so you can drill from
     the aggregate to the rows. Items come oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
-    summary (id, source, url, title, category, stage, saved_at, the custody
-    `fidelity` tier — full/partial/reference, ADR 0097 — and the scholarly
-    `works` it represents, ADR 0101: empty unless the item is one of several
-    saved forms of one work, in which case each entry names the work's DOI and
-    canonical form); follow up with get_scroll for the full record. Use it for
+    summary (id, source, url, title, category, stage, saved_at, the two custody
+    axes — the `fidelity` tier (full/partial/reference, ADR 0097) and the `drift`
+    posture (verified/unverified/drifted/rotted/error) the same row's `--drift`
+    filter selects on — and the scholarly `works` it represents, ADR 0101: empty
+    unless the item is one of several saved forms of one work, in which case each
+    entry names the work's DOI and canonical form); follow up with get_scroll for
+    the full record. Use it for
     "what arxiv papers tagged efficient are in the library", which has no natural
     search query.
     """
@@ -174,8 +180,15 @@ def list_scrolls(
     # item so a filtered/limited listing still reports an item's siblings, then
     # annotate the rows shown — the same approach `scrolls list` takes.
     membership = work_membership(list_items(paths.db_path))
+    # One ledger read for the whole listing (the CLI twin's approach): each row's
+    # `drift` posture is `drift_posture` over the same `latest_events`.
+    verdicts = latest_events(paths.db_path)
     return [
-        item_summary(item, membership_payload(membership.get(item.id, ())))
+        item_summary(
+            item,
+            membership_payload(membership.get(item.id, ())),
+            drift=drift_posture(verdicts.get(item.id)),
+        )
         for item in items
     ]
 

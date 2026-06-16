@@ -149,8 +149,16 @@ def test_summary_carries_the_browse_fields_plus_fidelity():
         "stage": "fetched",
         "saved_at": NOW,
         "fidelity": "full",
+        "drift": "unverified",  # drift posture defaults to never-checked (H58)
         "works": [],  # work membership defaults empty when none is passed
     }
+
+
+def test_summary_carries_the_drift_posture_passed_in():
+    # the second custody axis (H58): the caller passes the posture it read once
+    # from the ledger, the way it passes `works` membership.
+    item = _item("s", title="A Title", raw_text="body", stage="fetched")
+    assert item_summary(item, drift="drifted")["drift"] == "drifted"
 
 
 def test_summary_reports_a_reference_only_item_honestly():

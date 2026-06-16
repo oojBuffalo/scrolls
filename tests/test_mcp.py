@@ -219,9 +219,10 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
     assert [r["id"] for r in rows] == ["arxiv:2401.0001", "web:abc"]
     assert set(rows[0]) == {
         "id", "source", "url", "title", "category", "stage", "saved_at",
-        "fidelity", "works",
+        "fidelity", "drift", "works",
     }
     assert rows[0]["works"] == []  # neither item shares a work (ADR 0101)
+    assert rows[0]["drift"] == "unverified"  # never re-checked (H58)
 
     # facets AND together, mirroring scrolls list (incl. the tag membership facet)
     assert [r["id"] for r in mcp_server.list_scrolls(source="arxiv", tag="EFFICIENT")] == [
@@ -299,6 +300,38 @@ def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
 
     tiers = {r["id"]: r["fidelity"] for r in mcp_server.list_scrolls()}
     assert tiers == {"web:full": "full", "web:ref": "reference"}
+
+
+def test_list_and_search_scrolls_carry_the_drift_posture(scrolls_home):
+    # H58: the second custody axis (drift) travels with both MCP browse twins,
+    # the same posture the CLI rows/hits and the node-shape surfaces carry, and
+    # the twins agree on a given item.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:drifted", source="web", url="https://ex.com/drifted",
+        saved_at="2026-06-12T00:00:00+00:00", title="Drifted post about topic",
+        extracted_text="drifted topic body", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:never", source="web", url="https://ex.com/never",
+        saved_at="2026-06-12T01:00:00+00:00", title="Never-checked post about topic",
+        extracted_text="never topic body", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:drifted", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+    ])
+
+    listed = {r["id"]: r["drift"] for r in mcp_server.list_scrolls()}
+    assert listed == {"web:drifted": "drifted", "web:never": "unverified"}
+
+    searched = {h["id"]: h["drift"] for h in mcp_server.search_scrolls("topic")}
+    assert searched["web:drifted"] == "drifted"
+    assert searched["web:never"] == "unverified"
+    # the two twins agree on the same item's posture
+    assert listed["web:drifted"] == searched["web:drifted"]
 
 
 def test_list_and_search_scrolls_carry_work_membership(scrolls_home):
