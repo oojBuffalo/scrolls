@@ -199,6 +199,31 @@ def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
     return classification_view(item.provenance)
 
 
+def classification_phrase(view: dict[str, Any]) -> str:
+    """`by \\`<engine>\\` (<basis|model>) · confidence <level>[, <freshness>]`.
+
+    The shared readable rendering of a present `classification_view`'s method +
+    confidence, behind both the shareable bundle's per-scroll briefing line
+    (roadmap H35) and the `scrolls context` per-excerpt provenance tag (H44). The
+    surfaces differ only in what they prefix — the bundle says `classified
+    \\`<cat>\\` <phrase>`, the excerpt tag `classified <phrase>` (the category is
+    already in Best Matches) — so the *method/confidence* part reads byte-identical
+    wherever an agent meets it, the cross-surface provenance parity cap 8 asks for.
+    Caller passes a non-None view (`classification_view`/`classification_provenance`).
+    """
+    detail = view.get("basis") or (
+        f"model {view['model']}" if view.get("model") else None
+    )
+    phrase = f"by `{view['by']}`"
+    if detail:
+        phrase += f" ({detail})"
+    confidence = view["confidence"]
+    marker = confidence["level"]
+    if "freshness" in confidence:
+        marker += f", {confidence['freshness']}"
+    return f"{phrase} · confidence {marker}"
+
+
 def item_summary(
     item: ScrollItem,
     works: list[dict[str, Any]] | None = None,

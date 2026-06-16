@@ -13,6 +13,15 @@ stored summary and fall back to the leading extracted text. A
 "Synthesized Brief" needs an LLM and is omitted honestly, like LLM
 classification (ADR 0004) and LLM concept pages (ADR 0005).
 
+At the `full` budget each excerpt also carries two compact per-source trust
+tags beneath its meta line (roadmap H44 + H62): *how the category was derived*
+(the `classification_provenance` view, omitted on honest absence) and *whether
+the source has moved* (the `custody.drift_posture`, `unverified` stated
+explicitly). They derive from the same views every browse/inspect surface
+reads, so an excerpt an agent drops into its window reports the same provenance
+`show`/`list`/`search` would — the per-source counterpart of the scope-level
+`_Custody:_` headline.
+
 Beyond keyword matches the bundle carries a "Connected scrolls" section:
 items linked to or from the matches through the cross-item link graph the
 adapters build (a saved model's paper, a preprint's published DOI, a
@@ -34,9 +43,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scrolls.custody import custody_headline, latest_events
+from scrolls.custody import CustodyEvent, custody_headline, drift_posture, latest_events
 from scrolls.graph import build_graph
-from scrolls.items import ScrollItem, get_item
+from scrolls.items import (
+    ScrollItem,
+    classification_phrase,
+    classification_provenance,
+    get_item,
+)
 from scrolls.search import SearchHit, count_matches, search_items
 
 _EXCERPT_CHARS = 700
@@ -154,15 +168,21 @@ def build_context(
     if budget_note:
         lines += [budget_note, ""]
 
+    # One `latest_events` ledger read for the whole scope, shared by the scope
+    # custody headline (`connected`+) and the per-excerpt drift tags (`full`).
+    # Skipped at `index`, where neither renders (the leanest tier touches no
+    # ledger). `{}` there keeps `drift_posture(None)` → `unverified` honest.
+    verdicts: dict[str, CustodyEvent] = (
+        latest_events(db_path) if _tier_at_least(budget, "connected") else {}
+    )
+
     # The scope custody headline (roadmap H47): how much of what the agent is
     # about to read is full-fidelity, and how much has drifted — the same
     # `custody_headline` the shareable bundle briefing (H45) and `scrolls status`
     # (H38) render, over the in-bundle scrolls (the kept representations the
     # Coverage line counts). Gated to `connected`/`full` like the depth-bearing
-    # sections (H44): the leanest `index` tier stays a bare catalog. One
-    # `latest_events` ledger read for the whole scope, skipped at `index`.
+    # sections (H44): the leanest `index` tier stays a bare catalog.
     if _tier_at_least(budget, "connected"):
-        verdicts = latest_events(db_path)
         lines += [custody_headline(items, verdicts), ""]
 
     lines += ["## Best Matches", ""]
@@ -182,6 +202,7 @@ def build_context(
         lines += ["", "## Excerpts"]
         for item in items:
             lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
+            lines += _provenance_tags(item, verdicts.get(item.id))
             excerpt = _excerpt(item)
             if excerpt:
                 lines += ["", excerpt]
@@ -393,6 +414,39 @@ def _meta_line(item: ScrollItem) -> str:
     if item.markdown_path:
         parts.append(item.markdown_path)
     return " · ".join(parts)
+
+
+def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str]:
+    """The per-excerpt custody/provenance tags at the `full` budget (H44 + H62).
+
+    The model-facing bundle drops excerpts straight into an agent's window, so
+    each excerpt names the two trust signals cap 8 ("an agent knows what to
+    trust") asks for, beneath the id/source/path meta line:
+
+    - **Classification** (roadmap H44) — *how the category was derived*: the same
+      `classification_provenance` view `show`/`list`/`search` and the shareable
+      bundle briefing carry, rendered through the shared `classification_phrase`
+      so the method/confidence reads byte-identical across surfaces. Omitted on
+      honest absence — an unclassified or user-set item claims no method, so the
+      line is simply dropped (the excerpt's shape stays stable).
+    - **Drift** (roadmap H62) — *whether the source has moved*: the
+      `custody.drift_posture` over the item's latest verify-ledger verdict, the
+      per-source counterpart of the scope `_Custody:_` headline (H47). Always
+      shown, with `unverified` stated explicitly — never silently "clean", the
+      drift block's honesty on the per-excerpt axis.
+
+    Both derive from the views every other surface reads (the same `verdicts`
+    `latest_events` read the headline shares), so an excerpt reads the same
+    provenance an agent would see on `show`/`list`/`search` for that item. Gated
+    to `full` by the caller — `index`/`connected` stay lean catalogs (the H10
+    depth honesty); the two tags are a `full`-only deepening, like the excerpts.
+    """
+    tags = []
+    view = classification_provenance(item)
+    if view is not None:
+        tags.append(f"_classified {classification_phrase(view)}_")
+    tags.append(f"_drift `{drift_posture(verdict)}`_")
+    return tags
 
 
 def _excerpt(item: ScrollItem) -> str:

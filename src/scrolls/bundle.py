@@ -63,6 +63,7 @@ from scrolls.custody import (
 from scrolls.generated import GENERATED_END, fence, generated_body
 from scrolls.items import (
     ScrollItem,
+    classification_phrase,
     classification_provenance,
     get_fidelity,
     get_item,
@@ -287,21 +288,13 @@ def _classification_line(item: ScrollItem) -> str | None:
     The ruleset *fingerprint* the view also carries (`ruleset`) is deliberately
     left out: it is the re-derivation key (in the JSONL block for that), not
     reading material, and `confidence.freshness` already reports what it implies.
+    The method/confidence rendering is the shared `classification_phrase`, so this
+    briefing line and the `scrolls context` per-excerpt tag (H44) read identically.
     """
     view = classification_provenance(item)
     if view is None:
         return None
-    detail = view.get("basis") or (
-        f"model {view['model']}" if view.get("model") else None
-    )
-    head = f"classified `{item.category}` by `{view['by']}`"
-    if detail:
-        head += f" ({detail})"
-    confidence = view["confidence"]
-    marker = confidence["level"]
-    if "freshness" in confidence:
-        marker += f", {confidence['freshness']}"
-    return f"- {head} · confidence {marker}"
+    return f"- classified `{item.category}` {classification_phrase(view)}"
 
 
 def _concept_summary_block(db_path: Path, concept: str) -> list[str]:

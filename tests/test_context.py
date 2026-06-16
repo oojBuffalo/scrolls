@@ -645,6 +645,162 @@ def test_context_custody_headline_converges_with_doctor(scrolls_home, capsys):
     assert custody["drift"]["unverified"] == 1
 
 
+# --- per-excerpt provenance tags at the `full` budget (H44 + H62) ----------
+
+
+def _excerpt_block(out, heading):
+    """The lines of one `### <heading>` excerpt block, up to the next section."""
+    lines = out.splitlines()
+    start = lines.index(f"### {heading}")
+    block = []
+    for line in lines[start + 1 :]:
+        if line.startswith("### ") or line.startswith("## "):
+            break
+        block.append(line)
+    return block
+
+
+def test_context_full_excerpt_carries_classification_provenance(scrolls_home, capsys):
+    # H44: how the category was derived rides each excerpt, the same view
+    # `show`/`list`/`search` carry, rendered through the shared phrase
+    from scrolls.classify import classify_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, classify_item(make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+    )))
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
+    # a curated source → rules engine, curated-source basis, deterministic+current
+    assert (
+        "_classified by `rules-v1` (curated-source) · confidence deterministic, current_"
+        in block
+    )
+
+
+def test_context_excerpt_classification_records_the_llm_model(scrolls_home, capsys):
+    # the LLM engine's `model` rides the excerpt tag, as on the bundle briefing
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "web:llm", "A classified web post",
+        "Some prose about a database engine, classified by a model.",
+        source="web", url="https://ex.com/llm", category="reference",
+        provenance={"classified_by": "llm-v1", "classified_model": "claude-x"},
+    ))
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "A classified web post")
+    # inferred, and no freshness — no ruleset to compare (honest absence, H21)
+    assert "_classified by `llm-v1` (model claude-x) · confidence inferred_" in block
+
+
+def test_context_excerpt_classification_omitted_on_honest_absence(scrolls_home, capsys):
+    # an unclassified item claims no method — the classification tag is dropped,
+    # but the drift tag still rides the excerpt (the row shape stays stable)
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "web:plain", "An ordinary post",
+        "Some plain prose about a database engine.",
+        source="web", url="https://ex.com/plain",
+    ))
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "An ordinary post")
+    assert not any(line.startswith("_classified") for line in block)
+    assert "_drift `unverified`_" in block
+
+
+def test_context_full_excerpt_carries_drift_posture(scrolls_home, capsys):
+    # H62: whether the source has moved rides each excerpt, from the verify ledger
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.",
+        content_hash="deadbeef", raw_text="<raw>body</raw>",
+    ))
+    record_events(db, [_drift_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")])
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
+    assert "_drift `drifted`_" in block
+
+
+def test_context_excerpt_drift_unverified_when_never_checked(scrolls_home, capsys):
+    # honest absence on the drift axis: a never-checked item is `unverified`,
+    # stated explicitly — never silently "clean"
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
+    assert "_drift `unverified`_" in block
+
+
+def test_context_excerpt_drift_matches_the_ledger_primitive(scrolls_home, capsys):
+    # the per-excerpt posture is the one shared `custody.drift_posture` over the
+    # latest verdict — so the excerpt reads the same posture every other surface does
+    from scrolls.custody import drift_posture, latest_events
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+        content_hash="deadbeef", raw_text="<raw>body</raw>",
+    ))
+    record_events(db, [_drift_event("wikipedia:en:SQLite", "unchanged", observed="deadbeef")])
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
+    posture = drift_posture(latest_events(db)["wikipedia:en:SQLite"])
+    assert posture == "verified"
+    assert f"_drift `{posture}`_" in block
+
+
+def test_context_excerpt_tags_absent_below_full(scrolls_home, capsys):
+    # the per-excerpt tags are a `full`-only deepening (H10 depth honesty): the
+    # `connected` tier has no Excerpts section, so no per-excerpt tag at all
+    from scrolls.classify import classify_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, classify_item(make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    )))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine", "--budget", "connected")
+    assert "## Excerpts" not in out
+    assert "_classified" not in out
+    # the scope `_Custody:` headline still carries the drift *count* at connected,
+    # but no per-excerpt `_drift ` tag (that is a full-tier deepening)
+    assert "_drift `" not in out
+
+
+def test_context_excerpt_classification_phrase_matches_the_shared_view(scrolls_home, capsys):
+    # cross-surface parity: the excerpt's classification segment is exactly the
+    # shared `classification_phrase` over the item's own derived view — the same
+    # rendering the bundle briefing (H35) uses, so they cannot drift apart
+    from scrolls.classify import classify_item
+    from scrolls.items import classification_phrase, classification_provenance
+
+    main(["init"])
+    db = get_paths().db_path
+    item = classify_item(make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    insert_item(db, item)
+    capsys.readouterr()
+
+    block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
+    expected = f"_classified {classification_phrase(classification_provenance(item))}_"
+    assert expected in block
+
+
 # --- same-work collapse in the bundle (ADR 0101) ---------------------------
 
 

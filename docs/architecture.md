@@ -874,7 +874,16 @@ choice (ADRs 0004, 0005).
   bundle can cover "what the *papers* tagged efficient say about X"; a
   scoped bundle names its facets in the title (`category=unclassified` for
   the empty-string pool, `tag`/`concept` verbatim) to stay self-documenting
-  once dropped into context.
+  once dropped into context. At the `full` budget each excerpt carries two
+  **per-source trust tags** beneath its meta line (roadmap H44 + H62): *how
+  the category was derived* (the `classification_provenance` view, rendered via
+  the shared `items.classification_phrase` so it reads byte-identical to the
+  shareable bundle briefing's line — omitted on honest absence) and *whether the
+  source has moved* (the `custody.drift_posture` over the item's latest verdict,
+  `unverified` stated explicitly). Both read the same derived views every
+  browse/inspect surface carries, off the one `latest_events` read the scope
+  `_Custody:_` headline (H47) already shares — the per-source counterpart of that
+  scope-level headline, gated to `full` like `## Excerpts` (the H10 depth honesty).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`). Regeneration is **refresh-safe** the same way the
