@@ -240,10 +240,13 @@ _Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
   tiers/postures show, in canonical order; an empty page is the honest
   `_Custody: 0 scroll(s)._`. Like the row markers it is a derived read inside
   the `@generated` fence (refreshed each compile, never a stored field). It is
-  scoped to the four group list pages; the index/`graph`/`works` rollup pages do
-  not carry it (a whole-library custody headline on the landing `index.md` is
-  the separate roadmap H96) (`test_kb_group_pages_carry_a_scope_custody_headline`,
-  `test_kb_rollup_pages_omit_the_scope_custody_headline`).
+  scoped to the four group list pages; `graph`/`works` carry no custody headline
+  and the landing `index.md` carries its own *whole-library* one (over the
+  rendered library, the compiled counterpart of `scrolls status`, the separate
+  roadmap H96) rather than this page-scoped tally
+  (`test_kb_group_pages_carry_a_scope_custody_headline`,
+  `test_kb_graph_and_works_pages_omit_the_scope_custody_headline`,
+  `test_kb_index_carries_a_library_wide_custody_headline`).
 - One bullet per member — the title as a Markdown link to its scroll
   file — sorted by case-folded title with the item id as tiebreak. The
   ` — note` suffix is the item's category on source pages, and its
@@ -375,14 +378,23 @@ there (`test_kb_category_page_consolidates_work_representations`,
 
 `library/index.md` is the entry point: a count line, then one-line links
 to the link-graph page (`graph.md`) and the works page (`works.md`) each
-summarising what it holds, then
-`## Sources`, `## Categories`, `## Concepts`, and `## Tags` lists linking
-to group pages (the categories list ends with an unlinked
-`- unclassified — N scrolls` line when any rendered item lacks a category,
-`test_kb_counts_unclassified_items_in_index`), then `## Recent` linking
-the 10 newest scrolls, newest first
+summarising what it holds, then a **library-wide custody headline** —
+`_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._`
+(roadmap H96) — summarising how custody stands across the whole compiled
+library, the landing-page counterpart of `scrolls status` (the same shared
+`custody.custody_headline`, so the line reads identically to `status` and the
+group-page scope headlines, H95). It is scoped to the *rendered* library the
+index heads — the same items its count line counts — so its `N` never disagrees
+with the page it summarises, and it equals `status`/`doctor`'s custody aggregate
+when every held item is rendered. Then `## Sources`, `## Categories`,
+`## Concepts`, and `## Tags` lists linking to group pages (the categories list
+ends with an unlinked `- unclassified — N scrolls` line when any rendered item
+lacks a category, `test_kb_counts_unclassified_items_in_index`), then
+`## Recent` linking the 10 newest scrolls, newest first
 (`test_kb_index_links_recent_scrolls_newest_first`). Sections with
-nothing to list are omitted.
+nothing to list are omitted (the custody headline always shows — an empty
+library is the honest `_Custody: 0 scroll(s)._`,
+`test_kb_index_carries_a_library_wide_custody_headline`).
 
 Compiled from the example item above (its `cs.CL`/`cs.LG` taxonomy codes
 are `tags`) plus one rendered Wikipedia item (title `SQLite`, category
@@ -399,6 +411,7 @@ both report nothing held:
 2 scrolls from 2 sources.
 [Link graph](graph.md) — no linked scrolls yet.
 [Works](works.md) — no works held in multiple representations yet.
+_Custody: 2 scroll(s) · fidelity full 1, reference 1 · drift unverified 2._
 
 ## Sources
 

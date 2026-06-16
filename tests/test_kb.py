@@ -586,10 +586,10 @@ def test_kb_group_page_headline_is_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed  # annotation outside the fence preserved
 
 
-def test_kb_rollup_pages_omit_the_scope_custody_headline(scrolls_home, capsys):
-    """The scope headline is scoped to the four group list pages, not the
-    index/`graph`/`works` rollups (those are not member lists — H96 is the
-    separate whole-library landing headline)."""
+def test_kb_graph_and_works_pages_omit_the_scope_custody_headline(scrolls_home, capsys):
+    """The page-scoped headline is on the four group list pages; `graph`/`works`
+    are not member lists, so they carry none. The index carries its own
+    *whole-library* headline (roadmap H96), not a page-scoped one."""
     main(["init"])
     db = get_paths().db_path
     doi_url = "https://doi.org/10.1234/abc"
@@ -604,10 +604,55 @@ def test_kb_rollup_pages_omit_the_scope_custody_headline(scrolls_home, capsys):
     run_kb(capsys)
 
     library = scrolls_home / "library"
-    for rollup in ("index.md", "graph.md", "works.md"):
+    for rollup in ("graph.md", "works.md"):
         assert "_Custody:" not in (library / rollup).read_text(encoding="utf-8"), rollup
-    # but the group pages do carry it
+    # the group pages and the index landing page do carry a custody headline
     assert "_Custody:" in (library / "categories" / "ml.md").read_text(encoding="utf-8")
+    assert "_Custody:" in (library / "index.md").read_text(encoding="utf-8")
+
+
+def test_kb_index_carries_a_library_wide_custody_headline(scrolls_home, capsys):
+    """The landing `index.md` carries a whole-library `_Custody:_` headline (the
+    compiled counterpart of `scrolls status`, roadmap H96), over the rendered
+    library it heads — byte-identical to the shared `custody.custody_headline`."""
+    from scrolls.custody import custody_headline, latest_events
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:b", "web", "Beta", category="news", raw_text="b", content_hash="h2"))
+    insert_item(db, make_rendered("wikipedia:x", "wikipedia", "Pointer", category="ref"))
+    _drift(db, "web:a", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    rendered = [i for i in list_items(db) if i.markdown_path]
+    expected = custody_headline(rendered, latest_events(db))
+    assert expected == (
+        "_Custody: 3 scroll(s) · fidelity full 2, reference 1"
+        " · drift unverified 2, drifted 1._")
+    # it sits in the header block, right after the works line, before ## Sources
+    header = index.split("## Sources")[0]
+    assert expected in header
+    # and converges with `doctor`'s custody aggregate (all three items rendered)
+    capsys.readouterr()
+    main(["doctor"])
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody["tiers"] == {"full": 2, "partial": 0, "reference": 1}
+    assert custody["drift"]["drifted"] == 1
+
+
+def test_kb_empty_library_index_has_honest_custody_headline(scrolls_home, capsys):
+    """An initialized but empty library's index carries the honest zero headline."""
+    main(["init"])
+    capsys.readouterr()
+    run_kb(capsys)
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "_Custody: 0 scroll(s)._" in index
 
 
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):

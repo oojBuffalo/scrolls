@@ -264,7 +264,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     pages += 1
     _write_index(
         paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
-        components, works,
+        components, works, verdicts,
     )
     _reconcile_generated(paths.library_dir, written)
 
@@ -283,7 +283,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
 
 def _write_index(
     paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
-    components, works,
+    components, works, verdicts: dict[str, CustodyEvent],
 ) -> None:
     lines = [
         "# Scrolls Library",
@@ -292,6 +292,13 @@ def _write_index(
         f"{'' if len(by_source) == 1 else 's'}.",
         _graph_index_line(components),
         _works_index_line(works),
+        # the library-wide custody headline (roadmap H96) — the landing-page
+        # counterpart of `scrolls status` (H38), over the same shared
+        # `custody.custody_headline`. Scoped to the *compiled* library (the
+        # rendered `items` this page heads, matching its own count line above),
+        # so the headline's N never disagrees with the page it summarises; it
+        # equals `status`/`doctor` when every held item is rendered.
+        custody_headline(items, verdicts),
     ]
     if by_source:
         lines += ["", "## Sources", ""]

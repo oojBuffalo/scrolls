@@ -922,10 +922,14 @@ choice (ADRs 0004, 0005).
   `context` (H47) scope headlines, emitted through the same shared
   `custody.custody_headline` so the line is byte-identical across surfaces and
   its totals equal the page's per-row markers by construction. It is scoped to
-  the four group list pages (`_write_page`); the `index`/`graph`/`works` rollup
-  pages, rendered by their own functions, carry no page-scoped headline (a
-  whole-library custody headline on the landing `index.md` is the separate
-  roadmap H96). Concept pages merge spellings by
+  the four group list pages (`_write_page`); `graph`/`works` (their own
+  functions) carry none, and the landing `index.md` carries its own
+  **whole-library custody headline** (roadmap H96) — the same
+  `custody.custody_headline` over the rendered library it heads (the items its
+  count line counts), the compiled counterpart of `scrolls status`'s headline
+  (H38), so opening the library answers "how custody stands" at a glance and the
+  line converges with `status`/`doctor` when every held item is rendered.
+  Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,
