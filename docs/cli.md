@@ -245,6 +245,19 @@ lossless for custody as the whole-ledger path — the union dedups (no
 double-count) and the fresh library still reproduces the original's posture and
 facets, so the windowed backup loses nothing the whole one keeps.
 
+Finally, the module pins the **verify-selection family** (roadmap H81) — the
+*act* side of the same custody picture the read surfaces enumerate. `scrolls
+verify` carries four batch selections over one shared trio of `custody`
+selectors: `--unverified` (`unverified_items`), `--stale-before`
+(`items_checked_before`), and `--drift` (`items_in_posture`), plus `--all`. The
+invariant asserts they relate as documented: `verify --drift <posture>`
+re-captures exactly the rows `list --drift <posture>` enumerates (the act-side ≡
+read-side drill, by the shared `items_in_posture`); `verify --stale-before
+<future>` re-checks a *superset* of `--unverified` and clears the same
+`doctor custody.drift.unverified` bucket it subsumes; and every batch selection
+skips reference-only items identically (no baseline hash to diff). So the verify
+selections are a tested, actionable face of the custody read surfaces.
+
 ## Library lifecycle
 
 ### `scrolls init`

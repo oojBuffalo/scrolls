@@ -55,6 +55,18 @@ windowed path: a full `export events` plus an *overlapping* `export events
 real overlap), restored as their union in one import, is as lossless for custody
 as the whole-ledger path — the union dedups (no double count) and B still
 reproduces A's posture and facets.
+
+Finally, the **verify-selection** section (roadmap H81) pins the *act* side of
+the same custody picture the read surfaces enumerate. `scrolls verify` carries
+four batch selections over one shared trio of `custody` selectors —
+`--unverified` (`unverified_items`), `--stale-before` (`items_checked_before`),
+`--drift` (`items_in_posture`), plus `--all`. It asserts they relate as
+documented: `verify --drift <posture>` re-captures exactly the rows `list
+--drift <posture>` enumerates (the shared selector backs both); `verify
+--stale-before <future>` subsumes `--unverified` and clears the same
+`doctor custody.drift.unverified` bucket; and every batch selection skips
+reference-only items identically — so the recheck set can never desync from the
+read enumeration.
 """
 
 import json
@@ -62,6 +74,7 @@ import re
 
 import pytest
 
+import scrolls.cli as cli
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
@@ -682,3 +695,100 @@ def test_incremental_backup_union_preserves_the_posture(
     # …and the drift facet aggregate converges across the two libraries
     assert main(["facets", "drift"]) == 0
     assert _facet_map(json.loads(capsys.readouterr().out)["facets"]["drift"]) == facets_a
+
+
+# --- the verify-selection family (roadmap H81) -----------------------------
+#
+# `scrolls verify` now carries four batch *selections* over one shared trio of
+# `custody` selectors: `--unverified` (`unverified_items`), `--stale-before`
+# (`items_checked_before`), and `--drift` (`items_in_posture`), plus `--all`.
+# Those selections are the *act* side of the same custody picture the read
+# surfaces above enumerate. This section pins the documented relationships as a
+# tested contract — the verify-axis sibling of the per-item read invariant — so
+# a change that desyncs the recheck set from the read enumeration fails here.
+# The network edge is stubbed so every re-check reads `unchanged` offline.
+
+
+def _stub_recapture(monkeypatch, fn):
+    monkeypatch.setattr(cli, "live_recapture", fn)
+
+
+def test_verify_drift_rechecks_exactly_what_list_drift_enumerates(scrolls_home, monkeypatch, capsys):
+    # the act-side ≡ read-side drill: for every posture, `verify --drift X`
+    # re-captures exactly the rows `list --drift X` shows (the shared
+    # `items_in_posture` selector backs both).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    postures = ("verified", "drifted", "rotted", "unverified")
+    # snapshot every `list --drift X` set before any verify mutates the ledger
+    listed = {}
+    for posture in postures:
+        assert main(["list", "--drift", posture]) == 0
+        listed[posture] = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert listed == {
+        "verified": {"web:1"}, "drifted": {"web:2"},
+        "rotted": {"web:3"}, "unverified": {"web:4"},
+    }
+
+    _stub_recapture(monkeypatch, lambda i: i)  # every re-check reads `unchanged`
+    for posture in postures:
+        # each posture's items are distinct and not yet re-checked, so the live
+        # ledger still places them at `posture` when this selection reads it
+        assert main(["verify", "--drift", posture]) == 0
+        rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+        assert rechecked == listed[posture]
+
+
+def test_verify_stale_before_future_subsumes_unverified_and_clears_the_signal(scrolls_home, monkeypatch, capsys):
+    # `--stale-before <future>` is a superset of `--unverified` (every
+    # never-checked item is trivially stale), so it clears the same
+    # `doctor custody.drift.unverified` bucket `--unverified` targets.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    main(["doctor"])
+    assert json.loads(capsys.readouterr().out)["custody"]["drift"]["unverified"] == 1
+    main(["list", "--drift", "unverified"])
+    unverified_ids = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert unverified_ids == {"web:4"}
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    assert main(["verify", "--stale-before", "2099-01-01T00:00:00+00:00"]) == 0
+    rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+    assert rechecked == {"web:1", "web:2", "web:3", "web:4"}  # all four are stale
+    assert unverified_ids.issubset(rechecked)  # ⊇ the never-checked set
+
+    main(["doctor"])
+    after = json.loads(capsys.readouterr().out)["custody"]["drift"]
+    assert after["unverified"] == 0 and after["checked"] == 4
+
+
+def test_every_batch_selection_skips_reference_only_items(scrolls_home, monkeypatch, capsys):
+    # a reference-only capture has no baseline hash to diff a re-fetch against,
+    # so it is never re-checked by *any* batch selection — even though it is
+    # `unverified` and would otherwise be in `--unverified`/`--stale-before`/
+    # `--drift unverified`'s set. (The assertion holds regardless of ledger
+    # mutation: web:ref has no hash, so it is filtered out at every selection.)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    insert_item(db, _item(
+        "web:ref", "Reference only", content_hash=None, extracted_text=None,
+        raw_text=None, stage="detected", tags=("topic",)))
+    capsys.readouterr()
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    for argv in (
+        ["verify", "--all"],
+        ["verify", "--unverified"],
+        ["verify", "--stale-before", "2099-01-01T00:00:00+00:00"],
+        ["verify", "--drift", "unverified"],
+    ):
+        assert main(argv) == 0
+        rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+        assert "web:ref" not in rechecked
