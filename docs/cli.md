@@ -856,6 +856,68 @@ $ scrolls export items --source arxiv
 [exit 0]
 ```
 
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+
+A scoped, self-contained **custody bundle** for a topic — one Markdown file
+an agent can hand to a person or another library (ADR 0103, MVP M4,
+`tests/test_bundle.py`). Two layers in one file: a readable **briefing**
+(title + scope, then one entry per in-scope scroll naming its id, source,
+custody **fidelity** tier, capture timestamp, link, content hash, and a capped
+excerpt), and an embedded **custody block** — the lossless canonical rows as
+JSON Lines inside a ` ```jsonl ` code fence, wrapped in the ADR 0102
+`@generated`…`@end` sentinel. The block's JSONL is byte-identical to what
+`export items` writes, so the bundle's losslessness is the same already tested
+by ADR 0082/0099; the sentinel makes the block machine-locatable and keeps the
+briefing body around it hand-annotatable across a re-export.
+
+It is the shareable complement to `export items` (the whole-library/faceted
+backup) and the re-importable complement to `scrolls context` (a lossy excerpt
+bundle for a model's context, not a round-trip). Scope is the same query +
+facets `scrolls context`/`search` use (`--source`/`--category`/`--stage`/
+`--tag`/`--concept`), but with **no cap**: the bundle carries *every* matching
+scroll, because a take-it-with-you custody artifact must be complete about its
+scope, not a top-N (the completeness contract,
+`test_bundle_carries_every_match_not_a_capped_slice`). The bundle Markdown
+**is** the artifact, so it prints raw on stdout (the `context`/`export items`
+exception to the JSON-on-stdout rule) — `scrolls export bundle "<q>" >
+briefing.md`. A blank query is a JSON error on stderr; an empty scope still
+yields a valid, importable bundle saying `No matching scrolls.`
+(`test_empty_scope_yields_a_valid_importable_bundle`). Re-import with
+`scrolls import bundle`.
+
+### `scrolls import bundle <path>`
+
+Import scrolls from a custody bundle, losslessly — the inverse of
+`scrolls export bundle`, and the "take it with me" half of the dogfood flow.
+`path` is a bundle file `export bundle` wrote; the importer reads its
+sentinel-fenced custody block, parses each record exactly as `import items`
+does (`item_from_dict`, the same required identity fields, unknown keys
+tolerated), and restores the index rows. A file with no custody block, or a
+malformed record, is a JSON error on stderr naming the record, so a corrupt
+bundle fails loudly rather than restoring silently incomplete
+(`test_parse_bundle_rejects_a_non_bundle`, `test_import_bundle_reports_a_corrupt_block`).
+Existing scrolls are never overwritten (`INSERT OR IGNORE` by id, ADR 0082), so
+re-importing a bundle into a library that already holds it imports nothing
+(`test_import_bundle_never_overwrites_an_existing_scroll`); derived artifacts
+rebuild from the rows via `scrolls doctor --fix` / `scrolls kb`, as with
+`import items`. The export→import→`doctor --fix` round-trip across a fresh
+library is verified end to end
+(`test_export_import_round_trips_across_a_fresh_library`).
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new scrolls inserted |
+| `skipped` | already present (id collision is the dedupe working) |
+| `items` | scroll records read from the custody block |
+
+```console
+$ scrolls export bundle "database engine" > briefing.md
+
+$ scrolls import bundle briefing.md
+{"imported": 2, "skipped": 0, "items": 2}
+[exit 0]
+```
+
 ## Following feeds
 
 Live delta updates are feed-based (IDEAS.md §13, ADR 0017): follow any

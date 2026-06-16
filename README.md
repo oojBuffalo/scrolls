@@ -92,6 +92,8 @@ uv run scrolls export opml    # export feed subscriptions as an OPML document, t
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
 uv run scrolls export items   # export items as a lossless JSONL stream (back up / migrate), to stdout
+uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block, shareable & re-importable
+uv run scrolls import bundle <path>  # restore scrolls from a custody bundle, losslessly (the "take it with me" half), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON

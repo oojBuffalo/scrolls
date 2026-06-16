@@ -17,6 +17,7 @@ from scrolls import __version__
 from scrolls.agents import install_agent_docs
 from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
 from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
+from scrolls.bundle import BundleError, build_bundle, parse_bundle
 from scrolls.classify import classify_item
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import live_recapture, record_events, verify_item
@@ -351,6 +352,14 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="a JSONL items export written by `scrolls export items`",
     )
+    import_bundle_parser = import_sub.add_parser(
+        "bundle",
+        help="Import scrolls from a custody bundle, losslessly (JSON output)",
+    )
+    import_bundle_parser.add_argument(
+        "path",
+        help="a custody bundle written by `scrolls export bundle`",
+    )
 
     export_parser = subparsers.add_parser(
         "export", help="Export library data to a portable format (to stdout)"
@@ -391,6 +400,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_items_parser.add_argument(
         "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
+    )
+    export_bundle_parser = export_sub.add_parser(
+        "bundle",
+        help="Export a scoped, self-contained custody bundle for a query "
+        "(briefing + lossless block, to stdout)",
+    )
+    export_bundle_parser.add_argument(
+        "query", help="Free-text query; tokens are AND-ed (as `scrolls context`)"
+    )
+    export_bundle_parser.add_argument(
+        "--source", default=None, help="Only scrolls from one source, e.g. web, arxiv"
+    )
+    export_bundle_parser.add_argument(
+        "--category",
+        default=None,
+        help="Only scrolls with this category; an empty value selects "
+        "unclassified items",
+    )
+    export_bundle_parser.add_argument(
+        "--stage",
+        choices=("detected", "fetched", "rendered"),
+        default=None,
+        help="Only scrolls at one pipeline stage",
+    )
+    export_bundle_parser.add_argument(
+        "--tag", default=None, help="Only scrolls carrying this tag (case-insensitive)"
+    )
+    export_bundle_parser.add_argument(
+        "--concept",
+        default=None,
+        help="Only scrolls carrying this concept (matched by slug)",
     )
 
     ingest_parser = subparsers.add_parser(
@@ -669,12 +709,23 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_import_opml(args.path)
         if args.import_command == "items":
             return _cmd_import_items(args.path)
+        if args.import_command == "bundle":
+            return _cmd_import_bundle(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
         if args.export_command == "bookmarks":
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
         if args.export_command == "items":
             return _cmd_export_items(args.source, args.category, args.tag)
+        if args.export_command == "bundle":
+            return _cmd_export_bundle(
+                args.query,
+                args.source,
+                args.category,
+                args.stage,
+                args.tag,
+                args.concept,
+            )
         return _cmd_export_opml()
     if args.command == "ingest":
         return _cmd_ingest(args.url)
@@ -1033,6 +1084,62 @@ def _cmd_export_items(
     # the JSONL stream *is* the artifact, like `export opml`/`export bookmarks`,
     # so it prints raw — `scrolls export items > library.jsonl`
     sys.stdout.write(dump_items_export(items))
+    return 0
+
+
+def _cmd_export_bundle(
+    query: str,
+    source: str | None,
+    category: str | None,
+    stage: str | None,
+    tag: str | None,
+    concept: str | None,
+) -> int:
+    paths = get_paths()
+    try:
+        # build_bundle tolerates a missing library (a valid empty bundle, no
+        # library created — like `scrolls context` before `init`)
+        bundle = build_bundle(
+            paths.db_path,
+            query,
+            source=source,
+            category=category,
+            stage=stage,
+            tag=tag,
+            concept=concept,
+        )
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    # the bundle Markdown *is* the artifact (the `context`/scroll exception to the
+    # JSON-on-stdout rule) — `scrolls export bundle "<q>" > briefing.md`
+    sys.stdout.write(bundle)
+    return 0
+
+
+def _cmd_import_bundle(path: str) -> int:
+    try:
+        text = Path(path).expanduser().read_text(encoding="utf-8")
+        imported_items = parse_bundle(text)
+    except OSError as exc:
+        print(json.dumps({"error": f"cannot read {path}: {exc}"}), file=sys.stderr)
+        return 1
+    except BundleError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0}
+    for item in imported_items:
+        # INSERT OR IGNORE (ADR 0082): a scroll the target library already holds
+        # is never overwritten — custody-safe re-import. Derived artifacts rebuild
+        # from these rows via `doctor --fix` / `kb`, as `import items` relies on.
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+    print(json.dumps({**counts, "items": len(imported_items)}))
     return 0
 
 

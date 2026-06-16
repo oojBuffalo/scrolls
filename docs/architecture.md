@@ -102,6 +102,19 @@ each command moves items between stages or derives artifacts from them.
   `scrolls doctor --fix` and `scrolls kb`. Malformed input is rejected loudly
   (a backup must not restore silently incomplete), unknown keys tolerated
   (forward compatibility).
+- `scrolls export bundle <query>` / `scrolls import bundle <path>` are the
+  **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
+  self-contained Markdown file that is both a readable topic *briefing* (per
+  scroll: id, source, custody fidelity tier, capture timestamp, link, capped
+  excerpt) and a lossless re-import unit — the same `item_to_dict` JSONL
+  `export items` writes, embedded in a code fence wrapped in the ADR 0102
+  `@generated` sentinel. The bundle is *scoped* (a query + the `context`/`search`
+  facets) and *complete about that scope* (every match, not a top-N), so it is
+  the "take it with me" half of the dogfood flow where `export items` is the
+  whole-library backup. `import bundle` reuses the `import items` path
+  (`item_from_dict`, `INSERT OR IGNORE`), so losslessness is the ADR 0082/0099
+  property already tested; the sentinel keeps the briefing body hand-annotatable
+  across a re-export (refresh-safe, ADR 0102).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

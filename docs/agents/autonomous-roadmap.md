@@ -38,11 +38,8 @@ Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 | H9 | **✓ shipped (with H10).** M3 design folded into the implementation: the budget tiers are specified in `docs/cli.md` (the `--budget` paragraph) and the `src/scrolls/context.py` module docstring — `index`/`connected`/`full`, strictly nested, identity/index first → deep bodies on demand (the obsidian L0–L3 adaptation). No ADR: the tier set is a small, reversible CLI surface documented in `cli.md`, the same way the `--stats` envelope and Coverage line were (no ADR for H6–H8). | → M3, cap 10 |
 | H10 | **✓ shipped. M3 complete.** `scrolls context --budget {index,connected,full}` bounds bundle *depth* through nested tiers (`BUDGET_TIERS` in `context.py`): `index` is the catalog (Best Matches + Links, no graph build), `connected` adds `## Connected scrolls`, `full` (default) adds `## Excerpts` — the current bundle, unchanged. A tier below `full` carries a `_Budget:_` note disclosing what it held back (the depth-axis counterpart to the Coverage line's scope honesty; the two hold independently). Same-work collapse (ADR 0101) is index-level, so it holds at every tier. CLI + MCP twins share `build_context`. Tests in `tests/test_context.py` (10 new: tiering, default=full unchanged, budget note, coverage×budget independence, collapse×budget, empty-bundle/invalid-budget honesty) + `tests/test_mcp.py` (twin). `docs/cli.md`/`README.md` updated. Full suite green (2375). | → M3, cap 10 |
 | H11 | **✓ executed in the 2026-06-16 run that shipped H9/H10.** Buffer refresh checkpoint (maintenance rule): M1, M2, and M3 are all shipped ahead of schedule (M3 was the Day-2 target). M4 broken into the concrete vertical slices H12–H15 below; M5 into H16–H17. 3-day/week plans re-derived. | maintenance |
-| H12 | **M4 custody bundle — design (ADR 0103).** Specify the portable *briefing* bundle distinct from `export items` (ADR 0082, lossless JSONL of index rows): a scoped, self-contained Markdown/HTML slice carrying provenance + fidelity *per item*, re-importable losslessly. Decide the manifest shape (the embedded canonical rows the importer reads vs. the human/agent-readable briefing body), the scope selector (query/facets, reusing `search_items`), and the round-trip contract (re-import reconstructs index rows like `import items`, `INSERT OR IGNORE`). ADR because the on-disk format is consequential and shareable. | → M4, cap 9 |
-| H13 | **M4 implement `scrolls bundle export`.** Emit the self-contained bundle for a scope (query + the `search`/`context` facets) to a path: briefing body (best matches, fidelity tier, provenance per item) + an embedded lossless block the importer round-trips against. Tests pin the bundle contents (provenance + fidelity present per item; scope honored). `docs/cli.md` + README. | → M4, cap 9 |
-| H14 | **M4 implement `scrolls bundle import` + round-trip.** Re-import reconstructs index rows from the embedded block (dedupe by id, never overwrite — the ADR 0099 lossless invariant). A fixture proves export→import round-trips the custody state byte-for-byte and that the bundle is self-describing offline (no network, no original library). Tests land in a new bundle round-trip test module. | → M4, cap 9/11 |
-| H15 | **M4 docs + self-describing proof.** Document the bundle in `docs/cli.md`/`README.md`/`docs/architecture.md`; confirm ADR 0103 consequences; capture concrete export→import command output. **M4 complete.** | → M4, cap 9 |
-| H16 | **M5 dogfood flow — draft.** Write the one agent-runnable end-to-end flow (custody-vision dogfood): *hold a topic → prove custody (`doctor` score) → detect loss (drift recheck) → take it with me (`bundle export` → reimport)*. Script it against fixtures, offline. | → M5, cap 11 |
+| H12–H15 | **✓ shipped as one slice (ADR 0103). M4 complete.** `scrolls export bundle <query>` / `import bundle <path>`: one self-contained Markdown file that is both a readable topic *briefing* (per scroll: id, source, custody fidelity tier, capture timestamp, link, content-hash, capped excerpt) and a lossless re-import unit — the same `item_to_dict` JSONL `export items` writes, inside a ` ```jsonl ` fence wrapped in the ADR 0102 `@generated` sentinel (so the briefing body stays hand-annotatable). Scoped by the query + `context`/`search` facets and *complete about that scope* (every match, `count_matches` is the limit — no top-N), so it is the shareable, take-it-with-you complement to `export items`. New `src/scrolls/bundle.py` is an *envelope* reusing `search_items`/`count_matches`/`get_fidelity`/`dump_items_export`/`item_from_dict`/`generated.fence` — no new storage. `import bundle` reuses the `import items` path (`INSERT OR IGNORE`, custody-safe), so losslessness is the ADR 0082/0099 property already tested; the export→import→fresh-library round-trip is verified end to end. Tests: `tests/test_bundle.py` (11). Docs: `docs/cli.md` (two headings), README, `docs/architecture.md`, ADR 0103 + index. Done in one slice rather than the H12–H15 split because the round-trip core already existed — the bundle is an envelope, and the ADR lands with working code (repo convention). | → M4, cap 9 |
+| H16 | **M5 dogfood flow — draft.** Write the one agent-runnable end-to-end flow (custody-vision dogfood): *hold a topic → prove custody (`doctor` score) → detect loss (drift recheck) → take it with me (`export bundle` → `import bundle`)* — now fully unblocked (M1–M4 shipped). Script it against fixtures, offline. | → M5, cap 11 |
 | H17 | **M5 dogfood flow — run + score.** Run the flow offline against fixtures end to end; capture a before/after custody score; reference it from `docs/custody-vision.md`'s success section. **M5 complete → MVP M1–M5 done.** | → M5, cap 11 |
 | H18 | **Buffer refresh checkpoint** (maintenance rule). With the MVP complete, re-derive the post-MVP week plan (cap 8 re-derivable enrichment, scheduled custody maintenance) into concrete slices. | maintenance |
 
@@ -70,13 +67,20 @@ cosmetic churn (CLAUDE.md, *Avoid trivial progress*).
   {index,connected,full}` bounds bundle depth through nested tiers, identity/
   index first → deep bodies on demand, with a `_Budget:_` depth-honesty note
   and same-work collapse holding at every tier. Full suite green (2375).
-- **Day 2 (2026-06-17):** M2 **and M3 done early** (H5–H10 all shipped Day 1).
-  Next: M4 (custody bundle) — design with **ADR 0103** (the on-disk briefing
-  format is consequential and shareable, H12), then implement export (H13) and
-  import + round-trip fixture (H14).
-- **Day 3 (2026-06-18 → 2026-06-19):** M4 finished (docs + self-describing
-  proof, H15); M5 dogfood flow drafted (H16) and run offline against fixtures
-  with a before/after custody score (H17) — **MVP M1–M5 complete.**
+  **M4 (shareable custody bundle) also shipped Day 1** (H12–H15, ADR 0103):
+  `scrolls export bundle` / `import bundle` — a self-contained Markdown briefing
+  with an embedded lossless custody block, verified round-trip across a fresh
+  library. Done as one slice because the round-trip core (ADR 0082) already
+  existed; the bundle is an envelope.
+- **Day 2 (2026-06-17):** M2, M3, **and M4 done early** (H5–H15 all shipped
+  Day 1). Next: **M5** (dogfood proof) — the one agent-runnable end-to-end flow
+  *hold → prove → detect → take it with me*, now fully unblocked. Draft it
+  against fixtures (H16), then run it offline with a before/after custody score
+  (H17).
+- **Day 3 (2026-06-18 → 2026-06-19):** M5 finished and referenced from the
+  vision's dogfood section — **MVP M1–M5 complete.** Then begin the post-MVP
+  week plan (cap 8 re-derivable enrichment; framing the hourly worker as
+  scheduled custody maintenance).
 
 Each day ends on a committed, tested, clean stopping point. Slips roll forward;
 the 3-day plan is re-derived at each buffer refresh.
