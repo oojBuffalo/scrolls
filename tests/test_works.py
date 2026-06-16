@@ -303,6 +303,51 @@ def test_representations_carry_their_per_item_custody_fidelity():
     assert by_id["crossref:10.1000/x"].fidelity == "reference"
 
 
+def test_representation_payload_carries_per_item_drift_posture():
+    # H64: each representation's drift posture rides the payload, from the same
+    # `drift_posture`/`latest_events` ledger every other per-item surface reads —
+    # the ledger-derived axis is a payload enrichment (the H56 graph-node split),
+    # so the item-intrinsic `fidelity` stays on the dataclass.
+    from scrolls.custody import CustodyEvent, drift_posture
+
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.1000/x",)),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+    ]
+    (work,) = works_over(items)
+    verdicts = {
+        "arxiv:1706.03762": CustodyEvent(
+            item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+            status="drifted", prior_hash="a", observed_hash="b"),
+        # crossref:10.1000/x left out of the ledger → unverified
+    }
+    payload = to_payload(
+        [work], len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    by_id = {r["id"]: r for r in payload["works"][0]["representations"]}
+    assert by_id["arxiv:1706.03762"]["drift"] == "drifted"
+    assert by_id["crossref:10.1000/x"]["drift"] == "unverified"
+    # the shared primitive, not a re-derivation
+    assert by_id["arxiv:1706.03762"]["drift"] == drift_posture(
+        verdicts["arxiv:1706.03762"]
+    )
+
+
+def test_representation_drift_defaults_to_unverified_without_a_ledger():
+    # the pure caller (no verdicts) reads `unverified` for every representation —
+    # honest never-checked, never silently "clean" (drift_posture(None))
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.1000/x",)),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+    ]
+    (work,) = works_over(items)
+    payload = to_payload([work], len(items), scope={"min_representations": 2})
+    assert all(
+        rep["drift"] == "unverified"
+        for rep in payload["works"][0]["representations"]
+    )
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -338,9 +383,40 @@ def test_cli_works_reports_clusters(db, capsys):
         "stage": "fetched",
         # no body held for this representation — a bare reference (ADR 0100)
         "fidelity": "reference",
+        # never re-checked against its source — the honest never-verified posture
+        "drift": "unverified",
     }
     # the canonical representation is named by id (the published record, here)
     assert work["canonical"] == "crossref:10.5555/3295222"
+
+
+def test_cli_works_representation_drift_matches_the_list_row(db, capsys):
+    # H64 per-item parity: the drift a `works` representation shows for an item is
+    # exactly the drift its `list` row shows — same `drift_posture`/`latest_events`
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item(
+        "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.1000/x",),
+        raw_text="the preprint body", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, make_item(
+        "crossref:10.1000/x", url="https://doi.org/10.1000/x", stage="rendered"))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+    assert main(["works"]) == 0
+    reps = {
+        r["id"]: r
+        for r in json.loads(capsys.readouterr().out)["works"][0]["representations"]
+    }
+    assert main(["list"]) == 0
+    rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+
+    for item_id in ("arxiv:1706.03762", "crossref:10.1000/x"):
+        assert reps[item_id]["drift"] == rows[item_id]["drift"]
+    assert reps["arxiv:1706.03762"]["drift"] == "drifted"
+    assert reps["crossref:10.1000/x"]["drift"] == "unverified"
 
 
 def test_cli_works_min_flag(db, capsys):

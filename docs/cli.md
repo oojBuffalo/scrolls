@@ -1915,10 +1915,15 @@ an arXiv preprint and a PubMed record that both name `doi.org/D` are one
 work even when the `crossref:D` item that would link them is absent
 (`test_clusters_without_the_crossref_hub_present`). Each work carries its
 `doi`, canonical `url`, and `representations` (the `id`/`source`/`title`/
-`url`/`stage`/`fidelity` node shape — the fidelity-bearing subset of what
-`graph`/`related` carry, which add a `drift` posture too — so each
-representation reports the custody tier it is held at: the preprint may be
-full while the published record is a bare reference, ADR 0100), sorted by
+`url`/`stage` node shape plus **both per-item custody axes** — `fidelity`
+(how much is held, ADR 0100) and `drift` (whether the source moved, roadmap
+H64) — so each representation reports the custody tier it is held at *and*
+its drift posture: the preprint may be full while the published record is a
+bare reference, and either may have drifted since capture. The same
+`custody.drift_posture` over `latest_events` every other per-item surface
+reads, so a representation's `drift` equals that item's `list` row by
+construction, `unverified` when never re-checked —
+`test_cli_works_representation_drift_matches_the_list_row`), sorted by
 id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
@@ -1945,11 +1950,11 @@ item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 ```
 

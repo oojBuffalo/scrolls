@@ -335,9 +335,12 @@ def get_works(
     `canonical` — the id of the one representation that stands for the whole
     work (the registered published record over a preprint), a pointer into
     its own `representations` so a caller can cite or display that form. Each
-    representation carries its custody `fidelity` tier (full/partial/reference,
-    ADR 0097), so a caller sees which forms of the work the library holds in
-    full and which only by reference.
+    representation carries both per-item custody axes: its `fidelity` tier
+    (full/partial/reference, ADR 0097 — how much of the form is held) and its
+    `drift` posture (verified/unverified/drifted/rotted/error — whether the
+    source moved, roadmap H64), so a caller sees which forms the library holds in
+    full and which have drifted — the same two-axis picture `list_scrolls`/
+    `get_related_scrolls`/`get_link_graph` carry.
     Works with fewer than `min_representations` items are omitted (default 2,
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.
@@ -358,7 +361,8 @@ def get_works(
     else:
         works = works_over(items, min_representations=min_representations)
         scope = {"min_representations": min_representations}
-    return works_payload(works, len(items), scope=scope)
+    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    return works_payload(works, len(items), scope=scope, verdicts=verdicts)
 
 
 def get_context_bundle(

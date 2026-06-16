@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scrolls.custody import CustodyEvent, drift_posture
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -91,6 +92,13 @@ class Representation:
     so an agent reading a work sees which of its representations the library
     holds in full and which only by reference — the published DOI record may be
     a bare pointer while the preprint is fully held, or vice versa.
+
+    The item-intrinsic `fidelity` lives on the dataclass; the per-representation
+    custody **drift posture** (which needs the verify ledger) is added in
+    `to_payload` from the passed-in `verdicts`, not stored here — the H56
+    graph-node split, so a reader of a multi-representation work sees both custody
+    axes per form: *how much* is held (fidelity) and *whether the source moved*
+    (drift, roadmap H64).
     """
 
     id: str
@@ -283,7 +291,13 @@ def membership_payload(refs: tuple[WorkRef, ...]) -> list[dict]:
     ]
 
 
-def to_payload(works: list[Work], item_count: int, *, scope: dict[str, Any]) -> dict:
+def to_payload(
+    works: list[Work],
+    item_count: int,
+    *,
+    scope: dict[str, Any],
+    verdicts: dict[str, CustodyEvent] | None = None,
+) -> dict:
     """Works as the JSON object the CLI and MCP tool both emit.
 
     `stats.items` is the library total (the denominator the works count is
@@ -291,6 +305,18 @@ def to_payload(works: list[Work], item_count: int, *, scope: dict[str, Any]) -> 
     `scrolls graph` uses. `canonical` names the work's canonical
     representation by id (ADR 0095), a pointer into its own `representations`
     so a consumer can highlight the one form that stands for the work.
+
+    Each representation carries both per-item custody axes: its item-intrinsic
+    `fidelity` tier (how much is held, ADR 0100) and its `drift` posture
+    (whether the source moved — `custody.drift_posture` over its latest
+    `verdicts` entry, roadmap H64). So a reader of a multi-representation work
+    sees not just which form the library holds in full but which have drifted —
+    the custody signal for "prefer the canonical, but note it drifted". The same
+    `drift_posture`/`latest_events` every other per-item surface reads (list,
+    search, related, graph, show), so a representation's posture agrees with that
+    item's `list` row by construction. `verdicts` is the `latest_events` ledger
+    read the CLI/MCP pass; absent (the pure caller), every representation reads
+    `unverified` — honest, nothing has been checked.
 
     `scope` echoes what the call was scoped to — the `min_representations`
     floor for the whole-library clustering, or the `ref` anchor for the
@@ -304,6 +330,7 @@ def to_payload(works: list[Work], item_count: int, *, scope: dict[str, Any]) -> 
     missing from the payload was below the reported floor, not absent from the
     library, and `stats` already counts what cleared it.
     """
+    verdicts = verdicts or {}
     return {
         "scope": {key: value for key, value in scope.items() if value is not None},
         "works": [
@@ -319,6 +346,7 @@ def to_payload(works: list[Work], item_count: int, *, scope: dict[str, Any]) -> 
                         "url": rep.url,
                         "stage": rep.stage,
                         "fidelity": rep.fidelity,
+                        "drift": drift_posture(verdicts.get(rep.id)),
                     }
                     for rep in work.representations
                 ],

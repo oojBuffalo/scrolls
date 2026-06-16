@@ -21,15 +21,17 @@ so the browse filter and the aggregate can never disagree. A future change that
 desyncs any one surface fails here, in one obvious place.
 
 This module also pins the **per-item** counterpart of that scope-level invariant
-(roadmap H59). After H56/H58/H61 the per-item `drift` posture rides every
+(roadmap H59). After H56/H58/H61/H64 the per-item `drift` posture rides every
 browse/landing/inspect surface — `list` rows, `search` hits, `related` hits,
-`graph` nodes, the shareable bundle briefing, and `show`/`get_scroll` — each
-claimed to read the same `custody.drift_posture` over `latest_events`. The
-per-item section asserts that over one seeded fixture a given item reads the
-*same* `drift` on every surface that carries it, and that each
-whole-library-enumerating surface's per-item posture counts total `facets
-drift`'s count for that posture — tying the per-item axis back to the aggregate
-the scope-level invariant pins.
+`graph` nodes, the shareable bundle briefing, `show`/`get_scroll`, and the
+`works` representation shape — each claimed to read the same
+`custody.drift_posture` over `latest_events`. The per-item section asserts that
+over one seeded fixture a given item reads the *same* `drift` on every surface
+that carries it, and that each whole-library-enumerating surface's per-item
+posture counts total `facets drift`'s count for that posture — tying the
+per-item axis back to the aggregate the scope-level invariant pins. (`works`
+needs a DOI-sharing fixture — the ring seed forms no work — so it carries its
+own seed in `test_works_representation_agrees_on_an_items_drift_posture`.)
 """
 
 import json
@@ -353,3 +355,47 @@ def test_per_item_drift_totals_the_facets_count(scrolls_home, capsys):
     assert _posture_counts(json.loads(capsys.readouterr().out)) == facet_counts
     assert main(["graph"]) == 0
     assert _posture_counts(json.loads(capsys.readouterr().out)["nodes"]) == facet_counts
+
+
+def test_works_representation_agrees_on_an_items_drift_posture(scrolls_home, capsys):
+    # the seventh per-item surface (roadmap H64): the `works` representation shape.
+    # It needs a DOI-sharing fixture (the ring above links by URL, forms no work),
+    # so it has its own seed — an arXiv preprint + its published Crossref record,
+    # one drifted, one never re-checked. The drift each representation carries must
+    # equal the canonical `drift_posture` and the item's own `list` row.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item(
+        "arxiv:1706.03762", "Attention Is All You Need", source="arxiv",
+        source_id="1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="<raw>preprint body</raw>", content_hash="sha256:a",
+    ))
+    insert_item(db, _item(
+        "crossref:10.5555/3295222", "Attention Is All You Need", source="crossref",
+        source_id="10.5555/3295222", url="https://doi.org/10.5555/3295222",
+        stage="rendered", raw_text="<raw>record</raw>", content_hash="sha256:b",
+    ))
+    record_events(db, [
+        CustodyEvent("arxiv:1706.03762", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:a", "sha256:x", None),
+        # crossref left unverified
+    ])
+    capsys.readouterr()
+
+    verdicts = latest_events(db)
+    canonical = {
+        item.id: drift_posture(verdicts.get(item.id)) for item in list_items(db)
+    }
+    assert set(canonical.values()) == {"drifted", "unverified"}
+
+    assert main(["works"]) == 0
+    reps = {
+        r["id"]: r["drift"]
+        for r in json.loads(capsys.readouterr().out)["works"][0]["representations"]
+    }
+    assert main(["list"]) == 0
+    list_drift = {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)}
+
+    assert reps == canonical
+    assert reps == list_drift

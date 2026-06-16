@@ -734,6 +734,41 @@ def test_get_works_clusters_by_shared_doi(scrolls_home):
     assert work["canonical"] == "crossref:10.5555/3295222"
 
 
+def test_get_works_representation_carries_drift_at_parity_with_list(scrolls_home):
+    # H64: the MCP works twin carries each representation's `drift` posture, in
+    # agreement with the `list_scrolls` row for the same item (per-item parity)
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", source_id="1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="the preprint body", content_hash="sha256:a",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        stage="rendered",
+    ))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="unchanged", prior_hash="sha256:a", observed_hash="sha256:a")])
+
+    reps = {
+        r["id"]: r for r in mcp_server.get_works()["works"][0]["representations"]
+    }
+    rows = {r["id"]: r for r in mcp_server.list_scrolls()}
+    for item_id in ("arxiv:1706.03762", "crossref:10.5555/3295222"):
+        assert reps[item_id]["drift"] == rows[item_id]["drift"]
+    assert reps["arxiv:1706.03762"]["drift"] == "verified"
+
+
 def test_get_works_empty_library(scrolls_home):
     assert mcp_server.get_works() == {
         "scope": {"min_representations": 2},

@@ -2060,7 +2060,8 @@ def _cmd_works(min_representations: int, ref: str | None = None) -> int:
     else:
         works = works_over(items, min_representations=min_representations)
         scope = {"min_representations": min_representations}
-    print(json.dumps(works_payload(works, len(items), scope=scope)))
+    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    print(json.dumps(works_payload(works, len(items), scope=scope, verdicts=verdicts)))
     return 0
 
 
