@@ -115,7 +115,7 @@ uv run scrolls search <query> --source arxiv --category paper  # scope the ranke
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
-uv run scrolls related <id> [--limit N]  # items connected to one item, with reasons, as JSON (default 10)
+uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; with an id/URL, that item's work + siblings (ADR 0069, 0072)
 uv run scrolls list           # list items, as JSON

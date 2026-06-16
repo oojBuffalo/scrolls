@@ -7,7 +7,7 @@ import pytest
 from scrolls.cli import main
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
-from scrolls.related import find_related
+from scrolls.related import count_related, find_related, scored_related
 
 
 @pytest.fixture
@@ -325,6 +325,84 @@ def test_cli_related_prints_hits_json(db, capsys):
 
 def test_cli_related_unknown_id_is_an_error(scrolls_home, capsys):
     exit_code = main(["related", "x:missing"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+# --- The completeness contract G2 on `related`: scope echo + truncation ------
+
+
+def _related_pool(db, count):
+    """`count` items that all relate to a shared anchor by a common tag."""
+    for index in range(count):
+        insert_item(db, make_item(f"web:rel{index}", tags=("shared",)))
+
+
+def test_find_related_is_the_capped_view_of_scored_related(db):
+    """`find_related` is exactly `scored_related[:limit]` — same ranking."""
+    _related_pool(db, 4)  # anchor + 3 neighbours
+    full = scored_related(db, "web:rel0")
+    assert [h.id for h in find_related(db, "web:rel0", limit=2)] == [
+        h.id for h in full[:2]
+    ]
+    assert len(full) == 3  # every other item relates by the shared tag
+
+
+def test_count_related_counts_every_neighbour_past_the_cap(db):
+    _related_pool(db, 6)  # anchor + 5 neighbours
+    assert len(find_related(db, "web:rel0", limit=2)) == 2
+    assert count_related(db, "web:rel0") == 5
+
+
+def test_count_related_raises_on_unknown_id_like_find_related(db):
+    with pytest.raises(ValueError):
+        count_related(db, "web:does-not-exist")
+
+
+def test_cli_related_stats_echoes_anchor_and_marks_truncation(db, capsys):
+    _related_pool(db, 4)  # anchor + 3 neighbours
+    capsys.readouterr()
+
+    exit_code = main(["related", "web:rel0", "--limit", "1", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == {"item": "web:rel0", "limit": 1}
+    assert payload["stats"] == {"returned": 1, "matched": 3, "truncated": True}
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["reasons"]  # reasons survive into the envelope
+
+
+def test_cli_related_stats_is_opt_in_default_stays_a_bare_array(db, capsys):
+    _related_pool(db, 2)
+    capsys.readouterr()
+
+    main(["related", "web:rel0"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+
+    main(["related", "web:rel0", "--stats"])
+    assert isinstance(json.loads(capsys.readouterr().out), dict)
+
+
+def test_cli_related_stats_isolated_item_is_scope_honest_not_truncated(db, capsys):
+    """An item with no neighbour: empty results, but the anchor is named."""
+    insert_item(db, make_item("web:lonely"))
+    capsys.readouterr()
+
+    exit_code = main(["related", "web:lonely", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"] == []
+    assert payload["scope"] == {"item": "web:lonely", "limit": 10}
+    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+
+
+def test_cli_related_stats_unknown_id_still_errors_loudly(scrolls_home, capsys):
+    """--stats does not soften the could-not-check path (G1): error, exit 1."""
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["related", "web:does-not-exist", "--stats"])
     assert exit_code == 1
     captured = capsys.readouterr()
     assert captured.out == ""

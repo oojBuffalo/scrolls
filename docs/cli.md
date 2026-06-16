@@ -114,7 +114,7 @@ shape rather than erroring, so the payload shape never varies between "no
 library yet" and "library, no matches"
 (`test_before_init_is_empty_in_shape_across_surfaces`).
 
-### G2 — Honest scope, honest completeness *(`search`/`list` enforced via `--stats`; `context`/`related`/`works`/`doctor` target: M2 H7–H8)*
+### G2 — Honest scope, honest completeness *(`search`/`list`/`related` enforced via `--stats`; `context`/`works`/`doctor` target: M2 H7–H8)*
 
 A scoped or `--limit`-capped result must let a reader that holds *only the
 result* — not the call that produced it — recover the scope it covered and
@@ -161,7 +161,8 @@ builder.
 
 The enforcement order is fixed by the roadmap: **H6 (done)** adds the
 `--stats` scope + truncation envelope to `search` and `list`; H7 extends
-the same companion to `context`, `related`, and `works`; H8 sharpens
+the same companion to `related` (**done** — `count_related` is the
+past-the-cap denominator), `context`, and `works`; H8 sharpens
 `doctor`'s verified-now-vs-as-of-last-check report
 (`docs/agents/autonomous-roadmap.md`). Each lands with its own tests in the
 matching suite and flips this section's status marker for those surfaces
@@ -1387,7 +1388,7 @@ The last `--stats` call is the honest empty: nothing matched, but the
 result still names the scope it checked (`query`, `source=arxiv`), so it
 can never be misread as "the library holds nothing about sqlite."
 
-### `scrolls related <id> [--limit N]`
+### `scrolls related <id> [--limit N] [--stats]`
 
 Deterministic, explainable connections (IDEAS.md §10,
 `tests/test_related.py`): link edges in either direction (resolved
@@ -1400,9 +1401,22 @@ you how much of the item you land on the library actually holds, exactly as
 `scrolls search`/`scrolls list` report. Default limit 10. Unknown id is an
 error envelope on stderr.
 
+`--stats` wraps the array in the same scope-honest `{scope, stats,
+results}` envelope `search`/`list` use (the completeness contract G2):
+`scope` names the anchor `item` and the `limit`, and `stats` reports
+`returned`, `matched` (every item that relates, counted past the cap —
+`src/scrolls/related.py` `count_related`), and `truncated`. Opt-in: without
+it the output is the bare array unchanged
+(`test_cli_related_stats_is_opt_in_default_stays_a_bare_array`,
+`test_cli_related_stats_echoes_anchor_and_marks_truncation`).
+
 ```console
 $ scrolls related x:2222
 [{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference"}]
+[exit 0]
+
+$ scrolls related x:2222 --limit 1 --stats
+{"scope": {"item": "x:2222", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true}, "results": [{"id": "arxiv:1706.03762", ...}]}
 [exit 0]
 ```
 

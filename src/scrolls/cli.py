@@ -70,7 +70,7 @@ from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_i
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
-from scrolls.related import find_related
+from scrolls.related import find_related, scored_related
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
@@ -489,6 +489,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RELATED_LIMIT,
         help=f"Maximum hits to return (default {DEFAULT_RELATED_LIMIT})",
     )
+    related_parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Wrap the array in a scope-honest {scope, stats, results} "
+        "envelope: the anchor item and limit honored, how many items relate "
+        "in all, and whether the result was truncated below --limit",
+    )
 
     rm_parser = subparsers.add_parser(
         "rm", help="Remove items and the files they own (JSON output)"
@@ -684,7 +691,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "related":
-        return _cmd_related(args.id, args.limit)
+        return _cmd_related(args.id, args.limit, args.stats)
     if args.command == "rm":
         return _cmd_rm(args.refs)
     if args.command == "search":
@@ -1564,18 +1571,35 @@ def _cmd_context(
     return 0
 
 
-def _cmd_related(item_id: str, limit: int) -> int:
+def _cmd_related(item_id: str, limit: int, stats: bool = False) -> int:
     paths = get_paths()
     try:
-        hits = find_related(paths.db_path, resolve_item_id(item_id), limit=limit)
+        resolved = resolve_item_id(item_id)
+        # The full scored set when --stats needs the pre-cap denominator,
+        # else just the capped public view. Both raise the same ValueError on
+        # an unknown id, so the could-not-check path is identical (G1).
+        hits = scored_related(paths.db_path, resolved) if stats else find_related(
+            paths.db_path, resolved, limit=limit
+        )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
+    if not stats:
+        print(json.dumps(_related_rows(hits)))
+        return 0
+    matched = len(hits)
+    rows = _related_rows(hits[:limit])
+    scope = {"item": resolved, "limit": limit}
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched)))
+    return 0
+
+
+def _related_rows(hits: list) -> list[dict]:
+    """Related hits as JSON dicts, with `reasons` as a list (not a tuple)."""
     payload = [dataclasses.asdict(hit) for hit in hits]
     for hit in payload:
         hit["reasons"] = list(hit["reasons"])
-    print(json.dumps(payload))
-    return 0
+    return payload
 
 
 def _cmd_graph(include_all: bool) -> int:

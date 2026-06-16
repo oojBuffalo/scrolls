@@ -67,10 +67,32 @@ class RelatedHit:
 def find_related(
     db_path: Path, item_id: str, limit: int = DEFAULT_LIMIT
 ) -> list[RelatedHit]:
-    """Score every other item against `item_id`; best matches first.
+    """The best `limit` items related to `item_id`, best matches first.
 
-    Raises ValueError when the item does not exist. Ties break on id so
-    output is stable run to run.
+    The capped public view (the MCP `get_related_scrolls` and bare `scrolls
+    related` both read it). Raises ValueError when the item does not exist.
+    """
+    return scored_related(db_path, item_id)[:limit]
+
+
+def count_related(db_path: Path, item_id: str) -> int:
+    """How many items relate to `item_id` at all, ignoring the cap.
+
+    The honest denominator behind `scrolls related --stats`' truncation
+    marker (completeness contract G2): `find_related` returns at most
+    `limit` neighbours, so on its own it cannot tell "those are all the
+    related items" from "the top N of more". Raises ValueError on an unknown
+    id, exactly like `find_related`, so the could-not-check path is identical.
+    """
+    return len(scored_related(db_path, item_id))
+
+
+def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
+    """Every item with a non-zero relation to `item_id`, best matches first.
+
+    The uncapped scoring `find_related`/`count_related` are built on. Raises
+    ValueError when the item does not exist. Ties break on id so output is
+    stable run to run.
     """
     item = get_item(db_path, item_id) if db_path.exists() else None
     if item is None:
@@ -145,7 +167,7 @@ def find_related(
             )
 
     hits.sort(key=lambda hit: (-hit.score, hit.id))
-    return hits[:limit]
+    return hits
 
 
 def _link_targets(item: ScrollItem) -> set[str]:
