@@ -130,3 +130,24 @@ Four tests: each leg on its own, plus `test_dogfood_flow_hold_prove_detect_take`
 — the whole sequence, in order, unattended. The lossless round-trip leg shares
 its guarantee with `tests/test_roundtrip.py` (the JSONL backup invariant,
 ADR 0099); the bundle envelope is ADR 0103.
+
+## The recurring sibling — `scrolls maintain`
+
+The dogfood flow is the *one-shot* proof. Its recurring form is a single command,
+`scrolls maintain` (see [cli.md](cli.md), `### scrolls maintain`), the
+scheduled custody-maintenance pass an hourly worker can run unattended:
+
+1. **recheck** the live edge — a bounded `verify --all` (`--limit N`, or
+   `--no-recheck` for a fully offline pass), recording drift events;
+2. **regenerate** the `library/` views (deterministic `kb` compile);
+3. **audit** the post-maintenance state read-only (`doctor`, never `--fix`);
+4. report the **custody delta** since the last run — `score`, fidelity `tiers`,
+   drift posture, and the `enrichment_stale`/`summaries_stale` counts — against a
+   snapshot recorded at `<root>/.maintenance/last-run.json`.
+
+It is report-only and idempotent (custody-vision §2.4): it records events and
+regenerates views, but never repairs index rows, reclassifies, or re-summarizes —
+`doctor --fix`, `classify --stale`, and `kb --stale` stay the explicit, on-request
+mutations. The delta makes the custody point above **recurring**: each pass shows
+the drift posture moving without the integrity score ever dropping. Proven offline
+in `tests/test_maintain.py` (the same `cli.live_recapture` seam this flow uses).

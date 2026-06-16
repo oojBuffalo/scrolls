@@ -65,6 +65,13 @@ from scrolls.items import (
 from scrolls.items_export import ItemsSourceError
 from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
+from scrolls.maintain import (
+    compute_delta,
+    custody_snapshot,
+    load_snapshot,
+    save_snapshot,
+    snapshot_path,
+)
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
@@ -519,6 +526,28 @@ def build_parser() -> argparse.ArgumentParser:
         "whether the result was truncated below --limit",
     )
 
+    maintain_parser = subparsers.add_parser(
+        "maintain",
+        help="Run one scheduled custody-maintenance pass — recheck, regenerate "
+        "views, audit, and report the custody delta since the last run "
+        "(JSON output)",
+    )
+    maintain_group = maintain_parser.add_mutually_exclusive_group()
+    maintain_group.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Bound the drift recheck to N held items this run (oldest saved "
+        "first); default rechecks every held item with a captured hash",
+    )
+    maintain_group.add_argument(
+        "--no-recheck",
+        dest="recheck",
+        action="store_false",
+        help="Skip the live re-capture edge entirely — a fully offline pass that "
+        "regenerates views and audits without touching any source",
+    )
+
     subparsers.add_parser(
         "mcp",
         help="Serve the library to agents over the Model Context Protocol (stdio)",
@@ -761,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
             args.limit,
             args.stats,
         )
+    if args.command == "maintain":
+        return _cmd_maintain(args.recheck, args.limit)
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -843,6 +874,91 @@ def _cmd_doctor(fix: bool) -> int:
     print(json.dumps(payload))
     # healthy or fully repaired → 0; any drift left behind → 1
     return 1 if payload["issues"] > payload["fixed"] else 0
+
+
+def _cmd_maintain(recheck: bool, limit: int | None) -> int:
+    """One scheduled custody-maintenance pass (roadmap H22/H23/H34).
+
+    The dogfood flow's recurring sibling, composed entirely from surfaces that
+    already ship: *recheck* the live edge (`verify`, bounded by `--limit`, behind
+    the `live_recapture` seam so it scripts offline), *regenerate* views
+    (`compile_kb` — the deterministic compile, never an LLM re-synthesis), then
+    *audit* once with `run_doctor` to read the post-maintenance custody picture,
+    and report the **custody delta** against the snapshot the last run recorded.
+
+    Report-only and idempotent (custody-vision §2.4): it records drift events and
+    regenerates `library/` views, but never repairs index rows, reclassifies, or
+    re-summarizes — `doctor --fix` / `classify --stale` / `kb --stale` stay the
+    explicit, on-request mutations. The exit code mirrors `doctor`: nonzero only
+    when structural `issues` remain (the operator should run `doctor --fix`);
+    drift and stale enrichment/summaries are reported, never a failure.
+    """
+    paths = get_paths()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    # 1. RECHECK — the one live edge, bounded; records drift events, never
+    #    touching the captures (ADR 0098). Skipped entirely with --no-recheck.
+    if recheck:
+        recheck_report = _recheck_held_items(paths, limit, now)
+    else:
+        recheck_report = {
+            "skipped": True, "checked": 0,
+            "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
+        }
+
+    # 2. REGENERATE views from canonical rows (views are regenerable).
+    compiled = compile_kb(paths)
+
+    # 3. AUDIT the post-maintenance state, read-only (maintain never --fixes).
+    report = run_doctor(paths)
+    current = custody_snapshot(report)
+
+    # 4. DELTA vs the last recorded snapshot, then 5. record this run's.
+    path = snapshot_path(paths)
+    previous = load_snapshot(path)
+    delta = compute_delta(previous, current)
+    save_snapshot(path, {**current, "recorded_at": now})
+
+    print(
+        json.dumps(
+            {
+                "recorded_at": now,
+                "recheck": recheck_report,
+                "compiled": dataclasses.asdict(compiled),
+                "custody": current,
+                "delta": delta,
+                "issues": report["issues"],
+            }
+        )
+    )
+    # nonzero only on structural drift the operator must address (mirrors doctor)
+    return 1 if report["issues"] > 0 else 0
+
+
+def _recheck_held_items(paths: LibraryPaths, limit: int | None, now: str) -> dict:
+    """Bounded re-capture of held items carrying a baseline hash; record events.
+
+    The same core `verify --all` runs (re-capture through the `live_recapture`
+    seam, diff the hash, append a custody event), distilled to the counts
+    `maintain` reports. Reads the module-level `live_recapture` so tests can
+    script the network edge offline, exactly as `_cmd_verify` does.
+    """
+    counts = {"skipped": False, "checked": 0,
+              "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
+    if not paths.db_path.exists():
+        return counts
+    init_db(paths.db_path)  # ensure the ledger table exists before recording
+    items = [item for item in list_items(paths.db_path) if item.content_hash]
+    events = []
+    for item in items:
+        if limit is not None and counts["checked"] >= limit:
+            break
+        counts["checked"] += 1
+        event = verify_item(item, live_recapture, now=now)
+        events.append(event)
+        counts[event.status] += 1
+    record_events(paths.db_path, events)
+    return counts
 
 
 def _cmd_mcp() -> int:

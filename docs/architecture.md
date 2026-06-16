@@ -192,6 +192,23 @@ each command moves items between stages or derives artifacts from them.
   with me (`export`/`import bundle`)* — is narrated, with captured before/after
   custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against
   fixtures in `tests/test_dogfood.py` (MVP M5).
+- `scrolls maintain` (`src/scrolls/maintain.py`) is the dogfood flow's *recurring*
+  sibling — one scheduled custody-maintenance pass: bounded **recheck**
+  (`verify --all`, `--limit`/`--no-recheck`) → **regenerate** views (deterministic
+  `compile_kb`) → read-only **audit** (`run_doctor`) → a **custody delta** against
+  the snapshot the last run recorded at `<root>/.maintenance/last-run.json`. The
+  composition already ships; the module owns only the new piece — `custody_snapshot`
+  distils a doctor report into the comparable scalars (`score`, `tiers`, drift
+  posture, `enrichment_stale`/`summaries_stale`), `compute_delta` diffs this run's
+  snapshot against the last (`first_run` when there is no baseline; a baseline
+  missing an axis reads zero, the ADR 0082 forward-compat posture). Report-only and
+  idempotent (custody §2.4): it records drift events and regenerates views but never
+  repairs rows, reclassifies, or re-summarizes — `doctor --fix` / `classify --stale`
+  / `kb --stale` stay the explicit on-request mutations; the dot-prefixed snapshot
+  is never a compiled page and never created by `init`, so a lost/corrupt one just
+  degrades to "first run". The delta makes the dogfood's custody point recurring:
+  source drift moves the *drift posture* without lowering the integrity *score*
+  (`tests/test_maintain.py`; roadmap H22/H23/H34).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters
@@ -793,6 +810,14 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34) — `scrolls maintain` is
+  the scheduled custody-maintenance pass: recheck → regenerate → audit →
+  custody delta vs the last run (snapshot at `<root>/.maintenance/last-run.json`).
+  Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
+  the module owns only the snapshot/delta layer. Report-only and idempotent —
+  records drift events and regenerates views, never repairs rows or
+  re-enriches — so it is a safe cron-able pass (`tests/test_maintain.py`).
+  Like doctor, deliberately not exposed over MCP (a mutating operator surface).
 - **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
   files (scroll, captured media) and then its row, in that order, so an
   interrupted removal leaves a re-runnable item rather than orphan

@@ -418,6 +418,50 @@ $ scrolls verify --all
 [exit 0]
 ```
 
+### `scrolls maintain [--limit N | --no-recheck]`
+
+One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling
+(`docs/dogfood.md`), composed entirely from surfaces that already ship
+(`tests/test_maintain.py`). It runs four steps in order and prints one report:
+
+1. **recheck** — a bounded `scrolls verify --all`: re-capture every held item with
+   a baseline hash, append drift/rot events to the ledger, never touch the
+   captures. `--limit N` paces it (oldest saved first); `--no-recheck` skips the
+   live edge entirely for a fully offline pass (the two are mutually exclusive —
+   `--limit` bounds a recheck `--no-recheck` would skip).
+2. **regenerate** — `scrolls kb` (the deterministic compile), rebuilding the
+   `library/` views from the canonical rows. Never an LLM re-synthesis: refreshing
+   concept summaries stays the explicit `scrolls kb --stale`.
+3. **audit** — `scrolls doctor` (read-only, never `--fix`), read *after* the
+   recheck and regenerate so the custody picture is the post-maintenance state.
+4. **delta** — the custody change since the last run, compared against a snapshot
+   recorded at `<root>/.maintenance/last-run.json`. The snapshot carries only the
+   custody scalars the delta compares (`score`, fidelity `tiers`, the `drift`
+   posture, and the `enrichment_stale`/`summaries_stale` counts from doctor's
+   `custody.enrichment`/`custody.summaries` blocks). On the first run there is no
+   baseline (`delta.first_run: true`, every `before`/`change` null); a baseline
+   missing an axis (an older snapshot) reads that axis as zero, never null.
+
+This is **report-only and idempotent** (custody-vision §2.4): it records drift
+events and regenerates views, but never repairs index rows, reclassifies, or
+re-summarizes — `doctor --fix`, `classify --stale`, and `kb --stale` stay the
+explicit, on-request mutations. The recorded snapshot is dot-prefixed so it is
+never a compiled `library/` page and is never created by `scrolls init`; losing
+or corrupting it just means "first run" (the pass degrades safely, never aborts).
+
+The sharp custody point the delta makes visible (the dogfood proof's, recurring):
+detecting source drift moves the *drift posture* (`unverified` → `drifted`)
+**without lowering the integrity `score`** — raw is sacred, drift is a recorded
+event, not a loss of what we hold. Exit mirrors `doctor`: nonzero only when
+structural `issues` remain (run `doctor --fix` / `scrolls media`); drift and stale
+enrichment/summaries are reported, never a failure.
+
+```console
+$ scrolls maintain --limit 50            # second run; one source has drifted
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0}
+[exit 0]
+```
+
 ## Getting items in
 
 ### `scrolls detect <url>`
