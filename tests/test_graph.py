@@ -55,6 +55,26 @@ def test_edge_resolves_a_link_to_the_item_it_names(db):
     assert graph.edges[0].via == "https://arxiv.org/pdf/2605.27848"
 
 
+def test_nodes_carry_their_custody_fidelity(db):
+    # a graph node reports the same custody tier `scrolls related` does, so the
+    # two "node shapes" stay identical (ADR 0100); the graph already holds the
+    # full item, so the tier is derived for free.
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))  # a tweet: pointer only, no body
+    insert_item(db, make_item(
+        "arxiv:2605.27848",
+        url="https://arxiv.org/abs/2605.27848",
+        raw_text="the abstract and body", content_hash="sha256:p", stage="rendered",
+    ))
+
+    by_id = {node.id: node for node in build_graph(db).nodes}
+    assert by_id["x:1111"].fidelity == "reference"
+    assert by_id["arxiv:2605.27848"].fidelity == "full"
+
+
 def test_only_connected_items_are_nodes_by_default(db):
     insert_item(db, make_item(
         "x:1111",

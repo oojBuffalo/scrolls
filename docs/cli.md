@@ -1243,8 +1243,9 @@ saved item names another (a tweet citing a paper, a model's `arxiv:` tag,
 a preprint's published DOI), with `via` the link that matched. Resolution
 is the same two-sided, source-detecting match `related` uses (ADR 0023),
 so the graph is exactly the connections `related` would find, materialized
-at once. Nodes carry the `id`, `source`, `title`, `url`, `stage` shape
-`related`/`search` hits use, sorted by id; edges sorted by `(from, to)`.
+at once. Nodes carry the `id`, `source`, `title`, `url`, `stage`, `fidelity`
+shape `related`/`search` hits use (the custody tier travels with the node,
+ADR 0100), sorted by id; edges sorted by `(from, to)`.
 
 Nodes are the *connected* items by default — `--all` widens it to every
 item, isolated ones included. `stats.items` is always the library total,
@@ -1256,7 +1257,7 @@ uninitialized library is an empty graph, exit 0.
 
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}}
 [exit 0]
 ```
 
@@ -1277,8 +1278,10 @@ an arXiv preprint and a PubMed record that both name `doi.org/D` are one
 work even when the `crossref:D` item that would link them is absent
 (`test_clusters_without_the_crossref_hub_present`). Each work carries its
 `doi`, canonical `url`, and `representations` (the `id`/`source`/`title`/
-`url`/`stage` node shape `graph`/`related` use), sorted by id; works sort
-by representation count then DOI. `--min N` sets the minimum
+`url`/`stage`/`fidelity` node shape `graph`/`related` use, so each
+representation reports the custody tier it is held at — the preprint may be
+full while the published record is a bare reference, ADR 0100), sorted by
+id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
 library total. An empty or uninitialized library is no works, exit 0.
@@ -1296,11 +1299,11 @@ works, and an unknown item is a JSON error on stderr, exit 1.
 
 ```console
 $ scrolls works
-{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched"}]}], "stats": {"items": 2, "works": 1}}
+{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched"}]}], "stats": {"items": 2, "works": 1}}
+{"works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial"}]}], "stats": {"items": 2, "works": 1}}
 [exit 0]
 ```
 

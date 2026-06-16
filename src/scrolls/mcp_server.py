@@ -228,7 +228,9 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     get_related_scrolls explores one item's neighborhood, this returns the
     whole structure at once. Nodes are the connected items unless
     `include_isolated` widens it to every item; `stats.items` is the library
-    total.
+    total. Each node carries its custody `fidelity` tier (full/partial/
+    reference, ADR 0097), the same tier get_related_scrolls reports, so a node
+    says how much of the item the library holds.
     """
     paths = get_paths()
     return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
@@ -249,7 +251,10 @@ def get_works(
     `doi`, `url`, `representations` (the same node shape as the graph), and
     `canonical` — the id of the one representation that stands for the whole
     work (the registered published record over a preprint), a pointer into
-    its own `representations` so a caller can cite or display that form.
+    its own `representations` so a caller can cite or display that form. Each
+    representation carries its custody `fidelity` tier (full/partial/reference,
+    ADR 0097), so a caller sees which forms of the work the library holds in
+    full and which only by reference.
     Works with fewer than `min_representations` items are omitted (default 2,
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.

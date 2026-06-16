@@ -44,7 +44,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.items import ScrollItem, list_items
+from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
 
@@ -83,13 +83,21 @@ _RANK_OTHER = len(CANONICAL_SOURCE_RANK)
 
 @dataclass(frozen=True)
 class Representation:
-    """One item that represents a work — the node shape graph/related use."""
+    """One item that represents a work — the node shape graph/related use.
+
+    Carries the item's custody `fidelity` tier (full/partial/reference,
+    ADR 0097/0100) alongside the same fields graph nodes and related hits do,
+    so an agent reading a work sees which of its representations the library
+    holds in full and which only by reference — the published DOI record may be
+    a bare pointer while the preprint is fully held, or vice versa.
+    """
 
     id: str
     source: str
     title: str | None
     url: str
     stage: str
+    fidelity: str
 
 
 @dataclass(frozen=True)
@@ -218,6 +226,7 @@ def to_payload(works: list[Work], item_count: int) -> dict:
                         "title": rep.title,
                         "url": rep.url,
                         "stage": rep.stage,
+                        "fidelity": rep.fidelity,
                     }
                     for rep in work.representations
                 ],
@@ -287,4 +296,5 @@ def _representation(item: ScrollItem) -> Representation:
         title=item.title,
         url=item.url,
         stage=item.stage,
+        fidelity=get_fidelity(item),
     )

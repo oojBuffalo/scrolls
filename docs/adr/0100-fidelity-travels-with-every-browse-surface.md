@@ -51,7 +51,19 @@ affords:**
 - `RelatedHit` gains a `fidelity` field, derived with `get_fidelity(other)`
   directly, because `find_related` already holds the full neighbour item.
 
-Both fields propagate to the CLI (`dataclasses.asdict`) and MCP outputs for free.
+**Keep the shared node shape actually shared.** `graph.Node` documents itself as
+"the same shape `scrolls related` reports" and `works.Representation` as "the
+node shape graph/related use" — three surfaces deliberately reporting one item
+shape. Adding `fidelity` to `RelatedHit` alone would silently break that
+contract, so the same field is added to both: `graph.Node` (derived in `_node`
+with `get_fidelity(item)`, surfaced in `to_payload`) and `works.Representation`
+(derived in `_representation`, surfaced in `to_payload`). Both already load full
+items, so the tier costs nothing extra, and a work now shows which of its
+representations the library holds in full versus by reference — the preprint may
+be fully held while the published DOI record is a bare pointer.
+
+All four hit/node/representation fields propagate to the CLI
+(`dataclasses.asdict` / the payload builders) and MCP outputs for free.
 
 **Fold the facet onto the same primitive.** `facets._fidelity_counts` no longer
 reconstructs a lightweight `ScrollItem` per row (the `_load_fidelity_columns`
@@ -63,11 +75,14 @@ it. Behavior is byte-for-byte unchanged (the existing facet tests pin it).
 
 ## Consequences
 
-- `scrolls search` / `search_scrolls` and `scrolls related` /
-  `get_related_scrolls` each carry a `fidelity` tier on every hit, identical to
-  the tier `scrolls list`, the facet, and `doctor` report. Fidelity now travels
-  with **every** way an agent reaches an item — list, search, related — closing
-  the search/list/MCP consistency gap for this dimension.
+- `scrolls search` / `search_scrolls`, `scrolls related` /
+  `get_related_scrolls`, `scrolls graph` / `get_link_graph`, and `scrolls works`
+  / `get_works` each carry a `fidelity` tier on every hit / node /
+  representation, identical to the tier `scrolls list`, the facet, and `doctor`
+  report. Fidelity now travels with **every** way an agent reaches an item —
+  list, search, related, graph, works — closing the search/list/MCP consistency
+  gap for this dimension, and the three surfaces that share one "node shape"
+  (related, graph, works) stay byte-for-byte the same shape.
 - The tier rule lives in one function (`fidelity_tier`); `get_fidelity`, search,
   and the facet all delegate to it, so the three surfaces cannot drift in how
   they classify a tier.
@@ -80,6 +95,8 @@ it. Behavior is byte-for-byte unchanged (the existing facet tests pin it).
 - Verified offline: `tests/test_search.py` (each tier on a ranked hit, and that
   a hit's tier equals `get_fidelity` of the same stored item),
   `tests/test_related.py` (the neighbour's tier on the hit + the CLI surface),
-  `tests/test_fidelity.py` (`fidelity_tier` agrees with `get_fidelity` across
-  every presence/stage combination), and the existing facet/list shape tests in
+  `tests/test_graph.py` (each node's tier), `tests/test_works.py` (each
+  representation's own tier + the CLI payload shape), `tests/test_fidelity.py`
+  (`fidelity_tier` agrees with `get_fidelity` across every presence/stage
+  combination), and the existing facet/list shape tests in
   `tests/test_facets.py` / `tests/test_cli.py` / `tests/test_mcp.py`.

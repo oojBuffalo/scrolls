@@ -281,6 +281,21 @@ def test_works_for_item_solo_work_canonical_is_the_item_itself():
     assert work.canonical.id == "arxiv:1706.03762"
 
 
+def test_representations_carry_their_per_item_custody_fidelity():
+    # each representation reports its own tier (ADR 0100), so an agent sees the
+    # library may hold the preprint in full but only a reference to the record.
+    items = [
+        make_item("arxiv:1706.03762", links=("https://doi.org/10.1000/x",),
+                  raw_text="the preprint body", content_hash="sha256:a",
+                  stage="rendered"),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+    ]
+    (work,) = works_over(items)
+    by_id = {rep.id: rep for rep in work.representations}
+    assert by_id["arxiv:1706.03762"].fidelity == "full"
+    assert by_id["crossref:10.1000/x"].fidelity == "reference"
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -314,6 +329,8 @@ def test_cli_works_reports_clusters(db, capsys):
         "title": "Attention Is All You Need",
         "url": "https://arxiv.org/abs/1706.03762",
         "stage": "fetched",
+        # no body held for this representation — a bare reference (ADR 0100)
+        "fidelity": "reference",
     }
     # the canonical representation is named by id (the published record, here)
     assert work["canonical"] == "crossref:10.5555/3295222"

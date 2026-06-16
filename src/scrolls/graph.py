@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.items import ScrollItem, list_items, make_item_id
+from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
 
@@ -48,13 +48,20 @@ class Edge:
 
 @dataclass(frozen=True)
 class Node:
-    """A graph node: an item, in the same shape `scrolls related` reports."""
+    """A graph node: an item, in the same shape `scrolls related` reports.
+
+    `fidelity` is the item's custody tier (full/partial/reference, ADR 0097/
+    0100), so a node an agent lands on while reading the graph says how much of
+    it the library holds — the same tier `scrolls related` carries, keeping the
+    two shapes identical now that fidelity travels with related hits.
+    """
 
     id: str
     source: str
     title: str | None
     url: str
     stage: str
+    fidelity: str
 
 
 @dataclass(frozen=True)
@@ -192,6 +199,7 @@ def to_payload(graph: Graph) -> dict:
                 "title": node.title,
                 "url": node.url,
                 "stage": node.stage,
+                "fidelity": node.fidelity,
             }
             for node in graph.nodes
         ],
@@ -274,4 +282,5 @@ def _node(item: ScrollItem) -> Node:
         title=item.title,
         url=item.url,
         stage=item.stage,
+        fidelity=get_fidelity(item),
     )
