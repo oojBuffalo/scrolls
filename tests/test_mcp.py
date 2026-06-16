@@ -198,6 +198,35 @@ def test_get_scroll_history_limit_returns_the_most_recent_n(scrolls_home):
     assert len(mcp_server.get_scroll_history("web:demo")) == 3  # unbounded default
 
 
+def test_get_scroll_history_since_windows_like_the_cli(scrolls_home):
+    # H71: the twin windows to checks at/after the boundary, like `scrolls
+    # history --since`, and equals the shared `item_history` primitive
+    from scrolls.custody import CustodyEvent, item_history, record_events
+
+    _seed_verifiable_item()
+    record_events(get_paths().db_path, [
+        CustodyEvent("web:demo", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:demo", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:demo", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "x"),
+    ])
+    history = mcp_server.get_scroll_history("web:demo", since="2026-06-14T00:00:00+00:00")
+    assert [e["status"] for e in history] == ["rotted", "drifted"]  # 06-13 dropped
+    assert history == item_history(
+        get_paths().db_path, "web:demo", since="2026-06-14T00:00:00+00:00"
+    )
+    # composes with limit (window then cap) and empty window is the honest []
+    assert [e["status"] for e in mcp_server.get_scroll_history(
+        "web:demo", since="2026-06-14T00:00:00+00:00", limit=1
+    )] == ["rotted"]
+    assert mcp_server.get_scroll_history("web:demo", since="2026-08-01T00:00:00+00:00") == []
+
+
+def test_get_scroll_history_malformed_since_raises(scrolls_home):
+    _seed_verifiable_item()
+    with pytest.raises(ValueError):
+        mcp_server.get_scroll_history("web:demo", since="yesterday")
+
+
 def test_get_scroll_history_unknown_item_raises(scrolls_home):
     main(["init"])
     with pytest.raises(ValueError, match="no such item"):

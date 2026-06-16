@@ -2697,6 +2697,92 @@ def test_import_events_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
     assert "error" in json.loads(captured.err)
 
 
+# --- export events --since: the incremental custody backup (H75) ------------
+
+
+def test_export_events_since_windows_the_ledger(scrolls_home, capsys):
+    # the seed has a 06-13 unchanged and a 06-15 drifted check for web:demo
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    assert main(["export", "events", "--since", "2026-06-15T00:00:00+00:00"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # only the 06-15 check travels; the 06-13 one is before the window (boundary
+    # inclusive — the 06-15 check exactly at it stays)
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["checked_at"] == "2026-06-15T00:00:00+00:00"
+    assert row["status"] == "drifted"
+
+
+def test_export_events_since_empty_window_is_an_empty_document(scrolls_home, capsys):
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    # nothing falls in the window — a valid empty JSONL doc, never a crash
+    assert main(["export", "events", "--since", "2026-08-01T00:00:00+00:00"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_events_malformed_since_is_a_usage_error(scrolls_home, capsys):
+    _seed_item_with_events(scrolls_home)
+    capsys.readouterr()
+    exit_code = main(["export", "events", "--since", "yesterday"])
+    captured = capsys.readouterr()
+    assert exit_code == 2  # loud usage error, the `maintain --trend` precedent
+    assert captured.out == ""  # no partial backup written
+    assert "error" in json.loads(captured.err)
+
+
+def test_export_events_since_composes_with_the_source_facet(scrolls_home, capsys):
+    # window then scope: a github check inside the window, a web one outside it
+    _seed_item_with_events(scrolls_home, item_id="web:w", source="web")
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="github:g/g", source="github", url="https://github.com/g/g",
+        saved_at="2026-06-12T00:00:00+00:00", title="g", content_hash="hg",
+        markdown_path="scrolls/github/g.md", stage="rendered",
+    ))
+    record_events(db, [
+        CustodyEvent("github:g/g", "2026-06-16T00:00:00+00:00", "rotted", "hg", None, "404"),
+    ])
+    capsys.readouterr()
+    assert main(
+        ["export", "events", "--since", "2026-06-16T00:00:00+00:00", "--source", "github"]
+    ) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["item_id"] == "github:g/g"
+
+
+def test_export_events_since_union_reimports_idempotently(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the incremental-backup contract: a full backup plus an overlapping --since
+    # backup, imported together into a fresh library, dedups to the whole ledger
+    _seed_item_with_events(scrolls_home)  # 06-13 + 06-15 for web:demo
+    capsys.readouterr()
+
+    main(["export", "events"])
+    full = tmp_path / "full.jsonl"
+    full.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    main(["export", "events", "--since", "2026-06-15T00:00:00+00:00"])
+    incremental = tmp_path / "incr.jsonl"  # overlaps the full backup's 06-15 row
+    incremental.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "events", str(full)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"imported": 2, "skipped": 0, "events": 2}
+    # the incremental backup's one row is already held — a custody no-op
+    assert main(["import", "events", str(incremental)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"imported": 0, "skipped": 1, "events": 1}
+
+    from scrolls.custody import item_events
+    restored = item_events(get_paths().db_path, "web:demo")
+    assert [e.status for e in restored] == ["drifted", "unchanged"]  # whole ledger, once
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])

@@ -26,6 +26,7 @@ from scrolls.custody import (
     items_in_posture,
     latest_events,
     live_recapture,
+    parse_since,
     record_events,
     unverified_items,
     verify_item,
@@ -251,6 +252,98 @@ def test_item_history_limit_returns_the_most_recent_n(tmp_path):
     assert item_history(db_path, "web:a", limit=0) == []
     assert len(item_history(db_path, "web:a", limit=99)) == 3
     assert item_history(db_path, "web:a", limit=None) == item_history(db_path, "web:a")
+
+
+# --- parse_since: the shared --since window normalizer/validator (H71/H75) ---
+
+
+def test_parse_since_normalizes_to_the_stored_utc_iso_shape():
+    # no window asked for (the default and an explicit blank both mean "no window")
+    assert parse_since(None) is None
+    assert parse_since("") is None
+    assert parse_since("   ") is None
+    # the stored `checked_at` vocabulary: isoformat(timespec="seconds") in +00:00
+    assert parse_since("2026-06-15T12:00:00+00:00") == "2026-06-15T12:00:00+00:00"
+    # a Z suffix and a date-only boundary both normalize to that shape, so the
+    # downstream `checked_at >=` compare is apples-to-apples, not a string accident
+    assert parse_since("2026-06-15T12:00:00Z") == "2026-06-15T12:00:00+00:00"
+    assert parse_since("2026-06-15") == "2026-06-15T00:00:00+00:00"
+
+
+def test_parse_since_rejects_a_malformed_boundary():
+    # a non-blank value that is not a timestamp is a loud usage error, never a
+    # silently-empty window that could mask a typo
+    with pytest.raises(ValueError):
+        parse_since("yesterday")
+    with pytest.raises(ValueError):
+        parse_since("not-a-date")
+
+
+def test_item_history_since_windows_to_on_or_after(tmp_path):
+    # H71: the time-axis sibling of --limit — "what has this source done since X"
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+    # only checks at or after the boundary survive — newest first, oldest dropped
+    windowed = item_history(db_path, "web:a", since="2026-06-14T00:00:00+00:00")
+    assert [e["status"] for e in windowed] == ["rotted", "drifted"]
+    # the boundary is inclusive (>=, not >): a check exactly at the boundary stays
+    assert windowed[-1]["checked_at"] == "2026-06-14T00:00:00+00:00"
+    # None is the whole unwindowed ledger
+    assert item_history(db_path, "web:a", since=None) == item_history(db_path, "web:a")
+
+
+def test_item_history_since_composes_with_limit_window_then_cap(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+    # window to the last two checks, then cap to the most recent one of those
+    capped = item_history(
+        db_path, "web:a", since="2026-06-14T00:00:00+00:00", limit=1
+    )
+    assert [e["status"] for e in capped] == ["rotted"]
+
+
+def test_item_history_since_empty_window_is_honest_empty(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+    ])
+    # nothing falls in the window — checked-and-empty, never an error
+    assert item_history(db_path, "web:a", since="2026-07-01T00:00:00+00:00") == []
+
+
+def test_events_for_items_since_windows_within_the_id_scope(tmp_path):
+    # H75: the incremental-backup window over the export read, after id scoping
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:b", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h", "h3"),
+    ])
+    scoped = events_for_items(
+        db_path, ["web:a"], since="2026-06-14T00:00:00+00:00"
+    )
+    # only web:a's events (id scope) that are at/after the boundary (time window)
+    assert [(e.item_id, e.checked_at) for e in scoped] == [
+        ("web:a", "2026-06-15T00:00:00+00:00")
+    ]
+    # None (the bundle/H72 callers' value) exports the whole scoped ledger
+    assert events_for_items(db_path, ["web:a"], since=None) == events_for_items(
+        db_path, ["web:a"]
+    )
+    # an empty window over a non-empty scope is an empty read, never a crash
+    assert events_for_items(db_path, ["web:a"], since="2026-08-01T00:00:00+00:00") == []
 
 
 def test_latest_events_takes_the_most_recent_per_item(tmp_path):

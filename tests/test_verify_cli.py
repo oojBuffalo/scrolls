@@ -500,3 +500,77 @@ def test_history_limit_over_count_returns_the_whole_ledger(paths, capsys):
 
     assert capped == full
     assert len(full) == 3
+
+
+# --- scrolls history <id> --since <ISO> — the time-axis ledger window (H71) --
+
+
+def test_history_since_windows_to_checks_on_or_after_the_boundary(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)  # 06-13 unchanged, 06-14 drifted, 06-15 rotted
+
+    exit_code = main(["history", item.id, "--since", "2026-06-14T00:00:00+00:00"])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    # only the 06-14 and 06-15 checks, newest first; 06-13 falls out of the window
+    assert [e["status"] for e in out] == ["rotted", "drifted"]
+    # the boundary is inclusive (>=): the 06-14 check exactly at it stays
+    assert out[-1]["checked_at"] == "2026-06-14T00:00:00+00:00"
+
+
+def test_history_since_accepts_a_date_only_boundary(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    # a bare date normalizes to that day's midnight UTC, so the whole day is in
+    assert main(["history", item.id, "--since", "2026-06-15"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["status"] for e in out] == ["rotted"]
+
+
+def test_history_since_composes_with_limit_window_then_cap(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    # window to the last two checks, then cap to the most recent one of those
+    assert main(
+        ["history", item.id, "--since", "2026-06-14T00:00:00+00:00", "--limit", "1"]
+    ) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["status"] for e in out] == ["rotted"]
+
+
+def test_history_since_empty_window_is_the_honest_empty(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    exit_code = main(["history", item.id, "--since", "2026-07-01T00:00:00+00:00"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out) == []  # checked-and-empty, never an error
+    assert captured.err == ""
+
+
+def test_history_malformed_since_is_a_loud_usage_error(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    exit_code = main(["history", item.id, "--since", "yesterday"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2  # usage error, the `maintain --trend` precedent
+    assert captured.out == ""  # nothing emitted when the request itself is malformed
+    assert "error" in json.loads(captured.err)
+
+
+def test_history_malformed_since_beats_an_unknown_id(paths, capsys):
+    # a malformed window is a usage error caught before the item lookup, so a
+    # typo'd boundary on an unknown item is exit 2 (usage), not exit 1 (no item)
+    exit_code = main(["history", "web:does-not-exist", "--since", "not-a-date"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)

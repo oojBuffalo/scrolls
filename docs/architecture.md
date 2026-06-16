@@ -133,9 +133,15 @@ each command moves items between stages or derives artifacts from them.
   agent sees *when* a source drifted and *how often* it was re-checked, the
   per-item counterpart of `maintain --history`'s scope-level trajectory; a
   `--limit N` (roadmap H69) bounds a long ledger to the most recent N checks
-  (a scheduled `maintain` appends a verdict per pass), the whole timeline by
-  default. Like `show`, an unknown ref is a loud could-not-check error while a
-  held-but-never-checked item is the honest empty `[]` (folded into the M2
+  (a scheduled `maintain` appends a verdict per pass) and `--since <ISO>`
+  (roadmap H71) windows it to checks at/after a boundary — "what has this source
+  done since the last sweep" — the two composing window-then-cap, the whole
+  timeline by default. The boundary normalizes through the one `checked_at`
+  vocabulary (`custody.parse_since` over `dates.to_utc_iso`, ADR 0024) so the
+  lexicographic `checked_at >=` compare is apples-to-apples; a malformed
+  `--since` is a loud usage error (exit 2). Like `show`, an unknown ref is a
+  loud could-not-check error while a held-but-never-checked item (or an empty
+  `--since` window) is the honest empty `[]` (folded into the M2
   completeness invariant). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
@@ -242,7 +248,11 @@ each command moves items between stages or derives artifacts from them.
   carries in its second `@generated` region (H67): same restore primitive, a
   machine stream rather than a readable briefing. Restore order is free (the
   ledger is keyed by `item_id` string), typically `import items` then `import
-  events`.
+  events`. `export events --since <ISO>` (roadmap H75) makes it an **incremental
+  backup** — only events `checked_at >= <ISO>` (the boundary normalized through
+  `custody.parse_since`, window then the item facets), so a maintenance worker
+  appends only what is new since the last sweep; the content-5-tuple dedup makes
+  the union of a full and overlapping incremental backups re-import idempotently.
 - `scrolls export bundle <query>` / `scrolls import bundle <path>` are the
   **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
   self-contained Markdown file that is both a readable topic *briefing* (per

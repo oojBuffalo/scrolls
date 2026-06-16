@@ -34,6 +34,7 @@ from scrolls.custody import (
     item_history,
     latest_events,
     live_recapture,
+    parse_since,
     record_events,
     unverified_items,
     verify_item,
@@ -348,6 +349,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return only the most recent N checks (newest first); default is "
         "the whole timeline",
     )
+    history_parser.add_argument(
+        "--since",
+        default=None,
+        help="Only checks at or after this ISO-8601 timestamp (e.g. 2026-06-15 "
+        "or 2026-06-15T12:00:00+00:00); composes with --limit (window then cap)",
+    )
 
     import_parser = subparsers.add_parser(
         "import", help="Bulk-import a local archive (JSON output)"
@@ -482,6 +489,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tag",
         default=None,
         help="Only events for items carrying this tag (case-insensitive)",
+    )
+    export_events_parser.add_argument(
+        "--since",
+        default=None,
+        help="Only events at or after this ISO-8601 timestamp (an incremental "
+        "backup since the last sweep); re-importing the overlapping union "
+        "dedups, so it stays idempotent",
     )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
@@ -845,7 +859,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "history":
-        return _cmd_history(args.id, args.limit)
+        return _cmd_history(args.id, args.limit, args.since)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -868,7 +882,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.export_command == "items":
             return _cmd_export_items(args.source, args.category, args.tag)
         if args.export_command == "events":
-            return _cmd_export_events(args.source, args.category, args.tag)
+            return _cmd_export_events(
+                args.source, args.category, args.tag, args.since
+            )
         if args.export_command == "bundle":
             return _cmd_export_bundle(
                 args.query,
@@ -1380,12 +1396,25 @@ def _cmd_export_items(
 
 
 def _cmd_export_events(
-    source: str | None, category: str | None, tag: str | None
+    source: str | None,
+    category: str | None,
+    tag: str | None,
+    since: str | None = None,
 ) -> int:
     # whole-library portable custody (H72): the verify ledger as a lossless JSONL
     # stream, the custody sibling of `export items`. Scoped by the same
     # item-facet set (source/category/tag) — resolve the items, then their
     # events — so a slice's custody travels with the slice's items.
+    #
+    # `--since <ISO>` (H75) windows the stream to events at/after the boundary —
+    # an incremental backup since the last sweep. Validated first so a malformed
+    # boundary is a loud usage error (exit 2, the `maintain --trend` precedent),
+    # never a silently-empty backup; an empty window is still a valid empty doc.
+    try:
+        boundary = parse_since(since)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
     paths = get_paths()
     items = (
         list_items(paths.db_path, source=source, category=category, tag=tag)
@@ -1393,7 +1422,9 @@ def _cmd_export_events(
         else []
     )
     events = (
-        events_for_items(paths.db_path, [item.id for item in items]) if items else []
+        events_for_items(paths.db_path, [item.id for item in items], since=boundary)
+        if items
+        else []
     )
     # the JSONL stream *is* the artifact (the `export items` rule) —
     # `scrolls export events > ledger.jsonl`
@@ -2322,7 +2353,9 @@ def _cmd_show(item_id: str) -> int:
     return 0
 
 
-def _cmd_history(item_id: str, limit: int | None = None) -> int:
+def _cmd_history(
+    item_id: str, limit: int | None = None, since: str | None = None
+) -> int:
     """Print one item's custody-ledger timeline, newest first (roadmap H66).
 
     `verify` appends an append-only custody event per check; `show`/`list` carry
@@ -2332,18 +2365,31 @@ def _cmd_history(item_id: str, limit: int | None = None) -> int:
     so an agent can see *when* a source drifted and *how often* it has been
     re-checked, the per-item counterpart of `maintain --history`'s scope-level
     trajectory. `--limit N` bounds a long ledger to the most recent N checks
-    (roadmap H69), the whole timeline by default. Read-only and honest: a
-    known-but-never-verified item is the empty `[]` (completeness G1,
-    checked-and-empty), while an *unknown* ref is a loud could-not-check error —
-    the same empty-vs-error split `show`/`related` draw, so the per-item ledger
-    never masquerades a typo as "no history".
+    (roadmap H69) and `--since <ISO>` windows it to checks at/after a boundary
+    (roadmap H71 — "what has this source done since the last sweep"); the two
+    compose window-then-cap, the whole timeline by default. Read-only and
+    honest: a known-but-never-verified item (or an empty `--since` window) is the
+    empty `[]` (completeness G1, checked-and-empty), an *unknown* ref is a loud
+    could-not-check error (exit 1) — the same empty-vs-error split
+    `show`/`related` draw, so the per-item ledger never masquerades a typo as
+    "no history" — and a malformed `--since` is a loud usage error (exit 2, the
+    `maintain --trend` precedent), validated before the item lookup.
     """
+    try:
+        boundary = parse_since(since)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
     paths = get_paths()
     item, error = _find_item(paths, item_id)
     if item is None:
         print(json.dumps({"error": error}), file=sys.stderr)
         return 1
-    print(json.dumps(item_history(paths.db_path, item.id, limit=limit)))
+    print(
+        json.dumps(
+            item_history(paths.db_path, item.id, limit=limit, since=boundary)
+        )
+    )
     return 0
 
 

@@ -496,7 +496,7 @@ $ scrolls verify --unverified      # only the held items doctor flags `unverifie
 [exit 0]
 ```
 
-### `scrolls history <id> [--limit N]`
+### `scrolls history <id> [--limit N] [--since ISO]`
 
 Print one item's **custody-ledger timeline**, newest first (cited tests in
 `tests/test_verify_cli.py`). Where `scrolls verify` *appends* a custody event per
@@ -516,7 +516,24 @@ same item). `--limit N` bounds a long ledger to the most recent N checks
 schedule appends a verdict per pass, so a long-lived item accumulates history;
 the whole timeline is the default, and the slice mirrors `list --limit` so
 `--limit 0` is the honest empty `[]` and an over-count returns all
-(`test_history_limit_returns_the_most_recent_n`). Read-only and honest about absence (the completeness contract): a
+(`test_history_limit_returns_the_most_recent_n`).
+
+`--since <ISO>` is the **time-axis** sibling of `--limit`'s count cap: it
+returns only the checks `checked_at >= <ISO>`, so a maintenance worker can ask
+"what has this source done *since the last sweep*" without reading (or capping
+by count) the whole ledger. The boundary is normalized through the one
+`published_at`/`checked_at` vocabulary (ADR 0024), so a `Z` suffix, a different
+offset, or a date-only `2026-06-15` (that day's midnight UTC) all compare
+correctly against the stored `+00:00` stamps; the boundary is **inclusive** and
+the two flags compose **window then cap** (`--since` cuts the time range, then
+`--limit` caps the count of what remains —
+`test_history_since_composes_with_limit_window_then_cap`). An empty window is
+the honest `[]` (checked-and-empty, exit 0); a **malformed** `--since` is a loud
+usage error on stderr, exit 2 — validated *before* the item lookup, so a typo'd
+boundary on an unknown item is a usage error, not a missing-item one
+(`test_history_malformed_since_beats_an_unknown_id`).
+
+Read-only and honest about absence (the completeness contract): a
 held item the ledger has *never* checked is the empty `[]` — checked-and-empty,
 exit 0 (`test_history_of_a_never_verified_item_is_empty`) — while an *unknown*
 ref is a loud could-not-check error on stderr, exit 1
@@ -533,6 +550,10 @@ $ scrolls history web:never-verified      # held, but never re-checked
 [exit 0]
 
 $ scrolls history web:af2e70e87b6d --limit 1   # just the latest check
+[{"checked_at": "2026-06-16T09:00:00+00:00", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]
+[exit 0]
+
+$ scrolls history web:af2e70e87b6d --since 2026-06-15   # only checks since the last sweep
 [{"checked_at": "2026-06-16T09:00:00+00:00", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]
 [exit 0]
 ```
@@ -1098,7 +1119,7 @@ $ scrolls export items --source arxiv
 [exit 0]
 ```
 
-### `scrolls export events [--source S] [--category C] [--tag T]`
+### `scrolls export events [--source S] [--category C] [--tag T] [--since ISO]`
 
 Export the verify ledger (`custody_events`) as a lossless JSON Lines stream —
 **whole-library portable custody** (roadmap H72), the custody sibling of
@@ -1119,8 +1140,24 @@ path argument. The same three durable item-property filters `export items`
 offers scope it and AND together — `--source`, `--category` (empty selects
 unclassified), `--tag` — by resolving the matching items and exporting *their*
 events, so a slice's custody travels with the slice
-(`test_export_events_source_filter_scopes_to_the_items_facet`). An empty (or
-pre-`init`) library produces an empty document, never an error
+(`test_export_events_source_filter_scopes_to_the_items_facet`).
+
+`--since <ISO>` makes it an **incremental backup** (roadmap H75): it streams
+only the events `checked_at >= <ISO>`, so a maintenance worker that backs up
+custody after each sweep can append only what is new rather than re-exporting
+the whole ledger every time. The boundary is normalized through the one
+`checked_at` vocabulary (ADR 0024, a `Z` suffix / offset / date-only all
+compare correctly) and is **inclusive**; it composes with the facets (window
+then scope — `test_export_events_since_composes_with_the_source_facet`). Because
+`import events` dedups on the content 5-tuple, the **union** of a full backup
+and overlapping incremental ones re-imports idempotently — every duplicate row
+is skipped (`test_export_events_since_union_reimports_idempotently`). An empty
+window is a valid empty document, never an error
+(`test_export_events_since_empty_window_is_an_empty_document`); a malformed
+`--since` is a loud usage error, exit 2
+(`test_export_events_malformed_since_is_a_usage_error`).
+
+An empty (or pre-`init`) library produces an empty document, never an error
 (`test_export_events_empty_library_is_valid`,
 `test_export_events_before_init_is_an_empty_document`). Restore with
 `scrolls import events`.
@@ -1128,6 +1165,9 @@ pre-`init`) library produces an empty document, never an error
 ```console
 $ scrolls export events --source arxiv
 {"item_id": "arxiv:1706.03762", "checked_at": "2026-06-14T00:00:00+00:00", "status": "drifted", "prior_hash": "sha256:6d2e1066", "observed_hash": "sha256:a1b2c3d4", "detail": null}
+[exit 0]
+
+$ scrolls export events --since 2026-06-16 >> ledger.jsonl   # append only checks since the last sweep
 [exit 0]
 ```
 
@@ -2377,7 +2417,7 @@ The tools wrap the same engines as the CLI commands
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the two custody axes (`fidelity` + `drift`, H61) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
-| `get_scroll_history(item_id, limit=None)` | `scrolls history <id> [--limit N]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `limit` bounds it to the most recent N; `[]` when never verified, error on an unknown id; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_returns_the_ledger_newest_first`) |
+| `get_scroll_history(item_id, limit=None, since=None)` | `scrolls history <id> [--limit N] [--since ISO]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `limit` bounds it to the most recent N and `since` windows it to checks at/after a boundary (window then cap); `[]` when never verified or empty window, error on an unknown id or malformed `since`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_since_windows_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |

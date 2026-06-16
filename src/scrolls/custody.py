@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, get_fidelity
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 
@@ -135,6 +136,35 @@ def live_recapture(item: ScrollItem) -> ScrollItem:
 _EVENT_COLUMNS = ("item_id", "checked_at", "status", "prior_hash", "observed_hash", "detail")
 
 
+def parse_since(since: str | None) -> str | None:
+    """Normalize a ``--since`` ledger-window boundary to the stored UTC ISO
+    vocabulary (ADR 0024), or ``None`` when no window was asked for.
+
+    The shared validator behind every time-windowed ledger read — `scrolls
+    history <id> --since` (roadmap H71) and `scrolls export events --since`
+    (H75). It funnels the raw boundary through `dates.to_utc_iso`, the one
+    parser every `published_at`/`checked_at` writer uses, so the window edge
+    ends up in *exactly* the ``isoformat(timespec="seconds")`` ``+00:00`` shape
+    `verify` stamps a `checked_at` with. That makes the downstream lexicographic
+    ``checked_at >= since`` compare apples-to-apples regardless of how the
+    boundary was written — a ``Z`` suffix, a different offset, or a date-only
+    ``2026-06-15`` (which becomes that day's midnight UTC) all normalize to the
+    stored shape before the compare, so the ordering is correct and not a
+    string-shape accident.
+
+    ``None`` or a blank value means *no window* (returns ``None``); a non-blank
+    value that does not parse as a timestamp raises ``ValueError`` — a malformed
+    window is a loud usage error (the CLI maps it to exit 2, the MCP twin lets
+    it surface), never a silently empty result that could mask a typo.
+    """
+    if since is None or not since.strip():
+        return None
+    normalized = to_utc_iso(since)
+    if normalized is None:
+        raise ValueError(f"not a valid ISO-8601 timestamp: {since!r}")
+    return normalized
+
+
 def record_events(db_path: Path, events: Iterable[CustodyEvent]) -> int:
     """Append custody events to the ledger in one transaction; return the count.
 
@@ -222,7 +252,11 @@ def event_payload(event: CustodyEvent) -> dict[str, str | None]:
 
 
 def item_history(
-    db_path: Path, item_id: str, *, limit: int | None = None
+    db_path: Path,
+    item_id: str,
+    *,
+    limit: int | None = None,
+    since: str | None = None,
 ) -> list[dict[str, str | None]]:
     """The custody ledger timeline for one item, newest first.
 
@@ -234,15 +268,23 @@ def item_history(
     over the ledger read; the single primitive `scrolls history` and the MCP
     `get_scroll_history` twin share, so they can never disagree.
 
-    `limit` bounds a long ledger to the most recent N checks (newest first,
-    oldest dropped) — a maintenance worker that appends a verdict per pass
-    accumulates a long history, and `--limit` reads only the head. ``None``
-    (the default) returns the whole timeline, so the unbounded shape is
-    unchanged; the slice mirrors `scrolls list --limit` (``events[:limit]``), so
-    ``0`` is the honest empty `[]` and an over-count returns all.
+    `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`, which
+    the CLI/MCP edge calls): only checks ``checked_at >= since`` are kept — the
+    time-axis window a maintenance worker asks for ("what has this source done
+    since the last sweep", roadmap H71). ``None`` (the default) keeps the whole
+    ledger. `limit` then bounds the windowed result to the most recent N checks
+    (newest first, oldest dropped) — a maintenance worker that appends a verdict
+    per pass accumulates a long history, and `--limit` reads only the head.
+    ``None`` returns everything in the window. The two compose **window then
+    cap**: `since` cuts the time range, then `limit` caps the count of what
+    remains, so ``0`` is the honest empty `[]` and an over-count returns all of
+    the window. The unbounded, unwindowed shape (both ``None``) is unchanged.
     """
-    events = [event_payload(event) for event in item_events(db_path, item_id)]
-    return events if limit is None else events[:limit]
+    events = item_events(db_path, item_id)
+    if since is not None:
+        events = [event for event in events if event.checked_at >= since]
+    payloads = [event_payload(event) for event in events]
+    return payloads if limit is None else payloads[:limit]
 
 
 def event_export_dict(event: CustodyEvent) -> dict[str, str | None]:
@@ -287,25 +329,37 @@ def event_from_dict(data: dict) -> CustodyEvent:
 
 
 def events_for_items(
-    db_path: Path, item_ids: Iterable[str]
+    db_path: Path, item_ids: Iterable[str], *, since: str | None = None
 ) -> list[CustodyEvent]:
     """Every custody event for a set of items, in append (chronological) order.
 
     The export-side read behind the shareable bundle's custody-events block
-    (roadmap H67): the in-scope items' full ledger so their drift *history*
-    travels, not just the exporter's last-seen posture. Ordered by the
-    monotonic `id` (the append order `verify` writes, i.e. chronological), so a
-    fresh-library import re-appends them in the same order and `latest_events`
-    there picks the same latest verdict. Filters the whole ledger in Python by
-    the id set rather than a large ``IN`` clause, so a bundle covering many
-    matches never hits SQLite's bound-parameter limit; reuses `_query_events`,
-    so a pre-v7 library with no ledger table reads as an empty history.
+    (roadmap H67) and the whole-library `export events` stream (H72): the
+    in-scope items' full ledger so their drift *history* travels, not just the
+    exporter's last-seen posture. Ordered by the monotonic `id` (the append
+    order `verify` writes, i.e. chronological), so a fresh-library import
+    re-appends them in the same order and `latest_events` there picks the same
+    latest verdict. Filters the whole ledger in Python by the id set rather than
+    a large ``IN`` clause, so a bundle covering many matches never hits SQLite's
+    bound-parameter limit; reuses `_query_events`, so a pre-v7 library with no
+    ledger table reads as an empty history.
+
+    `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`): only
+    events ``checked_at >= since`` travel — the incremental-backup window
+    (`scrolls export events --since`, roadmap H75) so a maintenance worker
+    re-exports only what is new since the last backup. ``None`` (the default,
+    and the bundle/H72 callers' value) exports the whole scoped ledger, so the
+    untouched-window shape is unchanged; `import events`' content-dedup makes the
+    union of overlapping incremental backups idempotent regardless.
     """
     wanted = set(item_ids)
     if not wanted:
         return []
     rows = _query_events(db_path, "SELECT * FROM custody_events ORDER BY id")
-    return [_from_row(row) for row in rows if row["item_id"] in wanted]
+    events = [_from_row(row) for row in rows if row["item_id"] in wanted]
+    if since is not None:
+        events = [event for event in events if event.checked_at >= since]
+    return events
 
 
 # The content key that identifies a check across libraries — the autoincrement
