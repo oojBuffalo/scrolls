@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, custody_counts, drift_posture
+from scrolls.custody import CustodyEvent, custody_counts, drift_posture, last_checked
 from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -56,10 +56,11 @@ class Node:
     it the library holds — the same tier `scrolls related` carries, keeping the
     two shapes identical now that fidelity travels with related hits. The
     item-intrinsic fields live on the node; the per-node custody **drift posture**
-    (which needs the verify ledger) is added in `to_payload` from the `verdicts`
-    it is passed (roadmap H56), so the node shape an agent reads carries both
-    custody axes — *how much* (fidelity) and *whether the source moved* (drift) —
-    without coupling graph building to the ledger.
+    and **last_checked** timestamp (which need the verify ledger) are added in
+    `to_payload` from the `verdicts` it is passed (roadmap H56/H86), so the node
+    shape an agent reads carries the full per-item custody picture — *how much*
+    (fidelity), *whether the source moved* (drift), and *as of when* (last_checked)
+    — without coupling graph building to the ledger.
     """
 
     id: str
@@ -209,10 +210,13 @@ def to_payload(
     Each node also carries its per-item custody `drift` posture (roadmap H56) —
     `custody.drift_posture` over its latest `verdicts` entry (`verified` /
     `unverified` / `drifted` / `rotted` / `error`), the same posture the bundle
-    briefing and `scrolls related` hits carry — so an agent landing on a node sees
-    not just *how much* of it the library holds (`fidelity`) but *whether the
-    source drifted out from under it*. The per-item parity counterpart of the
-    scope-level `stats.custody` convergence.
+    briefing and `scrolls related` hits carry — and `last_checked` (roadmap H86),
+    `custody.last_checked` over the *same* verdict: when that posture was taken, or
+    `null` when never re-checked. So an agent landing on a node sees not just *how
+    much* of it the library holds (`fidelity`) but *whether the source drifted out
+    from under it* and *as of when* — the same per-item custody picture the browse
+    rows (`list`/`search`/`show`) and `related` hits report. The per-item parity
+    counterpart of the scope-level `stats.custody` convergence.
 
     `stats.custody` is the graph-surface member of the custody-headline family
     (roadmap H52): the shared `custody.custody_counts` tally — fidelity-tier and
@@ -239,6 +243,7 @@ def to_payload(
                 "stage": node.stage,
                 "fidelity": node.fidelity,
                 "drift": drift_posture(verdicts.get(node.id)),
+                "last_checked": last_checked(verdicts.get(node.id)),
             }
             for node in graph.nodes
         ],

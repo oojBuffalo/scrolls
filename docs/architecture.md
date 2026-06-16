@@ -145,15 +145,20 @@ each command moves items between stages or derives artifacts from them.
   moved), each through the same `custody.drift_posture` over `latest_events`, so
   a given item reads the same posture wherever an agent reaches it, and the
   posture a `list` row shows is exactly the one its `--drift` filter selects on.
-  The primary browse/inspect rows (`list`/`search`/`show` + their MCP twins) also
-  carry the *time* axis of that posture (roadmap H84): a `last_checked` field
-  beside `drift`, the `checked_at` of the same latest verdict via the
-  `custody.last_checked` sibling of `drift_posture` (`null` when never
-  re-checked), so an agent reads not just whether a source moved but as of when —
-  and can pick a `verify --stale-before <ISO>` boundary by inspection. That
-  per-item agreement is pinned across all seven surfaces by the per-item
-  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64), which also
-  ties `last_checked` to the head of the `history` ledger (H84). Where
+  Every surface that carries the `drift` posture also carries the *time* axis of
+  it (roadmap H84/H86): a `last_checked` field beside `drift`, the `checked_at` of
+  the same latest verdict via the `custody.last_checked` sibling of
+  `drift_posture` (`null` when never re-checked) — on the primary browse/inspect
+  rows (`list`/`search`/`show`, H84) *and* the node-shape surfaces (`related`
+  hits, `graph` nodes, H86, the H56 payload-enrichment split lifted to the time
+  axis), each from the same passed-in `latest_events`. So an agent reaching an
+  item by relation or graph traversal reads not just whether a source moved but as
+  of when — at parity with the browse rows — and can pick a `verify
+  --stale-before <ISO>` boundary by inspection. That per-item agreement is pinned
+  across all seven surfaces by the per-item invariant in
+  `tests/test_custody_convergence.py` (roadmap H59/H64), which also ties
+  `last_checked` (on `list`/`search`/`show` *and* `related`/`graph`) to the head
+  of the `history` ledger (H84/H86). Where
   every surface above carries only the *latest* posture, `scrolls history <id>`
   (+ the MCP `get_scroll_history` twin, roadmap H66) reads the *full* per-item
   ledger back — the complete append-only timeline `verify` writes, each
@@ -805,9 +810,11 @@ choice (ADRs 0004, 0005).
   corroboration. A genuine same-work pair whose hub is present scores both
   the same-work and the link edge — complementary facts, not double counting.
   Every hit carries its `reasons`, its custody `fidelity` tier, and — from one
-  `latest_events` read per call — its custody `drift` posture (roadmap H56), so
-  a neighbour an agent follows reports both how much of it the library holds and
-  whether its source has drifted (`tests/test_related.py`).
+  `latest_events` read per call — its custody `drift` posture (roadmap H56) and
+  `last_checked` timestamp (roadmap H86, the `custody.last_checked` sibling over
+  the same verdict; `null` when never re-checked), so a neighbour an agent follows
+  reports how much of it the library holds, whether its source has drifted, and as
+  of when (`tests/test_related.py`).
 - **Link graph** (`graph.py`, ADR 0044) — `scrolls graph` resolves *every*
   item's links into directed edges across the whole library, the
   whole-library complement to `related`'s per-item lens. The link-resolution
@@ -816,12 +823,14 @@ choice (ADRs 0004, 0005).
   indexes every item's identity tokens once then probes with each link
   (linear, not the per-pair O(n²)); nodes are the connected items by
   default (`--all` adds isolates), `stats.items` the library total and
-  `stats.clusters` the number of 2+-member components. Each node carries both
-  custody axes — its `fidelity` tier (item-intrinsic, on the `Node`) and its
-  `drift` posture (added in `to_payload` from the same `verdicts` the
-  `stats.custody` tally reads, roadmap H56), so a node reads the same posture
-  whether reached here or as a `related` hit, and a node's posture never
-  disagrees with its contribution to the scope count. The
+  `stats.clusters` the number of 2+-member components. Each node carries the
+  per-item custody picture — its `fidelity` tier (item-intrinsic, on the `Node`)
+  and, added in `to_payload` from the same `verdicts` the `stats.custody` tally
+  reads, its `drift` posture (roadmap H56) and `last_checked` timestamp (roadmap
+  H86, the time-axis sibling of the posture from the same verdict) — so a node
+  reads the same posture *and* staleness whether reached here or as a `related`
+  hit, and a node's posture never disagrees with its contribution to the scope
+  count. The
   same `{nodes, edges, stats}` payload backs the MCP `get_link_graph` tool
   (`tests/test_graph.py`). `connected_components` partitions the graph into
   clusters (edges undirected for the partition, the directed edges kept) and

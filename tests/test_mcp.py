@@ -835,6 +835,49 @@ def test_node_shape_carries_drift_across_both_mcp_surfaces(scrolls_home):
     )
 
 
+def test_node_shape_carries_last_checked_across_both_mcp_surfaces(scrolls_home):
+    # the time axis (last_checked) rides the node shape on both MCP node-shape
+    # twins beside `drift` and agrees with the `list_scrolls` row (H86)
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="x:1111", source="x", url="https://x.com/a/status/1111",
+        saved_at="2026-06-12T00:00:00+00:00", title="thread", concepts=("ml",),
+        links=("https://arxiv.org/abs/2605.27848",), stage="fetched",
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:2605.27848", source="arxiv", url="https://arxiv.org/abs/2605.27848",
+        saved_at="2026-06-12T00:00:00+00:00", title="A Paper", concepts=("ml",),
+        stage="fetched",
+    ))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "2026-06-14T00:00:00+00:00",
+                     "drifted", "h", "x", None),
+        # x:1111 left unverified
+    ])
+
+    ts = "2026-06-14T00:00:00+00:00"
+    graph_nodes = {n["id"]: n for n in mcp_server.get_link_graph()["nodes"]}
+    assert graph_nodes["arxiv:2605.27848"]["last_checked"] == ts
+    assert graph_nodes["x:1111"]["last_checked"] is None  # never checked → null
+
+    related = {r["id"]: r for r in mcp_server.get_related_scrolls("x:1111")}
+    assert related["arxiv:2605.27848"]["last_checked"] == ts
+
+    listed = {r["id"]: r for r in mcp_server.list_scrolls()}
+    # all three node/browse surfaces agree on the same item's last_checked
+    assert (
+        related["arxiv:2605.27848"]["last_checked"]
+        == graph_nodes["arxiv:2605.27848"]["last_checked"]
+        == listed["arxiv:2605.27848"]["last_checked"]
+        == ts
+    )
+
+
 def test_github_issue_thread_is_reachable_through_mcp(scrolls_home):
     # An issue/PR thread carries a '#' in its id (ADR 0084), a novel character
     # for the id<->URL resolver — confirm the agent-facing surface handles it:

@@ -335,6 +335,42 @@ def test_cli_related_hit_exposes_drift(db, capsys):
     assert hit["drift"] == "unverified"
 
 
+def test_related_hits_carry_the_neighbours_last_checked(db):
+    # the time axis of the per-item custody picture rides the node shape too:
+    # *when* the drift verdict was taken (H86), beside `drift` (whether it moved)
+    from scrolls.custody import CustodyEvent, last_checked, latest_events, record_events
+
+    insert_item(db, make_item("github:a/repo", concepts=("agents",)))
+    insert_item(db, make_item("github:checked/repo", concepts=("agents",)))
+    insert_item(db, make_item("github:never/repo", concepts=("agents",)))
+    record_events(db, [
+        CustodyEvent("github:checked/repo", "2026-06-14T00:00:00+00:00",
+                     "unchanged", "h", "h", None),
+        # github:never/repo left with no verdict
+    ])
+
+    by_id = {hit.id: hit for hit in find_related(db, "github:a/repo")}
+    assert by_id["github:checked/repo"].last_checked == "2026-06-14T00:00:00+00:00"
+    assert by_id["github:never/repo"].last_checked is None  # honest absence
+    # and it is exactly the shared primitive over the same ledger verdict
+    verdicts = latest_events(db)
+    assert by_id["github:checked/repo"].last_checked == last_checked(
+        verdicts.get("github:checked/repo")
+    )
+
+
+def test_cli_related_hit_exposes_last_checked(db, capsys):
+    insert_item(db, make_item("x:1111", title="@a: thread", concepts=("ml",)))
+    insert_item(db, make_item("arxiv:2605.27848", title="A Paper", concepts=("ml",)))
+    capsys.readouterr()
+
+    # never re-checked → the honest null timestamp travels to the CLI surface
+    assert main(["related", "x:1111"]) == 0
+    (hit,) = json.loads(capsys.readouterr().out)
+    assert hit["id"] == "arxiv:2605.27848"
+    assert hit["last_checked"] is None
+
+
 def test_cli_related_prints_hits_json(db, capsys):
     insert_item(db, make_item(
         "x:1111",

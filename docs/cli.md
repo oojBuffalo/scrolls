@@ -230,11 +230,12 @@ per-item ledger back, and the invariant pins the tie (roadmap H70): the posture
 the head of the ledger `history` returns implies equals the `drift` every
 latest-posture surface shows for that item (and `[]` ⇒ `unverified`), so the
 full timeline an agent reads can never silently disagree with the postures that
-summarize it. The time-axis counterpart (roadmap H84) is pinned the same way: the
-`last_checked` timestamp `scrolls list`/`search`/`show` carry beside `drift`
-equals the `checked_at` of that `history` head (and `null` ⇔ the empty timeline
-⇔ never re-checked), so the staleness an agent reads off a browse row matches the
-ledger exactly.
+summarize it. The time-axis counterpart (roadmap H84/H86) is pinned the same way:
+the `last_checked` timestamp `scrolls list`/`search`/`show` rows, `scrolls
+related` hits, and `scrolls graph` nodes carry beside `drift` equals the
+`checked_at` of that `history` head (and `null` ⇔ the empty timeline ⇔ never
+re-checked), so the staleness an agent reads off a browse row or a node matches
+the ledger exactly.
 
 The module also pins the **portable-custody** round-trip (roadmap H73): since
 the verify ledger travels (in the `export bundle` and as the whole-library
@@ -2135,11 +2136,13 @@ through source detection, so a tweet linking to `arxiv.org/abs/X` finds
 item `arxiv:X`), shared concepts, shared tags, same category/domain as
 weak corroboration. `score` is an integer (higher = more connected) and
 every hit carries its `reasons` plus the neighbour's `fidelity` tier
-(`full`/`partial`/`reference`, ADR 0097/0100) and its custody `drift` posture
+(`full`/`partial`/`reference`, ADR 0097/0100), its custody `drift` posture
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H56, read from the
-verify ledger) — so following an edge tells you both how much of the item you
-land on the library holds *and* whether that source has drifted out from under
-the capture, the same two custody axes the `graph` node shape carries. Default
+verify ledger), and `last_checked` — *when* that drift verdict was taken, or
+`null` when never re-checked (roadmap H86) — so following an edge tells you how
+much of the item you land on the library holds, whether that source has drifted
+out from under the capture, *and as of when*: the same per-item custody picture
+the `graph` node shape and the browse rows carry. Default
 limit 10. Unknown id is an error envelope on stderr.
 
 `--stats` wraps the array in the same scope-honest `{scope, stats,
@@ -2153,7 +2156,7 @@ it the output is the bare array unchanged
 
 ```console
 $ scrolls related x:2222
-[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference", "drift": "unverified"}]
+[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference", "drift": "unverified", "last_checked": null}]
 [exit 0]
 
 $ scrolls related x:2222 --limit 1 --stats
@@ -2171,11 +2174,14 @@ a preprint's published DOI), with `via` the link that matched. Resolution
 is the same two-sided, source-detecting match `related` uses (ADR 0023),
 so the graph is exactly the connections `related` would find, materialized
 at once. Nodes carry the `id`, `source`, `title`, `url`, `stage`, `fidelity`,
-`drift` shape `related` hits use — both custody axes travel with the node: the
-`fidelity` tier (how much is held, ADR 0100) and the `drift` posture (whether the
-source moved, roadmap H56, read from the verify ledger; the same posture a
-`related` hit and the bundle briefing carry, so a node reads the same wherever
-it is reached). Sorted by id; edges sorted by `(from, to)`.
+`drift`, `last_checked` shape `related` hits use — the full per-item custody
+picture travels with the node: the `fidelity` tier (how much is held, ADR 0100),
+the `drift` posture (whether the source moved, roadmap H56, read from the verify
+ledger), and `last_checked` (*when* that posture was taken, or `null` when never
+re-checked, roadmap H86) — the same three fields a `related` hit and the browse
+rows carry, read through the same `custody.drift_posture`/`custody.last_checked`
+over `latest_events`, so a node reads the same wherever it is reached. Sorted by
+id; edges sorted by `(from, to)`.
 
 Nodes are the *connected* items by default — `--all` widens it to every
 item, isolated ones included. `stats.items` is always the library total,
@@ -2197,7 +2203,7 @@ counts travel directly — `verified` is the ledger `unchanged` (custody §2.4),
 
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 
@@ -2531,8 +2537,8 @@ The tools wrap the same engines as the CLI commands
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
-| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
-| `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
+| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `item_id` is an id or URL (ADR 0028) |
+| `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |

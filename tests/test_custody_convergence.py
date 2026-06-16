@@ -538,6 +538,19 @@ def test_last_checked_agrees_with_the_history_head_checked_at(scrolls_home, caps
         show_ts[item_id] = json.loads(capsys.readouterr().out)["last_checked"]
     assert show_ts == canonical
 
+    # the node-shape surfaces carry the same timestamp too (H86): graph nodes over
+    # the ring of links, and related hits from web:1 (every item but its anchor)
+    assert main(["graph"]) == 0
+    graph_ts = {
+        n["id"]: n["last_checked"] for n in json.loads(capsys.readouterr().out)["nodes"]
+    }
+    assert graph_ts == canonical
+    assert main(["related", "web:1"]) == 0
+    related_ts = {h["id"]: h["last_checked"] for h in json.loads(capsys.readouterr().out)}
+    assert related_ts == {
+        item_id: ts for item_id, ts in canonical.items() if item_id != "web:1"
+    }
+
 
 # --- portable custody: the posture survives export→import (roadmap H73) ------
 

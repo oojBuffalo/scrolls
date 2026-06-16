@@ -127,6 +127,55 @@ def test_graph_node_drift_matches_the_related_hit_drift(db, capsys):
     assert graph_nodes["arxiv:2605.27848"]["drift"] == "drifted"
 
 
+def test_graph_nodes_carry_their_last_checked_timestamp(db, capsys):
+    # the time axis of the per-item custody picture rides the node shape too (H86):
+    # *when* the drift verdict was taken, beside the posture, null when never checked
+    insert_item(db, make_item(
+        "x:1111", url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",)))
+    insert_item(db, make_item(
+        "arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "2026-06-14T00:00:00+00:00",
+                     "drifted", "h", "x", None),
+        # x:1111 left unverified
+    ])
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert nodes["arxiv:2605.27848"]["last_checked"] == "2026-06-14T00:00:00+00:00"
+    assert nodes["x:1111"]["last_checked"] is None  # honest absence, never checked
+
+
+def test_graph_node_last_checked_matches_the_related_and_list_surfaces(db, capsys):
+    # per-item parity for the time axis across the node-shape surfaces and the
+    # browse rows: a given item reads the same `last_checked` whether reached as a
+    # graph node, a related neighbour, or a `list` row (H86, the H56 parity lifted
+    # to the time axis).
+    from scrolls.related import find_related
+
+    insert_item(db, make_item("x:1111", concepts=("ml",),
+                              links=("https://example.org/arxiv:2605.27848",)))
+    insert_item(db, make_item("arxiv:2605.27848", concepts=("ml",)))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "2026-06-14T00:00:00+00:00",
+                     "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    graph_nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    related = {hit.id: hit for hit in find_related(db, "x:1111")}
+    assert main(["list"]) == 0
+    list_rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+
+    ts = "2026-06-14T00:00:00+00:00"
+    assert graph_nodes["arxiv:2605.27848"]["last_checked"] == ts
+    assert related["arxiv:2605.27848"].last_checked == ts
+    assert list_rows["arxiv:2605.27848"]["last_checked"] == ts
+
+
 def test_only_connected_items_are_nodes_by_default(db):
     insert_item(db, make_item(
         "x:1111",
