@@ -1216,8 +1216,12 @@ refs, provenance, content hash, and stage. That makes it the backup,
 migration, and library-merge format. The import restores the index rows
 (`INSERT OR IGNORE` by id, so re-imports are cheap and never overwrite);
 the derived artifacts rebuild from them with `scrolls doctor --fix` and
-`scrolls kb`. The same `--source`/`--category`/`--tag` filters as
-`export bookmarks` scope a slice.
+`scrolls kb`. That export→rebuild round-trip is byte-verified end to end
+(`tests/test_roundtrip.py`, `docs/adr/0099-lossless-roundtrip-invariant.md`):
+the rebuilt scrolls, `library/`, re-export, and search match the original,
+with captured media blobs the one thing a JSONL backup can't carry (doctor
+reports them for `scrolls media` to re-download). The same
+`--source`/`--category`/`--tag` filters as `export bookmarks` scope a slice.
 
 `scrolls follow <url>` subscribes the library to an RSS 2.0/Atom feed —
 the URL is fetched once to validate it and capture the feed's title

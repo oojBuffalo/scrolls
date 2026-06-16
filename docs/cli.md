@@ -554,7 +554,14 @@ field — extracted text, links, media refs, provenance, content hash,
 stage — because the export carries them. It restores the index rows only;
 the derived artifacts rebuild from those rows — run `scrolls doctor --fix`
 to rewrite any missing scroll file and the FTS index, then `scrolls kb`
-to recompile the library. Existing items are never overwritten
+to recompile the library. That full path is a *verified* round-trip, not
+just an assertion: exporting a real library and rebuilding it in a fresh one
+via `import items` → `doctor --fix` → `kb` reproduces the item rows, the
+re-export JSONL, the rendered scrolls, the compiled `library/`, and search
+results byte-for-byte, and the rebuilt library passes its own custody audit
+(`tests/test_roundtrip.py`, ADR 0099); the one thing a JSONL backup cannot
+carry is captured media *blobs*, which `doctor` then reports as missing for
+`scrolls media` to re-download. Existing items are never overwritten
 (`INSERT OR IGNORE` by id), so a re-import is cheap and a partial restore
 resumes safely (`test_import_items_is_idempotent`,
 `test_import_items_never_overwrites_existing_item`).
