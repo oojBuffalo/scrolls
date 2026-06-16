@@ -121,7 +121,7 @@ uv run scrolls search <query> --source arxiv --category paper  # scope the ranke
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
-uv run scrolls history <id> [--limit N] [--since ISO]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; --limit bounds a long ledger, --since windows it by time (window then cap); [] when never verified (H66, H69, H71)
+uv run scrolls history <id> [--limit N] [--since ISO] [--status V]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; three filter axes applied verdict → window → cap: --status (unchanged/drifted/rotted/error), --since (time), --limit (count); [] when never verified (H66, H69, H71, H77)
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; echoes its scope (the --min floor or ref anchor) so the payload is completeness-honest (G2); with an id/URL, that item's work + siblings (ADR 0069, 0072)

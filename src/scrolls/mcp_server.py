@@ -275,7 +275,10 @@ def get_scroll(item_id: str) -> dict[str, Any]:
 
 
 def get_scroll_history(
-    item_id: str, limit: int | None = None, since: str | None = None
+    item_id: str,
+    limit: int | None = None,
+    since: str | None = None,
+    status: str | None = None,
 ) -> list[dict[str, Any]]:
     """One item's custody-ledger timeline — every verify check, newest first.
 
@@ -284,14 +287,17 @@ def get_scroll_history(
     ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
     so an agent can see *when* a source drifted and *how often* it was
     re-checked, the per-item counterpart of the scope-level `maintain --history`
-    trajectory. `limit` bounds a long ledger to the most recent N checks (newest
-    first) and `since` (an ISO-8601 timestamp) windows it to checks at/after a
-    boundary — "what has this source done since the last sweep" (roadmap H71);
-    the two compose window-then-cap, the whole timeline by default. `item_id` is
-    the item's id or the URL that saved it (ADR 0028), resolved like
-    `get_scroll`'s. A known-but-never-verified item (or an empty `since` window)
-    is the honest empty `[]` (completeness G1); an *unknown* item — or a
-    malformed `since` — is an error, the same empty-vs-error split
+    trajectory. Three filter axes, applied verdict → time → count: `status`
+    keeps only checks with that verdict (``unchanged``/``drifted``/``rotted``/
+    ``error`` — an unknown verdict is an error, the closed-vocabulary `list
+    --drift` posture, roadmap H77), `since` (an ISO-8601 timestamp) windows to
+    checks at/after a boundary — "what has this source done since the last
+    sweep" (roadmap H71), `limit` bounds to the most recent N (roadmap H69); each
+    is off by default, so the whole timeline is the default. `item_id` is the
+    item's id or the URL that saved it (ADR 0028), resolved like `get_scroll`'s.
+    A known-but-never-verified item (or a filter/window nothing matches) is the
+    honest empty `[]` (completeness G1); an *unknown* item — or a malformed
+    `since` / unknown `status` — is an error, the same empty-vs-error split
     `get_scroll`/`get_related_scrolls` draw.
     """
     paths = get_paths()
@@ -301,7 +307,10 @@ def get_scroll_history(
     if item is None:
         suffix = f" (from {item_id})" if resolved != item_id else ""
         raise ValueError(f"no such item: {resolved}{suffix}")
-    return item_history(paths.db_path, resolved, limit=limit, since=boundary)
+    # an unknown `status` raises inside item_history (closed vocabulary)
+    return item_history(
+        paths.db_path, resolved, limit=limit, since=boundary, status=status
+    )
 
 
 def get_related_scrolls(

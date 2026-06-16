@@ -26,6 +26,7 @@ from scrolls.bundle import (
 from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
+    CUSTODY_STATUSES,
     drift_posture,
     dump_events_export,
     events_for_items,
@@ -354,6 +355,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only checks at or after this ISO-8601 timestamp (e.g. 2026-06-15 "
         "or 2026-06-15T12:00:00+00:00); composes with --limit (window then cap)",
+    )
+    history_parser.add_argument(
+        "--status",
+        choices=CUSTODY_STATUSES,
+        default=None,
+        help="Only checks with this verdict (unchanged/drifted/rotted/error) — "
+        "e.g. the times this source actually drifted; composes with "
+        "--since/--limit (verdict, then window, then cap)",
     )
 
     import_parser = subparsers.add_parser(
@@ -859,7 +868,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "history":
-        return _cmd_history(args.id, args.limit, args.since)
+        return _cmd_history(args.id, args.limit, args.since, args.status)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -2354,7 +2363,10 @@ def _cmd_show(item_id: str) -> int:
 
 
 def _cmd_history(
-    item_id: str, limit: int | None = None, since: str | None = None
+    item_id: str,
+    limit: int | None = None,
+    since: str | None = None,
+    status: str | None = None,
 ) -> int:
     """Print one item's custody-ledger timeline, newest first (roadmap H66).
 
@@ -2364,16 +2376,18 @@ def _cmd_history(
     ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
     so an agent can see *when* a source drifted and *how often* it has been
     re-checked, the per-item counterpart of `maintain --history`'s scope-level
-    trajectory. `--limit N` bounds a long ledger to the most recent N checks
-    (roadmap H69) and `--since <ISO>` windows it to checks at/after a boundary
-    (roadmap H71 — "what has this source done since the last sweep"); the two
-    compose window-then-cap, the whole timeline by default. Read-only and
-    honest: a known-but-never-verified item (or an empty `--since` window) is the
+    trajectory. Three filter axes, applied verdict → time → count: `--status`
+    keeps only checks with that verdict (roadmap H77 — "the times this source
+    actually drifted"), `--since <ISO>` windows to checks at/after a boundary
+    (roadmap H71), `--limit N` bounds to the most recent N (roadmap H69); each is
+    off by default, so the whole timeline is the default. Read-only and honest: a
+    known-but-never-verified item (or a filter/window nothing matches) is the
     empty `[]` (completeness G1, checked-and-empty), an *unknown* ref is a loud
     could-not-check error (exit 1) — the same empty-vs-error split
     `show`/`related` draw, so the per-item ledger never masquerades a typo as
     "no history" — and a malformed `--since` is a loud usage error (exit 2, the
-    `maintain --trend` precedent), validated before the item lookup.
+    `maintain --trend` precedent), validated before the item lookup. `--status`
+    is a closed vocabulary guarded by argparse `choices`.
     """
     try:
         boundary = parse_since(since)
@@ -2387,7 +2401,9 @@ def _cmd_history(
         return 1
     print(
         json.dumps(
-            item_history(paths.db_path, item.id, limit=limit, since=boundary)
+            item_history(
+                paths.db_path, item.id, limit=limit, since=boundary, status=status
+            )
         )
     )
     return 0

@@ -257,6 +257,7 @@ def item_history(
     *,
     limit: int | None = None,
     since: str | None = None,
+    status: str | None = None,
 ) -> list[dict[str, str | None]]:
     """The custody ledger timeline for one item, newest first.
 
@@ -268,19 +269,36 @@ def item_history(
     over the ledger read; the single primitive `scrolls history` and the MCP
     `get_scroll_history` twin share, so they can never disagree.
 
-    `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`, which
-    the CLI/MCP edge calls): only checks ``checked_at >= since`` are kept — the
-    time-axis window a maintenance worker asks for ("what has this source done
-    since the last sweep", roadmap H71). ``None`` (the default) keeps the whole
-    ledger. `limit` then bounds the windowed result to the most recent N checks
-    (newest first, oldest dropped) — a maintenance worker that appends a verdict
-    per pass accumulates a long history, and `--limit` reads only the head.
-    ``None`` returns everything in the window. The two compose **window then
-    cap**: `since` cuts the time range, then `limit` caps the count of what
-    remains, so ``0`` is the honest empty `[]` and an over-count returns all of
-    the window. The unbounded, unwindowed shape (both ``None``) is unchanged.
+    Three independent filter axes, applied **verdict → time → count** (order is
+    immaterial to the result — the first two are AND filters, `limit` only caps
+    what remains):
+
+    - `status` keeps only the checks whose verdict is exactly this — one of
+      `CUSTODY_STATUSES` (``unchanged``/``drifted``/``rotted``/``error``, the
+      raw event status `history` emits, *not* the reader-facing drift posture):
+      "show me only the times this source actually changed" (roadmap H77). An
+      unknown verdict raises ``ValueError`` (a closed vocabulary — never a
+      silent empty, the `list --drift` posture), so both the CLI (which also
+      guards via argparse ``choices``) and the MCP twin inherit the guarantee.
+    - `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`, which
+      the CLI/MCP edge calls): only checks ``checked_at >= since`` are kept —
+      the time-axis window a maintenance worker asks for ("what has this source
+      done since the last sweep", roadmap H71).
+    - `limit` then bounds the result to the most recent N checks (newest first,
+      oldest dropped) — a maintenance worker that appends a verdict per pass
+      accumulates a long history, and `--limit` reads only the head. ``0`` is
+      the honest empty `[]` and an over-count returns all.
+
+    Each axis is ``None`` by default, so the unfiltered shape is unchanged.
     """
+    if status is not None and status not in CUSTODY_STATUSES:
+        raise ValueError(
+            f"unknown custody status {status!r}; "
+            f"choose one of {', '.join(CUSTODY_STATUSES)}"
+        )
     events = item_events(db_path, item_id)
+    if status is not None:
+        events = [event for event in events if event.status == status]
     if since is not None:
         events = [event for event in events if event.checked_at >= since]
     payloads = [event_payload(event) for event in events]

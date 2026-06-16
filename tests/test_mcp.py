@@ -227,6 +227,28 @@ def test_get_scroll_history_malformed_since_raises(scrolls_home):
         mcp_server.get_scroll_history("web:demo", since="yesterday")
 
 
+def test_get_scroll_history_status_filters_like_the_cli(scrolls_home):
+    # H77: the twin filters to one verdict, and equals the shared primitive
+    from scrolls.custody import CustodyEvent, item_history, record_events
+
+    _seed_verifiable_item()
+    record_events(get_paths().db_path, [
+        CustodyEvent("web:demo", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:demo", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:demo", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "x"),
+    ])
+    drifted = mcp_server.get_scroll_history("web:demo", status="drifted")
+    assert [e["checked_at"] for e in drifted] == ["2026-06-14T00:00:00+00:00"]
+    assert drifted == item_history(get_paths().db_path, "web:demo", status="drifted")
+
+
+def test_get_scroll_history_unknown_status_raises(scrolls_home):
+    _seed_verifiable_item()
+    # closed vocabulary — `verified` is a posture, not a raw event status
+    with pytest.raises(ValueError):
+        mcp_server.get_scroll_history("web:demo", status="verified")
+
+
 def test_get_scroll_history_unknown_item_raises(scrolls_home):
     main(["init"])
     with pytest.raises(ValueError, match="no such item"):

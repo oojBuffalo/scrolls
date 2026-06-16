@@ -322,6 +322,53 @@ def test_item_history_since_empty_window_is_honest_empty(tmp_path):
     assert item_history(db_path, "web:a", since="2026-07-01T00:00:00+00:00") == []
 
 
+def test_item_history_status_filters_to_one_verdict(tmp_path):
+    # H77: the verdict axis — "only the times this source actually changed"
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "unchanged", "h2", "h2"),
+        CustodyEvent("web:a", "2026-06-16T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+    # only the drifted check survives the verdict filter
+    drifted = item_history(db_path, "web:a", status="drifted")
+    assert [e["checked_at"] for e in drifted] == ["2026-06-14T00:00:00+00:00"]
+    # a verdict nothing matches is the honest empty, never an error
+    assert item_history(db_path, "web:a", status="error") == []
+    # None keeps the whole ledger
+    assert item_history(db_path, "web:a", status=None) == item_history(db_path, "web:a")
+
+
+def test_item_history_status_composes_verdict_then_window_then_cap(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "drifted", "h", "h1"),
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "unchanged", "h1", "h1"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h1", "h2"),
+        CustodyEvent("web:a", "2026-06-16T00:00:00+00:00", "drifted", "h2", "h3"),
+    ])
+    # verdict (drifted) → window (>= 06-14) → cap (1): the two drifts in window
+    # are 06-15 and 06-16; newest-first cap to 1 keeps 06-16
+    out = item_history(
+        db_path, "web:a", status="drifted", since="2026-06-14T00:00:00+00:00", limit=1
+    )
+    assert [e["checked_at"] for e in out] == ["2026-06-16T00:00:00+00:00"]
+
+
+def test_item_history_rejects_an_unknown_status(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    # a closed vocabulary — never a silent empty (the `list --drift` posture);
+    # note `verified` is a reader-facing *posture*, not a raw event *status*
+    with pytest.raises(ValueError):
+        item_history(db_path, "web:a", status="verified")
+    with pytest.raises(ValueError):
+        item_history(db_path, "web:a", status="nonsense")
+
+
 def test_events_for_items_since_windows_within_the_id_scope(tmp_path):
     # H75: the incremental-backup window over the export read, after id scoping
     db_path = tmp_path / "db.sqlite"

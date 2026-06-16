@@ -574,3 +574,66 @@ def test_history_malformed_since_beats_an_unknown_id(paths, capsys):
     assert exit_code == 2
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+# --- scrolls history <id> --status <verdict> — the verdict-axis filter (H77) -
+
+
+def _seed_four_verdicts(paths, item):
+    insert_item(paths.db_path, item)
+    record_events(paths.db_path, [
+        CustodyEvent(item.id, "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent(item.id, "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent(item.id, "2026-06-15T00:00:00+00:00", "unchanged", "h2", "h2"),
+        CustodyEvent(item.id, "2026-06-16T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+
+
+def test_history_status_filters_to_one_verdict(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_four_verdicts(paths, item)
+
+    exit_code = main(["history", item.id, "--status", "unchanged"])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    # only the two unchanged re-checks, newest first
+    assert [e["checked_at"] for e in out] == [
+        "2026-06-15T00:00:00+00:00", "2026-06-13T00:00:00+00:00"
+    ]
+
+
+def test_history_status_composes_with_since_and_limit(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_four_verdicts(paths, item)
+
+    # verdict (unchanged) → window (>= 06-14) → cap (1): only the 06-15 unchanged
+    assert main([
+        "history", item.id, "--status", "unchanged",
+        "--since", "2026-06-14T00:00:00+00:00", "--limit", "1",
+    ]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["checked_at"] for e in out] == ["2026-06-15T00:00:00+00:00"]
+
+
+def test_history_status_no_match_is_the_honest_empty(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_four_verdicts(paths, item)  # no `error` verdict in the ledger
+
+    exit_code = main(["history", item.id, "--status", "error"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out) == []
+    assert captured.err == ""
+
+
+def test_history_status_is_a_closed_vocabulary(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_four_verdicts(paths, item)
+
+    # `verified` is a reader-facing posture, not a raw event status — argparse
+    # rejects it with the usage exit code, never a silent empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["history", item.id, "--status", "verified"])
+    assert excinfo.value.code == 2

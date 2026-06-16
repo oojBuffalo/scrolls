@@ -132,16 +132,19 @@ each command moves items between stages or derives artifacts from them.
   through the shared `custody.event_payload`/`item_history` primitives — so an
   agent sees *when* a source drifted and *how often* it was re-checked, the
   per-item counterpart of `maintain --history`'s scope-level trajectory; a
-  `--limit N` (roadmap H69) bounds a long ledger to the most recent N checks
-  (a scheduled `maintain` appends a verdict per pass) and `--since <ISO>`
-  (roadmap H71) windows it to checks at/after a boundary — "what has this source
-  done since the last sweep" — the two composing window-then-cap, the whole
-  timeline by default. The boundary normalizes through the one `checked_at`
-  vocabulary (`custody.parse_since` over `dates.to_utc_iso`, ADR 0024) so the
-  lexicographic `checked_at >=` compare is apples-to-apples; a malformed
-  `--since` is a loud usage error (exit 2). Like `show`, an unknown ref is a
-  loud could-not-check error while a held-but-never-checked item (or an empty
-  `--since` window) is the honest empty `[]` (folded into the M2
+  three filter axes apply **verdict → time → count**: `--status V` (roadmap
+  H77) keeps only checks with that verdict (`unchanged`/`drifted`/`rotted`/
+  `error` — the raw event status, a closed vocabulary, "the times the source
+  actually changed"), `--since <ISO>` (roadmap H71) windows to checks at/after a
+  boundary — "what has this source done since the last sweep" — and `--limit N`
+  (roadmap H69) bounds to the most recent N (a scheduled `maintain` appends a
+  verdict per pass); each off by default, so the whole timeline is the default.
+  The `--since` boundary normalizes through the one `checked_at` vocabulary
+  (`custody.parse_since` over `dates.to_utc_iso`, ADR 0024) so the lexicographic
+  `checked_at >=` compare is apples-to-apples; a malformed `--since` (or unknown
+  `--status`) is a loud usage error (exit 2). Like `show`, an unknown ref is a
+  loud could-not-check error while a held-but-never-checked item (or a
+  filter/window nothing matches) is the honest empty `[]` (folded into the M2
   completeness invariant). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in

@@ -496,7 +496,7 @@ $ scrolls verify --unverified      # only the held items doctor flags `unverifie
 [exit 0]
 ```
 
-### `scrolls history <id> [--limit N] [--since ISO]`
+### `scrolls history <id> [--limit N] [--since ISO] [--status V]`
 
 Print one item's **custody-ledger timeline**, newest first (cited tests in
 `tests/test_verify_cli.py`). Where `scrolls verify` *appends* a custody event per
@@ -533,6 +533,20 @@ usage error on stderr, exit 2 — validated *before* the item lookup, so a typo'
 boundary on an unknown item is a usage error, not a missing-item one
 (`test_history_malformed_since_beats_an_unknown_id`).
 
+`--status <verdict>` is the **verdict axis** — return only the checks whose
+`status` is one of the closed set `unchanged`/`drifted`/`rotted`/`error` (the
+raw event verdict `history` emits, *not* the reader-facing drift posture — so
+it is `unchanged`, not `verified`). "Show me only the times this source
+actually *changed*" — an agent triaging a long ledger reads the drift/rot
+events without scanning the steady-state re-checks
+(`test_history_status_filters_to_one_verdict`). It is a closed vocabulary
+guarded by argparse `choices` (an unknown verdict is a usage error, exit 2,
+never a silent empty — `test_history_status_is_a_closed_vocabulary`), and
+composes with the other two axes **verdict → window → cap**: filter the
+verdict, then `--since` the time, then `--limit` the count
+(`test_history_status_composes_with_since_and_limit`). A verdict nothing matches
+is the honest `[]`.
+
 Read-only and honest about absence (the completeness contract): a
 held item the ledger has *never* checked is the empty `[]` — checked-and-empty,
 exit 0 (`test_history_of_a_never_verified_item_is_empty`) — while an *unknown*
@@ -555,6 +569,10 @@ $ scrolls history web:af2e70e87b6d --limit 1   # just the latest check
 
 $ scrolls history web:af2e70e87b6d --since 2026-06-15   # only checks since the last sweep
 [{"checked_at": "2026-06-16T09:00:00+00:00", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]
+[exit 0]
+
+$ scrolls history web:af2e70e87b6d --status drifted   # only the times the source actually changed
+[{"checked_at": "2026-06-14T09:00:00+00:00", "status": "drifted", "prior_hash": "sha256:1f3c…", "observed_hash": "sha256:9c20…", "detail": null}]
 [exit 0]
 ```
 
@@ -2417,7 +2435,7 @@ The tools wrap the same engines as the CLI commands
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the two custody axes (`fidelity` + `drift`, H61) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
-| `get_scroll_history(item_id, limit=None, since=None)` | `scrolls history <id> [--limit N] [--since ISO]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `limit` bounds it to the most recent N and `since` windows it to checks at/after a boundary (window then cap); `[]` when never verified or empty window, error on an unknown id or malformed `since`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_since_windows_like_the_cli`) |
+| `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
