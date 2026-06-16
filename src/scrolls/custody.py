@@ -220,8 +220,10 @@ def event_payload(event: CustodyEvent) -> dict[str, str | None]:
     }
 
 
-def item_history(db_path: Path, item_id: str) -> list[dict[str, str | None]]:
-    """The full custody ledger timeline for one item, newest first.
+def item_history(
+    db_path: Path, item_id: str, *, limit: int | None = None
+) -> list[dict[str, str | None]]:
+    """The custody ledger timeline for one item, newest first.
 
     The read-surface form of the append-only events `verify` writes: every
     recorded check serialized through `event_payload`, newest first (the
@@ -230,8 +232,16 @@ def item_history(db_path: Path, item_id: str) -> list[dict[str, str | None]]:
     which the caller rejects as a could-not-check before reaching here. Pure
     over the ledger read; the single primitive `scrolls history` and the MCP
     `get_scroll_history` twin share, so they can never disagree.
+
+    `limit` bounds a long ledger to the most recent N checks (newest first,
+    oldest dropped) — a maintenance worker that appends a verdict per pass
+    accumulates a long history, and `--limit` reads only the head. ``None``
+    (the default) returns the whole timeline, so the unbounded shape is
+    unchanged; the slice mirrors `scrolls list --limit` (``events[:limit]``), so
+    ``0`` is the honest empty `[]` and an over-count returns all.
     """
-    return [event_payload(event) for event in item_events(db_path, item_id)]
+    events = [event_payload(event) for event in item_events(db_path, item_id)]
+    return events if limit is None else events[:limit]
 
 
 def latest_events(db_path: Path) -> dict[str, CustodyEvent]:

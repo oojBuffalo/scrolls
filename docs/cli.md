@@ -488,9 +488,9 @@ $ scrolls verify --unverified      # only the held items doctor flags `unverifie
 [exit 0]
 ```
 
-### `scrolls history <id>`
+### `scrolls history <id> [--limit N]`
 
-Print one item's **full custody-ledger timeline**, newest first (cited tests in
+Print one item's **custody-ledger timeline**, newest first (cited tests in
 `tests/test_verify_cli.py`). Where `scrolls verify` *appends* a custody event per
 check and `show`/`list` carry only the *latest* `drift` posture (and
 `doctor`/`facets` only aggregate counts), `history` reads back the complete
@@ -503,7 +503,12 @@ often* it has been re-checked. It is the per-item counterpart of `maintain
 `<id>` is the item's id or, equivalently, the URL that saved it (ADR 0028),
 resolved like `show`'s. The output is a JSON array; the event fields mirror
 `verify`'s `results` rows minus the redundant per-row `id` (every event is the
-same item). Read-only and honest about absence (the completeness contract): a
+same item). `--limit N` bounds a long ledger to the most recent N checks
+(newest first, oldest dropped) — a worker that runs `scrolls maintain` on a
+schedule appends a verdict per pass, so a long-lived item accumulates history;
+the whole timeline is the default, and the slice mirrors `list --limit` so
+`--limit 0` is the honest empty `[]` and an over-count returns all
+(`test_history_limit_returns_the_most_recent_n`). Read-only and honest about absence (the completeness contract): a
 held item the ledger has *never* checked is the empty `[]` — checked-and-empty,
 exit 0 (`test_history_of_a_never_verified_item_is_empty`) — while an *unknown*
 ref is a loud could-not-check error on stderr, exit 1
@@ -517,6 +522,10 @@ $ scrolls history web:af2e70e87b6d        # re-checked twice; drifted, then held
 
 $ scrolls history web:never-verified      # held, but never re-checked
 []
+[exit 0]
+
+$ scrolls history web:af2e70e87b6d --limit 1   # just the latest check
+[{"checked_at": "2026-06-16T09:00:00+00:00", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]
 [exit 0]
 ```
 
@@ -2269,7 +2278,7 @@ The tools wrap the same engines as the CLI commands
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the two custody axes (`fidelity` + `drift`, H61) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
-| `get_scroll_history(item_id)` | `scrolls history <id>` | the item's full custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `[]` when never verified, error on an unknown id; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_returns_the_ledger_newest_first`) |
+| `get_scroll_history(item_id, limit=None)` | `scrolls history <id> [--limit N]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `limit` bounds it to the most recent N; `[]` when never verified, error on an unknown id; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_returns_the_ledger_newest_first`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |

@@ -332,6 +332,13 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser.add_argument(
         "id", help="Item id (e.g. wikipedia:en:SQLite), or the item's URL"
     )
+    history_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Return only the most recent N checks (newest first); default is "
+        "the whole timeline",
+    )
 
     import_parser = subparsers.add_parser(
         "import", help="Bulk-import a local archive (JSON output)"
@@ -802,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "history":
-        return _cmd_history(args.id)
+        return _cmd_history(args.id, args.limit)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -2224,26 +2231,28 @@ def _cmd_show(item_id: str) -> int:
     return 0
 
 
-def _cmd_history(item_id: str) -> int:
-    """Print one item's full custody-ledger timeline, newest first (roadmap H66).
+def _cmd_history(item_id: str, limit: int | None = None) -> int:
+    """Print one item's custody-ledger timeline, newest first (roadmap H66).
 
     `verify` appends an append-only custody event per check; `show`/`list` carry
     only the *latest* `drift` posture and `doctor`/`facets` only aggregate
-    counts. This emits the complete ledger for one item — each
+    counts. This emits the ledger for one item — each
     ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
     so an agent can see *when* a source drifted and *how often* it has been
     re-checked, the per-item counterpart of `maintain --history`'s scope-level
-    trajectory. Read-only and honest: a known-but-never-verified item is the
-    empty `[]` (completeness G1, checked-and-empty), while an *unknown* ref is a
-    loud could-not-check error — the same empty-vs-error split `show`/`related`
-    draw, so the per-item ledger never masquerades a typo as "no history".
+    trajectory. `--limit N` bounds a long ledger to the most recent N checks
+    (roadmap H69), the whole timeline by default. Read-only and honest: a
+    known-but-never-verified item is the empty `[]` (completeness G1,
+    checked-and-empty), while an *unknown* ref is a loud could-not-check error —
+    the same empty-vs-error split `show`/`related` draw, so the per-item ledger
+    never masquerades a typo as "no history".
     """
     paths = get_paths()
     item, error = _find_item(paths, item_id)
     if item is None:
         print(json.dumps({"error": error}), file=sys.stderr)
         return 1
-    print(json.dumps(item_history(paths.db_path, item.id)))
+    print(json.dumps(item_history(paths.db_path, item.id, limit=limit)))
     return 0
 
 

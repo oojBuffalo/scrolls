@@ -13,7 +13,7 @@ import pytest
 
 import scrolls.cli as cli
 from scrolls.cli import main
-from scrolls.custody import item_events
+from scrolls.custody import CustodyEvent, item_events, record_events
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, get_item, insert_item, make_item_id
 from scrolls.paths import get_paths
@@ -455,3 +455,48 @@ def test_history_unknown_id_errors_loudly(paths, capsys):
     assert exit_code == 1
     assert captured.out == ""  # nothing on stdout when the check could not run
     assert "error" in json.loads(captured.err)
+
+
+def _seed_three_checks(paths, item):
+    insert_item(paths.db_path, item)
+    record_events(paths.db_path, [
+        CustodyEvent(item.id, "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent(item.id, "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent(item.id, "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+
+
+def test_history_limit_returns_the_most_recent_n(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    exit_code = main(["history", item.id, "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert [e["status"] for e in out] == ["rotted", "drifted"]  # newest 2, oldest dropped
+
+
+def test_history_limit_zero_is_the_honest_empty(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    exit_code = main(["history", item.id, "--limit", "0"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out) == []
+    assert captured.err == ""
+
+
+def test_history_limit_over_count_returns_the_whole_ledger(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    _seed_three_checks(paths, item)
+
+    assert main(["history", item.id, "--limit", "99"]) == 0
+    capped = json.loads(capsys.readouterr().out)
+    assert main(["history", item.id]) == 0  # the unbounded default
+    full = json.loads(capsys.readouterr().out)
+
+    assert capped == full
+    assert len(full) == 3

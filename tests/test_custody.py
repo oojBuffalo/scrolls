@@ -230,6 +230,25 @@ def test_item_history_of_a_never_checked_item_is_empty(tmp_path):
     assert item_history(db_path, "web:never") == []
 
 
+def test_item_history_limit_returns_the_most_recent_n(tmp_path):
+    # H69: a maintenance worker appends a verdict per pass; --limit reads the head
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "gone"),
+    ])
+    # newest first, capped to the 2 most recent — oldest (unchanged) dropped
+    assert [e["status"] for e in item_history(db_path, "web:a", limit=2)] == [
+        "rotted", "drifted"
+    ]
+    # limit 0 is the honest empty; an over-count returns all; None is unbounded
+    assert item_history(db_path, "web:a", limit=0) == []
+    assert len(item_history(db_path, "web:a", limit=99)) == 3
+    assert item_history(db_path, "web:a", limit=None) == item_history(db_path, "web:a")
+
+
 def test_latest_events_takes_the_most_recent_per_item(tmp_path):
     # same-second checks: the monotonic id, not checked_at, picks the latest
     db_path = tmp_path / "db.sqlite"

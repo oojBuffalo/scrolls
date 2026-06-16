@@ -182,6 +182,22 @@ def test_get_scroll_history_never_verified_is_empty(scrolls_home):
     assert mcp_server.get_scroll_history("web:demo") == []
 
 
+def test_get_scroll_history_limit_returns_the_most_recent_n(scrolls_home):
+    # H69: the twin bounds a long ledger to the most recent N, like the CLI
+    from scrolls.custody import CustodyEvent, record_events
+
+    _seed_verifiable_item()
+    record_events(get_paths().db_path, [
+        CustodyEvent("web:demo", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:demo", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:demo", "2026-06-15T00:00:00+00:00", "rotted", "h2", None, "x"),
+    ])
+    history = mcp_server.get_scroll_history("web:demo", limit=2)
+    assert [e["status"] for e in history] == ["rotted", "drifted"]
+    assert mcp_server.get_scroll_history("web:demo", limit=0) == []
+    assert len(mcp_server.get_scroll_history("web:demo")) == 3  # unbounded default
+
+
 def test_get_scroll_history_unknown_item_raises(scrolls_home):
     main(["init"])
     with pytest.raises(ValueError, match="no such item"):

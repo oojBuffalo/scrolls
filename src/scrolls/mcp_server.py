@@ -273,18 +273,20 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     return payload
 
 
-def get_scroll_history(item_id: str) -> list[dict[str, Any]]:
-    """One item's full custody-ledger timeline — every verify check, newest first.
+def get_scroll_history(item_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+    """One item's custody-ledger timeline — every verify check, newest first.
 
     Where `get_scroll` carries only the *latest* `drift` posture, this returns
-    the complete append-only ledger `scrolls verify` writes: each
+    the append-only ledger `scrolls verify` writes: each
     ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
     so an agent can see *when* a source drifted and *how often* it was
     re-checked, the per-item counterpart of the scope-level `maintain --history`
-    trajectory. `item_id` is the item's id or the URL that saved it (ADR 0028),
-    resolved like `get_scroll`'s. A known-but-never-verified item is the honest
-    empty `[]` (completeness G1); an *unknown* item is an error, the same
-    empty-vs-error split `get_scroll`/`get_related_scrolls` draw.
+    trajectory. `limit` bounds a long ledger to the most recent N checks (newest
+    first), the whole timeline by default. `item_id` is the item's id or the URL
+    that saved it (ADR 0028), resolved like `get_scroll`'s. A
+    known-but-never-verified item is the honest empty `[]` (completeness G1); an
+    *unknown* item is an error, the same empty-vs-error split
+    `get_scroll`/`get_related_scrolls` draw.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
@@ -292,7 +294,7 @@ def get_scroll_history(item_id: str) -> list[dict[str, Any]]:
     if item is None:
         suffix = f" (from {item_id})" if resolved != item_id else ""
         raise ValueError(f"no such item: {resolved}{suffix}")
-    return item_history(paths.db_path, resolved)
+    return item_history(paths.db_path, resolved, limit=limit)
 
 
 def get_related_scrolls(
