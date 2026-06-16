@@ -35,6 +35,14 @@ The contract, across every engine that writes an enriched field:
    stamp — "unclassified" is honest absence, never a guessed label (the
    anti-fabrication half of M2, applied to enrichment).
 
+5. **A user override claims no method.** Setting ``category`` by hand
+   (`scrolls set`, IDEAS.md §8 layer three) drops the engine's
+   category-derivation stamps, so a hand-set category records no `by`/`basis`/
+   `ruleset`/`model` and is never counted re-derivable — provenance never
+   claims an engine produced a value the user chose. This is what keeps user
+   overrides out of doctor's stale-ruleset count and `classify --stale`
+   (roadmap H27): user overrides always win.
+
 The H19-noted gap is closed by roadmap H20: the rules engine now records not
 just the engine *version* (``classified_by = "rules-v1"``) but which precedence
 tier fired (``classified_basis``) and a fingerprint of the rule tables it ran
@@ -47,14 +55,20 @@ is recorded" + "deterministic re-derivation" contract.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
 from scrolls.classify import ENGINE as RULES_ENGINE
-from scrolls.classify import RULESET_FINGERPRINT, classify_item
+from scrolls.classify import (
+    RULESET_FINGERPRINT,
+    classify_item,
+    is_stale_classification,
+)
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.classify_llm import classify_item_llm
-from scrolls.items import ScrollItem
+from scrolls.items import ScrollItem, classification_provenance
+from scrolls.overrides import apply_overrides
 
 
 def make_item(**overrides) -> ScrollItem:
@@ -200,3 +214,42 @@ def test_unmatched_item_carries_no_label_and_no_method_stamp():
     assert "classified_by" not in (result.provenance or {})
     # honest absence is identity: nothing matched, nothing changed
     assert result == item
+
+
+# --- 5. a user override claims no method (cross-engine) -------------------
+
+
+def test_user_override_drops_the_rules_method_stamp():
+    """A hand-set category claims no method: the engine's category-derivation
+    stamps are dropped, so provenance never says an engine produced the user's
+    value, and the derived classification view is honest absence."""
+    classified = classify_item(make_item())  # rules-classified, fully stamped
+    assert classification_provenance(classified) is not None  # engine method shown
+    overridden = apply_overrides(classified, {"category": "reference"})
+    assert overridden.category == "reference"
+    assert classification_provenance(overridden) is None  # no method is claimed
+    # the capture chain still survives the override (clause 3 holds here too)
+    assert overridden.provenance["adapter"] == "web"
+
+
+def test_user_override_drops_the_llm_method_stamp():
+    classified = classify_item_llm(
+        make_item(), complete=fake_completer(_LLM_PAYLOAD), model="claude-test"
+    )
+    assert classification_provenance(classified)["by"] == LLM_ENGINE
+    overridden = apply_overrides(classified, {"category": "paper"})
+    assert classification_provenance(overridden) is None
+
+
+def test_user_override_is_never_counted_re_derivable_or_stale():
+    """The override stamp-drop is what keeps a hand-set category out of doctor's
+    stale-ruleset count and `classify --stale` — user overrides always win."""
+    # even when the rules classification it replaced was itself stale
+    classified = classify_item(make_item())
+    stale = replace(
+        classified,
+        provenance={**classified.provenance, "classified_ruleset": "deadbeef0000"},
+    )
+    assert is_stale_classification(stale) is True  # would be refreshed ...
+    overridden = apply_overrides(stale, {"category": "reference"})
+    assert is_stale_classification(overridden) is False  # ... but the override is not
