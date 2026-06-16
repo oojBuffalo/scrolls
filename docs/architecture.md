@@ -69,8 +69,13 @@ each command moves items between stages or derives artifacts from them.
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way
-  `test_completeness.py` pins M2). The remaining cap-8 step is a
-  confidence/recency marker (roadmap H21).
+  `test_completeness.py` pins M2). `scrolls doctor` makes the ruleset
+  fingerprint actionable: its `custody.enrichment` block reports items
+  classified under a *superseded* ruleset (stored `classified_ruleset` ≠
+  the live `RULESET_FINGERPRINT`) as a re-derivable, report-only signal —
+  never auto-reclassified, the drift block's enrichment counterpart
+  (roadmap H25). The remaining cap-8 step is a confidence/recency marker
+  (roadmap H21).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content

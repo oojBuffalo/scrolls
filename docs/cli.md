@@ -328,6 +328,22 @@ reader holding only the report can therefore tell "confirmed unchanged at the
 last verify" from "never checked", and never read an unverified item as a
 healthy one.
 
+The custody block also carries an `enrichment` sub-block — the re-derivability
+counterpart of drift, over the rules engine's classifications (cap 8). Each
+rules-classified item records the ruleset fingerprint that produced its
+category (`classified_ruleset`, roadmap H20); this block aggregates them
+against the live `current_ruleset`: `classified` (the rules-classified items
+held — LLM classifications are a different axis and out of scope), `current`
+(classified under the live ruleset), `stale` (classified under a *superseded*
+one, with the offending ids + fingerprints listed in `items` so a re-classify
+can be targeted), and `unfingerprinted` (classified before H20, so no
+fingerprint — unknown, **not** silently current, the same honesty as drift's
+`unverified`). It is honest, not alarmist: a stale fingerprint means the
+ruleset changed since, not that the category is wrong, so — like drift — it
+never feeds `issues`/the exit code, and doctor never auto-reclassifies (a
+regenerated view is produced on request, never a silent overwrite;
+`test_stale_ruleset_does_not_affect_issues_or_exit_code`).
+
 ### `scrolls verify [id] [--all] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the

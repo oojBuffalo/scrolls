@@ -570,6 +570,7 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
 
     main(["doctor"])
     custody = json.loads(capsys.readouterr().out)["custody"]
+    from scrolls.classify import RULESET_FINGERPRINT
     assert custody == {
         "score": 100, "issues": 0,
         "tiers": {"full": 1, "partial": 0, "reference": 0}, "findings": [],
@@ -578,6 +579,13 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             "checked": 0, "unverified": 1,
             "unchanged": 0, "drifted": 0, "rotted": 0,
             "error": 0, "events": [],
+        },
+        "enrichment": {
+            # the seeded item carries no engine classification, so nothing to
+            # measure for ruleset staleness — an honest, all-zero block
+            "basis": "ruleset_fingerprint", "current_ruleset": RULESET_FINGERPRINT,
+            "classified": 0, "current": 0, "stale": 0, "unfingerprinted": 0,
+            "items": [],
         },
     }
 
@@ -714,3 +722,87 @@ def test_drift_does_not_affect_issues_or_exit_code(paths, capsys):
     assert report["issues"] == 0
     assert report["custody"]["drift"]["drifted"] == 1
     assert report["custody"]["drift"]["rotted"] == 1
+
+
+# --- enrichment re-derivability: stale-ruleset signal (cap 8, H20→H25) ---
+#
+# `scrolls classify` stamps `classified_ruleset` = the ruleset fingerprint that
+# produced a category (roadmap H20). Doctor reports rules-classified items
+# whose stored fingerprint no longer matches the live `RULESET_FINGERPRINT` —
+# classified under a *superseded* ruleset. Like the drift block, this is
+# report-only: a stale fingerprint means the ruleset changed, not that the
+# category is wrong, so it never feeds `issues`/the exit code and doctor never
+# auto-reclassifies (custody §2.4 — regenerate on request, never silent
+# overwrite).
+
+
+def _classified_item(url, *, ruleset, by="rules-v1", basis="title-pattern"):
+    """A rules-classified web item carrying a given ruleset fingerprint."""
+    provenance = {"adapter": "web", "fetched_at": "2026-06-12T08:00:00+00:00",
+                  "classified_by": by, "classified_basis": basis}
+    if ruleset is not None:
+        provenance["classified_ruleset"] = ruleset
+    return _web_item(url, fetched=True, category="tutorial", provenance=provenance)
+
+
+def test_enrichment_counts_an_item_classified_under_the_current_ruleset_as_current(paths):
+    from scrolls.classify import RULESET_FINGERPRINT
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/a", ruleset=RULESET_FINGERPRINT))
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["classified"] == 1
+    assert enrichment["current"] == 1
+    assert enrichment["stale"] == 0
+    assert enrichment["items"] == []
+
+
+def test_enrichment_flags_an_item_classified_under_a_superseded_ruleset_as_stale(paths):
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["classified"] == 1
+    assert enrichment["stale"] == 1
+    assert enrichment["current"] == 0
+    # the stale item is named so a reader can target a re-classify
+    assert enrichment["items"] == [
+        {"id": make_item_id("web", None, "https://example.com/old"),
+         "ruleset": "deadbeef0000"}
+    ]
+
+
+def test_enrichment_names_a_pre_fingerprint_classification_as_unfingerprinted(paths):
+    # classified before H20: an engine stamp but no ruleset fingerprint — we
+    # cannot tell if a re-classify would differ, so it is unknown, not current
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/legacy", ruleset=None))
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["classified"] == 1
+    assert enrichment["unfingerprinted"] == 1
+    assert enrichment["current"] == 0
+    assert enrichment["stale"] == 0
+
+
+def test_enrichment_ignores_non_rules_classifications(paths):
+    # the ruleset fingerprint is a rules-engine concept; an LLM-classified item
+    # (a different re-derivability axis) is out of scope, not counted stale
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/llm", ruleset=None, by="llm-v1"))
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["classified"] == 0
+    assert enrichment["unfingerprinted"] == 0
+
+
+def test_stale_ruleset_does_not_affect_issues_or_exit_code(paths, capsys):
+    # report-only: a stale ruleset is not repairable drift, and doctor never
+    # silently re-classifies — the stored category and provenance are untouched
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["issues"] == 0
+    assert report["custody"]["enrichment"]["stale"] == 1
+    # the item was not rewritten: its old fingerprint and category still stand
+    stored = list_items(paths.db_path)[0]
+    assert stored.provenance["classified_ruleset"] == "deadbeef0000"
+    assert stored.category == "tutorial"

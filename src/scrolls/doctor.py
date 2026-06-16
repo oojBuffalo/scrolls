@@ -18,6 +18,8 @@ import sqlite3
 from dataclasses import replace
 from typing import Any, Iterable
 
+from scrolls.classify import ENGINE as RULES_ENGINE
+from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.custody import CUSTODY_STATUSES, latest_events
 from scrolls.items import (
     ScrollItem,
@@ -76,6 +78,15 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
                 "error": 0,
                 "events": [],
             },
+            "enrichment": {
+                "basis": "ruleset_fingerprint",
+                "current_ruleset": RULESET_FINGERPRINT,
+                "classified": 0,
+                "current": 0,
+                "stale": 0,
+                "unfingerprinted": 0,
+                "items": [],
+            },
         },
     }
     if not paths.db_path.exists():
@@ -90,6 +101,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     _check_fts(paths, report, fix)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
+    _check_enrichment_provenance(report, items)
     return report
 
 
@@ -364,3 +376,47 @@ def _check_custody_drift(
         for _, event in sorted(latest.items())
         if event.status in ("drifted", "rotted")
     ]
+
+
+def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
+    """Re-derivability of rules classification (cap 8, ADR 0004 / roadmap H20).
+
+    `scrolls classify` records `classified_ruleset` — the fingerprint of the
+    ruleset that produced a category (`classify.RULESET_FINGERPRINT`). This
+    aggregates how the held, rules-classified items stand against the *live*
+    ruleset, so a reader can tell which categories a re-classify today would
+    re-derive unchanged and which were produced under a ruleset that has since
+    changed:
+
+    - ``classified`` — held items the rules engine classified (the denominator;
+      LLM classifications are a different re-derivability axis and out of scope).
+    - ``current`` — classified under the live ruleset (`current_ruleset`).
+    - ``stale`` — classified under a *superseded* ruleset; the offending ids and
+      their recorded fingerprint are listed in ``items`` so a re-classify can be
+      targeted.
+    - ``unfingerprinted`` — rules-classified before H20, so no fingerprint was
+      recorded: we cannot tell whether a re-classify would differ. Like the
+      drift block's ``unverified``, this is *unknown*, not silently current.
+
+    Like drift, this is a *report*, never repairable ``issues`` and never the
+    exit code: a stale fingerprint means the ruleset changed, not that the
+    stored category is wrong (the recorded method is still valid for the ruleset
+    that produced it). Doctor never auto-reclassifies — a regenerated view is
+    produced on request, never as a silent overwrite (custody §2.4).
+    """
+    enrichment = report["custody"]["enrichment"]
+    stale = []
+    for item in items:
+        provenance = item.provenance or {}
+        if provenance.get("classified_by") != RULES_ENGINE:
+            continue
+        enrichment["classified"] += 1
+        fingerprint = provenance.get("classified_ruleset")
+        if fingerprint is None:
+            enrichment["unfingerprinted"] += 1
+        elif fingerprint == RULESET_FINGERPRINT:
+            enrichment["current"] += 1
+        else:
+            enrichment["stale"] += 1
+            stale.append({"id": item.id, "ruleset": fingerprint})
+    enrichment["items"] = sorted(stale, key=lambda entry: entry["id"])
