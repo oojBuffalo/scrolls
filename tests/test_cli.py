@@ -735,6 +735,16 @@ def _stats_item(item_id, **overrides):
     return ScrollItem(**base)
 
 
+def _core_stats(stats):
+    """The returned/matched/truncated trio, dropping the H98 `custody` member.
+
+    The `--stats` envelope's `stats` block now also carries a `custody` tally
+    (roadmap H98); these G2 truncation/scope tests pin the *denominator*, so they
+    drop `custody` and let the dedicated H98 tests below own its value.
+    """
+    return {key: value for key, value in stats.items() if key != "custody"}
+
+
 def test_search_stats_envelope_echoes_scope_and_marks_truncation(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -749,7 +759,7 @@ def test_search_stats_envelope_echoes_scope_and_marks_truncation(scrolls_home, c
     # the scope a reader recovers from the result alone
     assert payload["scope"] == {"query": "alpha", "limit": 2}
     # 2 of 5 → truncated: absence below the cap is NOT library-wide absence
-    assert payload["stats"] == {"returned": 2, "matched": 5, "truncated": True}
+    assert _core_stats(payload["stats"]) == {"returned": 2, "matched": 5, "truncated": True}
     assert len(payload["results"]) == 2
 
 
@@ -781,7 +791,7 @@ def test_search_stats_empty_scope_is_scope_honest_not_truncated(scrolls_home, ca
     payload = json.loads(capsys.readouterr().out)
     assert payload["results"] == []
     assert payload["scope"] == {"query": "alpha", "source": "arxiv", "limit": 20}
-    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+    assert _core_stats(payload["stats"]) == {"returned": 0, "matched": 0, "truncated": False}
 
 
 def test_search_stats_not_truncated_when_every_match_is_returned(scrolls_home, capsys):
@@ -791,7 +801,7 @@ def test_search_stats_not_truncated_when_every_match_is_returned(scrolls_home, c
 
     main(["search", "alpha", "--stats"])
     payload = json.loads(capsys.readouterr().out)
-    assert payload["stats"] == {"returned": 1, "matched": 1, "truncated": False}
+    assert _core_stats(payload["stats"]) == {"returned": 1, "matched": 1, "truncated": False}
 
 
 def test_search_stats_keeps_the_unclassified_pool_in_scope(scrolls_home, capsys):
@@ -816,7 +826,7 @@ def test_list_stats_echoes_applied_facets_and_marks_truncation(scrolls_home, cap
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scope"] == {"source": "web", "limit": 1}
-    assert payload["stats"] == {"returned": 1, "matched": 2, "truncated": True}
+    assert _core_stats(payload["stats"]) == {"returned": 1, "matched": 2, "truncated": True}
     assert len(payload["results"]) == 1
 
 
@@ -842,7 +852,7 @@ def test_list_stats_uncapped_omits_limit_and_never_truncates(scrolls_home, capsy
     main(["list", "--stats"])
     payload = json.loads(capsys.readouterr().out)
     assert "limit" not in payload["scope"]  # uncapped: returned everything
-    assert payload["stats"] == {"returned": 2, "matched": 2, "truncated": False}
+    assert _core_stats(payload["stats"]) == {"returned": 2, "matched": 2, "truncated": False}
 
 
 def test_list_limit_caps_the_bare_array_too(scrolls_home, capsys):
@@ -868,7 +878,121 @@ def test_list_stats_before_init_is_the_empty_envelope_not_an_error(scrolls_home,
     payload = json.loads(captured.out)
     assert payload["results"] == []
     assert payload["scope"] == {"source": "web", "limit": 5}
-    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+    assert _core_stats(payload["stats"]) == {"returned": 0, "matched": 0, "truncated": False}
+    # the custody member is present even at empty — a stable zeroed shape (H98)
+    assert payload["stats"]["custody"] == {
+        "tiers": {"full": 0, "partial": 0, "reference": 0},
+        "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+    }
+
+
+# --- H98: stats.custody — the custody tally over the matched scope -----------
+
+
+def _seed_custody_mix(db):
+    """Three held scrolls matching `alpha`, spanning fidelity + drift: a full one
+    re-checked unchanged (→ verified), a partial one drifted, a reference one
+    never re-checked (→ unverified). So the matched-scope custody tally is the
+    non-trivial mix `{full:1, partial:1, reference:1}` / `{verified:1, drifted:1,
+    unverified:1}` every H98 assertion can drill.
+    """
+    insert_item(db, _stats_item(
+        "web:full", raw_text="<raw>alpha</raw>", content_hash="sha256:full"))
+    insert_item(db, _stats_item("web:partial"))  # extracted only → partial
+    insert_item(db, _stats_item(
+        "web:ref", extracted_text=None, summary=None, stage="detected"))  # reference
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:full", "sha256:full", None),
+        CustodyEvent("web:partial", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:p", "sha256:x", None),
+    ])
+
+
+_MIX_CUSTODY = {
+    "tiers": {"full": 1, "partial": 1, "reference": 1},
+    "drift": {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0},
+}
+
+
+def test_list_stats_custody_tallies_the_matched_scope(scrolls_home, capsys):
+    # roadmap H98: `list --stats` carries a `stats.custody` tally over the matched
+    # scope — fidelity tiers + drift postures — so a reader sees "of the N matched,
+    # how much is held in full and how much drifted" without a second `facets` call.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["custody"] == _MIX_CUSTODY
+    # the tier/posture sections each sum to `matched` (every scroll has one of each)
+    assert sum(stats["custody"]["tiers"].values()) == stats["matched"] == 3
+    assert sum(stats["custody"]["drift"].values()) == stats["matched"]
+
+
+def test_list_stats_custody_is_the_matched_scope_not_the_returned_page(scrolls_home, capsys):
+    # the load-bearing H98 claim: a `--limit 1` cap returns one row but the custody
+    # tally still covers the *whole* matched scope (all three), so paging never
+    # shrinks the custody picture.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 3 and stats["truncated"] is True
+    assert stats["custody"] == _MIX_CUSTODY  # over the matched 3, not the returned 1
+
+
+# `search alpha` is query-scoped: the contentless `web:ref` pointer has no body to
+# full-text match, so it is *not* in the search-matched scope (only `list` lists it).
+# So search custody tallies the two items that match the query — a sharper picture
+# than `list`'s, and exactly the honest "of the N that matched *this query*" scope.
+_MIX_CUSTODY_SEARCH = {
+    "tiers": {"full": 1, "partial": 1, "reference": 0},
+    "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0},
+}
+
+
+def test_search_stats_custody_tallies_the_matched_scope(scrolls_home, capsys):
+    # the `search` twin of the list tally — each hit carries its own fidelity/drift
+    # (H58), and the envelope folds them over the query-matched scope.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["custody"] == _MIX_CUSTODY_SEARCH
+    assert sum(stats["custody"]["tiers"].values()) == stats["matched"] == 2
+
+
+def test_search_stats_custody_covers_the_matched_scope_past_the_cap(scrolls_home, capsys):
+    # the truncated search case: `--limit 1` returns one ranked hit, but the custody
+    # tally re-reads the full match set past the cap (the uncapped fetch only when
+    # truncated), so the picture is the whole matched scope, not the one returned hit.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 2 and stats["truncated"] is True
+    assert stats["custody"] == _MIX_CUSTODY_SEARCH  # over the matched 2, not the returned 1
+
+
+def test_stats_custody_is_opt_in_absent_from_the_bare_array(scrolls_home, capsys):
+    # the custody member rides only the opt-in envelope — the bare default array
+    # (G1-locked) is unchanged, carrying no envelope and so no custody block.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    for argv in (["list"], ["search", "alpha"]):
+        main(argv)
+        out = json.loads(capsys.readouterr().out)
+        assert isinstance(out, list)  # no envelope → nowhere for a custody block
 
 
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):

@@ -567,29 +567,51 @@ def items_checked_before(
     ]
 
 
+def tally_custody(
+    pairs: Iterable[tuple[str, str]]
+) -> dict[str, dict[str, int]]:
+    """Canonical fidelity-tier / drift-posture counts from `(fidelity, drift)` pairs.
+
+    The shape-and-count core every scope custody tally shares: it folds an
+    iterable of already-derived ``(fidelity_tier, drift_posture)`` pairs into the
+    ``{"tiers": …, "drift": …}`` maps, every tier/posture present in the canonical
+    order (`FIDELITY_TIERS`/`DRIFT_POSTURES`) with zeros included, so the shape is
+    stable for a renderer to filter. `custody_counts` derives the pairs from items
+    + the ledger; the `scrolls search --stats` envelope (roadmap H98) derives them
+    from each matched hit's own `fidelity`/`drift` fields (which equal the same
+    primitives by the per-item parity, roadmap H58) — both feed this one tally, so
+    the count is identical however the pairs were sourced.
+    """
+    tiers = {tier: 0 for tier in FIDELITY_TIERS}
+    drift = {posture: 0 for posture in DRIFT_POSTURES}
+    for fidelity, posture in pairs:
+        tiers[fidelity] += 1
+        drift[posture] += 1
+    return {"tiers": tiers, "drift": drift}
+
+
 def custody_counts(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, int]]:
     """Scope-level fidelity-tier and drift-posture counts over a set of items.
 
     The one tally behind every *scope* custody headline — `scrolls status` (the
-    whole library), the shareable bundle briefing (roadmap H45), and the
-    `scrolls context` bundle (roadmap H47). It counts the *same* `get_fidelity`
-    and `drift_posture` each surface's per-item view uses, so a headline's totals
-    equal its own entries by construction, and — for a whole-library, uncapped
-    scope — equal `doctor`'s `custody.tiers` / `custody.drift` aggregate (with the
-    documented `verified` ≡ ledger `unchanged` mapping; `unverified` = held −
-    verdicts). `verdicts` is the `latest_events` ledger read keyed by item id; an
-    item absent from it is `unverified`. Both maps carry every tier/posture in the
-    canonical order (`FIDELITY_TIERS`/`DRIFT_POSTURES`), zeros included, so the
-    shape is stable for a renderer to filter.
+    whole library), the shareable bundle briefing (roadmap H45), the `scrolls
+    context` bundle (roadmap H47), and the `scrolls search`/`list --stats`
+    envelope's `stats.custody` (roadmap H98). It counts the *same* `get_fidelity`
+    and `drift_posture` each surface's per-item view uses (folding them through
+    `tally_custody`), so a headline's totals equal its own entries by construction,
+    and — for a whole-library, uncapped scope — equal `doctor`'s `custody.tiers` /
+    `custody.drift` aggregate (with the documented `verified` ≡ ledger `unchanged`
+    mapping; `unverified` = held − verdicts). `verdicts` is the `latest_events`
+    ledger read keyed by item id; an item absent from it is `unverified`. Both maps
+    carry every tier/posture in the canonical order
+    (`FIDELITY_TIERS`/`DRIFT_POSTURES`), zeros included, so the shape is stable for
+    a renderer to filter.
     """
-    tiers = {tier: 0 for tier in FIDELITY_TIERS}
-    drift = {posture: 0 for posture in DRIFT_POSTURES}
-    for item in items:
-        tiers[get_fidelity(item)] += 1
-        drift[drift_posture(verdicts.get(item.id))] += 1
-    return {"tiers": tiers, "drift": drift}
+    return tally_custody(
+        (get_fidelity(item), drift_posture(verdicts.get(item.id))) for item in items
+    )
 
 
 def custody_headline(

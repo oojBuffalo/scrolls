@@ -208,14 +208,19 @@ Where the completeness contract pins *honesty* (nothing fabricated, scope
 disclosed), a sibling invariant pins *convergence*: the custody picture an agent
 reads — fidelity-tier counts and drift-posture counts — is identical wherever it
 appears. `scrolls status` (the custody headline), the `export bundle` briefing
-and `scrolls context` headlines, `scrolls facets fidelity`/`drift`, and
-`doctor`'s `custody` block all derive from one shared tally
+and `scrolls context` headlines, `scrolls facets fidelity`/`drift`, the `graph`
+and `search`/`list --stats` `stats.custody` blocks, and `doctor`'s `custody`
+block all derive from one shared tally
 (`custody.custody_counts`/`custody_headline` over `get_fidelity` +
 `drift_posture`/`latest_events`), so they cannot disagree for a given scope (the
 one vocabulary mapping: the posture `verified` is the ledger status
 `unchanged`). That scope-level convergence is pinned once, across every surface,
 in `tests/test_custody_convergence.py` — the custody-side analogue of
-`tests/test_completeness.py` (roadmap H50). The **compiled human-readable**
+`tests/test_completeness.py` (roadmap H50). The `search`/`list --stats` envelope's
+`custody` member (roadmap H98) is the browse-surface entry in that family: for a
+filter-only `list` scope it equals `facets fidelity`/`drift` for the same filters
+(`test_list_stats_custody_member_converges_with_facets`), the counts covering the
+matched scope, not just the returned page. The **compiled human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
 line (H95) and in the landing `index.md` header (H96), and the invariant parses
@@ -1915,6 +1920,17 @@ capped slice from the whole scope. `--stats` is opt-in: without it the
 output is the bare array unchanged (`test_list_stats_is_opt_in_default_stays_a_bare_array`).
 See the contract section above for the envelope's shape and guarantees.
 
+The `--stats` envelope's `stats` block also carries a `custody` member (roadmap
+H98): the `custody.custody_counts` tally — fidelity-tier and drift-posture
+counts — over the **matched** scope (the full match set the cap may have hidden,
+not just the returned page), so a reader paging results sees "of the N matched,
+how much is held in full and how much has drifted" without a second `facets`
+call. It is the browse-surface counterpart of the `graph` `stats.custody` block,
+built from the same shared tally, so for a filter-only `list` scope it equals
+`facets fidelity`/`drift` for the same filters by construction
+(`test_list_stats_custody_member_converges_with_facets`); the tier/posture counts
+sum to `stats.matched`.
+
 ```console
 $ scrolls list
 [{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00", "fidelity": "full", "drift": "unverified", "last_checked": null, "works": []}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
@@ -1925,7 +1941,7 @@ $ scrolls list --source x --category technique
 [exit 0]
 
 $ scrolls list --source x --limit 1 --stats
-{"scope": {"source": "x", "limit": 1}, "stats": {"returned": 1, "matched": 2, "truncated": true}, "results": [{"id": "x:1111", ...}]}
+{"scope": {"source": "x", "limit": 1}, "stats": {"returned": 1, "matched": 2, "truncated": true, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}, "results": [{"id": "x:1111", ...}]}
 [exit 0]
 
 $ scrolls facets drift                      # the aggregate: how many at each posture
@@ -2117,6 +2133,15 @@ without it the output is the bare array unchanged
 (`test_search_stats_is_opt_in_default_stays_a_bare_array`,
 `test_search_stats_envelope_echoes_scope_and_marks_truncation`).
 
+`stats` also carries a `custody` member (roadmap H98) — the `custody_counts`
+tally over the **matched** scope (the full query-matched set, not just the
+returned page), so a reader sees the custody of *everything that matched this
+query*, not only the top hits it paged. Each hit already carries its own
+`fidelity`/`drift` (the per-item parity, roadmap H58), so the envelope folds
+those; the tally re-reads the full match set only when the cap actually hid rows
+(truncated), reusing the page otherwise. The tier/posture counts sum to
+`stats.matched` (`test_search_stats_custody_covers_the_matched_scope_past_the_cap`).
+
 ```console
 $ scrolls search "sqlite fts5"
 [{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": []}]
@@ -2131,11 +2156,11 @@ $ scrolls search "sqlite fts5" --source arxiv
 [exit 0]
 
 $ scrolls search "sqlite fts5" --limit 1 --stats
-{"scope": {"query": "sqlite fts5", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true}, "results": [{"id": "x:1111", ...}]}
+{"scope": {"query": "sqlite fts5", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 2, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}}, "results": [{"id": "x:1111", ...}]}
 [exit 0]
 
 $ scrolls search "sqlite fts5" --source arxiv --stats
-{"scope": {"query": "sqlite fts5", "source": "arxiv", "limit": 20}, "stats": {"returned": 0, "matched": 0, "truncated": false}, "results": []}
+{"scope": {"query": "sqlite fts5", "source": "arxiv", "limit": 20}, "stats": {"returned": 0, "matched": 0, "truncated": false, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}}}, "results": []}
 [exit 0]
 
 $ scrolls search "   "

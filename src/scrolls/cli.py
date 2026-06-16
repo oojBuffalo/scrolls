@@ -27,6 +27,7 @@ from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     CUSTODY_STATUSES,
+    custody_counts,
     drift_posture,
     dump_events_export,
     events_for_items,
@@ -40,6 +41,7 @@ from scrolls.custody import (
     live_recapture,
     parse_since,
     record_events,
+    tally_custody,
     unverified_items,
     verify_item,
 )
@@ -2132,11 +2134,15 @@ def _cmd_list(
     if not paths.db_path.exists():
         # Empty in the surface's own shape, capped or not — never an error
         # (completeness contract G1). The --stats envelope says so explicitly:
-        # a checked-and-empty library, scoped to the same facets.
-        empty = scope_envelope([], scope=scope, matched=0) if stats else []
+        # a checked-and-empty library, scoped to the same facets — with a zeroed
+        # custody tally (roadmap H98) so the stats shape is stable even at empty.
+        empty = (
+            scope_envelope([], scope=scope, matched=0, custody=tally_custody([]))
+            if stats else []
+        )
         print(json.dumps(empty))
         return 0
-    items = list_items(
+    matched_items = list_items(
         paths.db_path,
         stage=stage,
         source=source,
@@ -2146,9 +2152,8 @@ def _cmd_list(
         drift=drift,
         stale_before=boundary,
     )
-    matched = len(items)
-    if limit is not None:
-        items = items[:limit]
+    matched = len(matched_items)
+    items = matched_items[:limit] if limit is not None else matched_items
     # Work membership is a whole-library property (ADR 0101): a filtered listing
     # (e.g. source=arxiv) hides an item's sibling representation, so clustering
     # over the filtered rows would undercount it. Cluster over every item, then
@@ -2169,7 +2174,15 @@ def _cmd_list(
         )
         for item in items
     ]
-    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched) if stats else rows))
+    if not stats:
+        print(json.dumps(rows))
+        return 0
+    # `stats.custody` (roadmap H98): the custody tally over the *matched* scope —
+    # the full uncapped `matched_items`, not just the returned page — over the same
+    # `verdicts` the rows' postures read, so the tier/posture counts sum to
+    # `stats.matched` and (for a filter-only scope) equal `facets fidelity`/`drift`.
+    custody = custody_counts(matched_items, verdicts)
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
 
@@ -2380,6 +2393,16 @@ def _cmd_search(
         tag=tag,
         concept=concept,
     )
+    # `stats.custody` (roadmap H98): the custody tally over the *matched* scope, not
+    # just the returned page — each hit already carries its `fidelity`/`drift` (the
+    # per-item parity, roadmap H58), so tally those, sourcing the full match set.
+    # Reuse the page when nothing was hidden; only re-run uncapped when truncated
+    # (the cap is the common case, so the extra scan is paid only when it adds rows).
+    matched_hits = hits if matched <= len(hits) else search_items(
+        paths.db_path, query, limit=matched, source=source, category=category,
+        stage=stage, tag=tag, concept=concept,
+    )
+    custody = tally_custody((hit.fidelity, hit.drift) for hit in matched_hits)
     scope = {
         "query": query,
         "source": source,
@@ -2389,7 +2412,7 @@ def _cmd_search(
         "concept": concept,
         "limit": limit,
     }
-    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched)))
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
 

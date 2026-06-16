@@ -24,6 +24,7 @@ def scope_envelope(
     *,
     scope: dict[str, Any],
     matched: int,
+    custody: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Wrap `results` in the scope-honest `{scope, stats, results}` envelope.
 
@@ -39,15 +40,28 @@ def scope_envelope(
     hid matches (`matched > returned`). An empty result is therefore never
     "truncated" and still names its scope, so "nothing in *this* slice" can
     never be misread as library-wide absence.
+
+    `custody`, when given, is the `custody.custody_counts` tally over the
+    *matched* scope (the full match set, not just the returned page) — added to
+    `stats.custody` so a reader paging results sees "of the N that matched, how
+    much is held in full and how much has drifted" without a second `facets`
+    call (roadmap H98, the browse-surface counterpart of the `graph`
+    `stats.custody` block). It counts the same matched set `stats.matched`
+    totals, so the tier/posture counts sum to `matched`. Omitted (no
+    `stats.custody` key) when the caller passes nothing, so surfaces that do not
+    opt in — `related`/`works` — keep the lean stats shape.
     """
     returned = len(results)
     applied = {key: value for key, value in scope.items() if value is not None}
+    stats: dict[str, Any] = {
+        "returned": returned,
+        "matched": matched,
+        "truncated": matched > returned,
+    }
+    if custody is not None:
+        stats["custody"] = custody
     return {
         "scope": applied,
-        "stats": {
-            "returned": returned,
-            "matched": matched,
-            "truncated": matched > returned,
-        },
+        "stats": stats,
         "results": results,
     }

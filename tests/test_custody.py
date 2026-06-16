@@ -16,6 +16,7 @@ import pytest
 import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts,
     event_export_dict,
     event_from_dict,
     event_payload,
@@ -30,11 +31,12 @@ from scrolls.custody import (
     live_recapture,
     parse_since,
     record_events,
+    tally_custody,
     unverified_items,
     verify_item,
 )
 from scrolls.db import init_db
-from scrolls.items import ScrollItem
+from scrolls.items import ScrollItem, get_fidelity
 from scrolls.sources import FetchError
 
 
@@ -431,6 +433,54 @@ def test_last_checked_is_none_when_never_verified():
     # no verdict ⇒ no timestamp — the null counterpart of drift_posture(None)'s
     # `unverified` posture, never a fabricated wall-clock time (honest absence).
     assert last_checked(None) is None
+
+
+# --- tally_custody / custody_counts (the scope tally core, roadmap H98) ---
+
+
+def test_tally_custody_folds_pairs_into_the_canonical_shape():
+    # the shape-and-count core: every tier/posture present in canonical order with
+    # zeros included, so a renderer can filter a stable shape (roadmap H98).
+    counts = tally_custody([
+        ("full", "verified"), ("full", "drifted"),
+        ("partial", "unverified"), ("reference", "unverified"),
+    ])
+    assert counts == {
+        "tiers": {"full": 2, "partial": 1, "reference": 1},
+        "drift": {"verified": 1, "unverified": 2, "drifted": 1, "rotted": 0, "error": 0},
+    }
+    # the tier and posture sections each sum to the number of pairs
+    assert sum(counts["tiers"].values()) == 4
+    assert sum(counts["drift"].values()) == 4
+
+
+def test_tally_custody_empty_is_the_zeroed_shape():
+    # no pairs → all-zero counts (the honest empty scope the --stats envelope and
+    # the empty-library `list` path both lean on), shape still stable.
+    counts = tally_custody([])
+    assert counts == {
+        "tiers": {"full": 0, "partial": 0, "reference": 0},
+        "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+    }
+
+
+def test_custody_counts_delegates_to_tally_over_item_derived_pairs():
+    # custody_counts(items, verdicts) must equal tally_custody over the same
+    # (get_fidelity, drift_posture) pairs it derives — the one source of truth, so
+    # the item-sourced tally and the hit-sourced one (search --stats) agree.
+    full = _item("web:full", content_hash="h", extracted_text="b", raw_text="<r>b</r>")
+    ref = _item("web:ref", content_hash=None, extracted_text=None, raw_text=None,
+                stage="detected")
+    items = [full, ref]
+    verdicts = {"web:full": CustodyEvent("web:full", "t", "drifted", "h", "x")}
+    expected = tally_custody([
+        (get_fidelity(item), custody.drift_posture(verdicts.get(item.id)))
+        for item in items
+    ])
+    assert custody_counts(items, verdicts) == expected
+    # sanity: the fixture spans two tiers and two postures
+    assert expected["tiers"]["full"] == 1 and expected["tiers"]["reference"] == 1
+    assert expected["drift"]["drifted"] == 1 and expected["drift"]["unverified"] == 1
 
 
 # --- unverified_items predicate (held − verdicts) ------------------------

@@ -285,6 +285,45 @@ def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):
     assert custody_headline(web_items, verdicts) in capsys.readouterr().out
 
 
+def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):
+    # roadmap H98: the `list --stats` envelope's `stats.custody` is the
+    # browse-surface counterpart of the `graph` stats.custody block — built from the
+    # same shared `custody_counts` tally, so it converges with `facets
+    # fidelity`/`drift` for the same scope by construction. `list` is filter-only
+    # (no free-text query), so its *matched* scope is exactly the `facets` scope —
+    # pin it whole-library and under a shared `--source` filter, and pin that the
+    # custody totals equal `stats.matched` (the full matched scope, not the page).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # whole library: the custody member equals the whole-library facets
+    assert main(["list", "--stats"]) == 0
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert _nonzero(stats["custody"]["tiers"]) == _facet_map(
+        compute_facets(db, field="fidelity")["facets"]["fidelity"])
+    assert _nonzero(stats["custody"]["drift"]) == _facet_map(
+        compute_facets(db, field="drift")["facets"]["drift"])
+    # the totals cover the matched scope (every scroll has one tier and one posture)
+    assert sum(stats["custody"]["tiers"].values()) == stats["matched"]
+    assert sum(stats["custody"]["drift"].values()) == stats["matched"]
+
+    # under --source web: the custody member narrows with the listing, still == facets
+    assert main(["list", "--source", "web", "--stats"]) == 0
+    web_stats = json.loads(capsys.readouterr().out)["stats"]
+    assert _nonzero(web_stats["custody"]["tiers"]) == _facet_map(
+        compute_facets(db, field="fidelity", source="web")["facets"]["fidelity"])
+    assert _nonzero(web_stats["custody"]["drift"]) == _facet_map(
+        compute_facets(db, field="drift", source="web")["facets"]["drift"])
+    # and it equals the canonical tally over the web-scoped held items
+    web_items = [item for item in list_items(db) if item.source == "web"]
+    assert web_stats["custody"] == custody_counts(web_items, latest_events(db))
+
+
 # --- the per-item invariant (roadmap H59) ------------------------------------
 
 

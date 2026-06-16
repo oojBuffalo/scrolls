@@ -345,10 +345,17 @@ each command moves items between stages or derives artifacts from them.
   headlines converge for a scope by construction — one custody tally, many
   surfaces. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
-  JSON) over its whole `stats.items` scope (roadmap H52), and `scrolls facets
-  fidelity`/`drift` (H48) are the browse aggregates of the two axes — all reading
-  `custody.custody_counts`, so the cross-surface convergence is pinned once in
-  `tests/test_custody_convergence.py` (H50). The full dogfood flow these
+  JSON) over its whole `stats.items` scope (roadmap H52); the `search`/`list
+  --stats` envelope carries it as a `stats.custody` member too (roadmap H98) —
+  over the *matched* scope (the full match set past the cap, sourced from each
+  hit's own `fidelity`/`drift` for search, the uncapped matched items for list),
+  so a reader paging results sees the custody of everything that matched, not just
+  the returned page, and for a filter-only `list` scope it equals `facets
+  fidelity`/`drift`. And `scrolls facets fidelity`/`drift` (H48) are the browse
+  aggregates of the two axes — all reading `custody.custody_counts` (the
+  shape-and-count core `custody.tally_custody`, which `custody_counts` and the
+  search `--stats` hit-sourced tally both fold through), so the cross-surface
+  convergence is pinned once in `tests/test_custody_convergence.py` (H50). The full dogfood flow these
   surfaces compose into — *hold → prove (`doctor`) → detect (`verify`) → take it
   with me (`export`/`import bundle`)* — is narrated, with captured before/after
   custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against
