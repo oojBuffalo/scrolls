@@ -342,7 +342,9 @@ fingerprint — unknown, **not** silently current, the same honesty as drift's
 ruleset changed since, not that the category is wrong, so — like drift — it
 never feeds `issues`/the exit code, and doctor never auto-reclassifies (a
 regenerated view is produced on request, never a silent overwrite;
-`test_stale_ruleset_does_not_affect_issues_or_exit_code`).
+`test_stale_ruleset_does_not_affect_issues_or_exit_code`). To act on the
+signal, run [`scrolls classify --stale`](#scrolls-classify-id), the explicit
+refresh that re-runs the rules engine over exactly the items reported here.
 
 ### `scrolls verify [id] [--all] [--limit N]`
 
@@ -1122,6 +1124,27 @@ category. This surfaces as a derived `classification` block on `show`,
 reads identically on every browse surface; `tests/test_classify.py` pins the
 per-tier basis, the fingerprint, and their deterministic re-derivation.
 
+`--stale` re-runs the rules engine over exactly the items `scrolls doctor`
+reports in `custody.enrichment.stale` — categories produced under a *superseded*
+ruleset (`classified_ruleset` ≠ the live fingerprint) — refreshing both
+`category` and `classified_ruleset` to the live ruleset. It is the explicit,
+user-invoked counterpart to doctor's read-only stale signal: regeneration
+happens *on request*, never as doctor's silent overwrite (custody §2.4),
+closing the loop *record* (H20) → *report* (H25) → *refresh* (H27). Selection
+is the one shared predicate (`classify.is_stale_classification`), so the count
+doctor shows equals the count a refresh acts on, and it converges
+(`test_classify_stale_clears_the_doctor_stale_signal`). It never touches
+current-ruleset items, pre-H20 *unfingerprinted* items (unknown, not stale), or
+user-set categories — a hand-set category carries no engine stamp
+(`scrolls set` drops it), so user overrides always win
+(`test_classify_stale_skips_current_ruleset_items`,
+`test_classify_stale_leaves_user_set_categories_untouched`). An item the live
+ruleset no longer matches falls to `"status": "unmatched"` and its stored
+category is left untouched — surfaced, never wiped. Rules-only: `--stale`
+rejects `--engine llm`, `--batch`, and a single id
+(`test_classify_stale_rejects_the_llm_engine`,
+`test_classify_stale_rejects_batch`, `test_classify_stale_rejects_an_item_id`).
+
 `--engine llm` (engine `llm-v1`, ADR 0015) classifies with a model via the
 Anthropic API instead (network; needs `ANTHROPIC_API_KEY`; default model
 `claude-opus-4-8`, overridable via `SCROLLS_LLM_MODEL`). It uses the full
@@ -1180,6 +1203,10 @@ $ scrolls classify       # after writing broken TOML into config.toml
 $ scrolls classify --batch     # the rules engine has nothing to batch
 {"error": "--batch requires the llm engine (--engine llm)"}
 [exit 1]
+
+$ scrolls classify --stale     # refresh whatever doctor flagged stale
+{"classified": 1, "unmatched": 0, "failed": 0, "results": [{"id": "web:3f1a", "status": "classified", "category": "tutorial"}]}
+[exit 0]
 ```
 
 ### `scrolls set <id> field=value...`

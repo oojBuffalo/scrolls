@@ -4,7 +4,11 @@ Deterministic, offline: category comes from source defaults, title
 patterns, and URL shape — no LLM, no network.
 """
 
-from scrolls.classify import RULESET_FINGERPRINT, classify_item
+from scrolls.classify import (
+    RULESET_FINGERPRINT,
+    classify_item,
+    is_stale_classification,
+)
 from scrolls.items import ScrollItem
 
 
@@ -563,3 +567,45 @@ def test_unmatched_item_records_no_basis_or_ruleset():
     assert classified.category is None
     assert "classified_basis" not in (classified.provenance or {})
     assert "classified_ruleset" not in (classified.provenance or {})
+
+
+# --- the stale-ruleset selector: shared by doctor + `classify --stale` (H27) -
+#
+# `is_stale_classification` is the one definition behind doctor's
+# `custody.enrichment.stale` report and the `scrolls classify --stale` refresh
+# pool, so the count doctor shows equals the count a refresh acts on.
+
+
+def _with_provenance(**stamps):
+    base = {"adapter": "web", "fetched_at": "2026-06-12T00:00:00+00:00"}
+    return make_item(category="reference", provenance={**base, **stamps})
+
+
+def test_stale_classification_is_a_superseded_rules_fingerprint():
+    item = _with_provenance(classified_by="rules-v1", classified_ruleset="deadbeef0000")
+    assert is_stale_classification(item) is True
+
+
+def test_current_ruleset_classification_is_not_stale():
+    item = _with_provenance(
+        classified_by="rules-v1", classified_ruleset=RULESET_FINGERPRINT)
+    assert is_stale_classification(item) is False
+
+
+def test_unfingerprinted_classification_is_not_stale():
+    # pre-H20: an engine stamp but no ruleset — unknown, not stale
+    item = _with_provenance(classified_by="rules-v1")
+    assert is_stale_classification(item) is False
+
+
+def test_llm_classification_is_never_stale():
+    # the ruleset fingerprint is a rules-engine concept; the LLM axis is out
+    item = _with_provenance(classified_by="llm-v1", classified_ruleset="deadbeef0000")
+    assert is_stale_classification(item) is False
+
+
+def test_user_set_category_carrying_no_stamp_is_not_stale():
+    # a hand-set category has no engine stamp (overrides), so it never qualifies
+    item = make_item(category="tool", provenance={"adapter": "web"})
+    assert is_stale_classification(item) is False
+    assert is_stale_classification(make_item(category="tool", provenance=None)) is False

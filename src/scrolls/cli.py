@@ -18,7 +18,7 @@ from scrolls.agents import install_agent_docs
 from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
 from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.bundle import BundleError, build_bundle, parse_bundle
-from scrolls.classify import classify_item
+from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import live_recapture, record_events, verify_item
 from scrolls.context import BUDGET_TIERS as CONTEXT_BUDGET_TIERS
@@ -136,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Submit the whole run as one Message Batches API request "
         "(llm engine only): half the per-token price, but the command "
         "waits for the batch to finish — typically minutes",
+    )
+    classify_parser.add_argument(
+        "--stale",
+        action="store_true",
+        help="Re-run the rules engine over items classified under a superseded "
+        "ruleset (the ids `scrolls doctor` reports in custody.enrichment.stale), "
+        "refreshing their category and ruleset fingerprint to the live ruleset; "
+        "rules engine only, never with --batch or a single id",
     )
 
     context_parser = subparsers.add_parser(
@@ -665,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "agent":
         return _cmd_agent_install()
     if args.command == "classify":
-        return _cmd_classify(args.id, args.engine, args.batch)
+        return _cmd_classify(args.id, args.engine, args.batch, args.stale)
     if args.command == "context":
         return _cmd_context(
             args.query,
@@ -1309,7 +1317,10 @@ def _cmd_verify(ref: str | None, verify_all: bool, limit: int | None = None) -> 
 
 
 def _cmd_classify(
-    item_id: str | None, engine: str | None = None, batch: bool = False
+    item_id: str | None,
+    engine: str | None = None,
+    batch: bool = False,
+    stale: bool = False,
 ) -> int:
     paths = get_paths()
     try:
@@ -1318,7 +1329,41 @@ def _cmd_classify(
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
     # the --engine flag beats config.toml's [classify] default_engine
+    explicit_engine = engine
     engine = engine or config.default_engine
+
+    if stale:
+        # --stale refreshes the *rules* ruleset fingerprint, so it is rules-only
+        # and forces the engine regardless of the config default; an explicit
+        # `--engine llm`, `--batch`, or a single id is a contradiction.
+        if explicit_engine == "llm":
+            print(
+                json.dumps(
+                    {"error": "classify --stale refreshes rules classifications; "
+                     "it cannot use --engine llm"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        if batch:
+            print(
+                json.dumps(
+                    {"error": "classify --stale is a rules refresh; "
+                     "it cannot be combined with --batch"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        if item_id is not None:
+            print(
+                json.dumps(
+                    {"error": "classify --stale refreshes a batch; "
+                     "it cannot target one item"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        engine = "rules"
 
     if batch and engine != "llm":
         print(
@@ -1353,6 +1398,18 @@ def _cmd_classify(
         # Asking for one item by id is an explicit reclassify; batch runs
         # below never overwrite an existing category (user overrides win).
         items = [dataclasses.replace(item, category=None)]
+    elif stale:
+        # exactly doctor's custody.enrichment.stale set (one shared predicate);
+        # zero the category so a re-classify recomputes it under the live
+        # ruleset. An item the live ruleset no longer matches falls to
+        # "unmatched" and its stored category is left untouched (non-destructive
+        # — we surface that it no longer re-derives, we don't wipe it).
+        everything = list_items(paths.db_path) if paths.db_path.exists() else []
+        items = [
+            dataclasses.replace(item, category=None)
+            for item in everything
+            if is_stale_classification(item)
+        ]
     else:
         everything = list_items(paths.db_path) if paths.db_path.exists() else []
         items = [

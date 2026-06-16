@@ -82,8 +82,17 @@ each command moves items between stages or derives artifacts from them.
   classified under a *superseded* ruleset (stored `classified_ruleset` ≠
   the live `RULESET_FINGERPRINT`) as a re-derivable, report-only signal —
   never auto-reclassified, the drift block's enrichment counterpart
-  (roadmap H25). The remaining cap-8 step is a confidence/recency marker
-  (roadmap H21).
+  (roadmap H25). `scrolls classify --stale` is the explicit refresh that
+  acts on that signal: it re-runs the rules engine over exactly the items
+  doctor reports stale (the one shared predicate
+  `classify.is_stale_classification` backs both, so the count doctor shows
+  equals the count the refresh touches, and it converges), refreshing
+  `category` + `classified_ruleset` to the live ruleset — regeneration on
+  request, never doctor's silent overwrite, closing the loop H20 (record) →
+  H25 (report) → H27 (refresh). User overrides stay out of that pool: a
+  hand-set category drops the engine stamp (`overrides.apply_overrides`), so
+  it is never counted stale and never refreshed — user overrides always win.
+  The remaining cap-8 step is a confidence/recency marker (roadmap H21).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
@@ -501,7 +510,9 @@ choice (ADRs 0004, 0005).
   Which of the four tiers fired is recorded as `classified_basis`, paired with
   a `classified_ruleset` fingerprint of the rule tables, so a stored category
   names the exact ruleset that produced it (roadmap H20). Batch runs never
-  overwrite an existing category; `classify <id>` explicitly reclassifies
+  overwrite an existing category; `classify <id>` explicitly reclassifies, and
+  `classify --stale` re-runs the engine over exactly the items doctor flags as
+  classified under a superseded ruleset (`is_stale_classification`, roadmap H27)
   (`tests/test_classify.py`).
 - **LLM classification** (`classify_llm.py`, ADR 0015) — layer two
   (`llm-v1`), run explicitly via `classify --engine llm`: one Anthropic
@@ -523,7 +534,12 @@ choice (ADRs 0004, 0005).
   IDEAS.md §8's third layer: it writes exactly the fields the engines
   write (`category`, `domain`, `tags`, `concepts`), free-form, with
   empty values clearing a field back to the batch-classifiable pool. A
-  set category sticks because batch runs never overwrite one
+  set category sticks because batch runs never overwrite one. Setting
+  `category` also drops the engine's category-derivation stamps
+  (`classified_by` / `classified_basis` / `classified_ruleset` /
+  `classified_model`), keeping the contract `classification_view` documents
+  ("a user override carries no engine stamp") true — so a hand-set category
+  shows no method, and stays out of doctor's stale count and `classify --stale`
   (`tests/test_overrides.py`).
 - **Search** (`search.py`) — FTS5 BM25 with title weighted over summary
   over body. Query tokens are quoted and AND-ed, so arbitrary agent

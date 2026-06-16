@@ -108,6 +108,7 @@ uv run scrolls media          # download uncaptured media refs into media/, as J
 uv run scrolls media <id>     # (re)capture one item's media by id, as JSON
 uv run scrolls classify       # categorize items with the rules engine, as JSON
 uv run scrolls classify <id>  # explicitly (re)classify one item, as JSON
+uv run scrolls classify --stale  # refresh categories produced under a superseded ruleset (what doctor flags stale)
 uv run scrolls classify --engine llm  # LLM pass: category + domain + concepts (needs ANTHROPIC_API_KEY)
 uv run scrolls classify --engine llm --batch  # same LLM pass via the Batches API at half price
 uv run scrolls set <id> category=tool tags=a,b  # set classification fields by hand; empty value clears
@@ -1325,7 +1326,10 @@ second → user overrides always win" — see
 patterns (tutorial, opinion), then URL shape (docs sites →
 documentation), then youtube → media. Unmatched items honestly stay
 unclassified. Batch runs never overwrite an
-existing category; `scrolls classify <id>` explicitly reclassifies.
+existing category; `scrolls classify <id>` explicitly reclassifies, and
+`scrolls classify --stale` re-runs the engine over exactly the items
+`scrolls doctor` flags as classified under a superseded ruleset —
+regeneration on request, never doctor's silent overwrite.
 Already-rendered scrolls are re-rendered so frontmatter stays in sync.
 
 `scrolls classify --engine llm` is layer two (`llm-v1` — see

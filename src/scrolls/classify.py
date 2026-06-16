@@ -355,3 +355,31 @@ def _ruleset_digest() -> str:
 # Computed once at import: a fixed input → a stable digest, the determinism the
 # re-derivation contract rests on (`tests/test_classify.py`).
 RULESET_FINGERPRINT = _ruleset_digest()
+
+
+def is_stale_classification(item: ScrollItem) -> bool:
+    """True if `item` was rules-classified under a *superseded* ruleset.
+
+    The one definition behind both `doctor`'s `custody.enrichment.stale` report
+    (the items it flags) and `scrolls classify --stale` (the items it
+    refreshes), so the count doctor shows equals the count a refresh acts on —
+    closing the loop H20 (record the ruleset) → H25 (report what's stale) → H27
+    (refresh it on request).
+
+    Excluded, deliberately:
+
+    - an *unfingerprinted* classification (pre-H20, ``classified_ruleset`` is
+      absent) is *unknown*, not stale — we cannot tell whether a re-classify
+      would differ, so it is left alone (doctor's separate ``unfingerprinted``
+      bucket);
+    - an LLM classification (``classified_by != rules-v1``) — a different
+      re-derivability axis, out of scope;
+    - a hand-set category, which carries no engine stamp at all
+      (`overrides.apply_overrides`) — user overrides always win, so a refresh
+      must never reach them.
+    """
+    provenance = item.provenance or {}
+    if provenance.get("classified_by") != ENGINE:
+        return False
+    fingerprint = provenance.get("classified_ruleset")
+    return fingerprint is not None and fingerprint != RULESET_FINGERPRINT

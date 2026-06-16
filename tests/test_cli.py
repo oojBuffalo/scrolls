@@ -7,6 +7,7 @@ import pytest
 
 import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
+from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.cli import main
 from scrolls.db import SCHEMA_VERSION
 from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
@@ -1294,6 +1295,132 @@ def test_classify_unknown_id_is_an_error(scrolls_home, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+# --- classify --stale: refresh categories produced under a superseded ruleset
+#
+# `scrolls classify --stale` re-runs the rules engine over exactly the items
+# `scrolls doctor` reports in custody.enrichment.stale, refreshing their
+# category and ruleset fingerprint to the live ruleset. It is the user-invoked
+# counterpart to H25's read-only report (regenerate on request, never doctor's
+# silent overwrite — custody §2.4), closing the loop H20 → H25 → H27.
+
+
+def _make_stale(item_id, fingerprint="deadbeef0000"):
+    """Rewrite a held item's recorded ruleset to a superseded fingerprint."""
+    item = get_item(get_paths().db_path, item_id)
+    provenance = {**(item.provenance or {}), "classified_ruleset": fingerprint}
+    update_item(get_paths().db_path, dataclasses.replace(item, provenance=provenance))
+
+
+def test_classify_stale_refreshes_a_superseded_item(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    main(["classify"])  # reference, stamped with the live fingerprint
+    _make_stale("wikipedia:en:SQLite")
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--stale"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 1
+    assert payload["results"] == [
+        {"id": "wikipedia:en:SQLite", "status": "classified", "category": "reference"}
+    ]
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.category == "reference"
+    # the recorded ruleset is refreshed to the live one — no longer stale
+    assert stored.provenance["classified_ruleset"] == RULESET_FINGERPRINT
+    assert stored.provenance["classified_by"] == "rules-v1"
+
+
+def test_classify_stale_skips_current_ruleset_items(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    main(["classify"])  # current fingerprint
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--stale"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "classified": 0, "unmatched": 0, "failed": 0, "results": []
+    }
+
+
+def test_classify_stale_leaves_user_set_categories_untouched(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    main(["classify"])
+    _make_stale("wikipedia:en:SQLite")  # stale in the rules sense ...
+    main(["set", "wikipedia:en:SQLite", "category=tool"])  # ... then user override
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--stale"])
+    assert exit_code == 0
+    # nothing selected: the override dropped the engine stamp, so it is not stale
+    assert json.loads(capsys.readouterr().out)["classified"] == 0
+    stored = get_item(get_paths().db_path, "wikipedia:en:SQLite")
+    assert stored.category == "tool"  # user wins
+    assert "classified_by" not in (stored.provenance or {})
+
+
+def test_classify_stale_clears_the_doctor_stale_signal(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    # the loop converges: what doctor flags stale is exactly what --stale acts on
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    main(["classify"])
+    _make_stale("wikipedia:en:SQLite")
+    capsys.readouterr()
+
+    main(["doctor"])
+    before = json.loads(capsys.readouterr().out)["custody"]["enrichment"]
+    assert before["stale"] == 1
+
+    main(["classify", "--stale"])
+    capsys.readouterr()
+
+    main(["doctor"])
+    after = json.loads(capsys.readouterr().out)["custody"]["enrichment"]
+    assert after["stale"] == 0
+    assert after["current"] == 1
+
+
+def test_classify_stale_rejects_the_llm_engine(scrolls_home, capsys):
+    exit_code = main(["classify", "--stale", "--engine", "llm"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_classify_stale_rejects_batch(scrolls_home, capsys):
+    exit_code = main(["classify", "--stale", "--batch"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_classify_stale_rejects_an_item_id(scrolls_home, capsys):
+    exit_code = main(["classify", "wikipedia:en:SQLite", "--stale"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_classify_stale_empty_is_a_clean_noop(scrolls_home, capsys):
+    exit_code = main(["classify", "--stale"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "classified": 0, "unmatched": 0, "failed": 0, "results": []
+    }
 
 
 @pytest.fixture
