@@ -103,9 +103,21 @@ each command moves items between stages or derives artifacts from them.
   hand-set category drops the engine stamp (`overrides.apply_overrides`), so
   it is never counted stale and never refreshed — user overrides always win.
   The classification axis now also carries a per-item confidence/recency marker
-  (roadmap H21, above); the remaining cap-8 step is the summary-axis counterpart
-  — surfacing LLM concept-summary provenance and a stale-summary signal (roadmap
-  H29/H31).
+  (roadmap H21, above). The **summary axis** mirrors it (roadmap H29): a derived
+  `summary_provenance` view (`kb_llm.summary_provenance` over a stored
+  `ConceptSummary` and the concept's live members — `by` / `members_hash` /
+  `freshness`, `None` when never synthesized) and a `doctor` `custody.summaries`
+  block that reports summary-eligible concepts (≥ `MIN_MEMBERS` rendered members,
+  the one shared `kb_llm.eligible_concepts` denominator the generators use) whose
+  stored summary's `members_hash` no longer matches the live members as `stale` —
+  the membership moved since synthesis, so the summary is regenerable. Like
+  enrichment, it is report-only and never auto-regenerated; the view, the doctor
+  aggregate, and (roadmap H31) `scrolls kb --stale` share one
+  `kb_llm.summary_freshness` primitive (`current` / `stale` / `never`), so the
+  per-concept marker, doctor's counts, and the refresh pool can never disagree —
+  the convergence the classification axis pins, on the summary axis. `kb --stale`
+  (H31) is the explicit refresh that closes the summary-axis loop H29 (record/
+  report) → H31 (refresh), the counterpart of `classify --stale`.
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content

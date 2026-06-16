@@ -86,6 +86,90 @@ def members_hash(items: list[ScrollItem]) -> str:
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 
+def eligible_concepts(items: list[ScrollItem]) -> dict[str, dict]:
+    """Concepts that qualify for an LLM summary: ≥ `MIN_MEMBERS` rendered members.
+
+    The summarization *denominator*, factored out of the two generators so
+    `doctor`'s `custody.summaries` audit (roadmap H29) and the generator agree on
+    exactly which concepts a summary is expected for. Cross-item synthesis is the
+    value, so a one-item concept never qualifies (the same reason the generators
+    skip it).
+    """
+    return {
+        slug: entry
+        for slug, entry in group_concepts(items).items()
+        if len(entry["items"]) >= MIN_MEMBERS
+    }
+
+
+def summary_freshness(stored: ConceptSummary | None, live_digest: str) -> str:
+    """Recency of a stored concept summary against the concept's *live* members.
+
+    The summary-axis counterpart of `classify.classification_freshness`: the one
+    primitive shared by the `summary_provenance` view, `doctor`'s
+    `custody.summaries` aggregate, and (roadmap H31) `scrolls kb --stale`. One
+    home, so the per-concept marker an agent reads, the count doctor reports, and
+    the pool a refresh acts on can never disagree.
+
+    Recency here is the *membership fingerprint*, not a wall-clock timestamp —
+    the same idempotent-recency choice the classification axis makes. A summary's
+    `members_hash` changes exactly when an item joins, leaves, or is refetched
+    with different content (`members_hash`), the conditions under which a stored
+    summary is regenerable. `live_digest` is `members_hash(...)` over the
+    concept's current members. Returns:
+
+    - ``never`` — no stored summary for this concept (eligible but never
+      synthesized): unknown, not silently current.
+    - ``current`` — stored under this engine with `members_hash == live_digest`:
+      a re-synthesis would re-read the same members, so it is a no-op (the
+      generators' incremental-skip condition).
+    - ``stale`` — stored, but the members changed since synthesis (a different
+      `members_hash`) or it was written by a superseded engine: regenerable.
+    """
+    if stored is None:
+        return "never"
+    if stored.engine == ENGINE and stored.members_hash == live_digest:
+        return "current"
+    return "stale"
+
+
+def summary_provenance(
+    stored: ConceptSummary | None, live_digest: str
+) -> dict | None:
+    """The recorded *how* of a concept summary, or None when never synthesized.
+
+    The summary-axis counterpart of `items.classification_view`: a derived,
+    read-only view of an enrichment's provenance — the engine that wrote it
+    (`by`), the membership fingerprint it was synthesized from (`members_hash`),
+    and its `freshness` against the concept's live members. None when no summary
+    is stored — honest absence, no provenance claimed for an enrichment that does
+    not exist (the `classification_view`-returns-None posture). A present view's
+    freshness is always ``current`` or ``stale``; ``never`` is the absent case
+    this returns None for.
+    """
+    if stored is None:
+        return None
+    return {
+        "by": stored.engine,
+        "members_hash": stored.members_hash,
+        "freshness": summary_freshness(stored, live_digest),
+    }
+
+
+def is_stale_summary(stored: ConceptSummary | None, live_digest: str) -> bool:
+    """True if a stored summary's members changed since synthesis (regenerable).
+
+    The selector behind `doctor`'s `custody.summaries.stale` report and (roadmap
+    H31) `scrolls kb --stale`, so the count doctor shows equals the count a
+    refresh acts on — mirroring `classify.is_stale_classification` on the
+    classification axis. A thin reading of `summary_freshness`, so the view, the
+    doctor aggregate, and the refresh pool share one derivation. A *never*-
+    summarized concept is not stale (there is nothing to regenerate, only to
+    generate); an engine-mismatched or members-changed summary is.
+    """
+    return summary_freshness(stored, live_digest) == "stale"
+
+
 def concept_card(display: str, items: list[ScrollItem]) -> str:
     """The compact concept description the model synthesizes from.
 
@@ -160,11 +244,7 @@ def generate_concept_summaries(
     """
     model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
     items = [item for item in list_items(db_path) if item.markdown_path]
-    eligible = {
-        slug: entry
-        for slug, entry in group_concepts(items).items()
-        if len(entry["items"]) >= MIN_MEMBERS
-    }
+    eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
 
     counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
@@ -219,11 +299,7 @@ def generate_concept_summaries_batch(
     if complete_batch is None:
         complete_batch = _anthropic_complete_batch
     items = [item for item in list_items(db_path) if item.markdown_path]
-    eligible = {
-        slug: entry
-        for slug, entry in group_concepts(items).items()
-        if len(entry["items"]) >= MIN_MEMBERS
-    }
+    eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
 
     # One pass in page order (sorted slug) settles which concepts are

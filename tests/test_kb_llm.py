@@ -13,16 +13,20 @@ import pytest
 
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, insert_item, update_item
-from scrolls.kb import load_concept_summaries, save_concept_summary
+from scrolls.kb import ConceptSummary, load_concept_summaries, save_concept_summary
 from scrolls.kb_llm import (
     ENGINE,
     MIN_MEMBERS,
     SYSTEM_PROMPT,
     concept_card,
+    eligible_concepts,
     generate_concept_summaries,
     generate_concept_summaries_batch,
+    is_stale_summary,
     members_hash,
     summarize_concept_llm,
+    summary_freshness,
+    summary_provenance,
 )
 from scrolls.llm import DEFAULT_MODEL, LLMAuthError, LLMError
 
@@ -508,3 +512,104 @@ def test_real_batch_completer_maps_missing_credentials_to_auth_error(monkeypatch
     with pytest.raises(LLMAuthError):
         _anthropic_complete_batch(
             SYSTEM_PROMPT, [("concept-0", "card")], "claude-opus-4-8")
+
+
+# --- summary provenance view + freshness primitive (cap 8, roadmap H29) --
+#
+# The summary-axis counterpart of the classification view (H20) and its
+# `classification_freshness` primitive: a stored concept summary records the
+# `members_hash` of the scrolls it was synthesized from, so a reader can tell
+# whether a re-synthesis today would reproduce it (`current`), the members
+# changed since (`stale`), or it was never written (`never`). One derivation
+# behind the view, doctor's `custody.summaries` aggregate, and `kb --stale`.
+
+
+def _summary(slug, members_hash="abc", engine=ENGINE):
+    return ConceptSummary(
+        slug=slug, display=slug.upper(), summary="How it shows up.",
+        members_hash=members_hash, engine=engine, model=DEFAULT_MODEL,
+        generated_at="2026-06-16T00:00:00+00:00")
+
+
+def test_summary_freshness_current_when_members_hash_matches_under_this_engine():
+    stored = _summary("bm25", members_hash="live-digest")
+    assert summary_freshness(stored, "live-digest") == "current"
+
+
+def test_summary_freshness_stale_when_members_changed_since_synthesis():
+    stored = _summary("bm25", members_hash="old-digest")
+    assert summary_freshness(stored, "live-digest") == "stale"
+
+
+def test_summary_freshness_stale_when_a_superseded_engine_wrote_it():
+    # the generators regenerate a summary from another engine, so it is stale
+    # even when the members are unchanged — the same condition that drives a
+    # re-synthesis (`prior.engine == ENGINE` in the incremental-skip check)
+    stored = _summary("bm25", members_hash="live-digest", engine="kb-llm-v0")
+    assert summary_freshness(stored, "live-digest") == "stale"
+
+
+def test_summary_freshness_never_when_no_summary_is_stored():
+    # eligible but never synthesized: unknown, not silently current
+    assert summary_freshness(None, "live-digest") == "never"
+
+
+def test_summary_provenance_names_engine_members_hash_and_freshness():
+    stored = _summary("bm25", members_hash="old-digest")
+    assert summary_provenance(stored, "live-digest") == {
+        "by": ENGINE,
+        "members_hash": "old-digest",
+        "freshness": "stale",
+    }
+
+
+def test_summary_provenance_is_none_when_never_summarized():
+    # honest absence: no provenance claimed for an enrichment that doesn't exist
+    assert summary_provenance(None, "live-digest") is None
+
+
+def test_summary_provenance_present_view_freshness_is_never_the_absent_bucket():
+    stored = _summary("bm25", members_hash="live-digest")
+    view = summary_provenance(stored, "live-digest")
+    assert view["freshness"] in ("current", "stale")
+
+
+def test_is_stale_summary_is_true_only_for_a_regenerable_stored_summary():
+    assert is_stale_summary(_summary("a", members_hash="old"), "live") is True
+    assert is_stale_summary(_summary("a", members_hash="live"), "live") is False
+    # never-summarized is not stale — there is nothing to regenerate, only to
+    # generate (mirrors classify's *unfingerprinted* exclusion from --stale)
+    assert is_stale_summary(None, "live") is False
+
+
+# --- eligible_concepts: the shared summarization denominator -------------
+
+
+def test_eligible_concepts_requires_at_least_min_members(db_path):
+    # one concept with 2 members qualifies; a one-item concept never does
+    insert_item(db_path, make_rendered(
+        "a", "web", "Alpha", concepts=("Shared", "Solo")))
+    insert_item(db_path, make_rendered(
+        "b", "web", "Beta", concepts=("Shared",)))
+    from scrolls.items import list_items
+
+    eligible = eligible_concepts(list_items(db_path))
+    assert "shared" in eligible
+    assert "solo" not in eligible
+    assert len(eligible["shared"]["items"]) == MIN_MEMBERS
+
+
+def test_eligible_concepts_matches_the_generator_denominator(db_path):
+    # the audit and the generator must see exactly the same eligible concepts:
+    # every concept the generator produced a result for is one this reports
+    seed_bm25_concept(db_path)
+    insert_item(db_path, make_rendered(
+        "solo", "web", "Solo", concepts=("Lonely",)))
+    complete = fake_completer()
+    _, results = generate_concept_summaries(db_path, complete=complete)
+
+    from scrolls.items import list_items
+
+    eligible = eligible_concepts(list_items(db_path))
+    generated_slugs = {r["slug"] for r in results if r["status"] != "pruned"}
+    assert generated_slugs == set(eligible)

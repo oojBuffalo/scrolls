@@ -587,6 +587,13 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             "classified": 0, "current": 0, "stale": 0, "unfingerprinted": 0,
             "items": [],
         },
+        "summaries": {
+            # one item, so no ≥2-member concept is eligible for a summary —
+            # the all-zero block (the summary-axis counterpart of enrichment)
+            "basis": "members_hash",
+            "eligible": 0, "summarized": 0, "current": 0, "stale": 0, "never": 0,
+            "items": [],
+        },
     }
 
 
@@ -839,3 +846,175 @@ def test_stale_ruleset_does_not_affect_issues_or_exit_code(paths, capsys):
     stored = list_items(paths.db_path)[0]
     assert stored.provenance["classified_ruleset"] == "deadbeef0000"
     assert stored.category == "tutorial"
+
+
+# --- enrichment re-derivability: stale-summary signal (cap 8, H29) -------
+#
+# `scrolls kb --engine llm` stores each concept summary with a `members_hash`
+# fingerprint of the scrolls it synthesized (`kb_llm.members_hash`). Doctor
+# reports summary-eligible concepts (≥ MIN_MEMBERS rendered members) whose
+# stored summary's fingerprint no longer matches the live members — the
+# membership changed since synthesis, so the summary is regenerable. The
+# summary-axis counterpart of the stale-ruleset enrichment block; like it,
+# report-only: a stale summary means the members moved, not that the synthesis
+# is wrong, so it never feeds `issues`/the exit code and doctor never
+# auto-regenerates (the refresh is `kb --stale`, H31).
+
+
+def _concept_item(item_id, concept, *, content_hash):
+    """A web item carrying one concept and full custody (so it is clean).
+
+    Provenance + a body + a hash keep it free of custody findings; it is
+    written to disk by `_seed_eligible_concept` so it has a real scroll file
+    and joins its concept group.
+    """
+    return ScrollItem(
+        id=item_id, source="web", url=f"https://example.org/{item_id}",
+        saved_at="2026-06-01T00:00:00+00:00", title=item_id,
+        extracted_text="body", raw_text="body", concepts=(concept,),
+        content_hash=content_hash, provenance={"fetched_at": "2026-06-01T00:00:00+00:00"})
+
+
+def _seed_eligible_concept(paths, concept="BM25", hashes=("h1", "h2")):
+    """Two rendered items sharing one concept; returns the live members digest.
+
+    Scrolls are written to disk (via `write_scroll`) so the library stays
+    structurally clean — the audit measures summary freshness, not drift.
+    """
+    from scrolls.kb_llm import members_hash
+
+    rendered = []
+    for n, h in enumerate(hashes):
+        item = _concept_item(f"web:{concept.lower()}-{n}", concept, content_hash=h)
+        rendered.append(_rendered(paths, item))
+    return members_hash(rendered)
+
+
+def _store_summary(paths, slug, members_hash, *, engine="kb-llm-v1"):
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(paths.db_path, ConceptSummary(
+        slug=slug, display=slug.upper(), summary="How it shows up.",
+        members_hash=members_hash, engine=engine, model="claude-opus-4-8",
+        generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def test_summaries_counts_a_summary_over_current_members_as_current(paths):
+    live = _seed_eligible_concept(paths)
+    _store_summary(paths, "bm25", live)
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["eligible"] == 1
+    assert summaries["summarized"] == 1
+    assert summaries["current"] == 1
+    assert summaries["stale"] == 0
+    assert summaries["never"] == 0
+    assert summaries["items"] == []
+
+
+def test_summaries_flags_a_summary_whose_members_changed_as_stale(paths):
+    live = _seed_eligible_concept(paths)
+    _store_summary(paths, "bm25", "stale-old-digest")
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["eligible"] == 1
+    assert summaries["summarized"] == 1
+    assert summaries["stale"] == 1
+    assert summaries["current"] == 0
+    # the stale concept is named with both fingerprints so a re-synthesis can
+    # be targeted and verified (the enrichment block's `items` posture)
+    assert summaries["items"] == [
+        {"slug": "bm25", "members_hash": "stale-old-digest", "live_hash": live}
+    ]
+
+
+def test_summaries_names_an_eligible_concept_with_no_summary_as_never(paths):
+    _seed_eligible_concept(paths)
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["eligible"] == 1
+    assert summaries["summarized"] == 0
+    assert summaries["never"] == 1
+    assert summaries["current"] == 0
+    assert summaries["stale"] == 0
+    assert summaries["items"] == []
+
+
+def test_summaries_treats_a_superseded_engine_as_stale(paths):
+    # a summary from another engine is regenerated even with unchanged members
+    # (the generators' `prior.engine == ENGINE` skip condition), so it is stale
+    live = _seed_eligible_concept(paths)
+    _store_summary(paths, "bm25", live, engine="kb-llm-v0")
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["stale"] == 1
+    assert summaries["current"] == 0
+
+
+def test_summaries_block_is_empty_when_no_concept_is_summary_eligible(paths):
+    # a single rendered item forms no ≥2-member concept — honest all-zero block
+    insert_item(paths.db_path, _concept_item("web:solo", "Loner", content_hash="h1"))
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["eligible"] == 0
+    assert summaries["summarized"] == 0
+    assert summaries["items"] == []
+
+
+def test_summaries_invariant_eligible_equals_summarized_plus_never(paths):
+    # the buckets partition the eligible concepts cleanly: a fresh + a stale +
+    # a never-summarized concept sum to eligible, and summarized = current+stale
+    fresh = _seed_eligible_concept(paths, concept="Fresh", hashes=("a", "b"))
+    _seed_eligible_concept(paths, concept="Stale", hashes=("c", "d"))
+    _seed_eligible_concept(paths, concept="New", hashes=("e", "f"))
+    _store_summary(paths, "fresh", fresh)
+    _store_summary(paths, "stale", "old-digest")
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["eligible"] == 3
+    assert summaries["current"] == 1
+    assert summaries["stale"] == 1
+    assert summaries["never"] == 1
+    assert summaries["summarized"] == summaries["current"] + summaries["stale"]
+    assert summaries["eligible"] == summaries["summarized"] + summaries["never"]
+
+
+def test_stale_summary_does_not_affect_issues_or_exit_code(paths, capsys):
+    # report-only: a stale summary is not repairable drift, and doctor never
+    # silently re-synthesizes — the stored summary and its fingerprint stand
+    from scrolls.kb import load_concept_summaries
+
+    _seed_eligible_concept(paths)
+    _store_summary(paths, "bm25", "stale-old-digest")
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["issues"] == 0
+    assert report["custody"]["summaries"]["stale"] == 1
+    # the summary was not rewritten: its old fingerprint still stands
+    assert load_concept_summaries(paths.db_path)["bm25"].members_hash == "stale-old-digest"
+
+
+def test_summaries_aggregate_converges_with_the_per_concept_view(paths):
+    # the per-concept `summary_provenance` view a reader builds and the count
+    # doctor aggregates share one `summary_freshness` derivation, so they can
+    # never disagree — the H21 convergence, on the summary axis
+    from collections import Counter
+
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import (
+        eligible_concepts, members_hash, summary_provenance,
+    )
+
+    fresh = _seed_eligible_concept(paths, concept="Fresh", hashes=("a", "b"))
+    _seed_eligible_concept(paths, concept="Stale", hashes=("c", "d"))
+    _seed_eligible_concept(paths, concept="New", hashes=("e", "f"))
+    _store_summary(paths, "fresh", fresh)
+    _store_summary(paths, "stale", "old-digest")
+
+    # roll up the freshness each eligible concept's own view reports
+    stored = load_concept_summaries(paths.db_path)
+    eligible = eligible_concepts(list_items(paths.db_path))
+    rolled = Counter()
+    for slug, entry in eligible.items():
+        view = summary_provenance(stored.get(slug), members_hash(entry["items"]))
+        rolled[view["freshness"] if view else "never"] += 1
+
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert rolled["current"] == summaries["current"] == 1
+    assert rolled["stale"] == summaries["stale"] == 1
+    assert rolled["never"] == summaries["never"] == 1

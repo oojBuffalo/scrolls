@@ -20,6 +20,8 @@ from typing import Any, Iterable
 
 from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
 from scrolls.custody import CUSTODY_STATUSES, latest_events
+from scrolls.kb import load_concept_summaries
+from scrolls.kb_llm import eligible_concepts, members_hash, summary_freshness
 from scrolls.items import (
     ScrollItem,
     get_fidelity,
@@ -86,6 +88,15 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
                 "unfingerprinted": 0,
                 "items": [],
             },
+            "summaries": {
+                "basis": "members_hash",
+                "eligible": 0,
+                "summarized": 0,
+                "current": 0,
+                "stale": 0,
+                "never": 0,
+                "items": [],
+            },
         },
     }
     if not paths.db_path.exists():
@@ -101,6 +112,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
     _check_enrichment_provenance(report, items)
+    _check_summary_provenance(paths, report, items)
     return report
 
 
@@ -421,3 +433,64 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
                 {"id": item.id, "ruleset": item.provenance["classified_ruleset"]}
             )
     enrichment["items"] = sorted(stale, key=lambda entry: entry["id"])
+
+
+def _check_summary_provenance(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem]
+) -> None:
+    """Re-derivability of LLM concept summaries (cap 8, ADR 0025 / roadmap H29).
+
+    The summary-axis counterpart of `_check_enrichment_provenance`. `scrolls kb
+    --engine llm` stores each concept summary with a `members_hash` fingerprint
+    of the scrolls it was synthesized from (`kb_llm.members_hash`). This
+    aggregates how the held, summary-eligible concepts stand against their *live*
+    members, so a reader can tell which summaries a re-synthesis today would
+    reproduce unchanged and which were written before the membership changed:
+
+    - ``eligible`` — held concepts that qualify for a summary (≥ `MIN_MEMBERS`
+      rendered members, the generator's denominator). LLM-only: the deterministic
+      compiler's pages need no synthesis.
+    - ``summarized`` — eligible concepts that have a stored summary
+      (``current`` + ``stale``).
+    - ``current`` — the stored summary's `members_hash` matches the live members:
+      a re-synthesis is a no-op (the generator's incremental-skip condition).
+    - ``stale`` — the members changed since synthesis (or a superseded engine
+      wrote it); the slug, the stored `members_hash`, and the live `live_hash`
+      are listed in ``items`` so a re-synthesis can be targeted.
+    - ``never`` — eligible but never summarized: unknown, not silently current
+      (the drift block's ``unverified`` honesty, on the summary axis).
+
+    Like drift and the enrichment block, this is a *report*, never repairable
+    ``issues`` and never the exit code: stale members mean the concept's
+    membership moved, not that the stored summary is wrong (it is still a valid
+    synthesis of the members it was written from). Doctor never auto-regenerates —
+    a refreshed summary is produced on request (`scrolls kb --stale`, roadmap
+    H31), never as a silent overwrite (custody §2.4).
+    """
+    summaries = report["custody"]["summaries"]
+    # Same denominator the generator uses: rendered members only (an unrendered
+    # item has no scroll file to synthesize from), grouped into eligible concepts
+    # via the one shared `eligible_concepts` helper so the audit and the
+    # generator can never disagree on which concepts a summary is expected for.
+    rendered = [item for item in items if item.markdown_path]
+    eligible = eligible_concepts(rendered)
+    if not eligible:
+        return
+    stored = load_concept_summaries(paths.db_path)
+    # The per-concept `summary_freshness` marker (the H29 view) and this aggregate
+    # share one derivation, so the count here can never disagree with the view or
+    # the `kb --stale` pool (the H31 convergence the classification axis pins too).
+    stale = []
+    for slug in sorted(eligible):
+        live = members_hash(eligible[slug]["items"])
+        prior = stored.get(slug)
+        freshness = summary_freshness(prior, live)
+        summaries["eligible"] += 1
+        if prior is not None:
+            summaries["summarized"] += 1
+        summaries[freshness] += 1  # never / current / stale
+        if freshness == "stale":
+            stale.append(
+                {"slug": slug, "members_hash": prior.members_hash, "live_hash": live}
+            )
+    summaries["items"] = stale  # already slug-ordered (sorted iteration)

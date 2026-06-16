@@ -351,6 +351,27 @@ marker each browse surface carries (roadmap H21) — both derive from the one
 `unfingerprinted` here equal the freshness an agent reads on the items themselves
 (`test_per_item_confidence_marker_converges_with_the_doctor_aggregate`).
 
+The custody block also carries a `summaries` sub-block — the same re-derivability
+posture on the *LLM concept-summary* axis (cap 8, roadmap H29). Each stored
+concept summary records the `members_hash` fingerprint of the scrolls it was
+synthesized from (`kb_llm.members_hash`); this block aggregates the
+summary-eligible concepts (≥ 2 rendered members, the `kb --engine llm`
+denominator) against their live members: `eligible` (concepts that qualify for a
+summary), `summarized` (those with a stored summary = `current` + `stale`),
+`current` (the stored fingerprint matches the live members — a re-synthesis is a
+no-op), `stale` (the members changed since synthesis, or a superseded engine
+wrote it — the slug, stored `members_hash`, and `live_hash` are listed in `items`
+so a re-synthesis can be targeted), and `never` (eligible but never summarized —
+unknown, **not** silently current, drift's `unverified` honesty on the summary
+axis). Like enrichment, it is report-only: a stale summary means the membership
+moved, not that the synthesis is wrong, so it never feeds `issues`/the exit code,
+and doctor never auto-regenerates (`test_stale_summary_does_not_affect_issues_or_exit_code`).
+The buckets and the per-concept `summary_provenance` view share one
+`kb_llm.summary_freshness` derivation, so the count here equals the freshness a
+reader builds per concept (`test_summaries_aggregate_converges_with_the_per_concept_view`);
+the explicit refresh that acts on the stale signal is `scrolls kb --stale`
+(roadmap H31), the summary-axis counterpart of `classify --stale`.
+
 ### `scrolls verify [id] [--all] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
