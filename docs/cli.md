@@ -1370,9 +1370,9 @@ search/browse pair (ADR 0080). `list`/`search`/`context` *narrow* by
 those values can be, so an agent learns the library's real categories,
 tags, and concept slugs before filtering. Output is
 `{"facets": {dimension: [{"value", "count", …}, …]}}`; with no `field`,
-every dimension (`sources`, `categories`, `tags`, `concepts`) is
-reported, in that order, and a `field` narrows the payload to that one
-(`test_facets_reports_every_dimension`,
+every dimension (`sources`, `categories`, `tags`, `concepts`, `fidelity`,
+`method`) is reported, in that order, and a `field` narrows the payload to
+that one (`test_facets_reports_every_dimension`,
 `test_facets_single_field_returns_only_that_dimension`). An empty or
 uninitialized library reports every dimension as `[]`
 (`test_facets_uninitialized_library_is_empty_but_well_shaped`); an
@@ -1396,6 +1396,20 @@ one concept on one item count it once
 facets that scope `search` scope the counts here, so
 `scrolls facets concepts --source arxiv` answers "which concepts do my
 arXiv papers carry?".
+
+`fidelity` and `method` are *derived* dimensions, not stored columns.
+`fidelity` counts items by custody tier (`full`/`partial`/`reference`,
+ADR 0097), the same tier `search`/`list` carry per item. `method` counts
+them by how each held category was produced — `rules-v1` / `llm-v1` for an
+engine-classified item, `user-set` for a hand-set category with no engine
+stamp, and `unclassified` for none — the aggregate counterpart of the
+per-item `classification` view (roadmap H20/H26), built from the same
+`items.classification_view` derivation so the counts and the per-item view
+never disagree. It answers "how much of my library was auto-classified vs
+set by hand vs still unclassified?", and completes the search ≡ list ≡ MCP
+≡ facets parity on the aggregate axis
+(`test_method_counts_by_how_the_category_was_produced`,
+`test_facets_method_buckets_how_categories_were_produced`).
 
 ```console
 $ scrolls facets

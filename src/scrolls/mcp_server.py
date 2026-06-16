@@ -183,15 +183,18 @@ def list_facets(
 
     The discovery counterpart to search_scrolls/list_scrolls: it answers
     "what can I filter by?" before you filter. With no `field`, reports every
-    dimension — `sources`, `categories`, `tags`, `concepts` — as
+    dimension — `sources`, `categories`, `tags`, `concepts`, plus the derived
+    `fidelity` (custody tier) and `method` (how each held category was produced:
+    `rules-v1`/`llm-v1`, or the honest `user-set`/`unclassified` buckets) — as
     `{"facets": {dimension: [{"value", "count", ...}, ...]}}`; pass a `field`
     to narrow to one. Each list is ranked by count then value and capped at
     `limit` (default 20). Categories report the unclassified pool as the empty
     string ""; concepts carry the `slug` you would pass as the `concept` facet.
     The same optional facets that scope search_scrolls scope these counts, so
     `list_facets("concepts", source="arxiv")` asks which concepts the saved
-    arXiv papers carry. Use it to learn the real category, tag, and concept
-    values before calling search_scrolls/list_scrolls with one.
+    arXiv papers carry, and `list_facets("method")` asks how much of the library
+    was auto-classified vs set by hand. Use it to learn the real category, tag,
+    and concept values before calling search_scrolls/list_scrolls with one.
     """
     return compute_facets(
         get_paths().db_path,

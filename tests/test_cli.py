@@ -2376,8 +2376,41 @@ def test_facets_uninitialized_library_is_empty_but_well_shaped(scrolls_home, cap
             "tags": [],
             "concepts": [],
             "fidelity": [],
+            "method": [],
         }
     }
+
+
+def test_facets_method_buckets_how_categories_were_produced(scrolls_home, capsys):
+    # the aggregate counterpart of the per-item `classification` view (H28):
+    # how much of the library was rules-classified vs set by hand vs unclassified
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:SQLite", source="wikipedia", source_id="en:SQLite",
+        url="https://en.wikipedia.org/wiki/SQLite", saved_at="2026-06-12T00:00:00+00:00",
+        title="SQLite", category="reference", stage="fetched",
+        provenance={"classified_by": "rules-v1", "classified_basis": "curated-source",
+                    "classified_ruleset": "abc123"}))
+    insert_item(db, ScrollItem(
+        id="web:user", source="web", url="https://ex.com/u",
+        saved_at="2026-06-12T00:00:00+00:00", title="A hand-set post",
+        category="opinion", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:bare", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T00:00:00+00:00", title="An unclassified post", stage="fetched"))
+    capsys.readouterr()
+
+    main(["facets", "method"])
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["facets"]) == {"method"}
+    assert payload["facets"]["method"] == [
+        {"value": "rules-v1", "count": 1},
+        {"value": "unclassified", "count": 1},
+        {"value": "user-set", "count": 1},
+    ]
 
 
 def test_facets_reports_every_dimension(scrolls_home, capsys):

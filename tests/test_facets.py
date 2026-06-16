@@ -127,6 +127,61 @@ def test_all_dimensions_returned_by_default(db_path):
     assert payload["facets"]["tags"] == [{"value": "x", "count": 1}]
 
 
+# --- method (how each held category was produced, roadmap H28) -------------
+
+
+def test_method_counts_by_how_the_category_was_produced(db_path):
+    # the aggregate counterpart of the per-item `classification` view (H20/H26):
+    # buckets the library by the engine that produced each category, with the
+    # honest "user-set" / "unclassified" buckets the per-item view's None covers.
+    from scrolls.classify import classify_item
+
+    seed(
+        db_path,
+        [
+            # two rules-classified items (wikipedia → reference, curated-source)
+            classify_item(make_item("wiki:1", source="wikipedia", category=None,
+                                    title="SQLite")),
+            classify_item(make_item("wiki:2", source="wikipedia", category=None,
+                                    title="Postgres")),
+            # an LLM-classified item carries classified_by=llm-v1
+            make_item("web:llm", category="tutorial",
+                      provenance={"classified_by": "llm-v1", "classified_model": "claude-x"}),
+            # a hand-set category, no engine stamp
+            make_item("web:user", category="opinion"),
+            # nothing classified it: no category at all
+            make_item("web:bare"),
+        ],
+    )
+    method = compute_facets(db_path, field="method")["facets"]["method"]
+    assert method == [
+        {"value": "rules-v1", "count": 2},
+        {"value": "llm-v1", "count": 1},
+        {"value": "unclassified", "count": 1},
+        {"value": "user-set", "count": 1},
+    ]
+
+
+def test_method_facet_respects_the_scoping_filters(db_path):
+    # the same facets that scope the other dimensions scope `method` too
+    from scrolls.classify import classify_item
+
+    seed(
+        db_path,
+        [
+            classify_item(make_item("wiki:1", source="wikipedia", category=None,
+                                    title="SQLite")),
+            make_item("web:user", source="web", category="opinion"),
+        ],
+    )
+    scoped = compute_facets(db_path, field="method", source="wikipedia")["facets"]["method"]
+    assert scoped == [{"value": "rules-v1", "count": 1}]
+
+
+def test_method_facet_empty_library_is_well_shaped(db_path):
+    assert compute_facets(db_path, field="method") == {"facets": {"method": []}}
+
+
 def test_scoping_filter_restricts_the_vocabulary(db_path):
     seed(
         db_path,

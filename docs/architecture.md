@@ -69,7 +69,11 @@ each command moves items between stages or derives artifacts from them.
   `list_scrolls` / `get_scroll` / `search_scrolls` twins (the ranked surfaces
   derive it per-hit from the FTS row's own provenance column via the shared
   `search.hit_payload` serializer, so it costs no extra query and the `--stats`
-  scope/truncation stays honest — roadmap H26). The cross-engine contract — method is recorded,
+  scope/truncation stays honest — roadmap H26). `scrolls facets method` is the
+  aggregate axis of the same view (roadmap H28): the library bucketed by how each
+  held category was produced — `rules-v1` / `llm-v1`, or the honest `user-set` /
+  `unclassified` buckets — built from the same `classification_view`, so the
+  counts and the per-item view never disagree. The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

@@ -16,6 +16,13 @@ facets grouped exactly as the KB and the `--tag`/`--concept` filters group them
 the filters key on. Each tag/concept count is the number of *distinct* items
 carrying it, so two spellings of one concept on one item count it once.
 
+The `fidelity` and `method` dimensions are *derived* tiers rather than stored
+columns: `fidelity` counts items by custody tier (ADR 0097), and `method`
+counts them by how each held category was produced (`rules-v1`/`llm-v1`, or the
+honest `user-set`/`unclassified` buckets) — the aggregate counterpart of the
+per-item `classification` view (roadmap H20/H26), built from the same
+`classification_view` derivation so the two never disagree.
+
 The same optional facets that scope search scope the enumeration too, reusing
 `items.item_filters`. `None` never filters.
 """
@@ -30,13 +37,14 @@ from typing import Any
 
 from scrolls.items import (
     ScrollItem,
+    classification_view,
     fidelity_tier,
     item_filters,
     register_facet_functions,
 )
 from scrolls.kb import group_concepts, group_tags
 
-FIELDS = ("sources", "categories", "tags", "concepts", "fidelity")
+FIELDS = ("sources", "categories", "tags", "concepts", "fidelity", "method")
 
 DEFAULT_LIMIT = 20
 
@@ -86,6 +94,8 @@ def compute_facets(
                 )
         if "fidelity" in wanted:
             facets["fidelity"] = _fidelity_counts(conn, where, params, limit)
+        if "method" in wanted:
+            facets["method"] = _method_counts(conn, where, params, limit)
     finally:
         conn.close()
     return {"facets": {name: facets[name] for name in wanted}}
@@ -208,3 +218,40 @@ def _fidelity_counts(
     )
     entries = [{"value": tier, "count": count} for tier, count in counts.items()]
     return _rank(entries, limit)
+
+
+def _method_counts(
+    conn: sqlite3.Connection, where: str, params: list[str], limit: int | None
+) -> list[dict[str, Any]]:
+    """Count items by how each held category was produced (roadmap H28).
+
+    The aggregate counterpart of the per-item `classification` view (H20/H26):
+    where that view says how *one* item's category was derived, this buckets the
+    whole (scoped) library by the engine that produced each category — the same
+    derivation (`classification_view` over the row's own `provenance`), so the
+    counts and the per-item view never disagree. Two buckets the per-item view's
+    None covers are named honestly here rather than dropped: `user-set` (a
+    category present with no engine stamp — a `scrolls set` value) and
+    `unclassified` (no category at all). Reads only `category` + `provenance`,
+    never the bodies, the way `_fidelity_counts` reads only presence flags.
+    """
+    rows = conn.execute(
+        f"SELECT category, provenance FROM items{where}", params
+    ).fetchall()
+    counts = Counter(_method_bucket(row["category"], row["provenance"]) for row in rows)
+    entries = [{"value": method, "count": count} for method, count in counts.items()]
+    return _rank(entries, limit)
+
+
+def _method_bucket(category: str | None, provenance_json: str | None) -> str:
+    """The classification-method bucket for one row.
+
+    The engine that stamped the category (`rules-v1` / `llm-v1`) when one did;
+    otherwise `user-set` for a hand-set category and `unclassified` for none —
+    the honest absence the per-item view returns as None, made countable.
+    """
+    provenance = json.loads(provenance_json) if provenance_json else None
+    view = classification_view(provenance)
+    if view is not None:
+        return view["by"]
+    return "user-set" if category is not None else "unclassified"

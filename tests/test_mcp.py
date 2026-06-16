@@ -335,8 +335,33 @@ def test_list_facets_before_init_is_empty_but_well_shaped(scrolls_home):
             "tags": [],
             "concepts": [],
             "fidelity": [],
+            "method": [],
         }
     }
+
+
+def test_list_facets_method_buckets_how_categories_were_produced(scrolls_home):
+    # the MCP twin of `scrolls facets method` (H28): the aggregate of the
+    # per-item classification view, with honest user-set/unclassified buckets
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:SQLite", source="wikipedia", source_id="en:SQLite",
+        url="https://en.wikipedia.org/wiki/SQLite", saved_at="2026-06-12T00:00:00+00:00",
+        title="SQLite", category="reference", stage="fetched",
+        provenance={"classified_by": "rules-v1", "classified_basis": "curated-source",
+                    "classified_ruleset": "abc123"}))
+    insert_item(db, ScrollItem(
+        id="web:bare", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T00:00:00+00:00", title="An unclassified post", stage="fetched"))
+
+    method = mcp_server.list_facets("method")["facets"]["method"]
+    assert method == [
+        {"value": "rules-v1", "count": 1},
+        {"value": "unclassified", "count": 1},
+    ]
 
 
 def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):
