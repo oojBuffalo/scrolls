@@ -167,6 +167,9 @@ def test_search_hits_carry_the_classification_view(db_path):
         "by": "rules-v1",
         "basis": "curated-source",
         "ruleset": RULESET_FINGERPRINT,
+        # the derived confidence marker (H21) rides the hit too: a rules match is
+        # deterministic, and current because it ran under the live ruleset
+        "confidence": {"level": "deterministic", "freshness": "current"},
     }
     # identical to what the inspect surfaces derive from the stored item
     assert hit.classification == classification_provenance(item)
@@ -215,7 +218,13 @@ def test_search_classification_view_records_the_llm_model(db_path):
     )
     insert_item(db_path, item)
     (hit,) = search_items(db_path, "database engine")
-    assert hit.classification == {"by": "llm-v1", "model": "claude-x"}
+    # the LLM engine is `inferred`, and carries no freshness — there is no ruleset
+    # to compare it against, so none is claimed (honest absence, H21)
+    assert hit.classification == {
+        "by": "llm-v1",
+        "model": "claude-x",
+        "confidence": {"level": "inferred"},
+    }
     assert hit.classification == classification_provenance(item)
 
 

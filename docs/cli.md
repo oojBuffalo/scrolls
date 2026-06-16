@@ -345,6 +345,11 @@ regenerated view is produced on request, never a silent overwrite;
 `test_stale_ruleset_does_not_affect_issues_or_exit_code`). To act on the
 signal, run [`scrolls classify --stale`](#scrolls-classify-id), the explicit
 refresh that re-runs the rules engine over exactly the items reported here.
+This aggregate is the rollup of the per-item `classification.confidence.freshness`
+marker each browse surface carries (roadmap H21) — both derive from the one
+`classify.classification_freshness` primitive, so `current`/`stale`/
+`unfingerprinted` here equal the freshness an agent reads on the items themselves
+(`test_per_item_confidence_marker_converges_with_the_doctor_aggregate`).
 
 ### `scrolls verify [id] [--all] [--limit N]`
 
@@ -1124,6 +1129,26 @@ category. This surfaces as a derived `classification` block on `show`,
 reads identically on every browse surface; `tests/test_classify.py` pins the
 per-tier basis, the fingerprint, and their deterministic re-derivation.
 
+The `classification` block also carries a derived `confidence` marker (roadmap
+H21, the obsidian "confidence levels" adaptation) so an agent knows *how much
+to trust* the category without consulting `doctor` or knowing the live ruleset:
+
+- `level` — the method's nature: `deterministic` for a rules match (it follows
+  mechanically from recorded signals — reproducible and explainable) or
+  `inferred` for an LLM category (a probabilistic model judgment, to be weighed
+  more cautiously). This is the "rule-matched vs llm-inferred" trust axis.
+- `freshness` — present only for the rules engine (where it can be answered):
+  `current` / `stale` / `unknown` against the *live* ruleset, the per-item
+  counterpart of doctor's `custody.enrichment` aggregate. Omitted for the LLM
+  engine — there is no ruleset to compare and a wall-clock timestamp would break
+  the idempotence contract, so no freshness is claimed rather than a guessed one
+  (honest absence). Recency is the *ruleset fingerprint*, not a timestamp.
+
+The marker reads from the same `classify.classification_freshness` derivation
+doctor and `--stale` use, so the per-item recency an agent sees can never
+disagree with the count doctor reports
+(`test_per_item_confidence_marker_converges_with_the_doctor_aggregate`).
+
 `--stale` re-runs the rules engine over exactly the items `scrolls doctor`
 reports in `custody.enrichment.stale` — categories produced under a *superseded*
 ruleset (`classified_ruleset` ≠ the live fingerprint) — refreshing both
@@ -1344,10 +1369,11 @@ whole-library DOI clustering `scrolls works` reports — a filtered listing
 (e.g. `--source arxiv`) still reports an item's full sibling count, even
 when those siblings are filtered out of the rows shown. A row also carries
 a derived `classification` block (`by` / `basis` / `ruleset`, plus `model`
-for the LLM engine) when an engine recorded how the category was produced —
-the same view `scrolls show` and the MCP twins surface (see `classify`);
-the key is omitted entirely for an unclassified or user-set item, so the
-row's shape stays stable (`test_list_omits_classification_for_an_unclassified_item`).
+for the LLM engine, and a `confidence` marker — `level` plus, for rules, a
+`freshness`; see `classify`) when an engine recorded how the category was
+produced — the same view `scrolls show` and the MCP twins surface; the key is
+omitted entirely for an unclassified or user-set item, so the row's shape stays
+stable (`test_list_omits_classification_for_an_unclassified_item`).
 
 Filters combine with AND
 (`test_list_filters_by_source_stage_and_category`): `--source` and
@@ -1460,9 +1486,10 @@ present as JSON arrays (`test_show_prints_full_item_json`). Unset fields
 are `null`, not omitted. The id may also be the item's URL — see
 Conventions (`test_show_accepts_item_url`). When an engine classified the
 item, `show` adds a derived `classification` block (`by` / `basis` /
-`ruleset`, plus `model` for the LLM engine) alongside the raw `provenance`
-keys — the same view `scrolls list` and the MCP `get_scroll` / `list_scrolls`
-twins surface, so how the category was produced reads identically wherever
+`ruleset`, plus `model` for the LLM engine, and a `confidence` trust/recency
+marker — see `classify`) alongside the raw `provenance` keys — the same view
+`scrolls list` and the MCP `get_scroll` / `list_scrolls` twins surface, so how
+the category was produced *and how much to trust it* read identically wherever
 it appears (`test_show_surfaces_the_classification_method`).
 
 ```console

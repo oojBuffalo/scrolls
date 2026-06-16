@@ -808,6 +808,9 @@ def test_show_surfaces_the_classification_method(scrolls_home, fake_wikipedia_ap
         "by": "rules-v1",
         "basis": "curated-source",
         "ruleset": RULESET_FINGERPRINT,
+        # the derived confidence marker (H21): a deterministic rule match, current
+        # under the live ruleset
+        "confidence": {"level": "deterministic", "freshness": "current"},
     }
     # the raw provenance keys are still present (show is the full dump)
     assert payload["provenance"]["classified_basis"] == "curated-source"
@@ -825,6 +828,7 @@ def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_ap
         "by": "rules-v1",
         "basis": "curated-source",
         "ruleset": RULESET_FINGERPRINT,
+        "confidence": {"level": "deterministic", "freshness": "current"},
     }
 
 
@@ -858,6 +862,8 @@ def test_search_surfaces_the_classification_method(scrolls_home, fake_wikipedia_
         "by": "rules-v1",
         "basis": "curated-source",
         "ruleset": RULESET_FINGERPRINT,
+        # the same confidence marker reads identically on the ranked surface
+        "confidence": {"level": "deterministic", "freshness": "current"},
     }
 
 
@@ -907,6 +913,33 @@ def test_classification_view_is_identical_across_browse_surfaces(
     show_view = json.loads(capsys.readouterr().out)["classification"]
 
     assert search_view == list_view == show_view
+
+
+def test_confidence_marker_surfaces_a_stale_recency_on_browse_surfaces(
+    scrolls_home, capsys
+):
+    # H21's agent-facing payoff: an item classified under a superseded ruleset
+    # reads `freshness: stale` on the browse surfaces themselves, so an agent
+    # knows the category may no longer reproduce without consulting `doctor`
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:stale", source="web", url="https://ex.com/stale",
+        saved_at="2026-06-12T00:00:00+00:00", title="An older tutorial",
+        extracted_text="Prose about a database engine.", stage="fetched",
+        category="tutorial",
+        provenance={"classified_by": "rules-v1", "classified_basis": "title-pattern",
+                    "classified_ruleset": "deadbeef0000"}))
+    capsys.readouterr()
+
+    main(["show", "web:stale"])
+    show_confidence = json.loads(capsys.readouterr().out)["classification"]["confidence"]
+    assert show_confidence == {"level": "deterministic", "freshness": "stale"}
+
+    main(["search", "database engine"])
+    hit_confidence = json.loads(capsys.readouterr().out)[0]["classification"]["confidence"]
+    assert hit_confidence == show_confidence  # the recency reads identically on search
 
 
 @pytest.fixture

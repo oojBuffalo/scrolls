@@ -380,7 +380,13 @@ def test_get_scroll_and_list_surface_the_classification_method(
     from scrolls.classify import RULESET_FINGERPRINT
 
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # classifies inline
-    expected = {"by": "rules-v1", "basis": "curated-source", "ruleset": RULESET_FINGERPRINT}
+    expected = {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+        # the confidence marker (H21) rides both MCP inspect surfaces identically
+        "confidence": {"level": "deterministic", "freshness": "current"},
+    }
 
     assert mcp_server.get_scroll("wikipedia:en:SQLite")["classification"] == expected
     row = next(r for r in mcp_server.list_scrolls() if r["id"] == "wikipedia:en:SQLite")
@@ -398,6 +404,7 @@ def test_search_scrolls_surfaces_the_classification_method(scrolls_home, fake_wi
         "by": "rules-v1",
         "basis": "curated-source",
         "ruleset": RULESET_FINGERPRINT,
+        "confidence": {"level": "deterministic", "freshness": "current"},
     }
 
 

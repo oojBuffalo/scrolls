@@ -6,10 +6,11 @@ patterns, and URL shape — no LLM, no network.
 
 from scrolls.classify import (
     RULESET_FINGERPRINT,
+    classification_freshness,
     classify_item,
     is_stale_classification,
 )
-from scrolls.items import ScrollItem
+from scrolls.items import ScrollItem, classification_view
 
 
 def make_item(**overrides):
@@ -609,3 +610,99 @@ def test_user_set_category_carrying_no_stamp_is_not_stale():
     item = make_item(category="tool", provenance={"adapter": "web"})
     assert is_stale_classification(item) is False
     assert is_stale_classification(make_item(category="tool", provenance=None)) is False
+
+
+# --- the freshness primitive: one home behind doctor + the H21 marker ---------
+#
+# `classification_freshness` is the single derivation `is_stale_classification`,
+# `doctor`'s `custody.enrichment` aggregate, and the per-item confidence marker
+# all read, so the recency signal an agent sees on a hit can never disagree with
+# the count doctor reports or the pool a refresh acts on.
+
+
+def test_freshness_current_under_the_live_ruleset():
+    prov = {"classified_by": "rules-v1", "classified_ruleset": RULESET_FINGERPRINT}
+    assert classification_freshness(prov) == "current"
+
+
+def test_freshness_stale_under_a_superseded_ruleset():
+    prov = {"classified_by": "rules-v1", "classified_ruleset": "deadbeef0000"}
+    assert classification_freshness(prov) == "stale"
+
+
+def test_freshness_unknown_when_unfingerprinted():
+    # pre-H20: a rules stamp but no fingerprint — we cannot tell, so not "current"
+    assert classification_freshness({"classified_by": "rules-v1"}) == "unknown"
+
+
+def test_freshness_is_none_for_a_non_rules_classification():
+    # an LLM category has no rules ruleset to compare against — no claim is made
+    assert classification_freshness({"classified_by": "llm-v1"}) is None
+    # a hand-set or unclassified item carries no engine stamp at all
+    assert classification_freshness({"adapter": "web"}) is None
+    assert classification_freshness(None) is None
+
+
+def test_is_stale_agrees_with_freshness():
+    # the selector is exactly freshness == "stale", so the two never diverge
+    for prov in (
+        {"classified_by": "rules-v1", "classified_ruleset": "deadbeef0000"},
+        {"classified_by": "rules-v1", "classified_ruleset": RULESET_FINGERPRINT},
+        {"classified_by": "rules-v1"},
+        {"classified_by": "llm-v1", "classified_ruleset": "deadbeef0000"},
+        None,
+    ):
+        item = make_item(category="reference", provenance=prov)
+        assert is_stale_classification(item) == (classification_freshness(prov) == "stale")
+
+
+# --- the per-item confidence marker rides the classification view (H21) -------
+#
+# Every present `classification_view` carries a derived `confidence` marker so an
+# agent reading a category knows how much to trust it: `level` (deterministic
+# rule vs inferred LLM) and, where it can be answered, `freshness` against the
+# live ruleset. Derived in one home, so it travels every surface identically.
+
+
+def test_view_confidence_is_deterministic_and_current_for_a_live_rules_match():
+    view = classification_view(
+        {"classified_by": "rules-v1", "classified_basis": "curated-source",
+         "classified_ruleset": RULESET_FINGERPRINT}
+    )
+    assert view["confidence"] == {"level": "deterministic", "freshness": "current"}
+
+
+def test_view_confidence_marks_a_superseded_rules_match_stale():
+    view = classification_view(
+        {"classified_by": "rules-v1", "classified_ruleset": "deadbeef0000"}
+    )
+    assert view["confidence"] == {"level": "deterministic", "freshness": "stale"}
+
+
+def test_view_confidence_marks_an_unfingerprinted_rules_match_unknown():
+    view = classification_view({"classified_by": "rules-v1"})
+    assert view["confidence"] == {"level": "deterministic", "freshness": "unknown"}
+
+
+def test_view_confidence_for_the_llm_engine_is_inferred_with_no_freshness():
+    # honest absence: no ruleset to compare, and a timestamp would break the
+    # idempotence contract — so no freshness is claimed for an LLM category
+    view = classification_view(
+        {"classified_by": "llm-v1", "classified_model": "claude-x"}
+    )
+    assert view["confidence"] == {"level": "inferred"}
+    assert "freshness" not in view["confidence"]
+
+
+def test_a_freshly_classified_item_carries_a_current_confidence_marker():
+    # the end-to-end path: classify_item stamps under the live ruleset, so the
+    # derived marker reads current — the marker and the engine agree by construction
+    classified = classify_item(make_item(source="wikipedia", title="SQLite"))
+    view = classification_view(classified.provenance)
+    assert view["confidence"] == {"level": "deterministic", "freshness": "current"}
+
+
+def test_unclassified_and_user_set_items_carry_no_view_and_no_marker():
+    # no engine stamp → no view at all, so no confidence is claimed (honest absence)
+    assert classification_view(None) is None
+    assert classification_view({"adapter": "web"}) is None

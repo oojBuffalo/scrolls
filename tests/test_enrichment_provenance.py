@@ -65,6 +65,7 @@ from scrolls.classify import (
     classify_item,
     is_stale_classification,
 )
+from scrolls.classify import classification_freshness
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.classify_llm import classify_item_llm
 from scrolls.items import ScrollItem, classification_provenance
@@ -253,3 +254,60 @@ def test_user_override_is_never_counted_re_derivable_or_stale():
     assert is_stale_classification(stale) is True  # would be refreshed ...
     overridden = apply_overrides(stale, {"category": "reference"})
     assert is_stale_classification(overridden) is False  # ... but the override is not
+
+
+# --- 6. the confidence marker is honest and convergent (H21) --------------
+#
+# Every present classification view carries a derived `confidence` marker so an
+# agent knows how much to trust a category without consulting doctor: `level`
+# (the method's nature) and, where it can be answered, `freshness` (recency vs
+# the live ruleset). The marker reports recorded method, never a fabricated
+# score, and it reads from the *same* `classification_freshness` primitive
+# doctor's aggregate and `classify --stale` use — so the marker an agent sees on
+# a hit can never disagree with the count doctor reports (the H25/H27 convergence
+# extended to the per-item axis).
+
+
+@pytest.mark.parametrize(
+    "enrich, level",
+    [
+        (lambda item: classify_item(item), "deterministic"),
+        (
+            lambda item: classify_item_llm(item, complete=fake_completer(_LLM_PAYLOAD)),
+            "inferred",
+        ),
+    ],
+    ids=["rules", "llm"],
+)
+def test_confidence_level_reports_the_method_nature(enrich, level):
+    """A rules match is deterministic (reproducible from signals); an LLM
+    category is inferred (a probabilistic judgment to weigh more cautiously)."""
+    view = classification_provenance(enrich(make_item()))
+    assert view["confidence"]["level"] == level
+
+
+def test_confidence_freshness_is_exactly_the_doctor_primitive():
+    """The marker's freshness is `classification_freshness` verbatim — the same
+    derivation doctor's `custody.enrichment` and `classify --stale` read, so the
+    per-item marker and the aggregate count converge by construction."""
+    for prov in (
+        {"classified_by": "rules-v1", "classified_ruleset": RULESET_FINGERPRINT},
+        {"classified_by": "rules-v1", "classified_ruleset": "deadbeef0000"},
+        {"classified_by": "rules-v1"},
+        {"classified_by": "llm-v1", "classified_model": "claude-x"},
+    ):
+        view = classification_provenance(make_item(category="reference", provenance=prov))
+        freshness = classification_freshness(prov)
+        if freshness is None:  # LLM — no rules ruleset to compare against
+            assert "freshness" not in view["confidence"]
+        else:
+            assert view["confidence"]["freshness"] == freshness
+
+
+def test_llm_confidence_claims_no_fabricated_freshness():
+    """The anti-fabrication clause on the recency axis: with no ruleset to
+    compare and a timestamp barred by the idempotence contract, an LLM category
+    claims no freshness rather than a guessed `current`."""
+    classified = classify_item_llm(make_item(), complete=fake_completer(_LLM_PAYLOAD))
+    confidence = classification_provenance(classified)["confidence"]
+    assert confidence == {"level": "inferred"}

@@ -69,7 +69,17 @@ each command moves items between stages or derives artifacts from them.
   `list_scrolls` / `get_scroll` / `search_scrolls` twins (the ranked surfaces
   derive it per-hit from the FTS row's own provenance column via the shared
   `search.hit_payload` serializer, so it costs no extra query and the `--stats`
-  scope/truncation stays honest — roadmap H26). `scrolls facets method` is the
+  scope/truncation stays honest — roadmap H26). Every present view also carries
+  a derived `confidence` marker (`items.classification_confidence`, roadmap H21,
+  the obsidian "confidence levels" adaptation): `level` (`deterministic` for a
+  rules match, `inferred` for an LLM category — the trust axis) and, for the
+  rules engine only, `freshness` (`current` / `stale` / `unknown` against the
+  live ruleset — the recency axis; omitted for the LLM, where there is no ruleset
+  and a timestamp would break idempotence, so no freshness is fabricated). The
+  freshness leg delegates to `classify.classification_freshness`, the *single*
+  recency primitive `doctor`'s `custody.enrichment` aggregate and `classify
+  --stale` also read, so the per-item marker an agent sees can never disagree
+  with the count doctor reports. `scrolls facets method` is the
   aggregate axis of the same view (roadmap H28): the library bucketed by how each
   held category was produced — `rules-v1` / `llm-v1`, or the honest `user-set` /
   `unclassified` buckets — built from the same `classification_view`, so the
@@ -92,7 +102,10 @@ each command moves items between stages or derives artifacts from them.
   H25 (report) → H27 (refresh). User overrides stay out of that pool: a
   hand-set category drops the engine stamp (`overrides.apply_overrides`), so
   it is never counted stale and never refreshed — user overrides always win.
-  The remaining cap-8 step is a confidence/recency marker (roadmap H21).
+  The classification axis now also carries a per-item confidence/recency marker
+  (roadmap H21, above); the remaining cap-8 step is the summary-axis counterpart
+  — surfacing LLM concept-summary provenance and a stale-summary signal (roadmap
+  H29/H31).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content

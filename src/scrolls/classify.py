@@ -357,16 +357,54 @@ def _ruleset_digest() -> str:
 RULESET_FINGERPRINT = _ruleset_digest()
 
 
+def classification_freshness(provenance: dict | None) -> str | None:
+    """Recency of a rules classification against the *live* ruleset, or None.
+
+    The single freshness primitive shared by every surface that asks "would a
+    re-classify today still reproduce this category?" — the per-item confidence
+    marker (`items.classification_view`, roadmap H21), `doctor`'s
+    `custody.enrichment` aggregate (H25), and `is_stale_classification` (the
+    `classify --stale` selector, H27). One home, so the marker an agent reads on
+    a search hit can never disagree with the count doctor reports or the pool a
+    refresh acts on.
+
+    Recency here is the *ruleset* fingerprint, not a wall-clock timestamp: the
+    classification stamps are deterministic and idempotent (re-classify is a
+    no-op in result, the H19/H20 contract), so a `classified_at` would break
+    that contract — the ruleset digest *is* the honest, idempotent recency
+    signal. Returns:
+
+    - ``current`` — classified under the live ruleset (`RULESET_FINGERPRINT`);
+    - ``stale`` — classified under a *superseded* ruleset (a re-classify may
+      now differ);
+    - ``unknown`` — rules-classified before H20, so no fingerprint was recorded
+      (doctor's ``unfingerprinted`` bucket): we cannot tell, so it is not
+      silently called current;
+    - ``None`` — not a rules classification at all (an LLM category, a hand-set
+      override carrying no engine stamp, or an unclassified item): freshness
+      against the rules ruleset is not a question we can answer, so no claim is
+      made (honest absence).
+    """
+    provenance = provenance or {}
+    if provenance.get("classified_by") != ENGINE:
+        return None
+    fingerprint = provenance.get("classified_ruleset")
+    if fingerprint is None:
+        return "unknown"
+    return "current" if fingerprint == RULESET_FINGERPRINT else "stale"
+
+
 def is_stale_classification(item: ScrollItem) -> bool:
     """True if `item` was rules-classified under a *superseded* ruleset.
 
-    The one definition behind both `doctor`'s `custody.enrichment.stale` report
-    (the items it flags) and `scrolls classify --stale` (the items it
-    refreshes), so the count doctor shows equals the count a refresh acts on —
-    closing the loop H20 (record the ruleset) → H25 (report what's stale) → H27
-    (refresh it on request).
+    The selector behind both `doctor`'s `custody.enrichment.stale` report (the
+    items it flags) and `scrolls classify --stale` (the items it refreshes), so
+    the count doctor shows equals the count a refresh acts on — closing the loop
+    H20 (record the ruleset) → H25 (report what's stale) → H27 (refresh it on
+    request). A thin reading of `classification_freshness`, so the stale pool, the
+    doctor aggregate, and the per-item confidence marker share one derivation.
 
-    Excluded, deliberately:
+    Excluded, deliberately (each `classification_freshness != "stale"`):
 
     - an *unfingerprinted* classification (pre-H20, ``classified_ruleset`` is
       absent) is *unknown*, not stale — we cannot tell whether a re-classify
@@ -378,8 +416,4 @@ def is_stale_classification(item: ScrollItem) -> bool:
       (`overrides.apply_overrides`) — user overrides always win, so a refresh
       must never reach them.
     """
-    provenance = item.provenance or {}
-    if provenance.get("classified_by") != ENGINE:
-        return False
-    fingerprint = provenance.get("classified_ruleset")
-    return fingerprint is not None and fingerprint != RULESET_FINGERPRINT
+    return classification_freshness(item.provenance) == "stale"

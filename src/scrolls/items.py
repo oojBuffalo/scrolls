@@ -126,6 +126,11 @@ def classification_view(provenance: dict[str, Any] | None) -> dict[str, Any] | N
     (`ruleset`); for the LLM engine, the `model`. A user override or an
     unclassified item carries no engine stamp, so this is None — honest absence
     (no method is claimed for a category no engine produced).
+
+    Every present view also carries a derived `confidence` marker (roadmap H21,
+    the obsidian "confidence levels" adaptation) so an agent reading the category
+    knows *how much to trust it* without consulting doctor or knowing the live
+    ruleset — see `classification_confidence`.
     """
     provenance = provenance or {}
     engine = provenance.get("classified_by")
@@ -140,7 +145,49 @@ def classification_view(provenance: dict[str, Any] | None) -> dict[str, Any] | N
         value = provenance.get(source_key)
         if value is not None:
             view[view_key] = value
+    view["confidence"] = classification_confidence(engine, provenance)
     return view
+
+
+def classification_confidence(
+    engine: str, provenance: dict[str, Any] | None
+) -> dict[str, Any]:
+    """The trust/recency marker for an engine-stamped category (roadmap H21).
+
+    The obsidian "confidence levels" adaptation, custody-shaped: an honest report
+    of *how* the category was derived, never a fabricated numeric score. Two
+    orthogonal axes an agent weighs when deciding whether to trust a category:
+
+    - ``level`` — the method's nature. ``deterministic`` for the rules engine (a
+      category that follows mechanically from recorded signals, reproducible and
+      explainable); ``inferred`` for any other engine (only the LLM today — a
+      probabilistic model judgment, to be weighed more cautiously). This is the
+      "rule-matched vs llm-inferred" axis H21 names.
+    - ``freshness`` — present only when it can be answered: the rules engine's
+      `classification_freshness` (``current``/``stale``/``unknown``) against the
+      *live* ruleset, so a reader sees per-item whether a re-classify would still
+      reproduce the category. Omitted for the LLM engine — there is no ruleset to
+      compare and a timestamp would break the idempotence contract, so claiming a
+      freshness would be fabrication (honest absence).
+
+    Derived purely from the recorded stamps plus the live ruleset digest, so it
+    costs no query and stays scope-honest (the H26 property). The freshness leg
+    delegates to `classify.classification_freshness` — imported lazily to keep
+    the items↔classify module cycle out of import time (the
+    `register_facet_functions` pattern) — so the per-item marker, doctor's
+    `custody.enrichment` aggregate, and the `classify --stale` pool can never
+    disagree.
+    """
+    from scrolls.classify import ENGINE as RULES_ENGINE  # lazy: avoid import cycle
+    from scrolls.classify import classification_freshness
+
+    confidence: dict[str, Any] = {
+        "level": "deterministic" if engine == RULES_ENGINE else "inferred"
+    }
+    freshness = classification_freshness(provenance)
+    if freshness is not None:
+        confidence["freshness"] = freshness
+    return confidence
 
 
 def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:

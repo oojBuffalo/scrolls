@@ -18,8 +18,7 @@ import sqlite3
 from dataclasses import replace
 from typing import Any, Iterable
 
-from scrolls.classify import ENGINE as RULES_ENGINE
-from scrolls.classify import RULESET_FINGERPRINT
+from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
 from scrolls.custody import CUSTODY_STATUSES, latest_events
 from scrolls.items import (
     ScrollItem,
@@ -405,18 +404,20 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
     produced on request, never as a silent overwrite (custody §2.4).
     """
     enrichment = report["custody"]["enrichment"]
+    # The per-item `confidence.freshness` marker an agent reads (H21) and this
+    # aggregate share one derivation — `classify.classification_freshness` — so
+    # the count here can never disagree with the marker or the `classify --stale`
+    # pool (the H25/H27 convergence). `unknown` is doctor's `unfingerprinted`.
+    bucket = {"current": "current", "stale": "stale", "unknown": "unfingerprinted"}
     stale = []
     for item in items:
-        provenance = item.provenance or {}
-        if provenance.get("classified_by") != RULES_ENGINE:
+        freshness = classification_freshness(item.provenance)
+        if freshness is None:  # not a rules classification — a different axis
             continue
         enrichment["classified"] += 1
-        fingerprint = provenance.get("classified_ruleset")
-        if fingerprint is None:
-            enrichment["unfingerprinted"] += 1
-        elif fingerprint == RULESET_FINGERPRINT:
-            enrichment["current"] += 1
-        else:
-            enrichment["stale"] += 1
-            stale.append({"id": item.id, "ruleset": fingerprint})
+        enrichment[bucket[freshness]] += 1
+        if freshness == "stale":
+            stale.append(
+                {"id": item.id, "ruleset": item.provenance["classified_ruleset"]}
+            )
     enrichment["items"] = sorted(stale, key=lambda entry: entry["id"])

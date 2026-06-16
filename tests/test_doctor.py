@@ -792,6 +792,39 @@ def test_enrichment_ignores_non_rules_classifications(paths):
     assert enrichment["unfingerprinted"] == 0
 
 
+def test_per_item_confidence_marker_converges_with_the_doctor_aggregate(paths):
+    # the recency an agent reads on each item (`classification.confidence.freshness`,
+    # H21) and the count doctor aggregates (`custody.enrichment`) share one
+    # `classification_freshness` derivation, so they can never disagree: doctor's
+    # stale/current/unfingerprinted counts equal the rollup of the per-item markers
+    from collections import Counter
+
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.items import classification_provenance, list_items
+
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/fresh", ruleset=RULESET_FINGERPRINT))
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/legacy", ruleset=None))
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/llm", ruleset=None, by="llm-v1"))
+
+    # roll up the freshness each held item's own marker reports
+    rolled = Counter()
+    for item in list_items(paths.db_path):
+        view = classification_provenance(item)
+        if view and view["by"] == "rules-v1":
+            rolled[view["confidence"].get("freshness")] += 1
+
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert rolled["current"] == enrichment["current"] == 1
+    assert rolled["stale"] == enrichment["stale"] == 1
+    assert rolled["unknown"] == enrichment["unfingerprinted"] == 1  # doctor's name
+    assert enrichment["classified"] == 3  # the LLM item is a different axis
+
+
 def test_stale_ruleset_does_not_affect_issues_or_exit_code(paths, capsys):
     # report-only: a stale ruleset is not repairable drift, and doctor never
     # silently re-classifies — the stored category and provenance are untouched
