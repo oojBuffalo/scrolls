@@ -227,11 +227,35 @@ def _parse_summary(raw: str) -> str:
     return summary.strip()
 
 
+def _summary_targets(eligible: dict, stored: dict, stale_only: bool) -> dict:
+    """The eligible concepts a generation run should consider.
+
+    Normally every eligible concept (the loop short-circuits current ones to a
+    no-op, the rest are generated). With `stale_only` (roadmap H31, `scrolls kb
+    --stale`), exactly the concepts `doctor` flags stale in `custody.summaries`
+    — a stored summary whose members changed since synthesis (`is_stale_summary`,
+    the one shared predicate with doctor) — so the targeted refresh touches the
+    same set doctor reports and nothing else: never-summarized eligible concepts
+    are left for a full `kb --engine llm` (generation, not refresh) and current
+    ones are already a no-op. The shared predicate makes the count doctor shows
+    equal the count `--stale` regenerates (the H27 convergence, on the summary
+    axis).
+    """
+    if not stale_only:
+        return eligible
+    return {
+        slug: entry
+        for slug, entry in eligible.items()
+        if is_stale_summary(stored.get(slug), members_hash(entry["items"]))
+    }
+
+
 def generate_concept_summaries(
     db_path: Path,
     *,
     complete: Completer | None = None,
     model: str | None = None,
+    stale_only: bool = False,
 ) -> tuple[dict[str, int], list[dict]]:
     """Bring the summary store up to date with the library's concepts.
 
@@ -241,16 +265,24 @@ def generate_concept_summaries(
     Per-concept failures are reported, never raised — except
     LLMAuthError, which propagates because every remaining concept would
     fail the same way (summaries already saved stay saved).
+
+    With `stale_only` (`scrolls kb --stale`, roadmap H31), the run is the
+    *targeted refresh* of exactly the concepts doctor flags stale — members
+    changed since synthesis — and nothing else: never-summarized eligible
+    concepts and orphan pruning are left to a full `kb --engine llm`. A
+    current/fresh library is then a network-free no-op (no targets → no model
+    call), the way `classify --stale` is on the classification axis.
     """
     model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
     items = [item for item in list_items(db_path) if item.markdown_path]
     eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
+    targets = _summary_targets(eligible, stored, stale_only)
 
     counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
     results: list[dict] = []
-    for slug in sorted(eligible):
-        entry = eligible[slug]
+    for slug in sorted(targets):
+        entry = targets[slug]
         digest = members_hash(entry["items"])
         prior = stored.get(slug)
         if prior and prior.members_hash == digest and prior.engine == ENGINE:
@@ -274,7 +306,9 @@ def generate_concept_summaries(
         counts["generated"] += 1
         results.append({"slug": slug, "concept": entry["display"], "status": "generated"})
 
-    _prune_orphans(db_path, stored, eligible, counts, results)
+    if not stale_only:
+        # pruning is a full-compile concern, not part of a targeted refresh
+        _prune_orphans(db_path, stored, eligible, counts, results)
     return counts, results
 
 
@@ -283,17 +317,18 @@ def generate_concept_summaries_batch(
     *,
     complete_batch: BatchCompleter | None = None,
     model: str | None = None,
+    stale_only: bool = False,
 ) -> tuple[dict[str, int], list[dict]]:
     """Bring the summary store up to date with one Message Batches run.
 
     The batch transport of `generate_concept_summaries` (ADR 0022, 0032):
     every concept that needs (re)generation is sent in one submission at
     half the per-token price, instead of one API call each. Eligibility,
-    incremental skipping, pruning, the JSON result shape, and per-concept
-    failure isolation are identical — only the transport differs. A
-    whole-batch failure (no credentials, the submission itself rejected)
-    raises, since every concept would fail identically; summaries already
-    saved stay saved.
+    incremental skipping, `stale_only` targeting, pruning, the JSON result
+    shape, and per-concept failure isolation are identical — only the
+    transport differs. A whole-batch failure (no credentials, the submission
+    itself rejected) raises, since every concept would fail identically;
+    summaries already saved stay saved.
     """
     model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
     if complete_batch is None:
@@ -301,6 +336,7 @@ def generate_concept_summaries_batch(
     items = [item for item in list_items(db_path) if item.markdown_path]
     eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
+    targets = _summary_targets(eligible, stored, stale_only)
 
     # One pass in page order (sorted slug) settles which concepts are
     # current and which need a request; positional custom_ids key the
@@ -309,8 +345,8 @@ def generate_concept_summaries_batch(
     # keying from the slug charset, the same reason classification uses them.
     plan: list[tuple[str, dict, str, str | None]] = []
     requests: list[tuple[str, str]] = []
-    for slug in sorted(eligible):
-        entry = eligible[slug]
+    for slug in sorted(targets):
+        entry = targets[slug]
         digest = members_hash(entry["items"])
         prior = stored.get(slug)
         if prior and prior.members_hash == digest and prior.engine == ENGINE:
@@ -351,7 +387,9 @@ def generate_concept_summaries_batch(
         counts["generated"] += 1
         results.append({"slug": slug, "concept": entry["display"], "status": "generated"})
 
-    _prune_orphans(db_path, stored, eligible, counts, results)
+    if not stale_only:
+        # pruning is a full-compile concern, not part of a targeted refresh
+        _prune_orphans(db_path, stored, eligible, counts, results)
     return counts, results
 
 

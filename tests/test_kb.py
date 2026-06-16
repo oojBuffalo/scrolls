@@ -1202,3 +1202,120 @@ def test_kb_llm_batch_per_concept_failure_compiles_and_exits_1(
     assert payload["results"][0]["status"] == "failed"
     assert payload["summaries"] == 0
     assert (scrolls_home / "library" / "index.md").exists()  # compile still ran
+
+
+# --- scrolls kb --stale: targeted summary refresh (roadmap H31) -----------
+#
+# The summary-axis counterpart of `classify --stale` (H27). `kb --stale`
+# re-synthesizes exactly the concept summaries `scrolls doctor` reports stale
+# in custody.summaries — members changed since synthesis — and nothing else:
+# never-summarized eligible concepts are left for a full `kb --engine llm`
+# (generation, not refresh). One shared `is_stale_summary` predicate backs both
+# doctor's report and the refresh, so the count converges and the loop H29
+# (record/report) → H31 (refresh) closes.
+
+
+def _add_bm25_member(db, item_id):
+    """Add another rendered scroll to the BM25 concept (its members change)."""
+    insert_item(db, make_rendered(item_id, "web", item_id, concepts=("BM25",)))
+
+
+def test_kb_stale_refreshes_only_the_stale_summary(
+    scrolls_home, fake_summary_llm, capsys
+):
+    main(["init"])
+    db = get_paths().db_path
+    seed_bm25_pair(db)
+    main(["kb", "--engine", "llm"])  # bm25 summarized over 2 members
+    capsys.readouterr()
+
+    # bm25's members change (now stale); a brand-new concept appears unsummarized
+    _add_bm25_member(db, "web:bm25-extra")
+    insert_item(db, make_rendered("web:g1", "web", "Graph one", concepts=("Graphs",)))
+    insert_item(db, make_rendered("web:g2", "web", "Graph two", concepts=("Graphs",)))
+
+    exit_code = main(["kb", "--stale"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    # only the stale concept is regenerated — not the never-summarized one
+    assert payload["generated"] == 1
+    assert payload["results"] == [
+        {"slug": "bm25", "concept": "BM25", "status": "generated"}
+    ]
+    assert len(fake_summary_llm) == 2  # the initial synthesis + this one refresh
+
+    from scrolls.kb import load_concept_summaries
+
+    stored = load_concept_summaries(db)
+    assert "graphs" not in stored  # the new eligible concept is left for a full run
+
+
+def test_kb_stale_is_a_noop_when_nothing_is_stale(
+    scrolls_home, fake_summary_llm, capsys
+):
+    main(["init"])
+    seed_bm25_pair(get_paths().db_path)
+    main(["kb", "--engine", "llm"])
+    capsys.readouterr()
+
+    # nothing changed since synthesis: --stale touches nothing and calls no model
+    exit_code = main(["kb", "--stale"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["generated"] == 0
+    assert payload["current"] == 0  # current concepts aren't even in the target set
+    assert len(fake_summary_llm) == 1  # no new model call — network-free no-op
+
+
+def test_kb_stale_rejects_the_deterministic_engine(scrolls_home, capsys):
+    exit_code = main(["kb", "--stale", "--engine", "deterministic"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "deterministic" in json.loads(captured.err)["error"]
+
+
+def test_kb_stale_clears_the_doctor_stale_signal(
+    scrolls_home, fake_summary_llm, capsys
+):
+    # the loop closes: doctor reports one stale summary, --stale refreshes
+    # exactly it, and doctor then reports none stale (one current instead)
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    seed_bm25_pair(db)
+    main(["kb", "--engine", "llm"])
+    _add_bm25_member(db, "web:bm25-extra")  # bm25 now stale
+    capsys.readouterr()
+
+    before = run_doctor(get_paths())["custody"]["summaries"]
+    assert before["stale"] == 1
+    assert before["current"] == 0
+
+    assert main(["kb", "--stale"]) == 0
+    capsys.readouterr()
+
+    after = run_doctor(get_paths())["custody"]["summaries"]
+    assert after["stale"] == 0
+    assert after["current"] == 1  # refreshed to the live 3-member fingerprint
+
+
+def test_kb_stale_batch_refreshes_the_stale_summary_in_one_submission(
+    scrolls_home, fake_summary_llm, fake_summary_llm_batch, capsys
+):
+    # --stale composes with the batch transport (both are the llm engine):
+    # the stale concept is refreshed via one Batches submission, not per-call
+    main(["init"])
+    db = get_paths().db_path
+    seed_bm25_pair(db)
+    main(["kb", "--engine", "llm"])  # per-call synthesis
+    _add_bm25_member(db, "web:bm25-extra")
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--stale", "--batch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["generated"] == 1
+    assert len(fake_summary_llm_batch) == 1  # one submission for the one stale concept
+    assert len(fake_summary_llm) == 1  # no extra per-call beyond the initial synthesis

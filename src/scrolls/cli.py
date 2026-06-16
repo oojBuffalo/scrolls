@@ -454,7 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
     kb_parser.add_argument(
         "--engine",
         choices=("deterministic", "llm"),
-        default="deterministic",
+        default=None,
         help="deterministic (default): compile pages from stored data only. "
         "llm: first synthesize lead summaries for concept pages with 2+ "
         "scrolls — incremental, unchanged concepts cost nothing — then "
@@ -467,6 +467,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Synthesize every concept summary in one Message Batches "
         "submission (--engine llm only): half the per-token price, but the "
         "command waits for the batch to finish — typically minutes",
+    )
+    kb_parser.add_argument(
+        "--stale",
+        action="store_true",
+        help="Re-synthesize only the concept summaries `scrolls doctor` reports "
+        "in custody.summaries.stale — members changed since synthesis — "
+        "refreshing the summary and its members fingerprint to the live members "
+        "(implies --engine llm; never-summarized concepts are left for a full "
+        "--engine llm run)",
     )
     list_parser = subparsers.add_parser(
         "list", help="List library items (JSON output)"
@@ -741,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init()
     if args.command == "kb":
-        return _cmd_kb(args.engine, args.batch)
+        return _cmd_kb(args.engine, args.batch, args.stale)
     if args.command == "list":
         return _cmd_list(
             args.source,
@@ -1580,8 +1589,27 @@ def _cmd_agent_install() -> int:
     return 0
 
 
-def _cmd_kb(engine: str = "deterministic", batch: bool = False) -> int:
+def _cmd_kb(
+    engine: str | None = None, batch: bool = False, stale: bool = False
+) -> int:
     paths = get_paths()
+    explicit_engine = engine
+    engine = engine or "deterministic"
+    if stale:
+        # --stale refreshes *LLM concept summaries*, so it is an llm operation:
+        # the deterministic compiler has no summaries to refresh. It forces the
+        # llm engine regardless of the default; an explicit `--engine
+        # deterministic` is a contradiction (the H27 explicit-vs-default posture).
+        if explicit_engine == "deterministic":
+            print(
+                json.dumps(
+                    {"error": "kb --stale re-synthesizes LLM concept summaries; "
+                     "it cannot use --engine deterministic"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        engine = "llm"
     if batch and engine != "llm":
         print(
             json.dumps({"error": "--batch requires the llm engine (--engine llm)"}),
@@ -1612,7 +1640,7 @@ def _cmd_kb(engine: str = "deterministic", batch: bool = False) -> int:
             )
             try:
                 counts, results = generate(
-                    paths.db_path, model=resolve_llm_model(config)
+                    paths.db_path, model=resolve_llm_model(config), stale_only=stale
                 )
             except LLMError as exc:
                 # whole-run failure (no credentials, or — for --batch — a

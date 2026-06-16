@@ -613,3 +613,71 @@ def test_eligible_concepts_matches_the_generator_denominator(db_path):
     eligible = eligible_concepts(list_items(db_path))
     generated_slugs = {r["slug"] for r in results if r["status"] != "pruned"}
     assert generated_slugs == set(eligible)
+
+
+# --- generate stale_only: the targeted refresh behind `kb --stale` (H31) -
+
+
+def test_generate_stale_only_refreshes_only_stale_concepts(db_path):
+    seed_bm25_concept(db_path)
+    complete = fake_completer()
+    generate_concept_summaries(db_path, complete=complete)  # bm25 over 2 members
+    assert len(complete.calls) == 1
+
+    # bm25's members change (stale); a new eligible concept appears (never);
+    # and an orphan summary sits for a concept that no longer exists
+    insert_item(db_path, make_rendered(
+        "web:bm25-3", "web", "More BM25", concepts=("BM25",)))
+    insert_item(db_path, make_rendered(
+        "web:g1", "web", "Graph one", concepts=("Graphs",)))
+    insert_item(db_path, make_rendered(
+        "web:g2", "web", "Graph two", concepts=("Graphs",)))
+    save_concept_summary(db_path, ConceptSummary(
+        slug="gone", display="Gone", summary="orphaned", members_hash="x",
+        engine=ENGINE, model=DEFAULT_MODEL, generated_at="2026-06-16T00:00:00+00:00"))
+
+    counts, results = generate_concept_summaries(
+        db_path, complete=complete, stale_only=True)
+    # only the stale concept is regenerated — never-summarized and current alike
+    # are out of the target set, and orphan pruning is left to a full run
+    assert counts == {"generated": 1, "current": 0, "failed": 0, "pruned": 0}
+    assert results == [{"slug": "bm25", "concept": "BM25", "status": "generated"}]
+    assert len(complete.calls) == 2  # exactly one refresh call
+
+    stored = load_concept_summaries(db_path)
+    assert "graphs" not in stored  # never-summarized concept untouched
+    assert "gone" in stored  # orphan not pruned by a targeted refresh
+
+
+def test_generate_stale_only_is_a_noop_when_nothing_changed(db_path):
+    seed_bm25_concept(db_path)
+    complete = fake_completer()
+    generate_concept_summaries(db_path, complete=complete)
+
+    counts, results = generate_concept_summaries(
+        db_path, complete=complete, stale_only=True)
+    assert counts == {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
+    assert results == []
+    assert len(complete.calls) == 1  # no model call — the network-free no-op
+
+
+def test_generate_stale_only_count_matches_the_stale_summary_set(db_path):
+    # the count a refresh regenerates equals the set of stale summaries — the
+    # convergence `kb --stale` and doctor's custody.summaries.stale share
+    seed_bm25_concept(db_path)
+    complete = fake_completer()
+    generate_concept_summaries(db_path, complete=complete)
+    insert_item(db_path, make_rendered(
+        "web:bm25-3", "web", "More BM25", concepts=("BM25",)))
+
+    from scrolls.items import list_items
+
+    stored = load_concept_summaries(db_path)
+    eligible = eligible_concepts(list_items(db_path))
+    stale_slugs = {
+        slug for slug, entry in eligible.items()
+        if is_stale_summary(stored.get(slug), members_hash(entry["items"]))
+    }
+    counts, _ = generate_concept_summaries(
+        db_path, complete=complete, stale_only=True)
+    assert counts["generated"] == len(stale_slugs) == 1

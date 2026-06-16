@@ -368,9 +368,11 @@ moved, not that the synthesis is wrong, so it never feeds `issues`/the exit code
 and doctor never auto-regenerates (`test_stale_summary_does_not_affect_issues_or_exit_code`).
 The buckets and the per-concept `summary_provenance` view share one
 `kb_llm.summary_freshness` derivation, so the count here equals the freshness a
-reader builds per concept (`test_summaries_aggregate_converges_with_the_per_concept_view`);
-the explicit refresh that acts on the stale signal is `scrolls kb --stale`
-(roadmap H31), the summary-axis counterpart of `classify --stale`.
+reader builds per concept (`test_summaries_aggregate_converges_with_the_per_concept_view`).
+To act on the signal, run [`scrolls kb --stale`](#scrolls-kb---engine----stale),
+the explicit refresh that re-synthesizes exactly the concepts reported here — the
+summary-axis counterpart of `classify --stale`
+(`test_kb_stale_clears_the_doctor_stale_signal`).
 
 ### `scrolls verify [id] [--all] [--limit N]`
 
@@ -1812,7 +1814,7 @@ SQLite FTS5 is criminally underrated for local search.
 
 ## Derived artifacts
 
-### `scrolls kb [--engine ...]`
+### `scrolls kb [--engine ...] [--stale]`
 
 Rebuild the interlinked library pages under `library/` from scratch
 (stale groups can't linger; other files there are untouched — ADR 0005,
@@ -1888,6 +1890,25 @@ abort before compiling
 flag needs the llm engine (`test_kb_batch_flag_requires_the_llm_engine`)
 and shares the Batches transport with `classify --engine llm --batch`
 (`tests/test_classify_llm.py`).
+
+`--stale` is the *targeted refresh* on the summary axis — the counterpart of
+[`classify --stale`](#scrolls-classify-id) (the loop H29 record/report → H31
+refresh). It re-synthesizes **only** the concept summaries `scrolls doctor`
+reports in `custody.summaries.stale` — a stored summary whose members changed
+since synthesis — refreshing each summary and its members fingerprint to the
+live members, then compiles. It implies `--engine llm` (the deterministic
+compiler has no summaries to refresh; `--engine deterministic` is rejected —
+`test_kb_stale_rejects_the_deterministic_engine`) and composes with `--batch`.
+Unlike a full `--engine llm` run it does **not** generate summaries for
+never-summarized eligible concepts (that is generation, left to the full run)
+and does not prune orphans; on a current library it touches nothing and calls no
+model (`test_kb_stale_is_a_noop_when_nothing_is_stale`). The set it regenerates
+is exactly the set doctor reports stale — one shared `kb_llm.is_stale_summary`
+predicate behind both — so refreshing clears the signal
+(`test_kb_stale_clears_the_doctor_stale_signal`), the way `classify --stale`
+clears `custody.enrichment.stale`. It never rewrites a current summary or
+generates a missing one — regeneration on request, never doctor's silent
+overwrite (custody §2.4).
 
 ```console
 $ scrolls kb

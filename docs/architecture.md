@@ -112,12 +112,17 @@ each command moves items between stages or derives artifacts from them.
   stored summary's `members_hash` no longer matches the live members as `stale` —
   the membership moved since synthesis, so the summary is regenerable. Like
   enrichment, it is report-only and never auto-regenerated; the view, the doctor
-  aggregate, and (roadmap H31) `scrolls kb --stale` share one
+  aggregate, and `scrolls kb --stale` (roadmap H31) share one
   `kb_llm.summary_freshness` primitive (`current` / `stale` / `never`), so the
   per-concept marker, doctor's counts, and the refresh pool can never disagree —
-  the convergence the classification axis pins, on the summary axis. `kb --stale`
-  (H31) is the explicit refresh that closes the summary-axis loop H29 (record/
-  report) → H31 (refresh), the counterpart of `classify --stale`.
+  the convergence the classification axis pins, on the summary axis. `scrolls kb
+  --stale` is the explicit refresh that acts on the signal: it re-synthesizes
+  **only** the concepts doctor flags stale (the shared `kb_llm.is_stale_summary`
+  predicate, so the count converges and refreshing clears the signal), implying
+  the llm engine and composing with `--batch`, while leaving never-summarized
+  concepts and orphan pruning to a full `kb --engine llm` — a targeted refresh on
+  request, never doctor's silent overwrite, closing the summary-axis loop H29
+  (record/report) → H31 (refresh), the counterpart of `classify --stale`.
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
