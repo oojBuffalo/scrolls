@@ -101,6 +101,28 @@ The library is the product. The CLI, MCP server, and Markdown files are the inte
 - **Fixtures + evals as product infrastructure**, not afterthought.
 - **Dogfood as the primary success metric**.
 
+## Patterns to Adopt from obsidian-second-brain
+
+Adopted as *mechanisms*, never its self-mutating-vault philosophy (Scrolls
+rejects "the vault rewrites itself" — it violates raw-is-sacred and
+drift-is-surfaced). Full mapping in `docs/agents/obsidian-second-brain-inspiration.md`;
+decision in ADR 0102.
+
+- **Raw/generated separation with refresh-safe blocks**: regenerate views inside
+  `@generated`/`@user` sentinels so a re-compile never clobbers human
+  annotations — the obsidian-architect mechanism applied to "views are
+  regenerable."
+- **Anti-fabrication / search-completeness** as a tested agent-contract
+  invariant: scope-honest results; "nothing found" is distinguishable from "not
+  checked."
+- **Agent-first preamble** on generated views (a short what/why/when so a page
+  pulled in isolation is self-describing).
+- **Progressive context budgets** (identity/index first, deep bodies on demand).
+- **Reconciliation/health as scheduled custody maintenance** (detection adopted;
+  resolution stays custody-safe — surface a drift/conflict event, never silently
+  overwrite).
+- **Vendor-neutral, portable export bundles** that survive outside the system.
+
 ## What Success Looks Like
 
 An agent can:

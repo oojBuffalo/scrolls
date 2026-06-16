@@ -58,19 +58,25 @@ Use the default Matt Pocock triage vocabulary. See `docs/agents/triage-labels.md
 
 This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order.
 
-**Primary north star:** Read `docs/agents/vision.md` first. It defines the first-principles product vision synthesized from Scrolls and last30days-skill. All autonomous decisions must be justified against it.
+**Primary north star:** Read `docs/agents/vision.md` first. It defines the first-principles product vision synthesized from Scrolls and last30days-skill. The operative, most-current north star is `docs/custody-vision.md` (custody-first synthesis, 2026-06-15); `docs/vision.md` and `docs/agents/vision.md` are the earlier syntheses it sharpens. All autonomous decisions must be justified against the custody vision.
 
-Secondary references: `docs/agents/last30days-inspiration.md` (specific patterns to adapt) and `docs/agents/domain.md`.
+Secondary references: `docs/agents/last30days-inspiration.md` and `docs/agents/obsidian-second-brain-inspiration.md` (specific patterns to adapt) and `docs/agents/domain.md`.
+
+**Product direction:** `docs/product/prd.md` (inspiration-backed direction), `docs/product/mvp.md` (near-term coherent scope), and `docs/agents/autonomous-roadmap.md` (the hour/day/week buffer the hourly worker should follow). Read these to pick the next coherent slice.
 
 ### Last30Days inspiration
 
 Use `/Users/claw/.hermes/gh-repos/last30days-skill` as a reference checkout for inspiration only. Adapt its patterns to Scrolls' local-first library model: agent-facing contracts, multi-source fanout with graceful degradation, evidence clustering/dedupe, signal-aware ranking, shareable artifacts, fixtures/evals, and dogfood workflows. Do not copy secrets, vendored code, or implementation details blindly.
 
+### Obsidian Second Brain inspiration
+
+Use `/Users/claw/.hermes/gh-repos/obsidian-second-brain` (GitHub: `eugeniughelbur/obsidian-second-brain`) as a reference checkout for inspiration only. Adopt **mechanisms, not its self-mutating-vault philosophy**: Scrolls rejects "the vault rewrites itself" / auto-overwriting reconciliation because it violates custody (raw is sacred; drift is a recorded event, never an overwrite). Adopt refresh-safe sentinel-fenced regeneration of generated artifacts, anti-fabrication/search-completeness as a tested contract, progressive context budgets, portable custody bundles, and scheduled custody maintenance. See `docs/agents/obsidian-second-brain-inspiration.md` and ADR 0102 for the full adopt/adapt/reject mapping. Do not copy secrets, vendored code, or implementation details blindly.
+
 ## Development process
 
 Use these practices for substantive work:
 
-- `/grill-me`: Before a design or implementation slice, self-grill the plan. Because hourly automation is unattended, answer the questions yourself using repo context and document important assumptions in the commit message, issue, PRD, ADR, or source comments.
+- `/grill-me-docs`: Before a design or implementation slice, self-grill the plan against this repo's documented decisions and terminology (the docs-aware grill; installed as `grill-with-docs`). Because hourly automation is unattended, answer the questions yourself using repo context and document important assumptions in the commit message, issue, PRD, ADR, or source comments.
 - `/tdd`: Prefer red-green-refactor for code changes once implementation starts.
 - `/diagnose`: Use a disciplined reproduce/minimize/hypothesize/instrument/fix loop for bugs.
 - `/improve-codebase-architecture`: Periodically look for opportunities to deepen modules and simplify interfaces.

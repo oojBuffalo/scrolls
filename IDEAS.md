@@ -16,7 +16,13 @@ Where:
 
 **Read `docs/agents/vision.md` for the authoritative product vision.** This IDEAS.md captures early thinking; the vision document is the current north star.
 
-## 0. Product inspiration: Last30Days
+## 0. Product inspiration: Last30Days and Obsidian Second Brain
+
+Scrolls draws on two external reference projects (and the original Field Theory
+CLI spark). Neither is code to copy — both are product bars for agent-facing
+usefulness, adapted to Scrolls' local-first **custody** model.
+
+### Last30Days
 
 Scrolls should take inspiration from [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill): not as code to copy, but as a product bar for agent-facing usefulness. Relevant patterns:
 
@@ -29,6 +35,19 @@ Scrolls should take inspiration from [`mvanhorn/last30days-skill`](https://githu
 - dogfood workflows that prove agents can actually use the system end to end.
 
 For the detailed adaptation notes, see `docs/agents/last30days-inspiration.md`. Near-term autonomous work should prefer these cross-cutting product patterns over adding more one-off adapters unless a new adapter validates a broader abstraction.
+
+### Obsidian Second Brain
+
+Scrolls also draws on [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain) — but under a strict *mechanism-not-philosophy* posture. Its headline idea, *"a vault that rewrites itself"* (ingest mutates existing pages; reconciliation auto-overwrites the losing claim), is **rejected**: it is the inverse of Scrolls' custody contract (raw is sacred; drift is a recorded event, never an overwrite). What Scrolls adopts is the mechanism underneath:
+
+- refresh-safe **sentinel-fenced regeneration** of generated artifacts (`@generated`/`@user` blocks) so re-compiling a view never clobbers human annotations,
+- **anti-fabrication / search-completeness** as a tested agent-contract invariant (scope-honest results; "nothing found" ≠ "not checked"),
+- **progressive context budgets** for the agent bundle (identity/index first, deep bodies on demand),
+- portable, vendor-neutral **custody bundles** that survive outside the running system,
+- **bi-temporal** framing of drift (captured-at vs source-changed-at) as a concept,
+- **scheduled custody maintenance** (the hourly worker as audit → recheck → regenerate → report).
+
+Rejected as out of scope for a custody library (not a planner or discovery engine): productivity surfaces (calendar/tasks/people/meetings/kanban), the paid live-research toolkit, presets/roles, and the multi-CLI build matrix. For the full adopt/adapt/reject mapping see `docs/agents/obsidian-second-brain-inspiration.md` and ADR 0102; for how it sequences see `docs/product/prd.md`, `docs/product/mvp.md`, and `docs/agents/autonomous-roadmap.md`.
 
 ## 1. Core abstraction: source adapters
 
