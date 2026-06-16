@@ -179,10 +179,15 @@ each command moves items between stages or derives artifacts from them.
   **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
   self-contained Markdown file that is both a readable topic *briefing* (per
   scroll: id, source, custody fidelity tier, capture timestamp, link, capped
-  excerpt, and — when an engine classified it — the `classification` view
+  excerpt, its verify-ledger **drift posture**
+  `verified`/`unverified`/`drifted`/`rotted`/`error` via the shared
+  `custody.drift_posture` over `latest_events` — so the briefing posture and
+  `doctor`'s `custody.drift` aggregate cannot disagree, roadmap H42 — and —
+  when an engine classified it — the `classification` view
   `by`/`basis`/`confidence`; a `--concept`-scoped bundle also carries that
   concept's synthesized summary and its `summary_provenance`, roadmap H35, so
-  *how a result was derived* travels in the reading, not only the data) and a
+  *how a result was derived* and *how custody stands* travel in the reading, not
+  only the data) and a
   lossless re-import unit — the same `item_to_dict` JSONL `export items` writes,
   embedded in a code fence wrapped in the ADR 0102 `@generated` sentinel. The
   briefing's provenance lines are *derived read views* (omitted on honest

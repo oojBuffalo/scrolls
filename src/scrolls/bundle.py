@@ -19,11 +19,14 @@ Two layers in one file:
 
 1. A briefing body (Markdown) — title + scope, then one entry per in-scope
    scroll naming its id, source, fidelity tier, capture timestamp, link, a
-   capped excerpt, and — when an engine classified it — *how the category was
-   derived* (the `classification_provenance` view: `by`/`basis`/`confidence`,
-   roadmap H35). A `concept`-scoped bundle also carries that concept's
-   synthesized LLM summary and its `summary_provenance` (engine + freshness).
-   This is what a human or agent *reads*, and it now carries provenance without
+   capped excerpt, its custody **drift posture** from the verify ledger
+   (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — the same
+   `latest_events` doctor's `custody.drift` aggregates, so they cannot disagree),
+   and — when an engine classified it — *how the category was derived* (the
+   `classification_provenance` view: `by`/`basis`/`confidence`, roadmap H35). A
+   `concept`-scoped bundle also carries that concept's synthesized LLM summary
+   and its `summary_provenance` (engine + freshness). This is what a human or
+   agent *reads*, and it now carries provenance and custody posture without
    anyone parsing the JSONL ("provenance travels with every result").
 2. A custody block — the canonical rows as JSON Lines inside a ` ```jsonl `
    code fence, wrapped in the ADR 0102 sentinel (`@generated`…`@end`). This is
@@ -47,6 +50,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scrolls.custody import CustodyEvent, drift_posture, latest_events
 from scrolls.generated import GENERATED_END, fence, generated_body
 from scrolls.items import (
     ScrollItem,
@@ -115,6 +119,12 @@ def build_bundle(
         concept=concept,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
+    # one ledger read for the whole scope: the latest custody verdict per item,
+    # so each briefing entry can name its drift posture (H42) from the same
+    # `latest_events` doctor aggregates — no per-item query, no disagreement.
+    # Skipped when there is nothing to brief (no items, incl. a missing library,
+    # where the ledger does not exist) so an empty/pre-init bundle stays valid.
+    verdicts = latest_events(db_path) if items else {}
 
     title = f"# Scrolls Custody Bundle: {query}"
     scope = _scope_note(source, category, stage, tag, concept)
@@ -137,7 +147,7 @@ def build_bundle(
             "",
         ]
         for rank, item in enumerate(items, start=1):
-            lines += _briefing_entry(rank, item)
+            lines += _briefing_entry(rank, item, verdicts.get(item.id))
 
     # the lossless custody block: the same JSONL `export items` writes, inside a
     # code fence, inside the ADR 0102 sentinel so it is locatable and the body
@@ -193,7 +203,9 @@ def parse_bundle(text: str) -> list[ScrollItem]:
     return items
 
 
-def _briefing_entry(rank: int, item: ScrollItem) -> list[str]:
+def _briefing_entry(
+    rank: int, item: ScrollItem, verdict: CustodyEvent | None
+) -> list[str]:
     """The readable per-scroll briefing block: identity, custody facts, excerpt."""
     out = [f"## {rank}. {item.title or item.id} (`{item.id}`)", ""]
     facts = f"- {item.source} · fidelity `{get_fidelity(item)}` · stage `{item.stage}`"
@@ -202,6 +214,7 @@ def _briefing_entry(rank: int, item: ScrollItem) -> list[str]:
     out.append(f"- {item.canonical_url or item.url}")
     if item.content_hash:
         out.append(f"- content-hash `{item.content_hash}`")
+    out.append(_drift_line(verdict))
     classification = _classification_line(item)
     if classification:
         out.append(classification)
@@ -210,6 +223,38 @@ def _briefing_entry(rank: int, item: ScrollItem) -> list[str]:
         out += ["", excerpt]
     out.append("")
     return out
+
+
+# A reader-facing gloss per posture; the bare posture word is the convergence
+# token (`custody \`<posture>\``) doctor's `custody.drift` counts agree with.
+_POSTURE_GLOSS = {
+    "verified": "confirmed unchanged at the last verify",
+    "drifted": "source changed since capture — raw preserved, drift is a recorded event",
+    "rotted": "source gone upstream — this is the last held copy",
+    "error": "last re-check could not reach the source",
+}
+
+
+def _drift_line(verdict: CustodyEvent | None) -> str:
+    """The per-scroll custody drift posture, from the verify ledger (roadmap H42).
+
+    The posture an agent reading a shared briefing most needs to weigh: was this
+    scroll confirmed unchanged, never re-checked, or has its source drifted/rotted
+    since capture? Derived through the one shared `custody.drift_posture`, so the
+    briefing posture and `doctor`'s `custody.drift` aggregate read the same ledger
+    and cannot disagree. ``unverified`` is stated explicitly (never silently
+    omitted) — "absent from the drift counts" must never be read as "confirmed
+    unchanged" (the drift block's honesty, on the per-scroll axis). A drifted or
+    rotted scroll is still carried losslessly in the custody block below: raw is
+    sacred, drift is a *recorded posture*, never a reason to drop the scroll.
+    """
+    posture = drift_posture(verdict)
+    if verdict is None:
+        return "- custody `unverified` — never re-checked against its source"
+    return (
+        f"- custody `{posture}` ({_POSTURE_GLOSS[posture]}) "
+        f"as of {verdict.checked_at}"
+    )
 
 
 def _classification_line(item: ScrollItem) -> str | None:

@@ -9,6 +9,8 @@ from scrolls.classify import ENGINE as RULES_ENGINE
 from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
+from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, get_item, insert_item, item_to_dict
 from scrolls.kb import ConceptSummary, save_concept_summary
 from scrolls.kb_llm import ENGINE as SUMMARY_ENGINE
@@ -229,6 +231,76 @@ def test_concept_summary_provenance_is_stale_when_members_changed(scrolls_home):
 
     bundle = build_bundle(db, "database", concept="Databases")
     assert f"Summary by `{SUMMARY_ENGINE}`, stale" in bundle
+
+
+# --- per-scroll drift posture in the briefing (roadmap H42) -----------------
+
+
+def _event(item_id, status, prior="deadbeef", observed=None):
+    return CustodyEvent(
+        item_id=item_id, checked_at="2026-06-14T00:00:00+00:00", status=status,
+        prior_hash=prior, observed_hash=observed,
+    )
+
+
+def test_briefing_carries_per_scroll_drift_posture(scrolls_home):
+    # the verify-ledger verdict an agent reading a shared briefing most needs
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:Fresh", "Fresh", "A fresh database."))
+    insert_item(db, make_item("wikipedia:en:Moved", "Moved", "A moved database."))
+    insert_item(db, make_item("wikipedia:en:Never", "Never", "A never-checked database."))
+    record_events(db, [
+        _event("wikipedia:en:Fresh", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:Moved", "drifted", observed="cafe1234"),
+    ])
+
+    bundle = build_bundle(db, "database")
+    assert "custody `verified`" in bundle
+    assert "as of 2026-06-14T00:00:00+00:00" in bundle
+    assert "custody `drifted`" in bundle
+    # the never-checked scroll is unverified, never silently "clean"
+    assert "custody `unverified`" in bundle
+
+
+def test_bundle_drift_posture_converges_with_the_doctor_aggregate(scrolls_home):
+    # the per-scroll posture reads from the same ledger doctor aggregates, so the
+    # postures in a whole-scope bundle must total doctor's custody.drift counts
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(5):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}", "Every page is a database.",
+        ))
+    record_events(db, [
+        _event("wikipedia:en:Page_0", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:Page_1", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:Page_2", "drifted", observed="cafe1234"),
+        _event("wikipedia:en:Page_3", "rotted"),
+        # Page_4 left unverified
+    ])
+
+    bundle = build_bundle(db, "database")
+    drift = run_doctor(get_paths())["custody"]["drift"]
+    assert bundle.count("custody `verified`") == drift["unchanged"] == 2
+    assert bundle.count("custody `drifted`") == drift["drifted"] == 1
+    assert bundle.count("custody `rotted`") == drift["rotted"] == 1
+    assert bundle.count("custody `unverified`") == drift["unverified"] == 1
+
+
+def test_a_drifted_scroll_is_still_carried_losslessly(scrolls_home):
+    # raw is sacred: a drifted scroll is a recorded posture, never dropped
+    main(["init"])
+    db = get_paths().db_path
+    original = make_item("wikipedia:en:Moved", "Moved", "A moved database.")
+    insert_item(db, original)
+    record_events(db, [_event("wikipedia:en:Moved", "drifted", observed="cafe1234")])
+
+    bundle = build_bundle(db, "database")
+    assert "custody `drifted`" in bundle
+    recovered = parse_bundle(bundle)
+    assert [i.id for i in recovered] == ["wikipedia:en:Moved"]
+    assert item_to_dict(recovered[0]) == item_to_dict(original)
 
 
 # --- full export → import round-trip across libraries (ADR 0099) ------------

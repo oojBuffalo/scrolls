@@ -957,7 +957,12 @@ an agent can hand to a person or another library (ADR 0103, MVP M4,
 `tests/test_bundle.py`). Two layers in one file: a readable **briefing**
 (title + scope, then one entry per in-scope scroll naming its id, source,
 custody **fidelity** tier, capture timestamp, link, content hash, a capped
-excerpt, and — when an engine classified it — *how the category was derived*:
+excerpt, its custody **drift posture** from the verify ledger
+(`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — derived
+through the same `latest_events` `doctor`'s `custody.drift` aggregates, so the
+per-scroll posture and doctor's counts cannot disagree; a drifted or rotted
+scroll is still carried losslessly — raw is sacred, drift is a *recorded
+posture*), and — when an engine classified it — *how the category was derived*:
 the same `classification` view `list`/`show`/`search` carry (`by`/`basis`/
 `confidence`, roadmap H20/H21/H35), omitted for an unclassified or user-set
 category, the same honest absence the structured surfaces keep. A

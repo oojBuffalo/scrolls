@@ -202,3 +202,22 @@ def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
         "(SELECT MAX(id) FROM custody_events GROUP BY item_id)",
     )
     return {row["item_id"]: _from_row(row) for row in rows}
+
+
+def drift_posture(event: CustodyEvent | None) -> str:
+    """The reader-facing custody posture for an item, from its latest verdict.
+
+    ``unverified`` when the ledger holds no verdict for the item — never
+    re-checked, so *unknown*, never silently "clean" (the drift block's
+    ``unverified`` honesty); otherwise the verdict mapped to a posture an agent
+    reads directly: ``verified`` for an ``unchanged`` re-check, else the status
+    itself (``drifted``/``rotted``/``error``). The single per-item derivation
+    behind the shareable bundle's per-scroll posture marker (roadmap H42).
+    Because `doctor`'s ``custody.drift`` aggregate counts the same
+    `latest_events` per status (``unchanged`` → the bundle's ``verified``,
+    ``unverified`` = held − verdicts), the per-scroll posture an agent reads and
+    doctor's counts can never disagree.
+    """
+    if event is None:
+        return "unverified"
+    return "verified" if event.status == "unchanged" else event.status
