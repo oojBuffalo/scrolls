@@ -792,6 +792,57 @@ def test_show_unknown_id_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def test_show_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
+    # how the category was derived travels with `show` (H20): the engine, the
+    # precedence tier that fired, and the ruleset fingerprint it ran under
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])  # ingest classifies inline
+    capsys.readouterr()
+
+    main(["show", "wikipedia:en:SQLite"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["category"] == "reference"
+    assert payload["classification"] == {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+    }
+    # the raw provenance keys are still present (show is the full dump)
+    assert payload["provenance"]["classified_basis"] == "curated-source"
+
+
+def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    main(["list"])
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["classification"] == {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+    }
+
+
+def test_list_omits_classification_for_an_unclassified_item(scrolls_home, capsys):
+    # honest absence: an item no engine classified carries no classification key,
+    # keeping the row shape stable (parity with the documented browse fields)
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:plain", source="web", url="https://ex.com/plain",
+        saved_at="2026-06-12T00:00:00+00:00", title="An ordinary post", stage="fetched"))
+    capsys.readouterr()
+
+    main(["list"])
+    rows = json.loads(capsys.readouterr().out)
+    assert "classification" not in rows[0]
+
+
 @pytest.fixture
 def fake_youtube_api(monkeypatch):
     """Serve canned oEmbed metadata and transcript instead of the network."""

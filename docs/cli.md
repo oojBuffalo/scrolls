@@ -1094,6 +1094,17 @@ reclassify, replacing any existing category
 are re-rendered so frontmatter stays in sync
 (`test_classify_batch_categorizes_and_rerenders`).
 
+When a rule fires, the rules engine records how the category was produced
+in `provenance`, so a re-classify is reproducible and auditable: the engine
+(`classified_by="rules-v1"`), which precedence tier matched
+(`classified_basis` — `curated-source` / `title-pattern` / `documentation-url`
+/ `weak-source`), and a fingerprint of the rule tables it ran under
+(`classified_ruleset`). The fingerprint changes if the rules change, so a
+reader can tell whether a re-classify today would still reproduce the stored
+category. This surfaces as a derived `classification` block on `show` and
+`list` (see those commands); `tests/test_classify.py` pins the per-tier basis,
+the fingerprint, and their deterministic re-derivation.
+
 `--engine llm` (engine `llm-v1`, ADR 0015) classifies with a model via the
 Anthropic API instead (network; needs `ANTHROPIC_API_KEY`; default model
 `claude-opus-4-8`, overridable via `SCROLLS_LLM_MODEL`). It uses the full
@@ -1287,7 +1298,12 @@ work's `doi`/`url`, the `canonical` form's id, whether this item
 `is_canonical`, and the `representations` count. Membership is the
 whole-library DOI clustering `scrolls works` reports — a filtered listing
 (e.g. `--source arxiv`) still reports an item's full sibling count, even
-when those siblings are filtered out of the rows shown.
+when those siblings are filtered out of the rows shown. A row also carries
+a derived `classification` block (`by` / `basis` / `ruleset`, plus `model`
+for the LLM engine) when an engine recorded how the category was produced —
+the same view `scrolls show` and the MCP twins surface (see `classify`);
+the key is omitted entirely for an unclassified or user-set item, so the
+row's shape stays stable (`test_list_omits_classification_for_an_unclassified_item`).
 
 Filters combine with AND
 (`test_list_filters_by_source_stage_and_category`): `--source` and
@@ -1384,7 +1400,12 @@ One item in full: every `ScrollItem` field
 (`docs/architecture.md` → "The data model"), with list fields always
 present as JSON arrays (`test_show_prints_full_item_json`). Unset fields
 are `null`, not omitted. The id may also be the item's URL — see
-Conventions (`test_show_accepts_item_url`).
+Conventions (`test_show_accepts_item_url`). When an engine classified the
+item, `show` adds a derived `classification` block (`by` / `basis` /
+`ruleset`, plus `model` for the LLM engine) alongside the raw `provenance`
+keys — the same view `scrolls list` and the MCP `get_scroll` / `list_scrolls`
+twins surface, so how the category was produced reads identically wherever
+it appears (`test_show_surfaces_the_classification_method`).
 
 ```console
 $ scrolls show x:1111

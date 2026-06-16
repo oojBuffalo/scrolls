@@ -35,12 +35,13 @@ The contract, across every engine that writes an enriched field:
    stamp — "unclassified" is honest absence, never a guessed label (the
    anti-fabrication half of M2, applied to enrichment).
 
-The one known gap (roadmap H19 note): the rules engine records the engine
-*version* (``rules-v1``) but not the specific precedence tier that fired. The
-engine name is a sufficient method marker for deterministic re-derivation today
-(the ruleset is versioned in code); finer method granularity is deferred to H20
-unless a workflow shows the engine name insufficient (custody §2.8 — pay for
-complexity).
+The H19-noted gap is closed by roadmap H20: the rules engine now records not
+just the engine *version* (``classified_by = "rules-v1"``) but which precedence
+tier fired (``classified_basis``) and a fingerprint of the rule tables it ran
+under (``classified_ruleset``) — the "inputs + method" a re-classify needs to be
+reproducible and auditable. Both are deterministic (per-tier assertions live in
+``test_classify.py``); this module pins them as part of the cross-engine "method
+is recorded" + "deterministic re-derivation" contract.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ import json
 import pytest
 
 from scrolls.classify import ENGINE as RULES_ENGINE
-from scrolls.classify import classify_item
+from scrolls.classify import RULESET_FINGERPRINT, classify_item
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.classify_llm import classify_item_llm
 from scrolls.items import ScrollItem
@@ -98,6 +99,15 @@ def test_rules_engine_records_its_method():
     classified = classify_item(make_item())
     assert classified.category is not None  # a rule fired (title says "Tutorial")
     assert classified.provenance["classified_by"] == RULES_ENGINE
+
+
+def test_rules_engine_records_the_inputs_and_method_h20():
+    """H20: beyond the engine version, the rules engine records which precedence
+    tier fired and the ruleset fingerprint — the inputs/method a re-classify
+    needs to be reproducible and auditable."""
+    classified = classify_item(make_item())  # title rule fires
+    assert classified.provenance["classified_basis"] == "title-pattern"
+    assert classified.provenance["classified_ruleset"] == RULESET_FINGERPRINT
 
 
 def test_llm_engine_records_its_method_and_model():

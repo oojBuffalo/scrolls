@@ -23,6 +23,8 @@ Precedence (first hit wins):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import replace
 from urllib.parse import urlparse
@@ -30,6 +32,17 @@ from urllib.parse import urlparse
 from scrolls.items import ScrollItem
 
 ENGINE = "rules-v1"
+
+# The precedence tiers, in the order `_category` consults them. The tier that
+# fires is recorded as `provenance.classified_basis` — the "which signal"
+# behind a category, the H19-flagged method granularity. These are the four
+# documented tiers (this module's header), not finer (which exact map entry
+# fired is over-granular for audit; the engine + ruleset fingerprint already
+# pin the rest — custody §2.8, pay for complexity).
+BASIS_CURATED = "curated-source"
+BASIS_TITLE = "title-pattern"
+BASIS_DOC_URL = "documentation-url"
+BASIS_WEAK = "weak-source"
 
 # Platforms whose category is inherent to the platform itself. A `doi.org`
 # link (the `crossref` source) is handled separately in `_curated_category`:
@@ -166,33 +179,57 @@ _CSL_CATEGORIES = {
 def classify_item(item: ScrollItem) -> ScrollItem:
     """Return the item with a rule-derived category, or unchanged if none match.
 
-    The input item is never mutated. When a rule fires, the engine name is
-    recorded as `provenance.classified_by` alongside the fetch provenance.
+    The input item is never mutated. When a rule fires, the method is recorded
+    in `provenance` alongside (never replacing) the fetch provenance, so a
+    re-classify is reproducible and auditable:
+
+    - ``classified_by`` — the engine (``rules-v1``);
+    - ``classified_basis`` — which precedence tier fired (the H20 method
+      granularity: ``curated-source`` / ``title-pattern`` / ``documentation-url``
+      / ``weak-source``);
+    - ``classified_ruleset`` — the fingerprint of the rule tables this run used
+      (``RULESET_FINGERPRINT``), so a reader can tell whether the ruleset has
+      changed since — i.e. whether a re-classify today would still reproduce
+      this category.
+
+    Stamping is idempotent: re-running on an already-classified item recomputes
+    the same category, basis, and fingerprint and overwrites the same keys, so a
+    re-classify of an unchanged library is a no-op in result.
     """
-    category = _category(item)
-    if category is None:
+    verdict = _category(item)
+    if verdict is None:
         return item
+    category, basis = verdict
     return replace(
         item,
         category=category,
-        provenance={**(item.provenance or {}), "classified_by": ENGINE},
+        provenance={
+            **(item.provenance or {}),
+            "classified_by": ENGINE,
+            "classified_basis": basis,
+            "classified_ruleset": RULESET_FINGERPRINT,
+        },
     )
 
 
-def _category(item: ScrollItem) -> str | None:
+def _category(item: ScrollItem) -> tuple[str, str] | None:
+    """The (category, precedence-tier) a rule produces, or None if none match."""
     curated = _curated_category(item)
     if curated:
-        return curated
+        return curated, BASIS_CURATED
 
     title = item.title or ""
     for pattern, category in _TITLE_RULES:
         if pattern.search(title):
-            return category
+            return category, BASIS_TITLE
 
     if _is_documentation_url(item.url):
-        return "documentation"
+        return "documentation", BASIS_DOC_URL
 
-    return _WEAK_SOURCE_CATEGORIES.get(item.source)
+    weak = _WEAK_SOURCE_CATEGORIES.get(item.source)
+    if weak is not None:
+        return weak, BASIS_WEAK
+    return None
 
 
 def _curated_category(item: ScrollItem) -> str | None:
@@ -288,3 +325,33 @@ def _is_documentation_url(url: str) -> bool:
         or "docs" in path_parts
         or "documentation" in path_parts
     )
+
+
+def _ruleset_digest() -> str:
+    """A short content fingerprint of the rule *tables*.
+
+    Recorded as `provenance.classified_ruleset` so a held classification names
+    the exact ruleset that produced it: if these tables change, the fingerprint
+    changes, and a reader can tell a re-classify would no longer reproduce the
+    stored category without re-running the engine. The fingerprint covers the
+    data-driven rules (the category maps and title patterns); the engine's
+    code-level logic — the URL shape test, the per-platform `source_id` parsing
+    — is versioned by the engine name (`rules-v1` → a future `rules-v2` on a
+    behavior change), so the two together pin the whole ruleset.
+    """
+    payload = {
+        "engine": ENGINE,
+        "curated_source": _CURATED_SOURCE_CATEGORIES,
+        "title_rules": [(pattern.pattern, category) for pattern, category in _TITLE_RULES],
+        "weak_source": _WEAK_SOURCE_CATEGORIES,
+        "datacite": _DATACITE_CATEGORIES,
+        "zenodo": _ZENODO_CATEGORIES,
+        "csl": _CSL_CATEGORIES,
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+# Computed once at import: a fixed input → a stable digest, the determinism the
+# re-derivation contract rests on (`tests/test_classify.py`).
+RULESET_FINGERPRINT = _ruleset_digest()

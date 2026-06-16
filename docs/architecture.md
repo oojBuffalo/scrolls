@@ -53,19 +53,24 @@ each command moves items between stages or derives artifacts from them.
 - **Enrichment is provenance-complete and re-derivable** (PRD cap 8,
   custody-vision §3.6). Every engine that writes a derived field records
   *how* it was produced, in `provenance`, alongside (never replacing) the
-  capture facts: the rules engine stamps `classified_by="rules-v1"`
-  (`classify.py`), the LLM classifier adds `classified_model`
-  (`classify_llm.py`), and the LLM concept summaries store a `members_hash`
-  fingerprint of the scrolls they synthesize so an unchanged concept is
-  skipped on re-run (`kb_llm.py`). The cross-engine contract — method is
-  recorded, re-derivation is deterministic, the capture chain survives,
-  and nothing unmatched is fabricated — is pinned as one invariant in
+  capture facts: the rules engine stamps `classified_by="rules-v1"`,
+  the precedence tier that fired (`classified_basis` — one of
+  `curated-source` / `title-pattern` / `documentation-url` / `weak-source`),
+  and a fingerprint of the rule tables it ran under (`classified_ruleset`,
+  `RULESET_FINGERPRINT`) so a held classification names the exact ruleset
+  that produced it (`classify.py`, roadmap H20); the LLM classifier adds
+  `classified_model` (`classify_llm.py`); and the LLM concept summaries
+  store a `members_hash` fingerprint of the scrolls they synthesize so an
+  unchanged concept is skipped on re-run (`kb_llm.py`). A derived
+  `classification` view (`items.classification_provenance` — `by` / `basis`
+  / `ruleset` / `model`) carries this onto the browse and inspect surfaces
+  identically: `scrolls list`, `show`, and the MCP `list_scrolls` /
+  `get_scroll` twins. The cross-engine contract — method is recorded,
+  re-derivation is deterministic, the capture chain survives, and nothing
+  unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way
-  `test_completeness.py` pins M2). *Known gap (roadmap H19):* the rules
-  engine records its version, not the precedence tier that fired; the
-  engine name suffices for deterministic re-derivation today, so finer
-  method granularity and a confidence/recency marker are deferred to
-  roadmap H20–H21.
+  `test_completeness.py` pins M2). The remaining cap-8 step is a
+  confidence/recency marker (roadmap H21).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
@@ -480,8 +485,11 @@ choice (ADRs 0004, 0005).
   (`group/project#<n>`/`!<n>`), gitea issue/PR (`<host>/<owner>/<repo>#<n>`), or
   bitbucket issue/PR (`workspace/repo#<n>`/`!<n>`) is a heterogeneous discussion
   thread left unclassified like a Hacker News post (ADR 0084/0085/0086/0087).
-  Batch runs never overwrite an existing category; `classify <id>`
-  explicitly reclassifies (`tests/test_classify.py`).
+  Which of the four tiers fired is recorded as `classified_basis`, paired with
+  a `classified_ruleset` fingerprint of the rule tables, so a stored category
+  names the exact ruleset that produced it (roadmap H20). Batch runs never
+  overwrite an existing category; `classify <id>` explicitly reclassifies
+  (`tests/test_classify.py`).
 - **LLM classification** (`classify_llm.py`, ADR 0015) — layer two
   (`llm-v1`), run explicitly via `classify --engine llm`: one Anthropic
   Messages call per item with structured outputs pinning `category` to

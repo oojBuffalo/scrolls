@@ -115,6 +115,33 @@ def get_fidelity(item: ScrollItem) -> str:
     )
 
 
+def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
+    """The recorded *how* of an item's category, or None when no engine stamped it.
+
+    A derived, read-only view over `provenance` that the browse and inspect
+    surfaces share, so an agent sees how a category was produced without parsing
+    raw provenance keys: the engine that classified the item (`by`), and — for
+    the rules engine — which precedence tier fired (`basis`) and the ruleset
+    fingerprint it ran under (`ruleset`); for the LLM engine, the `model`. A user
+    override or an unclassified item carries no engine stamp, so this is None —
+    honest absence (no method is claimed for a category no engine produced).
+    """
+    provenance = item.provenance or {}
+    engine = provenance.get("classified_by")
+    if not engine:
+        return None
+    view: dict[str, Any] = {"by": engine}
+    for source_key, view_key in (
+        ("classified_basis", "basis"),
+        ("classified_ruleset", "ruleset"),
+        ("classified_model", "model"),
+    ):
+        value = provenance.get(source_key)
+        if value is not None:
+            view[view_key] = value
+    return view
+
+
 def item_summary(
     item: ScrollItem, works: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
@@ -131,7 +158,7 @@ def item_summary(
     here so this module stays free of the `works` clustering (which itself reads
     items), and so a `list` over the whole library clusters once, not per row.
     """
-    return {
+    summary = {
         "id": item.id,
         "source": item.source,
         "url": item.url,
@@ -142,6 +169,13 @@ def item_summary(
         "fidelity": get_fidelity(item),
         "works": works or [],
     }
+    # How the category was derived, when an engine recorded it — so a browse row
+    # carries its own provenance (parity with `show`). Omitted entirely when no
+    # method was stamped, keeping the row's shape stable for unclassified items.
+    classification = classification_provenance(item)
+    if classification is not None:
+        summary["classification"] = classification
+    return summary
 
 
 def make_item_id(source: str, source_id: str | None, url: str) -> str:

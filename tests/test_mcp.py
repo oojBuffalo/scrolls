@@ -347,6 +347,21 @@ def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):
     assert item["markdown_path"] == "scrolls/wikipedia/sqlite.md"
 
 
+def test_get_scroll_and_list_surface_the_classification_method(
+    scrolls_home, fake_wikipedia_api
+):
+    # the derived classification view travels with both MCP inspect surfaces,
+    # identical to the CLI `show`/`list` payload (H20 parity)
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # classifies inline
+    expected = {"by": "rules-v1", "basis": "curated-source", "ruleset": RULESET_FINGERPRINT}
+
+    assert mcp_server.get_scroll("wikipedia:en:SQLite")["classification"] == expected
+    row = next(r for r in mcp_server.list_scrolls() if r["id"] == "wikipedia:en:SQLite")
+    assert row["classification"] == expected
+
+
 def test_get_scroll_unknown_id_raises(scrolls_home):
     with pytest.raises(ValueError, match="no such item"):
         mcp_server.get_scroll("x:9999")

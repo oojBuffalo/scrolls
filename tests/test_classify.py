@@ -4,7 +4,7 @@ Deterministic, offline: category comes from source defaults, title
 patterns, and URL shape — no LLM, no network.
 """
 
-from scrolls.classify import classify_item
+from scrolls.classify import RULESET_FINGERPRINT, classify_item
 from scrolls.items import ScrollItem
 
 
@@ -499,3 +499,67 @@ def test_input_item_is_never_mutated():
 def test_titleless_item_falls_back_to_source_rules():
     item = make_item(source="youtube", title=None)
     assert classify_item(item).category == "media"
+
+
+# --- re-derivable method: precedence tier + ruleset fingerprint (H20) ------
+#
+# `classified_by` names the engine; H20 adds the two facts a re-classify needs
+# to be reproducible and auditable: which precedence *tier* fired
+# (`classified_basis`, closing the H19 gap) and the ruleset fingerprint the run
+# used (`classified_ruleset`). Both are deterministic, so a re-classify of an
+# unchanged library reproduces them field-for-field.
+
+
+def test_curated_source_records_the_curated_basis():
+    classified = classify_item(make_item(source="wikipedia", title="SQLite"))
+    assert classified.category == "reference"
+    assert classified.provenance["classified_basis"] == "curated-source"
+
+
+def test_title_pattern_records_the_title_basis():
+    classified = classify_item(make_item(title="A Tutorial on FTS5"))
+    assert classified.category == "tutorial"
+    assert classified.provenance["classified_basis"] == "title-pattern"
+
+
+def test_documentation_url_records_the_url_basis():
+    classified = classify_item(
+        make_item(title="Reference", url="https://docs.python.org/3/library/sqlite3.html")
+    )
+    assert classified.category == "documentation"
+    assert classified.provenance["classified_basis"] == "documentation-url"
+
+
+def test_weak_source_records_the_weak_basis():
+    # a youtube item with no title rule falls through to the weak source default
+    classified = classify_item(make_item(source="youtube", title=None))
+    assert classified.category == "media"
+    assert classified.provenance["classified_basis"] == "weak-source"
+
+
+def test_every_classified_item_records_the_ruleset_fingerprint():
+    classified = classify_item(make_item(source="wikipedia", title="SQLite"))
+    assert classified.provenance["classified_ruleset"] == RULESET_FINGERPRINT
+    # the fingerprint is a short stable digest, not the whole ruleset
+    assert isinstance(RULESET_FINGERPRINT, str) and len(RULESET_FINGERPRINT) == 12
+
+
+def test_method_fields_are_deterministically_re_derivable():
+    # re-running the engine reproduces basis + ruleset field-for-field; a
+    # re-classify is a no-op in result (the H19 contract, now with finer method)
+    item = make_item(title="A Tutorial on FTS5")
+    first = classify_item(item)
+    assert classify_item(item) == first
+    refed = classify_item(first)
+    assert refed.provenance["classified_basis"] == first.provenance["classified_basis"]
+    assert refed.provenance["classified_ruleset"] == first.provenance["classified_ruleset"]
+    assert list(refed.provenance).count("classified_basis") == 1
+
+
+def test_unmatched_item_records_no_basis_or_ruleset():
+    # honest absence: nothing matched, so no method facts are claimed
+    item = make_item(title="An ordinary post")
+    classified = classify_item(item)
+    assert classified.category is None
+    assert "classified_basis" not in (classified.provenance or {})
+    assert "classified_ruleset" not in (classified.provenance or {})

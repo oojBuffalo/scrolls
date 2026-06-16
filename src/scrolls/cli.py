@@ -54,6 +54,7 @@ from scrolls.works import (
 )
 from scrolls.items import (
     ScrollItem,
+    classification_provenance,
     get_item,
     insert_item,
     item_summary,
@@ -1880,6 +1881,11 @@ def _cmd_show(item_id: str) -> int:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
+    # The derived classification view alongside the raw provenance, so `show`
+    # presents how the category was produced at parity with `list` (and MCP).
+    classification = classification_provenance(item)
+    if classification is not None:
+        payload["classification"] = classification
     print(json.dumps(payload))
     return 0
 

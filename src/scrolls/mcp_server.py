@@ -33,7 +33,13 @@ from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
 from scrolls.works import membership_payload, work_membership
 from scrolls.works import to_payload as works_payload
 from scrolls.works import works_for_item, works_over
-from scrolls.items import count_by_source, get_item, item_summary, list_items
+from scrolls.items import (
+    classification_provenance,
+    count_by_source,
+    get_item,
+    item_summary,
+    list_items,
+)
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
@@ -210,6 +216,11 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
+    # The derived classification view alongside raw provenance, matching the CLI
+    # `show` payload so both inspect surfaces present how the category was made.
+    classification = classification_provenance(item)
+    if classification is not None:
+        payload["classification"] = classification
     return payload
 
 
