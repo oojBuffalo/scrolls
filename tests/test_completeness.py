@@ -122,6 +122,9 @@ CHECKED_EMPTY_CASES = {
         ["export", "bundle", "zzznotatoken"],
         lambda out: "No matching scrolls." in out,
     ),
+    # a held item the ledger never checked → an honest empty timeline, not an
+    # error (the per-item custody ledger, roadmap H66): checked-and-empty
+    "history": (["history", "web:lonely"], lambda out: json.loads(out) == []),
 }
 
 
@@ -150,6 +153,9 @@ COULD_NOT_CHECK_CASES = {
     "related_unknown_id": ["related", "web:does-not-exist"],
     "works_unknown_ref": ["works", "web:does-not-exist"],
     "show_unknown_id": ["show", "web:does-not-exist"],
+    # an unknown ref has no item to time-line — a loud could-not-check, never an
+    # empty `[]` that a typo could masquerade as "no history" (the H66 split)
+    "history_unknown_id": ["history", "web:does-not-exist"],
 }
 
 
@@ -268,6 +274,7 @@ def test_before_init_is_empty_in_shape_across_surfaces(scrolls_home, capsys, nam
 MCP_CHECKED_EMPTY = {
     "search_scrolls": lambda: mcp_server.search_scrolls("zzznotatoken") == [],
     "list_scrolls": lambda: mcp_server.list_scrolls(tag="nonexistent") == [],
+    "get_scroll_history": lambda: mcp_server.get_scroll_history("web:lonely") == [],
     "get_related_scrolls": lambda: mcp_server.get_related_scrolls("web:lonely") == [],
     "get_works": lambda: mcp_server.get_works()["works"] == [],
     "get_works_item": lambda: mcp_server.get_works(item="web:lonely")["works"] == [],
@@ -287,6 +294,7 @@ MCP_COULD_NOT_CHECK = {
     "get_related_unknown": lambda: mcp_server.get_related_scrolls("web:does-not-exist"),
     "get_works_unknown_item": lambda: mcp_server.get_works(item="web:does-not-exist"),
     "get_scroll_unknown": lambda: mcp_server.get_scroll("web:does-not-exist"),
+    "get_scroll_history_unknown": lambda: mcp_server.get_scroll_history("web:does-not-exist"),
 }
 
 

@@ -85,6 +85,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "list_scrolls",
         "list_facets",
         "get_scroll",
+        "get_scroll_history",
         "get_related_scrolls",
         "get_link_graph",
         "get_works",
@@ -152,6 +153,39 @@ def test_verify_scroll_records_drift(scrolls_home, monkeypatch):
 
     latest = latest_events(get_paths().db_path)
     assert latest["web:demo"].status == "drifted"
+
+
+def test_get_scroll_history_returns_the_ledger_newest_first(scrolls_home, monkeypatch):
+    # H66: the MCP twin of `scrolls history` emits the same per-item ledger the
+    # CLI does — verify twice, the timeline reads newest-first with the 5-field
+    # shape, and equals the shared `custody.item_history` primitive.
+    from scrolls.custody import item_history
+    from scrolls.items import ScrollItem
+
+    _seed_verifiable_item(content_hash="sha256:old")
+    monkeypatch.setattr(
+        mcp_server, "live_recapture",
+        lambda i: ScrollItem(**{**dataclasses.asdict(i), "content_hash": "sha256:new"}),
+    )
+    mcp_server.verify_scroll("web:demo")  # drifted
+    monkeypatch.setattr(mcp_server, "live_recapture", lambda i: i)
+    mcp_server.verify_scroll("web:demo")  # unchanged
+
+    history = mcp_server.get_scroll_history("web:demo")
+    assert [e["status"] for e in history] == ["unchanged", "drifted"]
+    assert set(history[0]) == {"checked_at", "status", "prior_hash", "observed_hash", "detail"}
+    assert history == item_history(get_paths().db_path, "web:demo")
+
+
+def test_get_scroll_history_never_verified_is_empty(scrolls_home):
+    _seed_verifiable_item()
+    assert mcp_server.get_scroll_history("web:demo") == []
+
+
+def test_get_scroll_history_unknown_item_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError, match="no such item"):
+        mcp_server.get_scroll_history("web:nope")
 
 
 def test_verify_scroll_unknown_item_raises(scrolls_home):

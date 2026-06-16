@@ -199,6 +199,41 @@ def item_events(db_path: Path, item_id: str) -> list[CustodyEvent]:
     return [_from_row(row) for row in rows]
 
 
+def event_payload(event: CustodyEvent) -> dict[str, str | None]:
+    """One ledger event as a JSON-ready dict — the per-event read shape.
+
+    The shared serializer behind `scrolls history <id>` (roadmap H66) and its
+    MCP twin, so the per-item custody timeline reads byte-identical whichever
+    surface an agent reaches. The item id is omitted on purpose: `history` is
+    scoped to one item (the argument), so every row carries the same id — the
+    five fields that vary per check are ``checked_at`` (when), ``status`` (the
+    verdict), the ``prior_hash``/``observed_hash`` pair (what we held vs what the
+    re-capture saw), and ``detail`` (the failure message for a ``rotted``/
+    ``error`` event, ``None`` for a clean check).
+    """
+    return {
+        "checked_at": event.checked_at,
+        "status": event.status,
+        "prior_hash": event.prior_hash,
+        "observed_hash": event.observed_hash,
+        "detail": event.detail,
+    }
+
+
+def item_history(db_path: Path, item_id: str) -> list[dict[str, str | None]]:
+    """The full custody ledger timeline for one item, newest first.
+
+    The read-surface form of the append-only events `verify` writes: every
+    recorded check serialized through `event_payload`, newest first (the
+    `item_events` order). An item the ledger has never checked yields ``[]`` —
+    the honest-empty form (completeness G1), distinct from an *unknown* item,
+    which the caller rejects as a could-not-check before reaching here. Pure
+    over the ledger read; the single primitive `scrolls history` and the MCP
+    `get_scroll_history` twin share, so they can never disagree.
+    """
+    return [event_payload(event) for event in item_events(db_path, item_id)]
+
+
 def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
     """The most recent custody event per item, keyed by item id.
 

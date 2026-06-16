@@ -348,3 +348,110 @@ def test_verify_rejects_all_and_unverified_together(paths, capsys):
     exit_code = main(["verify", "--all", "--unverified"])
     assert exit_code == 1
     assert "error" in json.loads(capsys.readouterr().err)
+
+
+# --- scrolls history <id> — the per-item custody ledger timeline (H66) -----
+#
+# `verify` appends an append-only event per check; `show`/`list` carry only the
+# *latest* drift posture and doctor/facets only aggregate counts. `history`
+# emits the *full* ledger for one item as JSON, newest first — when a source
+# drifted and how often it was re-checked, the per-item counterpart of
+# `maintain --history`'s scope-level trajectory.
+
+
+def _drifts_to(new_hash):
+    """A recapture stub returning the stored item with a changed content hash."""
+    import dataclasses
+
+    return lambda item: dataclasses.replace(item, content_hash=new_hash)
+
+
+def test_history_lists_every_event_newest_first(paths, monkeypatch, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    insert_item(paths.db_path, item)
+
+    _stub_recapture(monkeypatch, _drifts_to("sha256:changed"))
+    main(["verify", item.id])  # event 1: drifted
+    capsys.readouterr()
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", item.id])  # event 2: unchanged (same stored hash)
+    capsys.readouterr()
+
+    exit_code = main(["history", item.id])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert [e["status"] for e in out] == ["unchanged", "drifted"]  # newest first
+
+
+def test_history_event_carries_the_five_field_shape(paths, monkeypatch, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    insert_item(paths.db_path, item)
+    _stub_recapture(monkeypatch, _drifts_to("sha256:changed"))
+    main(["verify", item.id])
+    capsys.readouterr()
+
+    exit_code = main(["history", item.id])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert len(out) == 1
+    assert set(out[0]) == {"checked_at", "status", "prior_hash", "observed_hash", "detail"}
+    assert out[0]["status"] == "drifted"
+    assert out[0]["prior_hash"] == "sha256:orig"
+    assert out[0]["observed_hash"] == "sha256:changed"
+    assert out[0]["detail"] is None
+    assert out[0]["checked_at"]  # a real timestamp, not empty
+
+
+def test_history_converges_with_the_item_history_primitive(paths, monkeypatch, capsys):
+    """The CLI emits exactly the shared `custody.item_history` primitive."""
+    from scrolls.custody import item_history
+
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    insert_item(paths.db_path, item)
+    _stub_recapture(monkeypatch, _drifts_to("sha256:changed"))
+    main(["verify", item.id])
+    capsys.readouterr()
+
+    exit_code = main(["history", item.id])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert out == item_history(paths.db_path, item.id)
+
+
+def test_history_of_a_never_verified_item_is_empty(paths, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    insert_item(paths.db_path, item)
+
+    exit_code = main(["history", item.id])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out) == []
+    assert captured.err == ""  # checked-and-empty writes nothing to stderr
+
+
+def test_history_resolves_a_url_to_its_id(paths, monkeypatch, capsys):
+    item = _item("https://example.com/a", content_hash="sha256:orig")
+    insert_item(paths.db_path, item)
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", item.id])
+    capsys.readouterr()
+
+    # the URL that saved it resolves to the same id (ADR 0028)
+    exit_code = main(["history", "https://example.com/a"])
+    out = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert [e["status"] for e in out] == ["unchanged"]
+
+
+def test_history_unknown_id_errors_loudly(paths, capsys):
+    exit_code = main(["history", "web:does-not-exist"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ""  # nothing on stdout when the check could not run
+    assert "error" in json.loads(captured.err)

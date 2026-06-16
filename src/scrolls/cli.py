@@ -23,6 +23,7 @@ from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     drift_posture,
     item_events,
+    item_history,
     latest_events,
     live_recapture,
     record_events,
@@ -322,6 +323,14 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="Feed URL — or a YouTube playlist/channel URL, which maps to "
         "its public feed; omit to list current subscriptions",
+    )
+
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Print one item's full custody-ledger timeline, newest first (JSON output)",
+    )
+    history_parser.add_argument(
+        "id", help="Item id (e.g. wikipedia:en:SQLite), or the item's URL"
     )
 
     import_parser = subparsers.add_parser(
@@ -792,6 +801,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_works(args.min_representations, args.ref)
     if args.command == "follow":
         return _cmd_follow(args.url)
+    if args.command == "history":
+        return _cmd_history(args.id)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -2210,6 +2221,29 @@ def _cmd_show(item_id: str) -> int:
     if classification is not None:
         payload["classification"] = classification
     print(json.dumps(payload))
+    return 0
+
+
+def _cmd_history(item_id: str) -> int:
+    """Print one item's full custody-ledger timeline, newest first (roadmap H66).
+
+    `verify` appends an append-only custody event per check; `show`/`list` carry
+    only the *latest* `drift` posture and `doctor`/`facets` only aggregate
+    counts. This emits the complete ledger for one item — each
+    ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
+    so an agent can see *when* a source drifted and *how often* it has been
+    re-checked, the per-item counterpart of `maintain --history`'s scope-level
+    trajectory. Read-only and honest: a known-but-never-verified item is the
+    empty `[]` (completeness G1, checked-and-empty), while an *unknown* ref is a
+    loud could-not-check error — the same empty-vs-error split `show`/`related`
+    draw, so the per-item ledger never masquerades a typo as "no history".
+    """
+    paths = get_paths()
+    item, error = _find_item(paths, item_id)
+    if item is None:
+        print(json.dumps({"error": error}), file=sys.stderr)
+        return 1
+    print(json.dumps(item_history(paths.db_path, item.id)))
     return 0
 
 

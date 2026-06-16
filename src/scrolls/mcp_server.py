@@ -25,6 +25,7 @@ from scrolls.context import build_context
 from scrolls.custody import (
     drift_posture,
     item_events,
+    item_history,
     latest_events,
     live_recapture,
     record_events,
@@ -270,6 +271,28 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     if classification is not None:
         payload["classification"] = classification
     return payload
+
+
+def get_scroll_history(item_id: str) -> list[dict[str, Any]]:
+    """One item's full custody-ledger timeline — every verify check, newest first.
+
+    Where `get_scroll` carries only the *latest* `drift` posture, this returns
+    the complete append-only ledger `scrolls verify` writes: each
+    ``{checked_at, status, prior_hash, observed_hash, detail}``, newest first —
+    so an agent can see *when* a source drifted and *how often* it was
+    re-checked, the per-item counterpart of the scope-level `maintain --history`
+    trajectory. `item_id` is the item's id or the URL that saved it (ADR 0028),
+    resolved like `get_scroll`'s. A known-but-never-verified item is the honest
+    empty `[]` (completeness G1); an *unknown* item is an error, the same
+    empty-vs-error split `get_scroll`/`get_related_scrolls` draw.
+    """
+    paths = get_paths()
+    resolved = resolve_item_id(item_id)
+    item = get_item(paths.db_path, resolved) if paths.db_path.exists() else None
+    if item is None:
+        suffix = f" (from {item_id})" if resolved != item_id else ""
+        raise ValueError(f"no such item: {resolved}{suffix}")
+    return item_history(paths.db_path, resolved)
 
 
 def get_related_scrolls(
@@ -576,6 +599,7 @@ _TOOLS = (
     list_scrolls,
     list_facets,
     get_scroll,
+    get_scroll_history,
     get_related_scrolls,
     get_link_graph,
     get_works,

@@ -63,7 +63,8 @@ integrity boundary is the agent contract (custody-vision §6); false
 absence corrupts an agent's memory the same way a fabricated row does.
 So every read and audit surface — `search`, `list`, `related`, `works`,
 `context`, `doctor`, `maintain` (run offline with `--no-recheck`),
-`export bundle` (the shareable artifact), and their MCP twins — honors one
+`export bundle` (the shareable artifact), `history` (the per-item custody
+ledger), and their MCP twins — honors one
 cross-cutting contract:
 **results are scope-honest and completeness-honest; "nothing found" is
 never confused with "not checked," and nothing is fabricated for content
@@ -74,7 +75,7 @@ guarantees.
 
 ### G1 — Honest absence, honest failure *(enforced; `tests/test_completeness.py`)*
 
-The anti-fabrication core. Three claims, each true across all eight surfaces
+The anti-fabrication core. Three claims, each true across all nine surfaces
 and pinned as a single named invariant rather than re-proved per command:
 
 - **Checked-and-empty is exit 0 in the surface's normal shape.** A surface
@@ -83,9 +84,10 @@ and pinned as a single named invariant rather than re-proved per command:
   `{"works": [], "stats": {…}}` for `works`, a `No matching scrolls.`
   bundle for `context`, a zero-finding report for `doctor`, for `maintain`
   a zero-`issues` report whose audit never fabricates a custody picture (an
-  uninitialized library reads `score: null`, never a perfect `100`), and for
+  uninitialized library reads `score: null`, never a perfect `100`), for
   `export bundle` a valid, *importable* `No matching scrolls.` bundle (never an
-  error, never a fabricated entry) — and exits 0. An empty result is a real
+  error, never a fabricated entry), and for `history` an `[]` timeline when the
+  item is held but the ledger has never checked it — and exits 0. An empty result is a real
   answer, never an error and never a fabricated row
   (`test_checked_and_empty_is_exit_zero_in_normal_shape`,
   `test_before_init_is_empty_in_shape_across_surfaces`).
@@ -94,7 +96,9 @@ and pinned as a single named invariant rather than re-proved per command:
   query) and an unknown id/URL (`related`, `works <ref>`, `show`) are *not
   checked*, and
   they are loud: `{"error": "…"}` on stderr, exit 1, nothing on stdout
-  (`test_could_not_check_errors_loudly_not_emptily`).
+  (`test_could_not_check_errors_loudly_not_emptily`). `history` draws the same
+  split — a never-checked held item is the empty `[]`, but an unknown ref is a
+  loud error, so a typo can never read as "no history."
 - **Therefore empty ≠ error.** The exit code plus the stream is the
   discriminator an agent reads: exit 0 + empty-in-shape means "I checked
   this slice and nothing matched"; exit ≠ 0 + `error` on stderr means "I
@@ -103,7 +107,7 @@ and pinned as a single named invariant rather than re-proved per command:
 
 The same invariant holds for the **MCP twins** (`search_scrolls`,
 `list_scrolls`, `get_related_scrolls`, `get_works`, `get_context_bundle`,
-`get_scroll`), where "exit 0 + empty shape" becomes "returns the empty
+`get_scroll`, `get_scroll_history`), where "exit 0 + empty shape" becomes "returns the empty
 form" and an error envelope becomes a raised tool error — so an agent gets
 the same honesty whether it reads the CLI or the protocol server
 (custody-vision §6, surface parity;
@@ -475,6 +479,38 @@ $ scrolls verify --all
 
 $ scrolls verify --unverified      # only the held items doctor flags `unverified`
 {"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "x:2222", "status": "unchanged", "prior_hash": "sha256:5e1a…", "observed_hash": "sha256:5e1a…", "detail": null}]}
+[exit 0]
+```
+
+### `scrolls history <id>`
+
+Print one item's **full custody-ledger timeline**, newest first (cited tests in
+`tests/test_verify_cli.py`). Where `scrolls verify` *appends* a custody event per
+check and `show`/`list` carry only the *latest* `drift` posture (and
+`doctor`/`facets` only aggregate counts), `history` reads back the complete
+append-only ledger for one item — each `{checked_at, status, prior_hash,
+observed_hash, detail}` — so an agent can see *when* a source drifted and *how
+often* it has been re-checked. It is the per-item counterpart of `maintain
+--history`'s scope-level trajectory, and the browsable form of the events
+`verify` writes.
+
+`<id>` is the item's id or, equivalently, the URL that saved it (ADR 0028),
+resolved like `show`'s. The output is a JSON array; the event fields mirror
+`verify`'s `results` rows minus the redundant per-row `id` (every event is the
+same item). Read-only and honest about absence (the completeness contract): a
+held item the ledger has *never* checked is the empty `[]` — checked-and-empty,
+exit 0 (`test_history_of_a_never_verified_item_is_empty`) — while an *unknown*
+ref is a loud could-not-check error on stderr, exit 1
+(`test_history_unknown_id_errors_loudly`), the same empty-vs-error split
+`show`/`related` draw, so a typo can never masquerade as "no history".
+
+```console
+$ scrolls history web:af2e70e87b6d        # re-checked twice; drifted, then held
+[{"checked_at": "2026-06-16T09:00:00+00:00", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}, {"checked_at": "2026-06-14T09:00:00+00:00", "status": "drifted", "prior_hash": "sha256:1f3c…", "observed_hash": "sha256:9c20…", "detail": null}]
+[exit 0]
+
+$ scrolls history web:never-verified      # held, but never re-checked
+[]
 [exit 0]
 ```
 
@@ -2227,6 +2263,7 @@ The tools wrap the same engines as the CLI commands
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the two custody axes (`fidelity` + `drift`, H61) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
+| `get_scroll_history(item_id)` | `scrolls history <id>` | the item's full custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); `[]` when never verified, error on an unknown id; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_returns_the_ledger_newest_first`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
@@ -2244,7 +2281,8 @@ The tools wrap the same engines as the CLI commands
 Read tools follow the CLI conventions: an empty or uninitialized
 library yields empty results (`test_search_scrolls_before_init_returns_empty`),
 unknown ids are tool errors (`test_get_scroll_unknown_id_raises`), and the
-item-ref tools (`get_scroll`, `get_related_scrolls`, `get_works`) accept the
+item-ref tools (`get_scroll`, `get_scroll_history`, `get_related_scrolls`,
+`get_works`) accept the
 item's URL as readily as its id, the same `resolve_item_id` chain the CLI uses
 (ADR 0028, `test_get_scroll_accepts_the_items_url`).
 

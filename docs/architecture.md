@@ -124,7 +124,16 @@ each command moves items between stages or derives artifacts from them.
   a given item reads the same posture wherever an agent reaches it, and the
   posture a `list` row shows is exactly the one its `--drift` filter selects on.
   That per-item agreement is pinned across all seven surfaces by the per-item
-  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64). The cross-engine contract — method is recorded,
+  invariant in `tests/test_custody_convergence.py` (roadmap H59/H64). Where
+  every surface above carries only the *latest* posture, `scrolls history <id>`
+  (+ the MCP `get_scroll_history` twin, roadmap H66) reads the *full* per-item
+  ledger back — the complete append-only timeline `verify` writes, each
+  `{checked_at, status, prior_hash, observed_hash, detail}` serialized newest-first
+  through the shared `custody.event_payload`/`item_history` primitives — so an
+  agent sees *when* a source drifted and *how often* it was re-checked, the
+  per-item counterpart of `maintain --history`'s scope-level trajectory. Like
+  `show`, an unknown ref is a loud could-not-check error while a held-but-never-checked
+  item is the honest empty `[]` (folded into the M2 completeness invariant). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

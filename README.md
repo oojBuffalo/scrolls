@@ -118,6 +118,7 @@ uv run scrolls search <query> --source arxiv --category paper  # scope the ranke
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
+uv run scrolls history <id>   # the item's full custody-ledger timeline (every verify check, newest first), as JSON; [] when never verified (H66)
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; echoes its scope (the --min floor or ref anchor) so the payload is completeness-honest (G2); with an id/URL, that item's work + siblings (ADR 0069, 0072)
@@ -1664,6 +1665,9 @@ changed since capture), `rotted` (HTTP 404/410, gone), or `error` (could not
 check) — into an append-only ledger *without* overwriting the original
 capture, and `scrolls doctor` aggregates the latest verdict per item into its
 `custody.drift` report, so the library can always answer "what have I lost, or
-what changed, since I saved it?" (ADR 0098).
+what changed, since I saved it?" (ADR 0098). `scrolls history <id>` reads that
+ledger back per item — the full timeline of every check, newest first — so an
+agent can see *when* a source drifted and *how often* it has been re-checked,
+not just its current posture.
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

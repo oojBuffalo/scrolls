@@ -16,7 +16,9 @@ import pytest
 import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
+    event_payload,
     item_events,
+    item_history,
     items_in_posture,
     latest_events,
     live_recapture,
@@ -194,6 +196,38 @@ def test_item_events_are_newest_first(tmp_path):
     ])
     history = item_events(db_path, "web:a")
     assert [e.status for e in history] == ["drifted", "unchanged"]
+
+
+def test_event_payload_is_the_five_field_read_shape():
+    # the per-event read shape behind `scrolls history` (H66): the item id is
+    # omitted (history is scoped to one item), so only the five per-check fields
+    event = CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "rotted", "h1", None, "gone")
+    assert event_payload(event) == {
+        "checked_at": "2026-06-15T00:00:00+00:00",
+        "status": "rotted",
+        "prior_hash": "h1",
+        "observed_hash": None,
+        "detail": "gone",
+    }
+
+
+def test_item_history_is_the_serialized_ledger_newest_first(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "unchanged", "h1", "h1"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h1", "h2"),
+    ])
+    history = item_history(db_path, "web:a")
+    assert [e["status"] for e in history] == ["drifted", "unchanged"]  # newest first
+    # equals item_events mapped through event_payload — the surfaces share it
+    assert history == [event_payload(e) for e in item_events(db_path, "web:a")]
+
+
+def test_item_history_of_a_never_checked_item_is_empty(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    assert item_history(db_path, "web:never") == []
 
 
 def test_latest_events_takes_the_most_recent_per_item(tmp_path):
