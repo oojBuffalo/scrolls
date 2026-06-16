@@ -62,10 +62,14 @@ each command moves items between stages or derives artifacts from them.
   `classified_model` (`classify_llm.py`); and the LLM concept summaries
   store a `members_hash` fingerprint of the scrolls they synthesize so an
   unchanged concept is skipped on re-run (`kb_llm.py`). A derived
-  `classification` view (`items.classification_provenance` — `by` / `basis`
-  / `ruleset` / `model`) carries this onto the browse and inspect surfaces
-  identically: `scrolls list`, `show`, and the MCP `list_scrolls` /
-  `get_scroll` twins. The cross-engine contract — method is recorded,
+  `classification` view (`items.classification_view` over a raw provenance
+  dict, exposed as `items.classification_provenance` for an item — `by` /
+  `basis` / `ruleset` / `model`) carries this onto every browse and inspect
+  surface identically: `scrolls list`, `show`, `search`, and the MCP
+  `list_scrolls` / `get_scroll` / `search_scrolls` twins (the ranked surfaces
+  derive it per-hit from the FTS row's own provenance column via the shared
+  `search.hit_payload` serializer, so it costs no extra query and the `--stats`
+  scope/truncation stays honest — roadmap H26). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

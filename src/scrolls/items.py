@@ -115,18 +115,19 @@ def get_fidelity(item: ScrollItem) -> str:
     )
 
 
-def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
-    """The recorded *how* of an item's category, or None when no engine stamped it.
+def classification_view(provenance: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The recorded *how* of a category from a raw `provenance` dict, or None.
 
-    A derived, read-only view over `provenance` that the browse and inspect
-    surfaces share, so an agent sees how a category was produced without parsing
-    raw provenance keys: the engine that classified the item (`by`), and — for
-    the rules engine — which precedence tier fired (`basis`) and the ruleset
-    fingerprint it ran under (`ruleset`); for the LLM engine, the `model`. A user
-    override or an unclassified item carries no engine stamp, so this is None —
-    honest absence (no method is claimed for a category no engine produced).
+    The shared core behind `classification_provenance`: a derived, read-only view
+    every surface builds the same way, whether it holds a full `ScrollItem`
+    (`show`/`list`) or only the FTS row's `provenance` column (`search`, H26). It
+    names the engine that classified the item (`by`), and — for the rules engine —
+    which precedence tier fired (`basis`) and the ruleset fingerprint it ran under
+    (`ruleset`); for the LLM engine, the `model`. A user override or an
+    unclassified item carries no engine stamp, so this is None — honest absence
+    (no method is claimed for a category no engine produced).
     """
-    provenance = item.provenance or {}
+    provenance = provenance or {}
     engine = provenance.get("classified_by")
     if not engine:
         return None
@@ -140,6 +141,15 @@ def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
         if value is not None:
             view[view_key] = value
     return view
+
+
+def classification_provenance(item: ScrollItem) -> dict[str, Any] | None:
+    """The recorded *how* of an item's category, or None when no engine stamped it.
+
+    The `ScrollItem` form of `classification_view`, used by the inspect/browse
+    surfaces that already hold the item (`show`, `list`, MCP twins).
+    """
+    return classification_view(item.provenance)
 
 
 def item_summary(

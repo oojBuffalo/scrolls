@@ -362,6 +362,34 @@ def test_get_scroll_and_list_surface_the_classification_method(
     assert row["classification"] == expected
 
 
+def test_search_scrolls_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api):
+    # the derived classification view travels with ranked MCP hits too (H26),
+    # identical to the CLI `search` payload and the inspect surfaces (H20 parity)
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # classifies inline
+    hits = mcp_server.search_scrolls("SQLite")
+    assert hits[0]["classification"] == {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+    }
+
+
+def test_search_scrolls_omits_classification_for_an_unclassified_item(scrolls_home):
+    # honest absence on the MCP ranked surface, matching list_scrolls' row shape
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:plain", source="web", url="https://ex.com/plain",
+        saved_at="2026-06-12T00:00:00+00:00", title="An ordinary post about pelicans",
+        extracted_text="Pelicans are large water birds.", stage="fetched"))
+
+    hits = mcp_server.search_scrolls("pelicans")
+    assert "classification" not in hits[0]
+
+
 def test_get_scroll_unknown_id_raises(scrolls_home):
     with pytest.raises(ValueError, match="no such item"):
         mcp_server.get_scroll("x:9999")

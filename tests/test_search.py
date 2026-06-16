@@ -150,6 +150,75 @@ def test_search_hit_for_a_lone_item_carries_no_work(db_path):
     assert hit.works == ()
 
 
+def test_search_hits_carry_the_classification_view(db_path):
+    # how a hit's category was produced travels with the ranked result (H26),
+    # at parity with `list`/`show` — the same derived view, the same keys.
+    from scrolls.classify import RULESET_FINGERPRINT, classify_item
+    from scrolls.items import classification_provenance
+
+    item = classify_item(make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+    ))
+    insert_item(db_path, item)
+
+    (hit,) = search_items(db_path, "database engine")
+    assert hit.classification == {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+    }
+    # identical to what the inspect surfaces derive from the stored item
+    assert hit.classification == classification_provenance(item)
+
+
+def test_search_hit_for_an_unclassified_item_carries_no_classification(db_path):
+    # honest absence: an item no engine classified carries no derived view, and
+    # the JSON payload omits the key entirely (the stable-row-shape parity `list`
+    # keeps for unclassified items)
+    from scrolls.search import hit_payload
+
+    insert_item(db_path, make_item(
+        "web:plain", "An ordinary post",
+        "Some plain prose about a database engine.",
+        source="web", url="https://ex.com/plain",
+    ))
+    (hit,) = search_items(db_path, "database engine")
+    assert hit.classification is None
+    payload = hit_payload(hit)
+    assert "classification" not in payload
+
+
+def test_search_payload_carries_the_classification_view_for_a_classified_hit(db_path):
+    # the complement: a classified hit keeps the key in its payload
+    from scrolls.classify import classify_item
+    from scrolls.search import hit_payload
+
+    insert_item(db_path, classify_item(make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.",
+    )))
+    (hit,) = search_items(db_path, "database")
+    assert hit_payload(hit)["classification"]["by"] == "rules-v1"
+
+
+def test_search_classification_view_records_the_llm_model(db_path):
+    # the LLM engine's `model` rides the same view on a search hit, as on `show`
+    from scrolls.items import classification_provenance
+
+    item = make_item(
+        "web:llm", "A classified web post",
+        "Some prose about a database engine, classified by a model.",
+        source="web", url="https://ex.com/llm",
+        category="reference",
+        provenance={"classified_by": "llm-v1", "classified_model": "claude-x"},
+    )
+    insert_item(db_path, item)
+    (hit,) = search_items(db_path, "database engine")
+    assert hit.classification == {"by": "llm-v1", "model": "claude-x"}
+    assert hit.classification == classification_provenance(item)
+
+
 def test_search_work_membership_spans_beyond_the_matched_rows(db_path):
     # the sibling representation need not match the query: membership is a
     # whole-library property, so a hit knows its work even when its sibling

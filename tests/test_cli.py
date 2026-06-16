@@ -843,6 +843,71 @@ def test_list_omits_classification_for_an_unclassified_item(scrolls_home, capsys
     assert "classification" not in rows[0]
 
 
+def test_search_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
+    # how a hit's category was produced travels with `search` too (H26), so it
+    # reads identically on every browse surface (search ≡ list ≡ show)
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])  # ingest classifies inline
+    capsys.readouterr()
+
+    main(["search", "SQLite"])
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["classification"] == {
+        "by": "rules-v1",
+        "basis": "curated-source",
+        "ruleset": RULESET_FINGERPRINT,
+    }
+
+
+def test_search_stats_envelope_carries_the_classification_method(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    # the derived view rides the --stats envelope's results too, unchanged
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    main(["search", "SQLite", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["classification"]["by"] == "rules-v1"
+
+
+def test_search_omits_classification_for_an_unclassified_item(scrolls_home, capsys):
+    # honest absence on the ranked surface, matching `list`'s stable row shape
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:plain", source="web", url="https://ex.com/plain",
+        saved_at="2026-06-12T00:00:00+00:00", title="An ordinary post about pelicans",
+        extracted_text="Pelicans are large water birds.", stage="fetched"))
+    capsys.readouterr()
+
+    main(["search", "pelicans"])
+    rows = json.loads(capsys.readouterr().out)
+    assert "classification" not in rows[0]
+
+
+def test_classification_view_is_identical_across_browse_surfaces(
+    scrolls_home, fake_wikipedia_api, capsys
+):
+    # H26's whole point: for one item, how its category was produced reads
+    # identically whether an agent searched for it, listed it, or showed it.
+    main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
+    capsys.readouterr()
+
+    main(["search", "SQLite"])
+    search_view = json.loads(capsys.readouterr().out)[0]["classification"]
+    main(["list"])
+    list_view = next(
+        r for r in json.loads(capsys.readouterr().out) if r["id"] == "wikipedia:en:SQLite"
+    )["classification"]
+    main(["show", "wikipedia:en:SQLite"])
+    show_view = json.loads(capsys.readouterr().out)["classification"]
+
+    assert search_view == list_view == show_view
+
+
 @pytest.fixture
 def fake_youtube_api(monkeypatch):
     """Serve canned oEmbed metadata and transcript instead of the network."""

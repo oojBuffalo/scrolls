@@ -78,7 +78,7 @@ from scrolls.related import find_related, scored_related
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
-from scrolls.search import count_matches, search_items
+from scrolls.search import count_matches, hit_payload, search_items
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
@@ -1806,7 +1806,7 @@ def _cmd_search(
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
-    rows = [dataclasses.asdict(hit) for hit in hits]
+    rows = [hit_payload(hit) for hit in hits]
     if not stats:
         print(json.dumps(rows))
         return 0

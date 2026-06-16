@@ -48,7 +48,7 @@ from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
 from scrolls.related import find_related
 from scrolls.render import slugify
 from scrolls.search import DEFAULT_LIMIT as DEFAULT_SEARCH_LIMIT
-from scrolls.search import search_items
+from scrolls.search import hit_payload, search_items
 
 SERVER_NAME = "scrolls"
 
@@ -102,6 +102,13 @@ def search_scrolls(
     its published record — each names the work's DOI and which hit is the
     canonical form, so you can collapse the duplicate and follow the canonical
     rather than treating the two as unrelated matches.
+
+    When an engine produced a hit's category, the hit also carries a derived
+    `classification` view — the engine (`by`), the rules precedence tier
+    (`basis`) and ruleset fingerprint (`ruleset`), or the LLM `model` — the same
+    view `get_scroll`/`list_scrolls` surface, so how a category was produced
+    reads identically whether you browsed or searched. The key is omitted for a
+    user-set or unclassified hit (honest absence).
     """
     paths = get_paths()
     hits = search_items(
@@ -114,7 +121,7 @@ def search_scrolls(
         tag=tag,
         concept=concept,
     )
-    return [dataclasses.asdict(hit) for hit in hits]
+    return [hit_payload(hit) for hit in hits]
 
 
 def list_scrolls(

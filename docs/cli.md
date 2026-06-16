@@ -1117,9 +1117,10 @@ in `provenance`, so a re-classify is reproducible and auditable: the engine
 / `weak-source`), and a fingerprint of the rule tables it ran under
 (`classified_ruleset`). The fingerprint changes if the rules change, so a
 reader can tell whether a re-classify today would still reproduce the stored
-category. This surfaces as a derived `classification` block on `show` and
-`list` (see those commands); `tests/test_classify.py` pins the per-tier basis,
-the fingerprint, and their deterministic re-derivation.
+category. This surfaces as a derived `classification` block on `show`,
+`list`, and `search` (see those commands), so how a category was produced
+reads identically on every browse surface; `tests/test_classify.py` pins the
+per-tier basis, the fingerprint, and their deterministic re-derivation.
 
 `--engine llm` (engine `llm-v1`, ADR 0015) classifies with a model via the
 Anthropic API instead (network; needs `ANTHROPIC_API_KEY`; default model
@@ -1474,6 +1475,18 @@ and the `representations` count, so an agent collapses the duplicate and
 follows the canonical instead of treating the two as unrelated matches.
 Membership is the whole-library DOI clustering `scrolls works` reports, so
 a hit knows its work even when its sibling ranks below the limit.
+
+When an engine produced the hit's category, the hit also carries a derived
+`classification` block — `by` / `basis` / `ruleset` for the rules engine,
+`by` / `model` for the LLM engine — the *same* view `scrolls list`/`show`
+surface (roadmap H26), so how a category was produced reads identically
+whether an agent browsed to the item or searched for it. It is derived
+per-hit from the row's own provenance, so the `--stats` count and truncation
+marker are untouched (still scope-honest, G2). A user-set or unclassified
+hit omits the key entirely — the honest-absence row shape `list` keeps
+(`test_search_surfaces_the_classification_method`,
+`test_search_omits_classification_for_an_unclassified_item`,
+`test_classification_view_is_identical_across_browse_surfaces`).
 
 `--stats` wraps the ranked array in the scope-honest `{scope, stats,
 results}` envelope (the completeness contract G2): `scope` echoes the

@@ -25,15 +25,27 @@ record — each names the work's DOI and points at its canonical representation,
 so an agent searching "attention is all you need" sees the two top hits *are*
 one work and which form to prefer, rather than treating them as unrelated
 results. Computed by the same DOI clustering `scrolls works` reports.
+
+Finally, a hit carries the derived `classification` view (roadmap H26): how its
+category was produced — the engine, the rules precedence tier, the ruleset
+fingerprint, the LLM model — the same view `scrolls list`/`show` surface, so an
+agent reads a category's provenance identically whether it browsed to the item
+or searched for it. Built per-hit from the row's own `provenance` column
+(`classification_view`), so it costs no extra query and stays scope-honest;
+omitted entirely when no engine stamped the category (the honest-absence shape
+`list` keeps), via the shared `hit_payload` serializer.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from scrolls.items import (
+    classification_view,
     fidelity_tier,
     item_filters,
     list_items,
@@ -58,6 +70,7 @@ _QUERY = f"""\
 SELECT items.id, items.source, items.title, items.url, items.stage,
        bm25(items_fts, {_BM25_WEIGHTS}) AS score,
        snippet(items_fts, -1, '[', ']', '…', {_SNIPPET_TOKENS}) AS snippet,
+       items.provenance,
        {", ".join(_PRESENCE)}
 FROM items_fts
 JOIN items ON items.rowid = items_fts.rowid
@@ -92,6 +105,10 @@ class SearchHit:
     snippet: str
     fidelity: str
     works: tuple[WorkRef, ...] = field(default_factory=tuple)
+    # How the hit's category was produced, when an engine recorded it (H26); None
+    # for a user-set or unclassified hit. `hit_payload` drops the key in that
+    # case, the honest-absence shape `list`/`show` keep.
+    classification: dict[str, Any] | None = None
 
 
 def search_items(
@@ -179,12 +196,15 @@ def count_matches(
 def _hit(row: tuple) -> SearchHit:
     """Build a hit from a result row, folding the four presence flags into a tier.
 
-    The query selects the ranked fields (`id`…`snippet`) followed by the four
-    `has_*` presence booleans; this collapses those trailing flags into one
-    `fidelity` string so the dataclass carries the tier, not the raw columns.
+    The query selects the ranked fields (`id`…`snippet`), then the raw
+    `provenance` JSON, then the four `has_*` presence booleans; this collapses the
+    trailing flags into one `fidelity` string and derives the `classification`
+    view from the provenance, so the dataclass carries the tier and the recorded
+    method, not the raw columns.
     """
     *ranked, has_raw, has_extracted, has_summary, has_hash = row
-    id_, source, title, url, stage, score, snippet = ranked
+    id_, source, title, url, stage, score, snippet, provenance_json = ranked
+    provenance = json.loads(provenance_json) if provenance_json else None
     return SearchHit(
         id=id_,
         source=source,
@@ -200,7 +220,23 @@ def _hit(row: tuple) -> SearchHit:
             has_hash=bool(has_hash),
             stage=stage,
         ),
+        classification=classification_view(provenance),
     )
+
+
+def hit_payload(hit: SearchHit) -> dict[str, Any]:
+    """The JSON-ready form of a hit, shared by `scrolls search` and MCP `search_scrolls`.
+
+    `asdict` renders the nested `works`/`classification`; the `classification`
+    key is then dropped when no engine stamped the hit's category — the
+    honest-absence shape `list`/`show` use (`classification_provenance`), so an
+    unclassified hit keeps a stable row shape and a classified one reads
+    identically across the CLI and MCP surfaces (H26 parity, one home).
+    """
+    data = asdict(hit)
+    if data.get("classification") is None:
+        data.pop("classification")
+    return data
 
 
 def _escape_query(query: str) -> str:
