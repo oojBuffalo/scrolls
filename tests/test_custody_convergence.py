@@ -49,7 +49,12 @@ fixture in library A, round-trips it into a fresh library B (via `export
 bundle`→`import bundle`, and via `export items`+`export events`→`import`), and
 asserts B reproduces A's per-item posture on every surface and A's `facets drift`
 aggregate — the convergence invariant holding by construction of the deduped
-restore.
+restore. The **incremental-backup** case (roadmap H78) extends that to the
+windowed path: a full `export events` plus an *overlapping* `export events
+--since` incremental backup (a staggered ledger so `--since` partitions with
+real overlap), restored as their union in one import, is as lossless for custody
+as the whole-ledger path — the union dedups (no double count) and B still
+reproduces A's posture and facets.
 """
 
 import json
@@ -583,3 +588,97 @@ def test_whole_library_export_events_round_trip_preserves_the_posture(
     # re-importing the ledger is a custody no-op (idempotent)
     assert main(["import", "events", str(events_path)]) == 0
     assert json.loads(capsys.readouterr().out)["skipped"] == 3
+
+
+def _seed_staggered_drift_ledger(db):
+    """Four held scrolls whose ledgers span two timestamps — an old verdict and a
+    newer one that determines the posture — so an `export events --since` window
+    partitions the ledger with *partial* overlap against a full backup.
+
+    The newer (2026-06-14) verdict per item fixes the same four postures the ring
+    fixture has (web:1 `verified`, web:2 `drifted`, web:3 `rotted`, web:4
+    `unverified`); the older (2026-06-10) verdicts are the ones a `--since
+    2026-06-12` incremental backup leaves behind, so the full backup carries them
+    and the union must dedup the overlapping recent ones.
+    """
+    for index in (1, 2, 3, 4):
+        insert_item(db, _item(
+            f"web:{index}", f"Topic scroll {index}",
+            extracted_text=f"topic body {index}", content_hash=f"sha256:{index}",
+        ))
+    record_events(db, [
+        # older verdicts (before the incremental window) — only in the full backup
+        CustodyEvent("web:1", "2026-06-10T00:00:00+00:00", "drifted", "sha256:1", "sha256:o", None),
+        CustodyEvent("web:2", "2026-06-10T00:00:00+00:00", "unchanged", "sha256:2", "sha256:2", None),
+        CustodyEvent("web:3", "2026-06-10T00:00:00+00:00", "unchanged", "sha256:3", "sha256:3", None),
+        # newer verdicts (in the incremental window) — set the latest posture
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged", "sha256:1", "sha256:1", None),
+        CustodyEvent("web:2", "2026-06-14T00:00:00+00:00", "drifted", "sha256:2", "sha256:x", None),
+        CustodyEvent("web:3", "2026-06-14T00:00:00+00:00", "rotted", "sha256:3", None, "HTTP Error 404"),
+        # web:4 never checked → unverified
+    ])
+
+
+def test_incremental_backup_union_preserves_the_posture(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # H78: H73 pins that a *whole-ledger* export→import preserves the posture;
+    # H75 adds the incremental (`--since`) backup. The load-bearing property this
+    # pins is that a full `export events` plus an *overlapping* `export events
+    # --since` incremental backup, restored together into a fresh library, is as
+    # lossless for custody as the whole-ledger path — the union dedups (no double
+    # count) and B reproduces A's per-item posture and `facets drift` aggregate.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_staggered_drift_ledger(db_a)
+    capsys.readouterr()
+
+    verdicts_a = latest_events(db_a)
+    canonical = {
+        item.id: drift_posture(verdicts_a.get(item.id)) for item in list_items(db_a)
+    }
+    assert set(canonical.values()) == {"verified", "drifted", "rotted", "unverified"}
+    main(["facets", "drift"])
+    facets_a = _facet_map(json.loads(capsys.readouterr().out)["facets"]["drift"])
+
+    # a full backup (every event) and an overlapping incremental one (only the
+    # recent window — the 3 newest verdicts, which the full backup also carries)
+    main(["export", "events"])
+    full = capsys.readouterr().out
+    main(["export", "events", "--since", "2026-06-12T00:00:00+00:00"])
+    incr = capsys.readouterr().out
+    # the incremental backup is a strict subset of the full one (3 of 6 events)
+    assert len(full.splitlines()) == 6
+    assert len(incr.splitlines()) == 3
+
+    # restore the *union* of the two backups into a fresh library B in one import
+    # — the realistic "restore all my backup rows" operation: `import events`
+    # sorts the batch by checked_at, so restored ids stay chronological (the
+    # posture an item reads back is its newest verdict) and the within-batch
+    # content-dedup drops the 3 rows the two backups share.
+    union_path = tmp_path / "union.jsonl"
+    union_path.write_text(full + incr, encoding="utf-8")  # 9 rows: 6 + 3 overlap
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    for item in list_items(db_a):
+        insert_item(db_b, item)
+    capsys.readouterr()
+    assert main(["import", "events", str(union_path)]) == 0
+    # the 6 distinct events land once; the 3 overlapping rows dedup — never
+    # double-counted, so the union is as lossless as the whole-ledger backup
+    assert json.loads(capsys.readouterr().out) == {"imported": 6, "skipped": 3, "events": 9}
+
+    # B reproduces A's per-item posture on every surface — the windowed/incremental
+    # path is as lossless for custody as the whole-ledger path (H73)
+    assert main(["list"]) == 0
+    assert {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)} == canonical
+    history_posture = {}
+    for item_id in canonical:
+        assert main(["history", item_id]) == 0
+        history_posture[item_id] = _posture_from_history(json.loads(capsys.readouterr().out))
+    assert history_posture == canonical
+    # …and the drift facet aggregate converges across the two libraries
+    assert main(["facets", "drift"]) == 0
+    assert _facet_map(json.loads(capsys.readouterr().out)["facets"]["drift"]) == facets_a

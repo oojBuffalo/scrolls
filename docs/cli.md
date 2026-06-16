@@ -238,7 +238,12 @@ the verify ledger travels (in the `export bundle` and as the whole-library
 export→import equals the posture it read before. It round-trips the four-posture
 fixture into a fresh library and asserts that library reproduces the original's
 per-item posture on every surface and its `facets drift` aggregate — custody
-itself round-trips, not just the item.
+itself round-trips, not just the item. A companion case (roadmap H78) extends
+this to the **incremental** backup: a full `export events` plus an overlapping
+`export events --since` window, restored as their union in one import, is as
+lossless for custody as the whole-ledger path — the union dedups (no
+double-count) and the fresh library still reproduces the original's posture and
+facets, so the windowed backup loses nothing the whole one keeps.
 
 ## Library lifecycle
 
