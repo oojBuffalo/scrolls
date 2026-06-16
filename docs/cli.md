@@ -240,7 +240,13 @@ posture has a single whole-library agreement test, the time axis has its mirror
 (roadmap H88): one fixture, one assertion that a given item reads the *same*
 `last_checked` on every surface that carries it — including the `export bundle`
 briefing, whose `as of <date>` / "never re-checked" prose carries the timestamp in
-Markdown — so a desync on any surface fails in one obvious place.
+Markdown — so a desync on any surface fails in one obvious place. The
+**human-readable** surface those JSON rows previously skipped is folded in too
+(roadmap H91): the `· <fidelity> · <drift>` marker the KB compiler writes on the
+compiled `library/` list-page rows (H89) is parsed back off a compiled page and
+asserted to equal the canonical `(get_fidelity, drift_posture)` and the `scrolls
+list` surface — so the compiled library a human browses reads the same per-item
+custody picture an agent does.
 
 The module also pins the **portable-custody** round-trip (roadmap H73): since
 the verify ledger travels (in the `export bundle` and as the whole-library

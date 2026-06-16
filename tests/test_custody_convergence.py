@@ -31,7 +31,13 @@ that carries it, and that each whole-library-enumerating surface's per-item
 posture counts total `facets drift`'s count for that posture — tying the
 per-item axis back to the aggregate the scope-level invariant pins. (`works`
 needs a DOI-sharing fixture — the ring seed forms no work — so it carries its
-own seed in `test_works_representation_agrees_on_an_items_drift_posture`.)
+own seed in `test_works_representation_agrees_on_an_items_drift_posture`.) The
+**human-readable** surface those JSON rows previously skipped is folded in too
+(roadmap H91): the `· <fidelity> · <drift>` marker the KB compiler writes on the
+compiled `library/` list-page rows (H89) is parsed back off a compiled page and
+asserted to equal the canonical `(get_fidelity, drift_posture)` and the JSON
+`list` surface — so the compiled library reads the same per-item custody picture
+an agent does.
 
 Those surfaces all carry only the *latest* posture; `scrolls history` (roadmap
 H66) reads the *full* per-item ledger back. The per-item section also pins the
@@ -92,7 +98,7 @@ from scrolls.custody import (
 )
 from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
-from scrolls.items import ScrollItem, insert_item, list_items
+from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items
 from scrolls.paths import get_paths
 
 
@@ -345,6 +351,103 @@ def _bundle_last_checked(text):
             stamps[current] = custody.group(1) if custody else None
             current = None
     return stamps
+
+
+def _library_markers(text):
+    """Map item title → (fidelity, drift) parsed from a compiled list page's rows.
+
+    Each per-item row on a compiled `library/` group page ends with the H89
+    custody marker `· <fidelity> · <drift>`; this parses the two trailing tokens
+    and the row's link title so the human-readable Markdown surface can be
+    compared against the JSON surfaces. Keyed by title (unique in the fixture)
+    because the row's link encodes the scroll path, not the item id. The greedy
+    `.*` before the anchored ` · <fid> · <drift>$` lets the optional ` — <note>`
+    segment fall inside it, so the parse works whether or not a row carries a note.
+    """
+    markers = {}
+    for line in text.splitlines():
+        m = re.match(r"^\s*- \[([^\]]+)\]\([^)]+\).* · (\w+) · (\w+)\s*$", line)
+        if m:
+            markers[m.group(1)] = (m.group(2), m.group(3))
+    return markers
+
+
+def _seed_marker_fixture(db):
+    """Four held, rendered scrolls (markdown_path set so the KB includes them),
+    one per `(fidelity, drift)` pair the compiled-page marker must show.
+
+    Spans the fidelity axis (`full`/`partial`/`reference`) crossed with three
+    drift verdicts plus a never-checked item — so the parsed marker exercises
+    both halves of the H89 marker against the canonical primitives. All source
+    ``web``, so every item lands on the one `sources/web.md` list page.
+    """
+    insert_item(db, _item(
+        "web:fv", "Marker full verified", stage="rendered",
+        markdown_path="scrolls/web/marker-full-verified.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fv"))
+    insert_item(db, _item(
+        "web:fd", "Marker full drifted", stage="rendered",
+        markdown_path="scrolls/web/marker-full-drifted.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fd"))
+    insert_item(db, _item(
+        "web:pr", "Marker partial rotted", stage="rendered",
+        markdown_path="scrolls/web/marker-partial-rotted.md",
+        extracted_text="only extracted"))  # extracted, no hash/raw → partial
+    insert_item(db, _item(
+        "web:ru", "Marker reference unverified", stage="rendered",
+        markdown_path="scrolls/web/marker-reference-unverified.md"))  # no content → reference
+    record_events(db, [
+        CustodyEvent("web:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:fv", "sha256:fv", None),
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:fd", "sha256:x", None),
+        CustodyEvent("web:pr", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:pr", None, "HTTP Error 404"),
+        # web:ru left unverified
+    ])
+
+
+def test_compiled_library_page_agrees_on_the_per_item_custody_marker(scrolls_home, capsys):
+    # roadmap H91: H89 put the `· <fidelity> · <drift>` marker on the compiled
+    # `library/` list-page rows — the human-readable surface the per-item picture
+    # skipped. Fold it into the convergence invariant: the marker a human reads
+    # off a compiled page equals the canonical (`get_fidelity`, `drift_posture`)
+    # *and* the JSON `list` surface's `fidelity`+`drift`, for every item.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_marker_fixture(db)
+    capsys.readouterr()
+
+    verdicts = latest_events(db)
+    items = list_items(db)
+    canonical = {
+        item.title: (get_fidelity(item), drift_posture(verdicts.get(item.id)))
+        for item in items
+    }
+    # sanity: the fixture spans the fidelity axis crossed with four postures
+    assert set(canonical.values()) == {
+        ("full", "verified"), ("full", "drifted"),
+        ("partial", "rotted"), ("reference", "unverified"),
+    }
+
+    # the JSON browse surface (H58): fidelity + drift per item, keyed by title
+    assert main(["list"]) == 0
+    title_by_id = {item.id: item.title for item in items}
+    list_markers = {
+        title_by_id[r["id"]]: (r["fidelity"], r["drift"])
+        for r in json.loads(capsys.readouterr().out)
+    }
+
+    # the compiled human-readable surface (H89): the markers on sources/web.md
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    page = (get_paths().library_dir / "sources" / "web.md").read_text(encoding="utf-8")
+    compiled_markers = _library_markers(page)
+
+    # all three agree, for every item — the compiled library reads the same
+    # per-item custody picture as the agent surfaces
+    assert compiled_markers == canonical
+    assert list_markers == canonical
 
 
 def test_every_surface_agrees_on_an_items_drift_posture(scrolls_home, capsys):
