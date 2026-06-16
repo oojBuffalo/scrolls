@@ -39,6 +39,17 @@ tie (roadmap H70): the posture the head of the ledger `history` returns implies
 — `drift_posture` of its newest event — equals the `drift` every latest-posture
 surface shows for that item (and `[]` ⇒ `unverified`), so the full-timeline
 surface can never silently disagree with the postures that summarize it.
+
+Finally, the **portable-custody** section (roadmap H73) lifts the per-item
+invariant *across libraries*: H67/H72 make the verify ledger travel (in the
+shareable bundle, and as the whole-library `export events` stream), so the
+posture an item reads after an export→import must equal the posture it read
+before — custody travels losslessly, not just the item. It seeds the four-posture
+fixture in library A, round-trips it into a fresh library B (via `export
+bundle`→`import bundle`, and via `export items`+`export events`→`import`), and
+asserts B reproduces A's per-item posture on every surface and A's `facets drift`
+aggregate — the convergence invariant holding by construction of the deduped
+restore.
 """
 
 import json
@@ -461,3 +472,114 @@ def test_history_head_agrees_with_the_per_item_drift_posture(scrolls_home, capsy
     assert main(["history", "web:4"]) == 0
     assert json.loads(capsys.readouterr().out) == []
     assert canonical["web:4"] == "unverified"
+
+
+# --- portable custody: the posture survives export→import (roadmap H73) ------
+
+
+def test_the_drift_posture_survives_an_export_import_round_trip(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # H73: H59/H70 pin that an item reads the same posture on every surface *in one
+    # library*; H67/H72 make the ledger portable. The load-bearing property this
+    # pins is that the posture an item reads after an export→import is exactly the
+    # posture it read before — custody travels losslessly, not just the item. So
+    # the convergence invariant holds *across* the two libraries, by construction
+    # of the deduped restore.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_linked_drift_postures(db_a)
+    capsys.readouterr()
+
+    # the canonical per-item posture in A
+    verdicts_a = latest_events(db_a)
+    canonical = {
+        item.id: drift_posture(verdicts_a.get(item.id)) for item in list_items(db_a)
+    }
+    assert set(canonical.values()) == {"verified", "drifted", "rotted", "unverified"}
+    # …and A's drift facet aggregate
+    main(["facets", "drift"])
+    facets_a = _facet_map(json.loads(capsys.readouterr().out)["facets"]["drift"])
+
+    # export the whole topic scope (items + their verify ledger, H67) from A
+    assert main(["export", "bundle", "topic"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # restore into a fresh library B
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # every item and every recorded check travelled (web:4 has no event)
+    assert report["imported"] == 4
+    assert report["events"] == {"imported": 3, "skipped": 0}
+
+    # every per-item surface in B reports the *same* posture A did — the per-item
+    # convergence invariant (H59), now across the round trip
+    assert main(["list"]) == 0
+    assert {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)} == canonical
+    assert main(["search", "topic"]) == 0
+    assert {h["id"]: h["drift"] for h in json.loads(capsys.readouterr().out)} == canonical
+    show_drift = {}
+    for item_id in canonical:
+        assert main(["show", item_id]) == 0
+        show_drift[item_id] = json.loads(capsys.readouterr().out)["drift"]
+    assert show_drift == canonical
+    # the full ledger round-trips too: history's head implies the same posture (H70)
+    history_posture = {}
+    for item_id in canonical:
+        assert main(["history", item_id]) == 0
+        history_posture[item_id] = _posture_from_history(
+            json.loads(capsys.readouterr().out)
+        )
+    assert history_posture == canonical
+    # a re-exported bundle from B carries the same per-scroll postures
+    assert main(["export", "bundle", "topic"]) == 0
+    assert _bundle_postures(capsys.readouterr().out) == canonical
+    # and the drift facet aggregate converges across the two libraries
+    assert main(["facets", "drift"]) == 0
+    facets_b = _facet_map(json.loads(capsys.readouterr().out)["facets"]["drift"])
+    assert facets_b == facets_a
+
+
+def test_whole_library_export_events_round_trip_preserves_the_posture(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the H72 backup-path counterpart: `export items` + `export events` from A,
+    # restored into fresh B, must reproduce A's per-item posture on every surface
+    # — custody travels with the whole-library backup, not just the bundle.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_linked_drift_postures(db_a)
+    capsys.readouterr()
+
+    verdicts_a = latest_events(db_a)
+    canonical = {
+        item.id: drift_posture(verdicts_a.get(item.id)) for item in list_items(db_a)
+    }
+    assert set(canonical.values()) == {"verified", "drifted", "rotted", "unverified"}
+
+    main(["export", "items"])
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    main(["export", "events"])
+    events_path = tmp_path / "ledger.jsonl"
+    events_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    capsys.readouterr()  # discard the items-import report
+    assert main(["import", "events", str(events_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "imported": 3, "skipped": 0, "events": 3
+    }
+
+    assert main(["list"]) == 0
+    assert {r["id"]: r["drift"] for r in json.loads(capsys.readouterr().out)} == canonical
+    # re-importing the ledger is a custody no-op (idempotent)
+    assert main(["import", "events", str(events_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["skipped"] == 3

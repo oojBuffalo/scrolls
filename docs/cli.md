@@ -232,6 +232,14 @@ latest-posture surface shows for that item (and `[]` ⇒ `unverified`), so the
 full timeline an agent reads can never silently disagree with the postures that
 summarize it.
 
+The module also pins the **portable-custody** round-trip (roadmap H73): since
+the verify ledger travels (in the `export bundle` and as the whole-library
+`export events` stream, H67/H72), the posture an item reads after an
+export→import equals the posture it read before. It round-trips the four-posture
+fixture into a fresh library and asserts that library reproduces the original's
+per-item posture on every surface and its `facets drift` aggregate — custody
+itself round-trips, not just the item.
+
 ## Library lifecycle
 
 ### `scrolls init`
