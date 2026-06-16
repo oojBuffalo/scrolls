@@ -198,6 +198,21 @@ twins keep returning the bare list for now, their G2 parity (an envelope
 option) following once the CLI shape has stabilized. G1 is the half that is
 already true across every surface and is locked so it cannot regress.
 
+### A sibling invariant — custody reads the same everywhere
+
+Where the completeness contract pins *honesty* (nothing fabricated, scope
+disclosed), a sibling invariant pins *convergence*: the custody picture an agent
+reads — fidelity-tier counts and drift-posture counts — is identical wherever it
+appears. `scrolls status` (the custody headline), the `export bundle` briefing
+and `scrolls context` headlines, `scrolls facets fidelity`/`drift`, and
+`doctor`'s `custody` block all derive from one shared tally
+(`custody.custody_counts`/`custody_headline` over `get_fidelity` +
+`drift_posture`/`latest_events`), so they cannot disagree for a given scope (the
+one vocabulary mapping: the posture `verified` is the ledger status
+`unchanged`). That convergence is pinned once, across every surface, in
+`tests/test_custody_convergence.py` — the custody-side analogue of
+`tests/test_completeness.py` (roadmap H50).
+
 ## Library lifecycle
 
 ### `scrolls init`
