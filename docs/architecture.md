@@ -198,7 +198,14 @@ each command moves items between stages or derives artifacts from them.
   whole-library backup. `import bundle` reuses the `import items` path
   (`item_from_dict`, `INSERT OR IGNORE`), so losslessness is the ADR 0082/0099
   property already tested; the sentinel keeps the briefing body hand-annotatable
-  across a re-export (refresh-safe, ADR 0102). The full dogfood flow these
+  across a re-export (refresh-safe, ADR 0102). Above the entries a one-line scope
+  **custody headline** (`custody.custody_headline`/`custody_counts`: N scrolls,
+  fidelity-tier and drift-posture counts over the in-bundle scrolls, roadmap H45)
+  summarises how custody stands across the whole bundle; the *same* shared
+  headline rides the `scrolls context` bundle from the `connected` tier up
+  (roadmap H47) and `scrolls status`'s custody block (H38), so the three scope
+  headlines converge for a scope by construction — one custody tally, three
+  surfaces. The full dogfood flow these
   surfaces compose into — *hold → prove (`doctor`) → detect (`verify`) → take it
   with me (`export`/`import bundle`)* — is narrated, with captured before/after
   custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against

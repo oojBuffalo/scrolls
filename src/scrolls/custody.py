@@ -37,10 +37,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from scrolls.items import ScrollItem
+from scrolls.items import ScrollItem, get_fidelity
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 
 CUSTODY_STATUSES = ("unchanged", "drifted", "rotted", "error")
+
+# The custody-fidelity tiers in best-held-first order — the three `get_fidelity`
+# returns. The canonical order every custody headline renders tiers in.
+FIDELITY_TIERS = ("full", "partial", "reference")
+
+# The drift postures in reading order — the five `drift_posture` returns.
+# `verified` is the posture word for the ledger's `unchanged` status, so a
+# headline's `verified` count equals `doctor`'s `custody.drift.unchanged` and
+# `unverified` equals held − verdicts (the H42 convergence, lifted to a scope).
+DRIFT_POSTURES = ("verified", "unverified", "drifted", "rotted", "error")
 
 # HTTP statuses that mean the resource is definitively gone, not transiently
 # unreachable: 404 Not Found and 410 Gone. A capture whose source returns one
@@ -221,3 +231,60 @@ def drift_posture(event: CustodyEvent | None) -> str:
     if event is None:
         return "unverified"
     return "verified" if event.status == "unchanged" else event.status
+
+
+def custody_counts(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> dict[str, dict[str, int]]:
+    """Scope-level fidelity-tier and drift-posture counts over a set of items.
+
+    The one tally behind every *scope* custody headline — `scrolls status` (the
+    whole library), the shareable bundle briefing (roadmap H45), and the
+    `scrolls context` bundle (roadmap H47). It counts the *same* `get_fidelity`
+    and `drift_posture` each surface's per-item view uses, so a headline's totals
+    equal its own entries by construction, and — for a whole-library, uncapped
+    scope — equal `doctor`'s `custody.tiers` / `custody.drift` aggregate (with the
+    documented `verified` ≡ ledger `unchanged` mapping; `unverified` = held −
+    verdicts). `verdicts` is the `latest_events` ledger read keyed by item id; an
+    item absent from it is `unverified`. Both maps carry every tier/posture in the
+    canonical order (`FIDELITY_TIERS`/`DRIFT_POSTURES`), zeros included, so the
+    shape is stable for a renderer to filter.
+    """
+    tiers = {tier: 0 for tier in FIDELITY_TIERS}
+    drift = {posture: 0 for posture in DRIFT_POSTURES}
+    for item in items:
+        tiers[get_fidelity(item)] += 1
+        drift[drift_posture(verdicts.get(item.id))] += 1
+    return {"tiers": tiers, "drift": drift}
+
+
+def custody_headline(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> str:
+    """One Markdown line summarising how custody stands across a set of items.
+
+    ``_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._``
+    — the shared renderer behind every scope custody headline (the bundle
+    briefing H45, the `scrolls context` bundle H47), so the surfaces emit a
+    byte-identical line over the same `custody_counts` tally and can never
+    disagree. Shows only the *non-zero* tiers/postures in canonical order (each
+    section still sums to N — every scroll has exactly one tier and one posture);
+    an empty scope is the honest ``_Custody: 0 scroll(s)._`` with no sections.
+    """
+    counts = custody_counts(items, verdicts)
+    parts = [f"{len(items)} scroll(s)"]
+    fidelity = ", ".join(
+        f"{tier} {counts['tiers'][tier]}"
+        for tier in FIDELITY_TIERS
+        if counts["tiers"][tier]
+    )
+    if fidelity:
+        parts.append(f"fidelity {fidelity}")
+    drift = ", ".join(
+        f"{posture} {counts['drift'][posture]}"
+        for posture in DRIFT_POSTURES
+        if counts["drift"][posture]
+    )
+    if drift:
+        parts.append(f"drift {drift}")
+    return "_Custody: " + " · ".join(parts) + "._"

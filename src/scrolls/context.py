@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scrolls.custody import custody_headline, latest_events
 from scrolls.graph import build_graph
 from scrolls.items import ScrollItem, get_item
 from scrolls.search import SearchHit, count_matches, search_items
@@ -94,6 +95,13 @@ def build_context(
     the way the Coverage line stays honest about scope. An unknown tier raises
     ValueError (the CLI also rejects it via argparse `choices`).
 
+    From `connected` up the bundle also carries a one-line `_Custody:_` headline
+    (roadmap H47) — fidelity-tier and drift-posture counts over the in-bundle
+    scrolls, the same `custody_headline` the shareable bundle and `scrolls
+    status` render — so an agent sees how much of what it is about to read is
+    full-fidelity and how much has drifted. Gated off `index` so the leanest
+    tier stays a bare catalog.
+
     No matches (or no library yet) still yields a valid bundle saying so,
     because agents shouldn't crash on an empty library.
     """
@@ -145,6 +153,17 @@ def build_context(
     budget_note = _budget_line(budget)
     if budget_note:
         lines += [budget_note, ""]
+
+    # The scope custody headline (roadmap H47): how much of what the agent is
+    # about to read is full-fidelity, and how much has drifted — the same
+    # `custody_headline` the shareable bundle briefing (H45) and `scrolls status`
+    # (H38) render, over the in-bundle scrolls (the kept representations the
+    # Coverage line counts). Gated to `connected`/`full` like the depth-bearing
+    # sections (H44): the leanest `index` tier stays a bare catalog. One
+    # `latest_events` ledger read for the whole scope, skipped at `index`.
+    if _tier_at_least(budget, "connected"):
+        verdicts = latest_events(db_path)
+        lines += [custody_headline(items, verdicts), ""]
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):

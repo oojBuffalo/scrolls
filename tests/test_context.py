@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
 
@@ -552,6 +553,96 @@ def test_context_cli_rejects_unknown_budget(scrolls_home):
     main(["init"])
     with pytest.raises(SystemExit):
         main(["context", "database", "--budget", "bogus"])
+
+
+# --- scope custody headline (roadmap H47) ----------------------------------
+
+
+def _custody_line(out):
+    return next(line for line in out.splitlines() if line.startswith("_Custody:"))
+
+
+def _drift_event(item_id, status, observed=None):
+    return CustodyEvent(
+        item_id=item_id, checked_at="2026-06-14T00:00:00+00:00", status=status,
+        prior_hash="deadbeef", observed_hash=observed,
+    )
+
+
+def test_context_carries_a_scope_custody_headline(scrolls_home, capsys):
+    # how much of what the agent is about to read is full-fidelity / has drifted
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Full", "Full database", "A fully held database body.",
+        content_hash="deadbeef", raw_text="<raw>A fully held database body.</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Partial", "Partial database", "A partial database body.",
+    ))  # no hash/raw → partial fidelity
+    record_events(db, [_drift_event("wikipedia:en:Full", "drifted", observed="cafe1234")])
+    capsys.readouterr()
+
+    headline = _custody_line(run_context(capsys, "database"))
+    assert "2 scroll(s)" in headline
+    assert "fidelity full 1, partial 1" in headline
+    # the full-fidelity scroll drifted; the partial one was never re-checked
+    assert "drift unverified 1, drifted 1" in headline
+
+
+def test_context_custody_headline_gated_off_index(scrolls_home, capsys):
+    # the leanest `index` tier stays a bare catalog — no custody headline (H44 gate)
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Custody:" not in out
+    # but the catalog (best matches + links) is still there
+    assert "## Best Matches" in out
+
+
+def test_context_custody_headline_present_from_connected_up(scrolls_home, capsys):
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_Custody: 1 scroll(s)" in out
+
+
+def test_context_custody_headline_converges_with_doctor(scrolls_home, capsys):
+    # an uncapped, uncollapsed whole-library scope: the headline counts equal
+    # doctor's custody aggregate (the H42 convergence, lifted to the bundle scope)
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index} database",
+            "Every page is a database.",
+            content_hash="deadbeef", raw_text="<raw>body</raw>",
+        ))
+    record_events(db, [
+        _drift_event("wikipedia:en:Page_0", "unchanged", observed="deadbeef"),
+        _drift_event("wikipedia:en:Page_1", "drifted", observed="cafe1234"),
+        # Page_2 left unverified
+    ])
+    capsys.readouterr()
+
+    headline = _custody_line(run_context(capsys, "database"))  # full, 3 < limit 8
+    custody = run_doctor(get_paths())["custody"]
+    assert "fidelity full 3" in headline and custody["tiers"]["full"] == 3
+    # verified ≡ ledger `unchanged`; unverified = held − verdicts
+    assert "drift verified 1, unverified 1, drifted 1" in headline
+    assert custody["drift"]["unchanged"] == 1
+    assert custody["drift"]["drifted"] == 1
+    assert custody["drift"]["unverified"] == 1
 
 
 # --- same-work collapse in the bundle (ADR 0101) ---------------------------

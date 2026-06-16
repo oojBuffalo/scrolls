@@ -318,8 +318,7 @@ def test_bundle_carries_a_scope_custody_headline(scrolls_home):
 def test_scope_custody_headline_totals_equal_the_entries_and_doctor(scrolls_home):
     # the headline counts converge with both the per-scroll entries and doctor's
     # custody aggregate for the same (whole-library) scope — H42 at scope level
-    from scrolls.bundle import custody_counts
-    from scrolls.custody import latest_events
+    from scrolls.custody import custody_counts, latest_events
     from scrolls.items import get_fidelity, list_items
 
     main(["init"])

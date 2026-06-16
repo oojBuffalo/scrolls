@@ -1892,6 +1892,18 @@ bundle still states full vs truncated coverage). Same-work collapse (ADR 0101)
 is index-level, so it holds at every tier:
 `test_context_index_budget_still_collapses_same_work`.
 
+From the `connected` tier up the bundle also carries a one-line `_Custody:_`
+**headline** — `N scroll(s)`, the fidelity-tier counts, and the drift-posture
+counts over the in-bundle scrolls — so an agent sees how much of what it is
+about to read is full-fidelity and how much has drifted before reading a word
+(roadmap H47, `test_context_carries_a_scope_custody_headline`). It is the same
+shared `custody_headline` the shareable bundle briefing (H45) and `scrolls
+status` (H38) render, so the three converge for the same scope; over an
+uncapped, uncollapsed whole-library scope the counts equal `doctor`'s `custody`
+aggregate (`test_context_custody_headline_converges_with_doctor`). Gated to
+`connected`/`full` (like the depth-bearing sections) so the leanest `index`
+tier stays a bare catalog (`test_context_custody_headline_gated_off_index`).
+
 `--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
 bundle exactly as they scope `scrolls search` (ADRs 0058/0059,
 `test_context_facets_scope_the_bundle`,
@@ -1909,6 +1921,8 @@ $ scrolls context "local search"
 # Scrolls Context Bundle: local search
 
 _Coverage: all 1 matching scrolls._
+
+_Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
 
 ## Best Matches
 
