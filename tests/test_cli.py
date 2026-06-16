@@ -2085,7 +2085,13 @@ def test_facets_uninitialized_library_is_empty_but_well_shaped(scrolls_home, cap
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
-        "facets": {"sources": [], "categories": [], "tags": [], "concepts": []}
+        "facets": {
+            "sources": [],
+            "categories": [],
+            "tags": [],
+            "concepts": [],
+            "fidelity": [],
+        }
     }
 
 

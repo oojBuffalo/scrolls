@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -80,8 +81,9 @@ def compute_facets(
                     group_concepts(items), limit, slug=True
                 )
         if "fidelity" in wanted:
-            items = _load_facet_columns(conn, where, params)
-            facets["fidelity"] = _fidelity_counts(items, limit)
+            facets["fidelity"] = _fidelity_counts(
+                _load_fidelity_columns(conn, where, params), limit
+            )
     finally:
         conn.close()
     return {"facets": {name: facets[name] for name in wanted}}
@@ -171,12 +173,40 @@ def _rank(entries: list[dict[str, Any]], limit: int | None) -> list[dict[str, An
     entries.sort(key=lambda record: (-record["count"], record["value"]))
     return entries[:limit] if limit is not None else entries
 
+def _load_fidelity_columns(
+    conn: sqlite3.Connection, where: str, params: list[str]
+) -> list[ScrollItem]:
+    """Filtered items carrying only the columns `get_fidelity` reads.
+
+    The fidelity tier is derived from content presence and stage, not from the
+    array columns the tag/concept facets need, so this loads `raw_text`,
+    `extracted_text`, `summary`, `content_hash`, and `stage` instead. Loading
+    the wrong columns is exactly the bug that made every item read as
+    `reference`; the tier facet only means something with these present.
+    """
+    rows = conn.execute(
+        "SELECT id, raw_text, extracted_text, summary, content_hash, stage "
+        f"FROM items{where}",
+        params,
+    ).fetchall()
+    return [
+        ScrollItem(
+            id=row["id"],
+            source="",
+            url="",
+            saved_at="",
+            raw_text=row["raw_text"],
+            extracted_text=row["extracted_text"],
+            summary=row["summary"],
+            content_hash=row["content_hash"],
+            stage=row["stage"],
+        )
+        for row in rows
+    ]
+
+
 def _fidelity_counts(items: list[ScrollItem], limit: int | None) -> list[dict[str, Any]]:
-    """Count items by derived fidelity tier."""
-    from collections import Counter
+    """Count items by derived custody-fidelity tier (`get_fidelity`)."""
     counts = Counter(get_fidelity(item) for item in items)
-    results = [{"value": tier, "count": count} for tier, count in counts.items()]
-    results.sort(key=lambda x: (-x["count"], x["value"]))
-    if limit is not None:
-        results = results[:limit]
-    return results
+    entries = [{"value": tier, "count": count} for tier, count in counts.items()]
+    return _rank(entries, limit)

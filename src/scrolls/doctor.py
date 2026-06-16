@@ -33,11 +33,21 @@ _STAGE_RANK = {"detected": 0, "fetched": 1, "rendered": 2}
 
 
 def get_fidelity(item: ScrollItem) -> str:
-    """Derive explicit fidelity tier for a custodied item.
+    """Derive the explicit custody-fidelity tier for an item (ADR 0097).
 
-    full: raw or extracted+hash present (re-derivable body).
-    partial: some content (extracted/summary) but not full.
-    reference: pointer/provenance only.
+    The tier answers "at what fidelity do we still hold this?" purely from
+    stored ScrollItem fields — no network, fully deterministic:
+
+    - ``full``: a re-derivable body is held — ``raw_text`` is present, or
+      ``extracted_text`` paired with a ``content_hash`` that fingerprints it
+      — and the item reached ``fetched``/``rendered``. The body can be
+      regenerated and the hash gives a future re-fetch something to diff.
+    - ``partial``: some content survives (``extracted_text`` or ``summary``)
+      but not enough to qualify as full — a degraded-but-honest capture.
+    - ``reference``: only the pointer and provenance are held, no content.
+
+    Degradation is honest, not a failure: a reference-only item is a complete
+    custody record of a thing we deliberately hold by reference.
     """
     has_raw = bool(getattr(item, "raw_text", None))
     has_extracted = bool(getattr(item, "extracted_text", None))
@@ -46,7 +56,7 @@ def get_fidelity(item: ScrollItem) -> str:
 
     if has_body and getattr(item, "stage", "detected") in ("fetched", "rendered"):
         return "full"
-    if has_extracted or getattr(item, "summary", None):
+    if has_raw or has_extracted or getattr(item, "summary", None):
         return "partial"
     return "reference"
 
@@ -72,7 +82,12 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
         "missing_media": [],
         "orphan_scrolls": [],
         "fts": {"in_sync": None, "status": "skipped"},
-        "custody": {"score": None, "tiers": {"full": 0, "partial": 0, "reference": 0}, "findings": []},
+        "custody": {
+            "score": None,
+            "issues": 0,
+            "tiers": {"full": 0, "partial": 0, "reference": 0},
+            "findings": [],
+        },
     }
     if not paths.db_path.exists():
         return report
@@ -258,49 +273,55 @@ def _fts_in_sync(conn: sqlite3.Connection) -> bool:
     return True
 
 
-def _check_custody_integrity(paths: LibraryPaths, report: dict, items: list[ScrollItem]) -> None:
-    """Custody integrity audit per the vision: verify scroll presence, re-derivability of body to content_hash, raw presence or honest fidelity downgrade, provenance completeness.
+def _check_custody_integrity(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem]
+) -> None:
+    """Custody integrity audit (ADR 0097): is each item held as honestly as
+    it claims, and can we still prove what we hold?
 
-    Adds to report['custody'] with tiers counts and findings for issues.
-    This is network-free and deterministic.
+    This is a custody *view* over the library, kept deliberately separate from
+    the repairable-drift accounting (`report["issues"]`/`["fixed"]`) that drives
+    doctor's exit code. Its outputs live entirely under `report["custody"]`:
+
+    - ``tiers``: the fidelity distribution (``get_fidelity`` per item).
+    - ``findings``: per-item custody violations, each a deterministic,
+      network-free integrity check:
+        * ``missing_scroll`` — a rendered item whose scroll file is gone, so
+          the rendered view it advertises no longer exists on disk. (The
+          repairable side of this is `_check_missing_scrolls`; here it counts
+          only toward the custody score, never twice toward `issues`.)
+        * ``unrederivable_hash`` — a ``content_hash`` is stored but neither
+          ``raw_text`` nor ``extracted_text`` survives, so we hold a
+          fingerprint of content we can no longer reproduce or verify.
+        * ``missing_provenance`` — content is held (full/partial) but neither
+          ``url`` nor ``source_id`` records where it came from.
+    - ``issues``: the count of items carrying at least one finding.
+    - ``score``: percent of items free of custody findings (100 when empty).
+
+    A reference-only item with complete provenance is honest custody, not a
+    violation, so it never lowers the score.
     """
     custody = report["custody"]
     for item in items:
         tier = get_fidelity(item)
         custody["tiers"][tier] = custody["tiers"].get(tier, 0) + 1
 
-        issues_for_item = []
+        findings = []
         scroll_path = paths.root / item.markdown_path if item.markdown_path else None
-
-        # Check 1: scroll file present for rendered items
         if item.stage == "rendered" and item.markdown_path:
             if not scroll_path or not scroll_path.exists():
-                issues_for_item.append("missing_scroll_file")
-
-        # Check 2: body re-derives to stored content_hash (basic: presence + hash)
-        if tier == "full" and item.content_hash:
-            if not item.extracted_text and not item.raw_text:
-                issues_for_item.append("body_not_rederivable")
-
-        # Check 3: raw or honest downgrade
-        if tier == "full" and not item.raw_text and not (item.extracted_text and item.content_hash):
-            issues_for_item.append("full_fidelity_without_raw_or_hash")
-
-        # Check 4: provenance basic (url or source_id present for non-reference)
+                findings.append("missing_scroll")
+        if item.content_hash and not item.raw_text and not item.extracted_text:
+            findings.append("unrederivable_hash")
         if tier != "reference" and not item.url and not item.source_id:
-            issues_for_item.append("missing_provenance")
+            findings.append("missing_provenance")
 
-        if issues_for_item:
-            report["issues"] += 1
-            custody["findings"].append({
-                "id": item.id,
-                "tier": tier,
-                "issues": issues_for_item,
-                "status": "found"
-            })
+        if findings:
+            custody["issues"] += 1
+            custody["findings"].append(
+                {"id": item.id, "tier": tier, "issues": findings, "status": "found"}
+            )
 
-    # Compute simple custody score: % of items that are full or partial without issues
-    total = len(items) or 1
-    full_or_partial = custody["tiers"]["full"] + custody["tiers"]["partial"]
-    findings_penalty = len(custody["findings"])
-    custody["score"] = max(0, int(100 * (full_or_partial / total) - (findings_penalty * 5)))
+    total = len(items)
+    clean = total - custody["issues"]
+    custody["score"] = 100 if total == 0 else round(100 * clean / total)

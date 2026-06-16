@@ -222,7 +222,13 @@ def test_list_facets_enumerates_the_filterable_vocabulary(scrolls_home):
 
 def test_list_facets_before_init_is_empty_but_well_shaped(scrolls_home):
     assert mcp_server.list_facets() == {
-        "facets": {"sources": [], "categories": [], "tags": [], "concepts": []}
+        "facets": {
+            "sources": [],
+            "categories": [],
+            "tags": [],
+            "concepts": [],
+            "fidelity": [],
+        }
     }
 
 

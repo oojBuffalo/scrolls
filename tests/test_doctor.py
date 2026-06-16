@@ -452,55 +452,117 @@ def test_doctor_fix_exits_one_when_unfixable_drift_remains(paths, capsys):
     assert payload["fixed"] == 0
 
 
-def test_get_fidelity_tiers(paths):
-    from scrolls.doctor import get_fidelity
-    from scrolls.items import ScrollItem
-
-    now = "2026-06-15T00:00:00+00:00"
-    # full: has extracted + hash + rendered stage
-    full_item = ScrollItem(
-        id="test:full", source="web", url="https://ex.com", saved_at=now, stage="rendered",
-        extracted_text="body", content_hash="sha256:abc", markdown_path="scrolls/web/test.md"
-    )
-    assert get_fidelity(full_item) == "full"
-
-    # partial: has extracted but no full hash
-    partial_item = ScrollItem(id="test:partial", source="web", url="https://ex.com", saved_at=now, stage="fetched", extracted_text="some")
-    assert get_fidelity(partial_item) == "partial"
-
-    # reference: no content
-    ref_item = ScrollItem(id="test:ref", source="web", url="https://ex.com", saved_at=now, stage="detected")
-    assert get_fidelity(ref_item) == "reference"
+# --- custody integrity audit (ADR 0097) ---
 
 
-def test_doctor_includes_custody_report(paths, capsys):
-    from scrolls.items import insert_item
+def test_clean_library_scores_full_custody(paths):
+    _rendered(paths, _web_item("https://example.com/post", fetched=True,
+                               extracted_text="full body", content_hash="sha256:123"))
+    custody = run_doctor(paths)["custody"]
+    assert custody["score"] == 100
+    assert custody["issues"] == 0
+    assert custody["findings"] == []
+    assert custody["tiers"]["full"] == 1
 
-    # Insert a mix
-    insert_item(paths.db_path, _web_item("https://example.com/full", fetched=True, extracted_text="full body", content_hash="sha256:123"))
-    insert_item(paths.db_path, _web_item("https://example.com/partial", extracted_text="partial"))
+
+def test_empty_library_scores_full_custody(paths):
+    custody = run_doctor(paths)["custody"]
+    assert custody["score"] == 100
+    assert custody["tiers"] == {"full": 0, "partial": 0, "reference": 0}
+
+
+def test_custody_report_counts_each_fidelity_tier(paths):
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/full", fetched=True,
+        extracted_text="full body", content_hash="sha256:123"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/partial", extracted_text="partial", content_hash=None))
     insert_item(paths.db_path, _web_item("https://example.com/ref"))
 
-    main(["doctor"])
-    payload = json.loads(capsys.readouterr().out)
-
-    assert "custody" in payload
-    assert payload["custody"]["tiers"]["full"] >= 1
-    assert payload["custody"]["tiers"]["partial"] >= 1
-    assert payload["custody"]["tiers"]["reference"] >= 1
-    assert payload["custody"]["score"] is not None
-    # basic check that findings list exists
-    assert "findings" in payload["custody"]
+    tiers = run_doctor(paths)["custody"]["tiers"]
+    assert tiers == {"full": 1, "partial": 1, "reference": 1}
 
 
-def test_fidelity_facet(paths):
-    from scrolls.facets import compute_facets
-    from scrolls.items import insert_item
+def test_custody_flags_a_rendered_scroll_gone_from_disk(paths):
+    rendered = _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    (paths.root / rendered.markdown_path).unlink()
 
-    insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True, extracted_text="a", content_hash="sha256:a"))
+    custody = run_doctor(paths)["custody"]
+    [finding] = custody["findings"]
+    assert finding == {
+        "id": rendered.id, "tier": "full", "issues": ["missing_scroll"],
+        "status": "found",
+    }
+    assert custody["issues"] == 1
+
+
+def test_custody_missing_scroll_does_not_double_count_structural_issues(paths):
+    # a deleted scroll is one drift, surfaced by the structural check (which
+    # repairs it and drives the exit code) and mirrored in the custody view —
+    # it must never be counted twice in the headline `issues`.
+    rendered = _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    (paths.root / rendered.markdown_path).unlink()
+
+    report = run_doctor(paths)
+    assert report["issues"] == 1  # structural only, not inflated by custody
+    assert report["custody"]["issues"] == 1
+
+
+def test_custody_flags_a_hash_with_no_body_to_reproduce(paths):
+    # we kept a fingerprint but lost the content it fingerprints: we can no
+    # longer reproduce or verify what we claim to hold
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/post", content_hash="sha256:orphan", stage="fetched"))
+
+    custody = run_doctor(paths)["custody"]
+    [finding] = custody["findings"]
+    assert finding["issues"] == ["unrederivable_hash"]
+    assert custody["issues"] == 1
+
+
+def test_custody_flags_held_content_with_no_provenance(paths):
+    # content is held but nothing records where it came from
+    insert_item(paths.db_path, ScrollItem(
+        id="web:orphan", source="web", source_id=None, url="",
+        saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="body with no origin", stage="fetched"))
+
+    custody = run_doctor(paths)["custody"]
+    [finding] = custody["findings"]
+    assert finding["issues"] == ["missing_provenance"]
+
+
+def test_custody_reference_only_item_is_honest_not_a_finding(paths):
+    # a pointer we deliberately hold by reference is complete custody, so it
+    # carries no finding and does not lower the score
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))
+    custody = run_doctor(paths)["custody"]
+    assert custody["findings"] == []
+    assert custody["score"] == 100
+
+
+def test_custody_score_is_percent_of_items_free_of_findings(paths):
+    # three honest items, one with an unrederivable hash -> 75% clean
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/a", fetched=True, extracted_text="a", content_hash="sha256:a"))
     insert_item(paths.db_path, _web_item("https://example.com/b", extracted_text="b"))
+    insert_item(paths.db_path, _web_item("https://example.com/c"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/d", content_hash="sha256:orphan", stage="fetched"))
 
-    facets = compute_facets(paths.db_path)
-    assert "fidelity" in facets["facets"]
-    values = {f["value"] for f in facets["facets"]["fidelity"]}
-    assert "reference" in values or "partial" in values or "full" in values
+    custody = run_doctor(paths)["custody"]
+    assert custody["issues"] == 1
+    assert custody["score"] == 75
+
+
+def test_doctor_cli_emits_the_custody_report(paths, capsys):
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/full", fetched=True,
+        extracted_text="full body", content_hash="sha256:123"))
+
+    main(["doctor"])
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody == {
+        "score": 100, "issues": 0,
+        "tiers": {"full": 1, "partial": 0, "reference": 0}, "findings": [],
+    }
