@@ -1530,7 +1530,7 @@ $ scrolls works arxiv:1706.03762
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -1557,6 +1557,21 @@ duplicate folded into its best-ranked sibling (ADR 0101) is still *covered*
 (named in that sibling's note), so a collapsed bundle reads as complete, not
 truncated. The line appears only when there are matches — the empty bundle
 keeps its G1-locked `No matching scrolls.` form untouched.
+
+`--budget` bounds the bundle's *depth* — a budgeted boot sequence, identity/
+index first, deep bodies on demand (MVP M3, the obsidian L0–L3 adaptation,
+`tests/test_context.py`). The three tiers are strictly nested: `index` is the
+catalog alone (Best Matches + Links — ids, titles, source URLs, and any
+same-work collapse note, with no link-graph build at all); `connected` adds the
+`## Connected scrolls` graph; `full` (the default) adds the `## Excerpts` deep
+bodies, i.e. the current flat bundle, unchanged. A tier below `full` carries a
+`_Budget:_` note under the Coverage line disclosing what it held back and the
+lever to get it (`--budget full`, or `scrolls show <id>` for one body), so a
+catalog-only bundle is never read as "all there is" — the depth-axis counterpart
+to the Coverage line's scope honesty, and the two hold independently (a budgeted
+bundle still states full vs truncated coverage). Same-work collapse (ADR 0101)
+is index-level, so it holds at every tier:
+`test_context_index_budget_still_collapses_same_work`.
 
 `--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
 bundle exactly as they scope `scrolls search` (ADRs 0058/0059,
@@ -1720,7 +1735,7 @@ The tools wrap the same engines as the CLI commands
 
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
-| `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
+| `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None, budget="full")` | `scrolls context` | Markdown bundle, optionally faceted; `budget` (`index`/`connected`/`full`) bounds depth |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, custody `fidelity`, and `works` membership (ADR 0101), optionally faceted |
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet (with `fidelity` and `works` membership, ADR 0101), no query (ADR 0060) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |

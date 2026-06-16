@@ -49,7 +49,8 @@ All commands are agent-friendly: data commands emit JSON, and
 
 - `scrolls context "<topic>"` — compact Markdown bundle: ranked
   matches, capped excerpts, and source links. Start here for any
-  research question.
+  research question. `--budget index` (or `connected`) boots on the
+  catalog/link-graph without bodies when you only need the map.
 - `scrolls search "<query>" --limit 20` — BM25-ranked hits with
   snippets, as JSON.
 - `scrolls show <id>` — one item in full (extracted text, provenance,
@@ -69,6 +70,9 @@ All commands are agent-friendly: data commands emit JSON, and
   to `search` + `show` when you need full text or structured fields.
 - Excerpts in a context bundle cite the item id and scroll path — use
   `scrolls show <id>` or read the scroll file for the full source.
+- Budget your context: `scrolls context "<topic>" --budget index` for a
+  cheap catalog (matches + links, no bodies), then pull the bodies you
+  want with `scrolls show <id>` or re-run at `--budget full`.
 - If a command reports an uninitialized library, run `scrolls init`.
 """
 

@@ -128,6 +128,7 @@ uv run scrolls kb             # compile the interlinked library pages, as JSON
 uv run scrolls kb --engine llm  # synthesize concept-page summaries first (needs ANTHROPIC_API_KEY), then compile
 uv run scrolls kb --engine llm --batch  # same synthesis via the Batches API at half price
 uv run scrolls context <query> [--limit N]  # compact context bundle, as Markdown (default 8); a Coverage: line marks "all N" vs "top N of M" so a capped bundle is never read as library-wide absence (G2)
+uv run scrolls context <query> --budget index  # depth tier: index (catalog only) | connected (+ link graph) | full (+ excerpts, default) — identity/index first, deep bodies on demand
 uv run scrolls context <query> --source arxiv  # scope the bundle (same --source/--category/--stage/--tag/--concept facets as search)
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON

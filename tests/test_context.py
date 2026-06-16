@@ -418,6 +418,142 @@ def test_context_blank_query_is_an_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+# --- progressive context budgets (MVP M3) ----------------------------------
+
+
+def _insert_match_with_linked_paper(db):
+    # a keyword match that links to a saved paper which is not itself a hit, so
+    # both an Excerpts and a Connected scrolls section exist at the full budget
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    insert_item(db, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer, a sequence model built on attention.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+
+
+def test_context_full_budget_is_the_default(scrolls_home, capsys):
+    main(["init"])
+    _insert_match_with_linked_paper(get_paths().db_path)
+    capsys.readouterr()
+
+    default = run_context(capsys, "database engine")
+    explicit = run_context(capsys, "database engine", "--budget", "full")
+    # the default budget is full and full is the current flat bundle, unchanged:
+    # excerpts, the connected graph, and no budget note (full omits nothing)
+    assert default == explicit
+    assert "## Excerpts" in default
+    assert "## Connected scrolls" in default
+    assert "Budget:" not in default
+
+
+def test_context_index_budget_is_catalog_only(scrolls_home, capsys):
+    main(["init"])
+    _insert_match_with_linked_paper(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine", "--budget", "index")
+    # the cheapest tier: the catalog (best matches + source links), no bodies
+    # and no graph build — identity/index first, deep bodies on demand
+    assert "## Best Matches" in out
+    assert "## Links" in out
+    assert "## Excerpts" not in out
+    assert "## Connected scrolls" not in out
+    # honest about the reduced depth, and names the levers to get more
+    assert "Budget: index" in out
+    assert "--budget full" in out
+    # the match is still named so the agent can follow up with `scrolls show`
+    assert "1. SQLite (`wikipedia:en:SQLite`)" in out
+
+
+def test_context_connected_budget_keeps_the_graph_omits_excerpts(scrolls_home, capsys):
+    main(["init"])
+    _insert_match_with_linked_paper(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine", "--budget", "connected")
+    # the middle tier adds the link graph back but still holds no deep bodies
+    assert "## Connected scrolls" in out
+    assert "Attention Is All You Need" in out
+    assert "## Excerpts" not in out
+    assert "Budget: connected" in out
+    assert "--budget full" in out
+
+
+def test_context_budget_note_absent_at_full(scrolls_home, capsys):
+    main(["init"])
+    _insert_match_with_linked_paper(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine", "--budget", "full")
+    # full omits nothing, so there is no depth to disclaim
+    assert "Budget:" not in out
+
+
+def test_context_budget_preserves_coverage_truncation(scrolls_home, capsys):
+    # the coverage line (G2) is about the match *set*, the budget about depth
+    # *per match*: a reduced budget must not weaken the truncation honesty
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(5):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}",
+            "Every page mentions databases.",
+        ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "databases", "--limit", "2", "--budget", "index")
+    assert "Coverage: the top 2 of 5 matching scrolls" in out
+
+
+def test_context_index_budget_still_collapses_same_work(scrolls_home, capsys):
+    # same-work collapse (ADR 0101) is an index-level fact, not a body: it must
+    # hold at every budget, so the catalog never spends two slots on one work
+    main(["init"])
+    _insert_attention_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "attention transformer", "--budget", "index")
+    assert out.count("Attention Is All You Need (`") == 1
+    assert "same work as `crossref:10.5555/3295222`" in out
+    assert "canonical `crossref:10.5555/3295222`" in out
+    # no bodies at the index budget — the work's excerpt is not rendered at all
+    assert "## Excerpts" not in out
+    assert "We propose the Transformer based on attention mechanisms." not in out
+
+
+def test_context_empty_bundle_ignores_budget(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+
+    out = run_context(capsys, "nothingmatcheshere", "--budget", "index")
+    # the G1-locked empty form is untouched: no budget note where there are no
+    # matches to have any depth over
+    assert "No matching scrolls." in out
+    assert "Budget:" not in out
+    assert "Coverage:" not in out
+
+
+def test_context_invalid_budget_raises(scrolls_home):
+    # build_context defends the contract for the MCP path (the CLI also rejects
+    # an unknown tier via argparse choices, tested separately)
+    from scrolls.context import build_context
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        build_context(get_paths().db_path, "database", budget="bogus")
+
+
+def test_context_cli_rejects_unknown_budget(scrolls_home):
+    main(["init"])
+    with pytest.raises(SystemExit):
+        main(["context", "database", "--budget", "bogus"])
+
+
 # --- same-work collapse in the bundle (ADR 0101) ---------------------------
 
 

@@ -35,10 +35,16 @@ Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 | H6 | **✓ shipped.** M2 G2 enforced on `search` + `list` via an opt-in `--stats` envelope. New pure builder `src/scrolls/scope.py` (`scope_envelope` → `{scope, stats, results}`, consistent with the `works`/`graph` stats companion); `search.py` gains `count_matches` (the honest denominator past the cap, so `truncated` iff `matched > returned`); `list` gains `--limit`. The bare array stays the default, so G1's locked `[]` empty form and the CLI/MCP list contract never regress (the documented additive resolution of the G1/G2 tension). Tests: `tests/test_scope.py`, `tests/test_search.py` (count_matches), `tests/test_cli.py` (scope echo, truncation, opt-in default, empty-scope honesty). `docs/cli.md` G2 marker flipped for these two surfaces; `README.md` updated. Full suite green (2347). | → M2, cap 7 |
 | H7 | **✓ shipped. M2 enforce on `context` + `related` + `works`.** `related`: `--stats` echoes anchor + limit + truncation, `count_related` the past-the-cap denominator. `works`: an always-on `scope` companion in `to_payload` naming the `--min` floor or the resolved `ref` anchor (no `--stats` flag — `works` already emits an object, no bare array to protect; uncapped, so the floor *is* its truncation story). `context`: a `Coverage:` line over `count_matches` — `all N` vs `top N of M matching scrolls` — with the empty bundle's G1 form untouched. CLI + MCP twins share the builders, so both surfaces carry the honesty. Tests in `tests/test_works.py`, `tests/test_context.py`, `tests/test_mcp.py`; `docs/cli.md` G2 markers flipped; README updated. | → M2, cap 7 |
 | H8 | **✓ shipped. M2 enforce on `doctor` — M2 complete.** The custody `drift` block now states what it verified: `basis` (`last_verify` — verdicts read from the ledger, not re-checked live this run), `as_of` (the freshest verdict timestamp the picture rests on, `null` when none), and `unverified` (held items the ledger has no verdict for — never checked, so unknown, **not** clean). A reader holding only the report can tell "confirmed unchanged at the last verify" from "never checked". Tests in `tests/test_doctor.py` (drift unverified/basis/as_of, no-ledger-table honesty); `docs/cli.md` G2 marker flipped — **G2 now enforced across every read surface.** Full suite green (2365). | → M2, cap 1/7 |
-| H9 | **M3 context budgets — design.** Specify the budget tiers for `scrolls context` (index/identity first → deep bodies on demand), reusing the same-work collapse already shipped. | → M3, cap 10 |
-| H10 | **M3 implement budget flag.** Bound bundle size predictably; tests pin tiering and the collapse interaction. Update `docs/cli.md`. Commit. | → M3, cap 10 |
-| H11 | **Buffer refresh checkpoint** (see maintenance rule). Re-read repo state, mark completed slots, append the next 24h of slices below H12, prune stale ones. | maintenance |
-| H12–H24 | **M4 custody bundle** (scoped Markdown/HTML briefing carrying provenance + fidelity, lossless re-import), then **M5 dogfood proof** (the end-to-end flow). Break into vertical slices as H11's refresh decides. | → M4/M5, cap 9/11 |
+| H9 | **✓ shipped (with H10).** M3 design folded into the implementation: the budget tiers are specified in `docs/cli.md` (the `--budget` paragraph) and the `src/scrolls/context.py` module docstring — `index`/`connected`/`full`, strictly nested, identity/index first → deep bodies on demand (the obsidian L0–L3 adaptation). No ADR: the tier set is a small, reversible CLI surface documented in `cli.md`, the same way the `--stats` envelope and Coverage line were (no ADR for H6–H8). | → M3, cap 10 |
+| H10 | **✓ shipped. M3 complete.** `scrolls context --budget {index,connected,full}` bounds bundle *depth* through nested tiers (`BUDGET_TIERS` in `context.py`): `index` is the catalog (Best Matches + Links, no graph build), `connected` adds `## Connected scrolls`, `full` (default) adds `## Excerpts` — the current bundle, unchanged. A tier below `full` carries a `_Budget:_` note disclosing what it held back (the depth-axis counterpart to the Coverage line's scope honesty; the two hold independently). Same-work collapse (ADR 0101) is index-level, so it holds at every tier. CLI + MCP twins share `build_context`. Tests in `tests/test_context.py` (10 new: tiering, default=full unchanged, budget note, coverage×budget independence, collapse×budget, empty-bundle/invalid-budget honesty) + `tests/test_mcp.py` (twin). `docs/cli.md`/`README.md` updated. Full suite green (2375). | → M3, cap 10 |
+| H11 | **✓ executed in the 2026-06-16 run that shipped H9/H10.** Buffer refresh checkpoint (maintenance rule): M1, M2, and M3 are all shipped ahead of schedule (M3 was the Day-2 target). M4 broken into the concrete vertical slices H12–H15 below; M5 into H16–H17. 3-day/week plans re-derived. | maintenance |
+| H12 | **M4 custody bundle — design (ADR 0103).** Specify the portable *briefing* bundle distinct from `export items` (ADR 0082, lossless JSONL of index rows): a scoped, self-contained Markdown/HTML slice carrying provenance + fidelity *per item*, re-importable losslessly. Decide the manifest shape (the embedded canonical rows the importer reads vs. the human/agent-readable briefing body), the scope selector (query/facets, reusing `search_items`), and the round-trip contract (re-import reconstructs index rows like `import items`, `INSERT OR IGNORE`). ADR because the on-disk format is consequential and shareable. | → M4, cap 9 |
+| H13 | **M4 implement `scrolls bundle export`.** Emit the self-contained bundle for a scope (query + the `search`/`context` facets) to a path: briefing body (best matches, fidelity tier, provenance per item) + an embedded lossless block the importer round-trips against. Tests pin the bundle contents (provenance + fidelity present per item; scope honored). `docs/cli.md` + README. | → M4, cap 9 |
+| H14 | **M4 implement `scrolls bundle import` + round-trip.** Re-import reconstructs index rows from the embedded block (dedupe by id, never overwrite — the ADR 0099 lossless invariant). A fixture proves export→import round-trips the custody state byte-for-byte and that the bundle is self-describing offline (no network, no original library). Tests land in a new bundle round-trip test module. | → M4, cap 9/11 |
+| H15 | **M4 docs + self-describing proof.** Document the bundle in `docs/cli.md`/`README.md`/`docs/architecture.md`; confirm ADR 0103 consequences; capture concrete export→import command output. **M4 complete.** | → M4, cap 9 |
+| H16 | **M5 dogfood flow — draft.** Write the one agent-runnable end-to-end flow (custody-vision dogfood): *hold a topic → prove custody (`doctor` score) → detect loss (drift recheck) → take it with me (`bundle export` → reimport)*. Script it against fixtures, offline. | → M5, cap 11 |
+| H17 | **M5 dogfood flow — run + score.** Run the flow offline against fixtures end to end; capture a before/after custody score; reference it from `docs/custody-vision.md`'s success section. **M5 complete → MVP M1–M5 done.** | → M5, cap 11 |
+| H18 | **Buffer refresh checkpoint** (maintenance rule). With the MVP complete, re-derive the post-MVP week plan (cap 8 re-derivable enrichment, scheduled custody maintenance) into concrete slices. | maintenance |
 
 If the queue empties before the day does, deepen tests/fixtures on the slice
 just shipped or pick the next-highest PRD capability — never manufacture
@@ -59,13 +65,18 @@ cosmetic churn (CLAUDE.md, *Avoid trivial progress*).
   echo, `context` a `Coverage:` line over `count_matches`), and finished on
   `doctor` (H8 — the drift block's `basis`/`as_of`/`unverified` make it
   verified-now-vs-as-of-last-check honest). **M2 complete: G2 enforced across
-  every read surface, ahead of the Day-2 target.**
-- **Day 2 (2026-06-17):** M2 **done early** (all of H5–H8 shipped Day 1).
-  Next: M3 (context budgets) shipped; M4 (custody bundle) designed with an ADR
-  if the bundle format is consequential.
-- **Day 3 (2026-06-18 → 2026-06-19):** M4 implemented with a round-trip fixture;
-  M5 dogfood flow drafted and run offline against fixtures; capture a
-  before/after custody score.
+  every read surface, ahead of the Day-2 target.** **M3 (progressive context
+  budgets) also shipped Day 1** (H9+H10): `scrolls context --budget
+  {index,connected,full}` bounds bundle depth through nested tiers, identity/
+  index first → deep bodies on demand, with a `_Budget:_` depth-honesty note
+  and same-work collapse holding at every tier. Full suite green (2375).
+- **Day 2 (2026-06-17):** M2 **and M3 done early** (H5–H10 all shipped Day 1).
+  Next: M4 (custody bundle) — design with **ADR 0103** (the on-disk briefing
+  format is consequential and shareable, H12), then implement export (H13) and
+  import + round-trip fixture (H14).
+- **Day 3 (2026-06-18 → 2026-06-19):** M4 finished (docs + self-describing
+  proof, H15); M5 dogfood flow drafted (H16) and run offline against fixtures
+  with a before/after custody score (H17) — **MVP M1–M5 complete.**
 
 Each day ends on a committed, tested, clean stopping point. Slips roll forward;
 the 3-day plan is re-derived at each buffer refresh.

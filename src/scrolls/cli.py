@@ -20,6 +20,8 @@ from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.classify import classify_item
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import live_recapture, record_events, verify_item
+from scrolls.context import BUDGET_TIERS as CONTEXT_BUDGET_TIERS
+from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.db import init_db, read_schema_version
@@ -167,6 +169,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--concept",
         default=None,
         help="Only scrolls carrying this concept (matched by slug)",
+    )
+    context_parser.add_argument(
+        "--budget",
+        choices=CONTEXT_BUDGET_TIERS,
+        default=DEFAULT_CONTEXT_BUDGET,
+        help="Bundle depth tier: index (catalog only), connected (+ link "
+        f"graph), or full (+ excerpts; default {DEFAULT_CONTEXT_BUDGET})",
     )
 
     detect_parser = subparsers.add_parser(
@@ -625,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
             args.stage,
             args.tag,
             args.concept,
+            args.budget,
         )
     if args.command == "detect":
         return _cmd_detect(args.url)
@@ -1551,6 +1561,7 @@ def _cmd_context(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> int:
     paths = get_paths()
     try:
@@ -1563,6 +1574,7 @@ def _cmd_context(
             stage=stage,
             tag=tag,
             concept=concept,
+            budget=budget,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)

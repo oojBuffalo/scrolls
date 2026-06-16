@@ -41,6 +41,28 @@ from scrolls.search import SearchHit, count_matches, search_items
 _EXCERPT_CHARS = 700
 DEFAULT_LIMIT = 8
 
+# Progressive context budget tiers (MVP M3, obsidian L0–L3 adaptation). A
+# bundle is a *budgeted boot sequence*: identity/index first, deep bodies on
+# demand. The tiers are strictly nested — each is a superset of the one before
+# — so `--budget` bounds depth predictably:
+#   index     — the catalog: Best Matches + Links (ids, titles, source URLs).
+#               No bodies, and no link-graph build at all (the cheapest boot).
+#   connected — index + the Connected scrolls link graph. Still no bodies.
+#   full      — connected + Excerpts (the deep bodies). The default, the
+#               current flat bundle, unchanged.
+# A tier below `full` discloses the reduced depth in a `_Budget:_` note so an
+# agent never reads a catalog-only bundle as "this is all there is to read" —
+# the same anti-fabrication / honest-scope discipline the Coverage line applies
+# to the match *set* (completeness contract G2), here applied to depth *per
+# match*. The two are orthogonal and both always hold.
+BUDGET_TIERS = ("index", "connected", "full")
+DEFAULT_BUDGET = "full"
+
+
+def _tier_at_least(budget: str, required: str) -> bool:
+    """Whether `budget` includes everything tier `required` includes (nested)."""
+    return BUDGET_TIERS.index(budget) >= BUDGET_TIERS.index(required)
+
 
 def build_context(
     db_path: Path,
@@ -51,6 +73,7 @@ def build_context(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    budget: str = DEFAULT_BUDGET,
 ) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
 
@@ -63,9 +86,21 @@ def build_context(
     so the bundle is self-documenting; the empty-string `category` selects
     the unclassified pool and reads as `category=unclassified`.
 
+    `budget` (MVP M3) bounds the bundle's *depth* through the nested
+    `index`/`connected`/`full` tiers (`BUDGET_TIERS`): `index` is the catalog
+    alone (matches + links), `connected` adds the link graph, `full` (default)
+    adds the deep-body excerpts. A tier below `full` carries a `_Budget:_` note
+    disclosing what it omitted, so a budgeted bundle stays honest about depth
+    the way the Coverage line stays honest about scope. An unknown tier raises
+    ValueError (the CLI also rejects it via argparse `choices`).
+
     No matches (or no library yet) still yields a valid bundle saying so,
     because agents shouldn't crash on an empty library.
     """
+    if budget not in BUDGET_TIERS:
+        raise ValueError(
+            f"unknown budget {budget!r}; choose one of {', '.join(BUDGET_TIERS)}"
+        )
     hits = search_items(
         db_path,
         query,
@@ -107,6 +142,9 @@ def build_context(
         concept=concept,
     )
     lines += [_coverage_line(matched, len(hits)), ""]
+    budget_note = _budget_line(budget)
+    if budget_note:
+        lines += [budget_note, ""]
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):
@@ -118,20 +156,26 @@ def build_context(
             line += f" · {note}"
         lines.append(line)
 
-    lines += ["", "## Excerpts"]
-    for item in items:
-        lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
-        excerpt = _excerpt(item)
-        if excerpt:
-            lines += ["", excerpt]
+    # Deep bodies only at the `full` budget — the index/connected tiers boot an
+    # agent on the catalog (and, for `connected`, the graph) and let it pull
+    # bodies on demand with `scrolls show <id>` or a `--budget full` re-run.
+    if _tier_at_least(budget, "full"):
+        lines += ["", "## Excerpts"]
+        for item in items:
+            lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
+            excerpt = _excerpt(item)
+            if excerpt:
+                lines += ["", excerpt]
 
-    # folded representations are the same work as a kept match, so they must
-    # not resurface as "connected" neighbours (the preprint links to the
-    # published DOI record it just absorbed) — exclude them too.
-    folded_ids = {item_id for ids in folded.values() for item_id in ids}
-    connected = _connected_lines(db_path, [item.id for item in items], folded_ids)
-    if connected:
-        lines += ["", "## Connected scrolls", ""] + connected
+    # The link graph from the `connected` tier up; `index` skips the graph build
+    # entirely. Folded representations are the same work as a kept match, so
+    # they must not resurface as "connected" neighbours (the preprint links to
+    # the published DOI record it just absorbed) — exclude them too.
+    if _tier_at_least(budget, "connected"):
+        folded_ids = {item_id for ids in folded.values() for item_id in ids}
+        connected = _connected_lines(db_path, [item.id for item in items], folded_ids)
+        if connected:
+            lines += ["", "## Connected scrolls", ""] + connected
 
     lines += ["", "## Links", ""]
     lines += [
@@ -193,6 +237,29 @@ def _coverage_line(matched: int, returned: int) -> str:
             "raise `--limit` or narrow the query to see the rest._"
         )
     return f"_Coverage: all {matched} matching scrolls._"
+
+
+def _budget_line(budget: str) -> str:
+    """The bundle's depth-honesty note for a tier below `full` (MVP M3), else ''.
+
+    Discloses what the budget held back and names the lever to get it, so a
+    catalog-only bundle is never mistaken for "all there is to read" — the
+    depth-axis counterpart to the Coverage line's scope honesty. `full` omits
+    nothing, so it carries no note and the default bundle is unchanged.
+    """
+    if budget == "index":
+        return (
+            "_Budget: index — the catalog only (best matches and source "
+            "links). Re-run with `--budget connected` for the link graph or "
+            "`--budget full` for excerpts; `scrolls show <id>` reads a body._"
+        )
+    if budget == "connected":
+        return (
+            "_Budget: connected — best matches, the link graph, and source "
+            "links, no excerpts. Re-run with `--budget full` for excerpts; "
+            "`scrolls show <id>` reads a body._"
+        )
+    return ""
 
 
 def _work_note(hit: SearchHit, folded_ids: list[str]) -> str:

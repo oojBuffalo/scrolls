@@ -619,6 +619,33 @@ def test_get_context_bundle_surfaces_connected_scrolls(scrolls_home):
     assert "`arxiv:1706.03762`" in connected
 
 
+def test_get_context_bundle_honors_budget(scrolls_home):
+    # The progressive budget tiers (MVP M3) reach MCP clients through the same
+    # build_context — no MCP-side code — so the tiering must be locked here too.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="wikipedia:en:SQLite", source="wikipedia",
+        url="https://en.wikipedia.org/wiki/SQLite",
+        saved_at="2026-06-12T00:00:00+00:00", title="SQLite",
+        extracted_text="SQLite is a database engine with full-text search.",
+        summary="SQLite is a database engine.", stage="rendered",
+    ))
+
+    # default is the full bundle (excerpts, no budget note)
+    full = mcp_server.get_context_bundle("database")
+    assert "## Excerpts" in full
+    assert "Budget:" not in full
+
+    # the index budget is catalog-only and self-discloses the reduced depth
+    index = mcp_server.get_context_bundle("database", budget="index")
+    assert "## Best Matches" in index
+    assert "## Excerpts" not in index
+    assert "Budget: index" in index
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())

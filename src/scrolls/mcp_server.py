@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from scrolls import feeds
+from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.custody import live_recapture, record_events, verify_item
@@ -304,6 +305,7 @@ def get_context_bundle(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
 
@@ -315,6 +317,13 @@ def get_context_bundle(
     (case-insensitive), and `concept` to items carrying a concept (matched by
     slug) — so the bundle can cover, e.g., what the *papers* say about a
     topic. A scoped bundle names its facets in the title.
+
+    `budget` bounds the bundle's depth (a budgeted boot sequence, identity/index
+    first): `index` is the catalog alone (best matches + links), `connected`
+    adds the link graph, `full` (default) adds the deep-body excerpts. A tier
+    below `full` discloses what it omitted in a `Budget:` note, so a catalog
+    bundle is never read as the whole story — an agent can boot cheap, then pull
+    bodies on demand with `get_scroll`/`scrolls show` or a `full` re-run.
     """
     paths = get_paths()
     return build_context(
@@ -326,6 +335,7 @@ def get_context_bundle(
         stage=stage,
         tag=tag,
         concept=concept,
+        budget=budget,
     )
 
 
