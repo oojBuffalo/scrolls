@@ -12,7 +12,7 @@ import pytest
 from scrolls.db import init_db
 from scrolls.doctor import get_fidelity
 from scrolls.facets import compute_facets
-from scrolls.items import ScrollItem, insert_item
+from scrolls.items import ScrollItem, insert_item, item_summary
 
 NOW = "2026-06-15T00:00:00+00:00"
 
@@ -105,3 +105,25 @@ def test_facet_scopes_to_the_same_filters_as_search(db_path):
 def test_facet_is_empty_for_an_uninitialized_library(tmp_path):
     payload = compute_facets(tmp_path / "absent.sqlite", field="fidelity")
     assert payload == {"facets": {"fidelity": []}}
+
+
+# --- the browse summary (shared by `scrolls list` and MCP list_scrolls) ---
+
+
+def test_summary_carries_the_browse_fields_plus_fidelity():
+    item = _item("s", title="A Title", category="paper",
+                 raw_text="body", stage="fetched")
+    assert item_summary(item) == {
+        "id": "s",
+        "source": "web",
+        "url": "https://ex.com/s",
+        "title": "A Title",
+        "category": "paper",
+        "stage": "fetched",
+        "saved_at": NOW,
+        "fidelity": "full",
+    }
+
+
+def test_summary_reports_a_reference_only_item_honestly():
+    assert item_summary(_item("ref", stage="detected"))["fidelity"] == "reference"

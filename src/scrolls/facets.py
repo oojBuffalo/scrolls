@@ -28,8 +28,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scrolls.items import ScrollItem, item_filters, register_facet_functions
-from scrolls.doctor import get_fidelity
+from scrolls.items import (
+    ScrollItem,
+    get_fidelity,
+    item_filters,
+    register_facet_functions,
+)
 from scrolls.kb import group_concepts, group_tags
 
 FIELDS = ("sources", "categories", "tags", "concepts", "fidelity")

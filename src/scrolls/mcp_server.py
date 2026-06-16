@@ -27,7 +27,7 @@ from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
 from scrolls.works import to_payload as works_payload
 from scrolls.works import works_for_item, works_over
-from scrolls.items import count_by_source, get_item, list_items
+from scrolls.items import count_by_source, get_item, item_summary, list_items
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
@@ -111,9 +111,10 @@ def list_scrolls(
     (case-insensitive), and `concept` by membership (matched by slug). Items
     come oldest-saved first, capped at `limit` (default 50) to stay
     context-friendly — raise it to see more. Each entry is a summary (id,
-    source, url, title, category, stage, saved_at); follow up with get_scroll
-    for the full record. Use it for "what arxiv papers tagged efficient are
-    in the library", which has no natural search query.
+    source, url, title, category, stage, saved_at, and the custody `fidelity`
+    tier — full/partial/reference, ADR 0097); follow up with get_scroll for the
+    full record. Use it for "what arxiv papers tagged efficient are in the
+    library", which has no natural search query.
     """
     paths = get_paths()
     if not paths.db_path.exists():
@@ -126,18 +127,7 @@ def list_scrolls(
         tag=tag,
         concept=concept,
     )[:limit]
-    return [
-        {
-            "id": item.id,
-            "source": item.source,
-            "url": item.url,
-            "title": item.title,
-            "category": item.category,
-            "stage": item.stage,
-            "saved_at": item.saved_at,
-        }
-        for item in items
-    ]
+    return [item_summary(item) for item in items]
 
 
 def list_facets(

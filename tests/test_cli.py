@@ -2001,8 +2001,10 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     assert {entry["id"] for entry in payload} == {"youtube:dQw4w9WgXcQ", "wikipedia:en:SQLite"}
     for entry in payload:
         assert entry["stage"] == "detected"
+        assert entry["fidelity"] == "reference"  # detected, no content held yet
         assert set(entry) == {
-            "id", "source", "url", "title", "category", "stage", "saved_at"
+            "id", "source", "url", "title", "category", "stage", "saved_at",
+            "fidelity",
         }
 
 

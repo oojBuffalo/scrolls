@@ -50,6 +50,56 @@ class ScrollItem:
 _FIELD_NAMES = tuple(f.name for f in fields(ScrollItem))
 
 
+def get_fidelity(item: ScrollItem) -> str:
+    """Derive the explicit custody-fidelity tier for an item (ADR 0097).
+
+    The tier answers "at what fidelity do we still hold this?" purely from
+    stored fields — no network, fully deterministic:
+
+    - ``full``: a re-derivable body is held — ``raw_text`` is present, or
+      ``extracted_text`` paired with a ``content_hash`` that fingerprints it
+      — and the item reached ``fetched``/``rendered``. The body can be
+      regenerated and the hash gives a future re-fetch something to diff.
+    - ``partial``: some content survives (``raw_text``, ``extracted_text``, or
+      ``summary``) but not enough to qualify as full — a degraded-but-honest
+      capture.
+    - ``reference``: only the pointer and provenance are held, no content.
+
+    Degradation is honest, not a failure: a reference-only item is a complete
+    custody record of a thing we deliberately hold by reference. Lives with the
+    item model so every surface (doctor, facets, list) derives it identically.
+    """
+    has_raw = bool(item.raw_text)
+    has_extracted = bool(item.extracted_text)
+    has_body = has_raw or (has_extracted and bool(item.content_hash))
+
+    if has_body and item.stage in ("fetched", "rendered"):
+        return "full"
+    if has_raw or has_extracted or item.summary:
+        return "partial"
+    return "reference"
+
+
+def item_summary(item: ScrollItem) -> dict[str, Any]:
+    """The compact browse record shared by `scrolls list` and MCP `list_scrolls`.
+
+    Enough to scan and pick an item — id, source, url, title, category, stage,
+    saved_at — plus its custody `fidelity` tier, so an agent browsing the
+    library sees at a glance which items it holds in full and which are
+    reference-only. One definition keeps the CLI and MCP surfaces identical.
+    """
+    return {
+        "id": item.id,
+        "source": item.source,
+        "url": item.url,
+        "title": item.title,
+        "category": item.category,
+        "stage": item.stage,
+        "saved_at": item.saved_at,
+        "fidelity": get_fidelity(item),
+    }
+
+
 def make_item_id(source: str, source_id: str | None, url: str) -> str:
     """Stable item id: `source:source_id`, else `source:` + URL hash (IDEAS.md §12)."""
     if source_id:

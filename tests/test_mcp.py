@@ -164,7 +164,8 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
     rows = mcp_server.list_scrolls()
     assert [r["id"] for r in rows] == ["arxiv:2401.0001", "web:abc"]
     assert set(rows[0]) == {
-        "id", "source", "url", "title", "category", "stage", "saved_at"
+        "id", "source", "url", "title", "category", "stage", "saved_at",
+        "fidelity",
     }
 
     # facets AND together, mirroring scrolls list (incl. the tag membership facet)
@@ -179,6 +180,26 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
 
 def test_list_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.list_scrolls() == []
+
+
+def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
+    # custody state travels with browse results (ADR 0097): an agent sees which
+    # items it holds in full without a follow-up get_scroll
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://ex.com/full",
+        saved_at="2026-06-12T00:00:00+00:00",
+        extracted_text="body", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://ex.com/ref",
+        saved_at="2026-06-12T01:00:00+00:00"))
+
+    tiers = {r["id"]: r["fidelity"] for r in mcp_server.list_scrolls()}
+    assert tiers == {"web:full": "full", "web:ref": "reference"}
 
 
 def test_list_facets_enumerates_the_filterable_vocabulary(scrolls_home):

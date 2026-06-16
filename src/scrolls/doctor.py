@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 from scrolls.items import (
     ScrollItem,
+    get_fidelity,
     list_items,
     make_item_id,
     replace_items,
@@ -32,33 +33,9 @@ from scrolls.sources.urls import normalize_url
 _STAGE_RANK = {"detected": 0, "fetched": 1, "rendered": 2}
 
 
-def get_fidelity(item: ScrollItem) -> str:
-    """Derive the explicit custody-fidelity tier for an item (ADR 0097).
-
-    The tier answers "at what fidelity do we still hold this?" purely from
-    stored ScrollItem fields — no network, fully deterministic:
-
-    - ``full``: a re-derivable body is held — ``raw_text`` is present, or
-      ``extracted_text`` paired with a ``content_hash`` that fingerprints it
-      — and the item reached ``fetched``/``rendered``. The body can be
-      regenerated and the hash gives a future re-fetch something to diff.
-    - ``partial``: some content survives (``extracted_text`` or ``summary``)
-      but not enough to qualify as full — a degraded-but-honest capture.
-    - ``reference``: only the pointer and provenance are held, no content.
-
-    Degradation is honest, not a failure: a reference-only item is a complete
-    custody record of a thing we deliberately hold by reference.
-    """
-    has_raw = bool(getattr(item, "raw_text", None))
-    has_extracted = bool(getattr(item, "extracted_text", None))
-    has_hash = bool(getattr(item, "content_hash", None))
-    has_body = has_raw or (has_extracted and has_hash)
-
-    if has_body and getattr(item, "stage", "detected") in ("fetched", "rendered"):
-        return "full"
-    if has_raw or has_extracted or getattr(item, "summary", None):
-        return "partial"
-    return "reference"
+# `get_fidelity` lives in items.py (the custody tier is an item-model
+# property); imported above so `doctor.get_fidelity` and the custody audit
+# below share the one definition with `facets` and `list`.
 
 # SQLite release that taught FTS5 'integrity-check' to verify the index
 # against an external content table; older ones can only check internals

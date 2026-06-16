@@ -45,6 +45,7 @@ from scrolls.items import (
     ScrollItem,
     get_item,
     insert_item,
+    item_summary,
     library_counts,
     list_items,
     update_item,
@@ -1324,22 +1325,7 @@ def _cmd_list(
         if paths.db_path.exists()
         else []
     )
-    print(
-        json.dumps(
-            [
-                {
-                    "id": item.id,
-                    "source": item.source,
-                    "url": item.url,
-                    "title": item.title,
-                    "category": item.category,
-                    "stage": item.stage,
-                    "saved_at": item.saved_at,
-                }
-                for item in items
-            ]
-        )
-    )
+    print(json.dumps([item_summary(item) for item in items]))
     return 0
 
 
