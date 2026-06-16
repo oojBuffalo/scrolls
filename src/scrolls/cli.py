@@ -34,6 +34,7 @@ from scrolls.custody import (
     item_events,
     item_history,
     items_checked_before,
+    items_in_posture,
     latest_events,
     live_recapture,
     parse_since,
@@ -825,11 +826,19 @@ def build_parser() -> argparse.ArgumentParser:
         "last sweep (oldest saved first)",
     )
     verify_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Verify only held items currently at this custody drift posture — "
+        "the set `scrolls list --drift` enumerates and `facets drift` counts "
+        "(e.g. --drift drifted to re-confirm a changed source; oldest saved first)",
+    )
+    verify_parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Attempt at most N re-captures this run "
-        "(--all/--unverified/--stale-before only), oldest saved first",
+        "(--all/--unverified/--stale-before/--drift only), oldest saved first",
     )
 
     return parser
@@ -975,7 +984,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_unfollow(args.id)
     if args.command == "verify":
         return _cmd_verify(
-            args.id, args.verify_all, args.unverified, args.limit, args.stale_before
+            args.id, args.verify_all, args.unverified, args.limit, args.stale_before,
+            args.drift,
         )
     return 2  # pragma: no cover - argparse enforces a valid command
 
@@ -1614,6 +1624,7 @@ def _cmd_verify(
     unverified: bool = False,
     limit: int | None = None,
     stale_before: str | None = None,
+    drift: str | None = None,
 ) -> int:
     """Re-capture items and record drift/rot custody events (ADR 0098).
 
@@ -1623,19 +1634,26 @@ def _cmd_verify(
     held. Exactly one *selection* is required: a single item ref, `--all`
     (every held item carrying a captured hash), `--unverified` (only the
     held, hash-bearing items the ledger has no verdict for — the `unverified`
-    bucket doctor/facets/status report, made actionable), or `--stale-before
+    bucket doctor/facets/status report, made actionable), `--stale-before
     <ISO>` (the held, hash-bearing items whose newest verdict predates the
     boundary, plus the never-checked — the staleness-bounded recheck, the
-    act-side sibling of `history --since` / `export events --since`). `error`
+    act-side sibling of `history --since` / `export events --since`), or
+    `--drift <posture>` (the held, hash-bearing items currently at a chosen
+    drift posture — the set `list --drift` enumerates and `facets drift`
+    counts, so a worker re-checks the suspect set instead of `--all`). `error`
     (could-not-check) drives a nonzero exit; `drifted`/`rotted` are successful
     checks that found a custody event.
     """
     paths = get_paths()
-    if sum((ref is not None, verify_all, unverified, stale_before is not None)) != 1:
+    selections = (
+        ref is not None, verify_all, unverified, stale_before is not None,
+        drift is not None,
+    )
+    if sum(selections) != 1:
         print(
             json.dumps(
                 {"error": "verify needs exactly one of an item id, --all, "
-                 "--unverified, or --stale-before"}
+                 "--unverified, --stale-before, or --drift"}
             ),
             file=sys.stderr,
         )
@@ -1665,8 +1683,8 @@ def _cmd_verify(
         if limit is not None:
             print(
                 json.dumps(
-                    {"error": "--limit paces --all/--unverified/--stale-before runs; "
-                     "drop it when verifying one item"}
+                    {"error": "--limit paces --all/--unverified/--stale-before/--drift "
+                     "runs; drop it when verifying one item"}
                 ),
                 file=sys.stderr,
             )
@@ -1693,15 +1711,19 @@ def _cmd_verify(
         if verify_all:
             items = hash_bearing
         else:
-            # Both ledger-driven selections read the latest verdict per item.
+            # The ledger-driven selections all read the latest verdict per item.
             # `--unverified` takes the held − verdicts set doctor's
             # `custody.drift.unverified` counts (so a re-check clears exactly that
             # bucket); `--stale-before` takes the items whose newest verdict
             # predates the boundary (plus the never-checked — it subsumes
-            # `--unverified`). Empty ledger ⇒ no verdicts ⇒ all of them.
+            # `--unverified`); `--drift` takes the items currently at a posture
+            # (the same set `list --drift` enumerates and `facets drift` counts).
+            # Empty ledger ⇒ no verdicts ⇒ everything is `unverified`.
             verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
             if unverified:
                 items = unverified_items(hash_bearing, verdicts)
+            elif drift is not None:
+                items = items_in_posture(hash_bearing, verdicts, drift)
             else:  # stale_before
                 items = items_checked_before(hash_bearing, verdicts, boundary)
 

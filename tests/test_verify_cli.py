@@ -484,6 +484,121 @@ def test_verify_rejects_all_and_stale_before_together(paths, capsys):
     assert "error" in json.loads(capsys.readouterr().err)
 
 
+# --- posture-targeted recheck (--drift POSTURE, H80) ----------------------
+#
+# The recheck-side counterpart of `list --drift` (the read enumeration) and the
+# verify-axis sibling of `--unverified`: re-capture only the held, hash-bearing
+# items currently at a chosen drift posture, so a worker re-checks the suspect
+# set (`--drift drifted` / `error` / `rotted`) instead of the whole library.
+
+
+def test_verify_drift_selects_only_the_chosen_posture(paths, monkeypatch, capsys):
+    drifted = _item("https://example.com/drifted", content_hash="sha256:d")
+    verified = _item("https://example.com/verified", content_hash="sha256:v")
+    never = _item("https://example.com/never", content_hash="sha256:n")
+    for it in (drifted, verified, never):
+        insert_item(paths.db_path, it)
+    _seed_verdict(paths, drifted, "2026-06-10T00:00:00+00:00", status="drifted")
+    _seed_verdict(paths, verified, "2026-06-10T00:00:00+00:00", status="unchanged")
+    # `never` has no verdict → unverified posture
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--drift", "drifted"])
+    out = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in out["results"]] == [drifted.id]
+
+
+def test_verify_drift_rechecks_exactly_the_list_drift_rows(paths, monkeypatch, capsys):
+    # the set --drift rechecks equals the rows `list --drift` enumerates — the
+    # act-side ≡ read-side drill, via the shared `items_in_posture` selector
+    a = _item("https://example.com/a", content_hash="sha256:a")
+    b = _item("https://example.com/b", content_hash="sha256:b")
+    insert_item(paths.db_path, a)
+    insert_item(paths.db_path, b)
+    _seed_verdict(paths, a, "2026-06-10T00:00:00+00:00", status="drifted")
+    _seed_verdict(paths, b, "2026-06-10T00:00:00+00:00", status="unchanged")
+
+    main(["list", "--drift", "drifted"])
+    listed = {row["id"] for row in json.loads(capsys.readouterr().out)}
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", "--drift", "drifted"])
+    rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+    assert rechecked == listed == {a.id}
+
+
+def test_verify_drift_recheck_moves_the_posture(paths, monkeypatch, capsys):
+    # re-checking a drifted item whose source has settled appends an `unchanged`
+    # verdict, so it leaves the `drifted` bucket and enters `verified`
+    item = _item("https://example.com/a", content_hash="sha256:a")
+    insert_item(paths.db_path, item)
+    _seed_verdict(paths, item, "2026-06-10T00:00:00+00:00", status="drifted")
+    _stub_recapture(monkeypatch, lambda i: i)  # fresh hash matches the stored one
+
+    main(["verify", "--drift", "drifted"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1 and out["unchanged"] == 1
+
+    main(["list", "--drift", "drifted"])
+    assert json.loads(capsys.readouterr().out) == []  # left the drifted bucket
+    main(["list", "--drift", "verified"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == [item.id]
+
+
+def test_verify_drift_composes_with_limit(paths, monkeypatch, capsys):
+    for n in range(3):
+        it = _item(f"https://example.com/{n}", content_hash=f"sha256:{n}")
+        insert_item(paths.db_path, it)
+        _seed_verdict(paths, it, "2026-06-10T00:00:00+00:00", status="drifted")
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--drift", "drifted", "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2  # oldest saved first, the third left for next pass
+
+
+def test_verify_drift_skips_reference_only_items(paths, monkeypatch, capsys):
+    # a reference-only capture is `unverified` but has no baseline to diff, so
+    # `--drift unverified` skips it like --all/--unverified/--stale-before
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--drift", "unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1  # only the hash-bearing unverified item
+
+
+def test_verify_drift_empty_posture_is_a_noop(paths, monkeypatch, capsys):
+    # a valid posture with no items in it re-checks nothing, no network touched
+    item = _item("https://example.com/a", content_hash="sha256:a")
+    insert_item(paths.db_path, item)
+    _seed_verdict(paths, item, "2026-06-10T00:00:00+00:00", status="unchanged")
+
+    def explode(_):
+        raise AssertionError("recapture must not run when no item is at the posture")
+
+    _stub_recapture(monkeypatch, explode)
+    exit_code = main(["verify", "--drift", "rotted"])  # nothing is rotted
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_drift_rejects_an_unknown_posture(paths):
+    # a closed vocabulary (argparse choices) — a typo is exit 2, never empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["verify", "--drift", "drited"])
+    assert excinfo.value.code == 2
+
+
+def test_verify_rejects_all_and_drift_together(paths, capsys):
+    exit_code = main(["verify", "--all", "--drift", "drifted"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 # --- scrolls history <id> — the per-item custody ledger timeline (H66) -----
 #
 # `verify` appends an append-only event per check; `show`/`list` carry only the

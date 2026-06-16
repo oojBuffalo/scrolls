@@ -442,7 +442,7 @@ the explicit refresh that re-synthesizes exactly the concepts reported here — 
 summary-axis counterpart of `classify --stale`
 (`test_kb_stale_clears_the_doctor_stale_signal`).
 
-### `scrolls verify [id] [--all | --unverified | --stale-before ISO] [--limit N]`
+### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
 copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
@@ -453,10 +453,11 @@ overwrites the original capture, so proving a source changed can never lose
 what was held.
 
 Exactly one *selection* is required — a single item `id`/URL, `--all`,
-`--unverified`, or `--stale-before` — never more than one
+`--unverified`, `--stale-before`, or `--drift` — never more than one
 (`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`,
 `test_verify_rejects_all_and_unverified_together`,
-`test_verify_rejects_all_and_stale_before_together`). `--all` re-checks every
+`test_verify_rejects_all_and_stale_before_together`,
+`test_verify_rejects_all_and_drift_together`). `--all` re-checks every
 held item carrying a captured `content_hash` to diff against — a reference-only
 or still-`detected` item has no baseline and is skipped. `--unverified` narrows
 that to only the hash-bearing items the ledger has *no* verdict for — the same
@@ -486,9 +487,25 @@ and a malformed boundary is a loud usage error (exit 2, the `export events`
 precedent), never a silently-empty recheck
 (`test_verify_stale_before_malformed_boundary_is_a_loud_usage_error`).
 
-`--limit N` paces a large `--all`/`--unverified`/`--stale-before` run (oldest
-saved first), like `scrolls fetch` — so a bounded pass makes monotone coverage
-progress. A single `id` must itself hold a content hash
+`--drift <posture>` is the **posture-targeted** recheck — the act-side
+counterpart of `scrolls list --drift` (the read enumeration) and the verify-axis
+sibling of `--unverified`. It re-checks only the hash-bearing items currently at
+a chosen drift posture (`verified`/`unverified`/`drifted`/`rotted`/`error`), so a
+worker targets the *suspect* set instead of the whole library — `--drift drifted`
+to re-confirm whether a changed source moved again or settled, `--drift error` to
+retry a transient failure, `--drift rotted` to confirm a 404 is permanent. The
+set it re-checks is exactly the rows `list --drift X` enumerates and `facets
+drift` counts for the same scope (the shared `custody.items_in_posture` selector;
+`test_verify_drift_rechecks_exactly_the_list_drift_rows`), so a recheck moves the
+posture it targeted (`test_verify_drift_recheck_moves_the_posture`). It is a
+closed vocabulary (argparse `choices` — a typo is exit 2, never a silent empty;
+`test_verify_drift_rejects_an_unknown_posture`) and, like the other batch modes,
+skips reference-only items with no baseline
+(`test_verify_drift_skips_reference_only_items`).
+
+`--limit N` paces a large `--all`/`--unverified`/`--stale-before`/`--drift` run
+(oldest saved first), like `scrolls fetch` — so a bounded pass makes monotone
+coverage progress. A single `id` must itself hold a content hash
 (`test_verify_item_without_content_hash_is_an_error`).
 
 Each result carries a `status`:
@@ -521,6 +538,10 @@ $ scrolls verify --unverified      # only the held items doctor flags `unverifie
 [exit 0]
 
 $ scrolls verify --stale-before 2026-06-15   # only items not re-checked since the last sweep
+{"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]}
+[exit 0]
+
+$ scrolls verify --drift drifted      # re-check only the items flagged drifted — did the source settle?
 {"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]}
 [exit 0]
 ```

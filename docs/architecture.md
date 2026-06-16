@@ -109,7 +109,14 @@ each command moves items between stages or derives artifacts from them.
   `unverified_items`, over the same `drift_posture`/`latest_events`), so the rows
   it returns total `facets drift`'s count for that posture — drill from the
   aggregate to the items, the read-side companion of `verify --unverified`'s
-  act-side selection. Beyond filtering, the per-item drift posture *rides* the
+  act-side selection. That same selector is also the *act* side: `scrolls verify
+  --drift <posture>` (roadmap H80) re-captures exactly the hash-bearing rows
+  `list --drift <posture>` enumerates, so a worker re-checks the suspect set
+  (`drifted`/`error`/`rotted`) instead of `--all`, and a recheck moves the
+  posture it targeted. The verify command now carries four batch selections over
+  this one trio of `custody` selectors — `--unverified` (`unverified_items`),
+  `--stale-before` (`items_checked_before`), and `--drift` (`items_in_posture`),
+  plus `--all` — the actionable face of the custody read surfaces. Beyond filtering, the per-item drift posture *rides* the
   primary browse rows themselves (roadmap H58): `items.item_summary` (→ `scrolls
   list` + MCP `list_scrolls`) and `search.SearchHit`/`hit_payload` (→ `scrolls
   search` + MCP `search_scrolls`) each carry a `drift` field beside `fidelity`,
