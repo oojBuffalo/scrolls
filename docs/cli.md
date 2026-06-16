@@ -1005,9 +1005,15 @@ $ scrolls export items --source arxiv
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
 `tests/test_bundle.py`). Two layers in one file: a readable **briefing**
-(title + scope, then one entry per in-scope scroll naming its id, source,
-custody **fidelity** tier, capture timestamp, link, content hash, a capped
-excerpt, its custody **drift posture** from the verify ledger
+(title + scope, then a one-line scope **custody headline** — `N scroll(s)`,
+the fidelity-tier counts, and the drift-posture counts across the *whole*
+bundle, so a reader gauges "how custody stands" without scanning every entry
+(roadmap H45); its totals equal the per-scroll entries and `doctor`'s `custody`
+aggregate for the same scope by construction, the bundle-level counterpart of
+`status`'s custody headline — `test_scope_custody_headline_totals_equal_the_entries_and_doctor`),
+then one entry per in-scope scroll naming its id, source, custody **fidelity**
+tier, capture timestamp, link, content hash, a capped excerpt, its custody
+**drift posture** from the verify ledger
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — derived
 through the same `latest_events` `doctor`'s `custody.drift` aggregates, so the
 per-scroll posture and doctor's counts cannot disagree; a drifted or rotted

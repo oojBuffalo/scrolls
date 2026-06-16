@@ -288,6 +288,81 @@ def test_bundle_drift_posture_converges_with_the_doctor_aggregate(scrolls_home):
     assert bundle.count("custody `unverified`") == drift["unverified"] == 1
 
 
+def test_bundle_carries_a_scope_custody_headline(scrolls_home):
+    # the scope-level "how custody stands" line under the title (roadmap H45):
+    # N scrolls, fidelity tier counts, drift posture counts
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:Full", "Full", "A full database."))
+    insert_item(db, make_item("wikipedia:en:Moved", "Moved", "A moved database."))
+    # a reference-only scroll (no body held) so a second fidelity tier appears;
+    # "database" rides in the title so it is still in the query scope
+    insert_item(db, make_item(
+        "wikipedia:en:Ref", "Reference database pointer", "",
+        raw_text=None, summary=None,
+        content_hash=None, markdown_path=None, stage="detected",
+    ))
+    record_events(db, [_event("wikipedia:en:Moved", "drifted", observed="cafe1234")])
+
+    bundle = build_bundle(db, "database")
+    headline = next(
+        line for line in bundle.splitlines() if line.startswith("_Custody:")
+    )
+    assert "3 scroll(s)" in headline
+    # two full-fidelity bodies + one reference-only pointer
+    assert "fidelity full 2, reference 1" in headline
+    # one drifted, the other two never re-checked (fixed posture order)
+    assert "drift unverified 2, drifted 1" in headline
+
+
+def test_scope_custody_headline_totals_equal_the_entries_and_doctor(scrolls_home):
+    # the headline counts converge with both the per-scroll entries and doctor's
+    # custody aggregate for the same (whole-library) scope — H42 at scope level
+    from scrolls.bundle import custody_counts
+    from scrolls.custody import latest_events
+    from scrolls.items import get_fidelity, list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(4):
+        insert_item(db, make_item(
+            f"wikipedia:en:Page_{index}", f"Page {index}", "Every page is a database.",
+        ))
+    record_events(db, [
+        _event("wikipedia:en:Page_0", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:Page_1", "drifted", observed="cafe1234"),
+        _event("wikipedia:en:Page_2", "rotted"),
+        # Page_3 left unverified
+    ])
+
+    items = list_items(db)
+    counts = custody_counts(items, latest_events(db))
+    # headline totals equal the entries by construction
+    assert sum(counts["tiers"].values()) == len(items) == 4
+    assert sum(counts["drift"].values()) == len(items) == 4
+    # the fidelity-tier count equals the per-scroll `fidelity` lines in the body
+    assert all(get_fidelity(item) == "full" for item in items)
+    bundle = build_bundle(db, "database")
+    assert counts["tiers"]["full"] == bundle.count("fidelity `full`") == 4
+
+    # and equal doctor's custody aggregate for the whole-library scope
+    custody = run_doctor(get_paths())["custody"]
+    assert counts["tiers"] == custody["tiers"]
+    drift = custody["drift"]
+    assert counts["drift"]["verified"] == drift["unchanged"] == 1
+    assert counts["drift"]["drifted"] == drift["drifted"] == 1
+    assert counts["drift"]["rotted"] == drift["rotted"] == 1
+    assert counts["drift"]["unverified"] == drift["unverified"] == 1
+
+
+def test_empty_scope_custody_headline_is_zero_scrolls(scrolls_home):
+    # honest absence: an empty bundle still states the scope custody (0 scrolls)
+    main(["init"])
+    bundle = build_bundle(get_paths().db_path, "nothingmatcheshere")
+    assert "_Custody: 0 scroll(s)._" in bundle
+    assert "No matching scrolls." in bundle
+
+
 def test_a_drifted_scroll_is_still_carried_losslessly(scrolls_home):
     # raw is sacred: a drifted scroll is a recorded posture, never dropped
     main(["init"])

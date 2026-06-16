@@ -17,9 +17,13 @@ context, not to round-trip.
 
 Two layers in one file:
 
-1. A briefing body (Markdown) — title + scope, then one entry per in-scope
-   scroll naming its id, source, fidelity tier, capture timestamp, link, a
-   capped excerpt, its custody **drift posture** from the verify ledger
+1. A briefing body (Markdown) — title + scope, a one-line scope **custody
+   headline** (N scrolls, fidelity-tier counts, drift-posture counts — how
+   custody stands across the whole bundle, roadmap H45; totals equal the entries
+   and `doctor`'s `custody` aggregate for the scope by construction), then one
+   entry per in-scope scroll naming its id, source, fidelity tier, capture
+   timestamp, link, a capped excerpt, its custody **drift posture** from the
+   verify ledger
    (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — the same
    `latest_events` doctor's `custody.drift` aggregates, so they cannot disagree),
    and — when an engine classified it — *how the category was derived* (the
@@ -68,6 +72,12 @@ from scrolls.search import count_matches, search_items
 
 _EXCERPT_CHARS = 600
 _REGENERATED_BY = "scrolls export bundle"
+
+# Fixed display orders for the scope custody headline (roadmap H45). The fidelity
+# tiers are `get_fidelity`'s three; the drift postures are `drift_posture`'s five
+# (``verified`` is the bundle's word for doctor's ``unchanged``).
+_TIER_ORDER = ("full", "partial", "reference")
+_POSTURE_ORDER = ("verified", "unverified", "drifted", "rotted", "error")
 
 # An item with no id/source/url/saved_at isn't a Scrolls item — mirror the
 # items-export validation so a corrupt custody block fails loudly, not silently.
@@ -131,6 +141,12 @@ def build_bundle(
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
+    # the scope-level custody headline (roadmap H45): one line summarising how
+    # custody stands across the *whole* bundle — N scrolls, fidelity tiers, drift
+    # postures — so a reader gauges the scope without scanning every entry. Its
+    # totals equal the per-scroll entries by construction (same get_fidelity +
+    # drift_posture), the H42 convergence at scope level.
+    lines += [_custody_headline_line(items, verdicts), ""]
     # a concept-scoped bundle is *about* that concept, so its synthesized
     # summary and how that summary was derived belong in the briefing (H35)
     if concept is not None:
@@ -201,6 +217,57 @@ def parse_bundle(text: str) -> list[ScrollItem]:
             )
         items.append(item_from_dict(data))
     return items
+
+
+def custody_counts(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> dict[str, dict[str, int]]:
+    """Scope-level fidelity-tier and drift-posture counts over the in-bundle scrolls.
+
+    Tallies the *same* `get_fidelity` and `drift_posture` the per-scroll briefing
+    entries render, so the scope headline's totals equal the entries by
+    construction (roadmap H45). Each map carries every tier/posture in a fixed
+    order (zeros included), so the shape is stable; the counts also equal
+    `doctor`'s `custody.tiers` / `custody.drift` for the same scope — the H42
+    convergence lifted to scope level (the bundle's ``verified`` is doctor's
+    ``unchanged``; ``unverified`` is held − verdicts). ``verdicts`` is the
+    `latest_events` ledger read `build_bundle` already does once for the scope.
+    """
+    tiers = {tier: 0 for tier in _TIER_ORDER}
+    drift = {posture: 0 for posture in _POSTURE_ORDER}
+    for item in items:
+        tiers[get_fidelity(item)] += 1
+        drift[drift_posture(verdicts.get(item.id))] += 1
+    return {"tiers": tiers, "drift": drift}
+
+
+def _custody_headline_line(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> str:
+    """Render the scope custody headline as one Markdown line (roadmap H45).
+
+    Shows the scroll count and, for a non-empty scope, only the *non-zero*
+    fidelity tiers and drift postures (each section's shown counts still sum to
+    the total — every scroll has exactly one tier and one posture). An empty
+    scope is the honest ``_Custody: 0 scroll(s)._`` with no sections.
+    """
+    counts = custody_counts(items, verdicts)
+    parts = [f"{len(items)} scroll(s)"]
+    fidelity = ", ".join(
+        f"{tier} {counts['tiers'][tier]}"
+        for tier in _TIER_ORDER
+        if counts["tiers"][tier]
+    )
+    if fidelity:
+        parts.append(f"fidelity {fidelity}")
+    drift = ", ".join(
+        f"{posture} {counts['drift'][posture]}"
+        for posture in _POSTURE_ORDER
+        if counts["drift"][posture]
+    )
+    if drift:
+        parts.append(f"drift {drift}")
+    return "_Custody: " + " · ".join(parts) + "._"
 
 
 def _briefing_entry(
