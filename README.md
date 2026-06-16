@@ -77,7 +77,7 @@ Working today:
 
 ```bash
 uv run scrolls init           # create the library skeleton (idempotent)
-uv run scrolls status         # initialized? schema? item/stage/source counts? as JSON
+uv run scrolls status         # initialized? schema? item/stage/source counts + custody headline, as JSON
 uv run scrolls paths          # library layout, as JSON
 uv run scrolls detect <url>   # URL → source adapter + source-local ID, as JSON
 uv run scrolls add <url>      # register a URL as an item (stage: detected), as JSON

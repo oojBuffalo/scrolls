@@ -231,6 +231,14 @@ each command moves items between stages or derives artifacts from them.
   net `score`/drift movement into one `posture` — `regressing`/`improving`/`holding`,
   integrity-first; <2 runs is `insufficient-history` (a single point has no
   direction).
+- `scrolls status` carries a one-line **custody headline** under its item
+  counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
+  the stale enrichment/summary counts — "how custody stands" without parsing a
+  full `doctor` report. It is the same `custody_snapshot(run_doctor(...))`
+  distillation `maintain` records, so `status`, `doctor`, and a maintenance
+  snapshot can never disagree (network-free; `score` is honestly `null` before
+  `init`, `100` for an empty initialized library — the "empty is healthy"
+  posture; `tests/test_cli.py`, roadmap H38).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

@@ -228,20 +228,33 @@ and `unclassified` is the pool a batch `classify` would pick up
 `tests/test_items.py`). An uninitialized library reports zero-filled
 counts, so the payload shape never varies.
 
+`custody` is the one-line **custody headline** — "how custody stands"
+without parsing a full `doctor` report: integrity `score`, the fidelity
+`tiers` distribution, the drift posture (`checked`/`unverified`/`unchanged`/
+`drifted`/`rotted`/`error`), and the stale enrichment/summary counts. It is
+distilled from the same `run_doctor` custody view (network-free) via the
+`custody_snapshot` primitive `scrolls maintain` records, so `status` can
+never disagree with `doctor` or a maintenance snapshot
+(`test_status_custody_headline_converges_with_doctor`). Before `init` the
+`score` is honestly `null` (no store), not a fabricated `100`; an empty but
+initialized library is trivially fully custodied (`100`), the "empty is
+healthy" posture `doctor` reports.
+
 | Key | Meaning |
 | --- | --- |
 | `initialized` / `schema_version` | `false`/`null` until `init` |
 | `root` | library root in use |
 | `items` | `total`, `by_stage` (always all three stages), `by_source` (present sources only), `unclassified` |
 | `subscriptions` | followed feeds (`scrolls follow`) |
+| `custody` | the custody headline — `score`, `tiers`, `drift` posture, `enrichment_stale`, `summaries_stale` (converges with `doctor`) |
 
 ```console
 $ scrolls status        # before init
-{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0}
+{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}}
 [exit 0]
 
 $ scrolls status        # after the imports and adds below
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}}
 [exit 0]
 ```
 

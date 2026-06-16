@@ -9,10 +9,13 @@ import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
 from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.db import SCHEMA_VERSION
+from scrolls.doctor import run_doctor
 from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
+from scrolls.maintain import custody_snapshot
 from scrolls.paths import get_paths
-from scrolls.items import ScrollItem, get_item, insert_item, update_item
+from scrolls.items import ScrollItem, get_item, insert_item, make_item_id, update_item
 from scrolls.render import write_scroll
 
 
@@ -100,6 +103,28 @@ _EMPTY_COUNTS = {
 }
 
 
+def _custody_headline(score):
+    """The status custody block for a library with no findings/drift/staleness.
+
+    `score` is `null` before `init` (no store) and `100` for an empty but
+    initialized library — mirroring `run_doctor`'s own missing-vs-empty split.
+    """
+    return {
+        "score": score,
+        "tiers": {"full": 0, "partial": 0, "reference": 0},
+        "drift": {
+            "checked": 0,
+            "unverified": 0,
+            "unchanged": 0,
+            "drifted": 0,
+            "rotted": 0,
+            "error": 0,
+        },
+        "enrichment_stale": 0,
+        "summaries_stale": 0,
+    }
+
+
 def test_status_before_init(scrolls_home, capsys):
     exit_code = main(["status"])
     assert exit_code == 0
@@ -110,6 +135,8 @@ def test_status_before_init(scrolls_home, capsys):
         "schema_version": None,
         "items": _EMPTY_COUNTS,
         "subscriptions": 0,
+        # no store yet → the custody score is honestly null, not a fabricated 100
+        "custody": _custody_headline(None),
     }
 
 
@@ -126,7 +153,78 @@ def test_status_after_init(scrolls_home, capsys):
         "schema_version": SCHEMA_VERSION,
         "items": _EMPTY_COUNTS,
         "subscriptions": 0,
+        # an empty-but-initialized library is trivially fully custodied (100),
+        # the same "empty is healthy" doctor reports
+        "custody": _custody_headline(100),
     }
+
+
+def test_status_custody_headline_converges_with_doctor(scrolls_home, capsys):
+    """The custody headline is the same `run_doctor` custody view, distilled —
+    so `status` can never disagree with `doctor` (the H21/H25 convergence)."""
+    # A fidelity mix the headline must report: two full-fidelity rendered scrolls
+    # and one reference-only pointer (no content held).
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+    full = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/held"),
+        source="web",
+        source_id=None,
+        url="https://example.com/held",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A fully held capture we can re-derive.",
+        content_hash="sha256:held1234",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    drifting = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/moved"),
+        source="web",
+        source_id=None,
+        url="https://example.com/moved",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A capture whose source has since drifted.",
+        content_hash="sha256:moved567",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    reference = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/pointer"),
+        source="web",
+        source_id=None,
+        url="https://example.com/pointer",
+        saved_at="2026-06-14T00:00:00+00:00",
+        stage="detected",
+        provenance={"adapter": "web"},
+    )
+    for item in (full, drifting, reference):
+        insert_item(paths.db_path, write_scroll(paths, item))
+    # one recorded drift verdict so the headline's drift posture is non-trivial
+    record_events(
+        paths.db_path,
+        [
+            CustodyEvent(
+                drifting.id, "2026-06-15T00:00:00+00:00", "drifted",
+                "sha256:moved567", "sha256:changed99", None,
+            )
+        ],
+    )
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+
+    # convergence by construction: the headline IS the doctor custody view distilled
+    report = run_doctor(paths)
+    assert custody == custody_snapshot(report)
+    # and it is the concrete, non-trivial posture doctor reports for this scope
+    assert custody["score"] == report["custody"]["score"]
+    assert custody["tiers"] == {"full": 2, "partial": 0, "reference": 1}
+    assert custody["drift"]["drifted"] == 1
+    assert custody["drift"]["unverified"] == 2  # the two never-rechecked scrolls
 
 
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):

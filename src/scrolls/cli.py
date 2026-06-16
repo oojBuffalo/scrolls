@@ -2164,6 +2164,16 @@ def _cmd_status() -> int:
             "unclassified": 0,
         }
         subscriptions = 0
+    # Custody headline (roadmap H38): the one-line "how custody stands" an agent
+    # can read without parsing a full `doctor` report — integrity `score`,
+    # fidelity `tiers`, the drift posture (checked/unverified/drifted/…), and the
+    # stale enrichment/summary counts. Distilled from the same `run_doctor`
+    # custody view (network-free) via the `custody_snapshot` primitive `maintain`
+    # already records, so `status` can never disagree with `doctor` or a
+    # maintenance snapshot (the H21/H25 convergence-by-construction posture).
+    # `run_doctor` guards a missing store itself, so before `init` this is the
+    # honest zero block (`score: null`), not an error.
+    custody = custody_snapshot(run_doctor(paths))
     print(
         json.dumps(
             {
@@ -2172,6 +2182,7 @@ def _cmd_status() -> int:
                 "schema_version": schema_version,
                 "items": items,
                 "subscriptions": subscriptions,
+                "custody": custody,
             }
         )
     )
