@@ -209,9 +209,18 @@ and `scrolls context` headlines, `scrolls facets fidelity`/`drift`, and
 (`custody.custody_counts`/`custody_headline` over `get_fidelity` +
 `drift_posture`/`latest_events`), so they cannot disagree for a given scope (the
 one vocabulary mapping: the posture `verified` is the ledger status
-`unchanged`). That convergence is pinned once, across every surface, in
-`tests/test_custody_convergence.py` — the custody-side analogue of
+`unchanged`). That scope-level convergence is pinned once, across every surface,
+in `tests/test_custody_convergence.py` — the custody-side analogue of
 `tests/test_completeness.py` (roadmap H50).
+
+The same module pins the **per-item** counterpart (roadmap H59): the per-item
+`drift` posture now rides every browse/landing surface — `scrolls list` rows and
+`scrolls search` hits (H58), `scrolls related` hits and `scrolls graph` nodes
+(H56), and the `export bundle` briefing (H42) — each reading the same
+`custody.drift_posture` over `latest_events`. The invariant asserts a given item
+reads the *same* `drift` on every surface that carries it, and that each
+whole-library-enumerating surface's per-item posture counts total `facets drift`'s
+count for that posture — tying the per-item axis back to the aggregate.
 
 ## Library lifecycle
 
