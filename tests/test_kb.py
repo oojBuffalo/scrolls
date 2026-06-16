@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.generated import generated_body
 from scrolls.items import ScrollItem, insert_item, update_item
 from scrolls.kb import compile_kb
@@ -21,7 +22,7 @@ def scrolls_home(monkeypatch, tmp_path):
 
 def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=(),
                   links=(), saved_at="2026-06-01T00:00:00+00:00", markdown_path=None,
-                  source_id=None, url=None):
+                  source_id=None, url=None, raw_text=None, content_hash=None):
     slug = title.lower().replace(" ", "-")
     return ScrollItem(
         id=item_id,
@@ -36,6 +37,8 @@ def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=()
         links=tuple(links),
         markdown_path=markdown_path or f"scrolls/{source}/{slug}.md",
         stage="rendered",
+        raw_text=raw_text,
+        content_hash=content_hash,
     )
 
 
@@ -311,6 +314,153 @@ def test_related_tags_co_occurrence_folds_case_and_caps(scrolls_home):
     assert len(python) == 10  # capped from 12 neighbours
     assert all(key != "python" for key, _display, _shared in python)  # never self-relates
     assert python[0] == ("lib00", "lib00", 2)  # lib00 co-occurs on two Python scrolls
+
+
+# --- per-item custody markers on the list pages (roadmap H89) -------------
+
+
+def _drift(db, item_id, status, *, checked_at="2026-06-10T00:00:00+00:00"):
+    """Seed one latest custody verdict so a list-page row shows a posture."""
+    record_events(db, [CustodyEvent(
+        item_id=item_id, checked_at=checked_at, status=status,
+        prior_hash="old", observed_hash="new" if status == "drifted" else None)])
+
+
+def test_kb_list_pages_carry_per_item_custody_markers(scrolls_home, capsys):
+    """Each source/category page row carries `· <fidelity> · <drift>`."""
+    main(["init"])
+    db = get_paths().db_path
+    # a full-fidelity capture (re-derivable body + hash) and a reference-only one
+    insert_item(db, make_rendered(
+        "wikipedia:en:SQLite", "wikipedia", "SQLite", category="reference",
+        raw_text="full body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:pointer", "wikipedia", "A pointer", category="reference"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    source_page = (scrolls_home / "library" / "sources" / "wikipedia.md").read_text(
+        encoding="utf-8")
+    # marker trails the existing note (the category here), never replaces it;
+    # a never-checked item is honestly `unverified`, never silently "clean"
+    assert ("- [SQLite](../../scrolls/wikipedia/sqlite.md) — reference"
+            " · full · unverified") in source_page
+    assert ("- [A pointer](../../scrolls/wikipedia/a-pointer.md) — reference"
+            " · reference · unverified") in source_page
+
+    category_page = (scrolls_home / "library" / "categories" / "reference.md").read_text(
+        encoding="utf-8")
+    assert ("- [SQLite](../../scrolls/wikipedia/sqlite.md) — wikipedia"
+            " · full · unverified") in category_page
+
+
+def test_kb_list_page_marker_reflects_the_drift_ledger(scrolls_home, capsys):
+    """The drift half of a row's marker is the item's latest ledger verdict."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:drifted", "web", "Moved post", category="news",
+        raw_text="body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:clean", "web", "Steady post", category="news",
+        raw_text="body", content_hash="h2"))
+    _drift(db, "web:drifted", "drifted")
+    _drift(db, "web:clean", "unchanged")  # `unchanged` reads as the `verified` posture
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    assert ("- [Moved post](../../scrolls/web/moved-post.md) — web"
+            " · full · drifted") in page
+    assert ("- [Steady post](../../scrolls/web/steady-post.md) — web"
+            " · full · verified") in page
+
+
+def test_kb_concept_and_tag_pages_carry_custody_markers(scrolls_home, capsys):
+    """Concept and tag list pages carry the same per-row custody marker."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "FTS deep dive", concepts=("BM25",), tags=("search",),
+        raw_text="body", content_hash="h1"))
+    _drift(db, "web:a", "rotted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    concept_page = (library / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    assert ("- [FTS deep dive](../../scrolls/web/fts-deep-dive.md) — web"
+            " · full · rotted") in concept_page
+    tag_page = (library / "tags" / "search.md").read_text(encoding="utf-8")
+    assert ("- [FTS deep dive](../../scrolls/web/fts-deep-dive.md) — web"
+            " · full · rotted") in tag_page
+
+
+def test_kb_category_consolidated_representations_carry_custody_markers(scrolls_home, capsys):
+    """A consolidated work's nested representation bullets carry the marker too."""
+    main(["init"])
+    db = get_paths().db_path
+    doi_url = "https://doi.org/10.1234/abc"
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper (preprint)", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "crossref:1", "crossref", "A Paper", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="h2"))
+    _drift(db, "arxiv:1", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "ml.md").read_text(encoding="utf-8")
+    # consolidated under one work heading; each rep is a nested bullet with a marker
+    assert "  - [A Paper (preprint)](../../scrolls/arxiv/a-paper-(preprint).md) — arxiv" \
+        " · full · drifted" in page
+    assert "  - [A Paper](../../scrolls/crossref/a-paper.md) — crossref" \
+        " · full · unverified" in page
+
+
+def test_kb_custody_markers_are_refresh_safe(scrolls_home, capsys):
+    """A re-verify refreshes the marker on recompile; an annotation survives."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:x", "web", "A post", category="news", raw_text="body", content_hash="h1"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page_path = scrolls_home / "library" / "categories" / "news.md"
+    page = page_path.read_text(encoding="utf-8")
+    assert "· full · unverified" in page
+    # the marker lives inside the generated fence (it is part of the body)
+    assert "· full · unverified" in generated_body(page)
+    # a human annotation appended outside the fence
+    page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # the source drifts and is re-verified, then the library recompiles
+    _drift(db, "web:x", "drifted", checked_at="2026-06-12T00:00:00+00:00")
+    run_kb(capsys)
+    refreshed = page_path.read_text(encoding="utf-8")
+    assert "· full · drifted" in refreshed  # marker refreshed in the fenced region
+    assert "· full · unverified" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
+def test_kb_index_and_graph_pages_omit_the_custody_marker(scrolls_home, capsys):
+    """The marker is scoped to the group list pages, not the index/graph rollups."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:x", "web", "A post", category="news", raw_text="body", content_hash="h1"))
+    _drift(db, "web:x", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    index = (library / "index.md").read_text(encoding="utf-8")
+    recent = generated_body(index).split("## Recent\n")[1]
+    assert "- [A post](../scrolls/web/a-post.md)" in recent
+    assert "· full · drifted" not in recent  # index Recent teaser stays a bare row
 
 
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
@@ -760,7 +910,8 @@ def test_kb_category_page_uses_canonical_title_and_interleaves(scrolls_home, cap
     run_kb(capsys)
     bullets = _category_bullets(scrolls_home, "paper")
     # the singleton 'Apex Paper' sorts before the work header 'Zeta Published Title'
-    assert bullets[0] == "- [Apex Paper](../../scrolls/web/apex-paper.md) — web"
+    assert bullets[0] == (
+        "- [Apex Paper](../../scrolls/web/apex-paper.md) — web · reference · unverified")
     # the canonical (crossref) title heads the consolidated work, not the preprint's
     assert bullets[1].startswith("- **Zeta Published Title** — 2 representations")
     assert "Zeta Preprint Title" not in bullets[1]
@@ -779,7 +930,9 @@ def test_kb_category_page_leaves_single_representation_uncollapsed(scrolls_home,
 
     run_kb(capsys)
     bullets = _category_bullets(scrolls_home, "paper")
-    assert bullets == ["- [Solo Preprint](../../scrolls/arxiv/solo-preprint.md) — arxiv"]
+    assert bullets == [
+        "- [Solo Preprint](../../scrolls/arxiv/solo-preprint.md) — arxiv"
+        " · reference · unverified"]
 
 
 def test_kb_source_pages_do_not_consolidate(scrolls_home, capsys):
@@ -868,8 +1021,8 @@ def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home
         "\n"
         "2 scrolls.\n"
         "\n"
-        "- [A](../../scrolls/web/a.md) — web\n"
-        "- [B](../../scrolls/web/b.md) — web\n"
+        "- [A](../../scrolls/web/a.md) — web · reference · unverified\n"
+        "- [B](../../scrolls/web/b.md) — web · reference · unverified\n"
         "\n"
         "## Related Concepts\n"
         "\n"

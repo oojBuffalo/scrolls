@@ -27,9 +27,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.custody import CustodyEvent, drift_posture, latest_events
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
-from scrolls.items import ScrollItem, list_items
+from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
 from scrolls.works import Work, works_over
@@ -177,6 +178,10 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     if not paths.db_path.exists():
         return KbResult(0, 0, 0, 0, 0, 0, 0, 0, 0)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
+    # one ledger read for the whole compile, shared by every list-page row's
+    # custody marker (the bundle/context pattern, roadmap H89) — the per-row
+    # posture and doctor's drift aggregate read the same `latest_events`
+    verdicts = latest_events(paths.db_path)
 
     by_source: dict[str, list[ScrollItem]] = {}
     by_category: dict[str, list[ScrollItem]] = {}
@@ -208,7 +213,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     for source, members in by_source.items():
         _write_page(
             paths, written, f"sources/{slugify(source) or 'untitled'}.md",
-            f"Source: {source}", members, note=lambda i: i.category,
+            f"Source: {source}", members, note=lambda i: i.category, verdicts=verdicts,
         )
         pages += 1
     for category, members in by_category.items():
@@ -218,7 +223,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         # category but not a source
         _write_page(
             paths, written, f"categories/{slugify(category) or 'untitled'}.md",
-            f"Category: {category}", members, note=lambda i: i.source,
+            f"Category: {category}", members, note=lambda i: i.source, verdicts=verdicts,
             consolidate_works=items_by_id,
         )
         pages += 1
@@ -229,6 +234,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
+            verdicts=verdicts,
             lead=stored.summary if stored else None,
             trailer=_related_lines(
                 "Related Concepts", related.get(slug, []), lambda key: key
@@ -239,6 +245,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"tags/{tag_filenames[key]}.md",
             f"Tag: {entry['display']}", entry["items"], note=lambda i: i.source,
+            verdicts=verdicts,
             trailer=_related_lines(
                 "Related Tags", related_tag_map.get(key, []),
                 lambda other: tag_filenames[other],
@@ -320,8 +327,8 @@ def _write_index(
 
 
 def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: str,
-                members: list[ScrollItem], note, lead: str | None = None,
-                trailer: list[str] | None = None,
+                members: list[ScrollItem], note, verdicts: dict[str, CustodyEvent],
+                lead: str | None = None, trailer: list[str] | None = None,
                 consolidate_works: dict[str, ScrollItem] | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
     lines = [f"# {title}", ""]
@@ -329,10 +336,13 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
         lines += [lead, ""]
     lines += [f"{_count(len(members))}.", ""]
     if consolidate_works is not None:  # category pages collapse works (ADR 0071)
-        lines += _consolidated_body(members, page_dir, note, consolidate_works)
+        lines += _consolidated_body(members, page_dir, note, consolidate_works, verdicts)
     else:
         ordered = sorted(members, key=_entry_sort_key)
-        lines += [_item_line(item, page_dir, note(item)) for item in ordered]
+        lines += [
+            _item_line(item, page_dir, note(item), _custody_marker(item, verdicts))
+            for item in ordered
+        ]
     if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
         lines += trailer
     _emit(paths.library_dir / relpath, lines, written)
@@ -361,7 +371,7 @@ def _entry_sort_key(item) -> tuple[str, str]:
 
 def _consolidated_body(
     members: list[ScrollItem], page_dir: str, note,
-    items_by_id: dict[str, ScrollItem],
+    items_by_id: dict[str, ScrollItem], verdicts: dict[str, CustodyEvent],
 ) -> list[str]:
     """A category page's body with same-work representations collapsed (ADR 0071).
 
@@ -387,12 +397,18 @@ def _consolidated_body(
             f"([doi.org/{work.doi}]({work.url}))"
         ]
         # representations already sorted by id (works_over), nested beneath
-        block += [f"  {_item_line(item, page_dir, note(item))}" for item in reps]
+        block += [
+            f"  {_item_line(item, page_dir, note(item), _custody_marker(item, verdicts))}"
+            for item in reps
+        ]
         entries.append((_entry_sort_key(canonical), block))
     for item in members:
         if item.id in consolidated_ids:
             continue
-        entries.append((_entry_sort_key(item), [_item_line(item, page_dir, note(item))]))
+        entries.append((
+            _entry_sort_key(item),
+            [_item_line(item, page_dir, note(item), _custody_marker(item, verdicts))],
+        ))
     entries.sort(key=lambda entry: entry[0])
     return [line for _, block in entries for line in block]
 
@@ -554,10 +570,32 @@ def _representation_count(n: int) -> str:
     return f"{n} representation{'' if n == 1 else 's'}"
 
 
-def _item_line(item: ScrollItem, page_dir: str, note: str | None = None) -> str:
+def _item_line(item: ScrollItem, page_dir: str, note: str | None = None,
+               custody: str = "") -> str:
     link = os.path.relpath(item.markdown_path, start=page_dir)
     line = f"- [{item.title or item.id}]({link})"
-    return f"{line} — {note}" if note else line
+    if note:
+        line = f"{line} — {note}"
+    return f"{line}{custody}"
+
+
+def _custody_marker(item: ScrollItem, verdicts: dict[str, CustodyEvent]) -> str:
+    """A compact `· <fidelity> · <drift>` per-row custody marker (roadmap H89).
+
+    The two-axis per-item custody picture every agent-facing surface already
+    carries — the fidelity tier (`get_fidelity`, how much we still hold) and the
+    drift posture (`custody.drift_posture` over the item's latest `latest_events`
+    verdict, whether the source has moved) — rendered for a human browsing the
+    compiled `library/` list pages, the one surface the per-item picture skipped.
+    Trails the row's existing note rather than replacing it. A never-checked item
+    is honestly ``unverified`` (`drift_posture(None)`), never silently "clean";
+    the marker reads the same posture `doctor`/`facets drift`/the browse rows do,
+    from the one ledger read `compile_kb` shares across the whole compile.
+    Report-only: the marker is a derived read, never a stored or mutated field
+    (custody §2.4). Rendered inside the page's `@generated` fence (ADR 0102), so a
+    recompile refreshes it without touching a hand annotation outside the block.
+    """
+    return f" · {get_fidelity(item)} · {drift_posture(verdicts.get(item.id))}"
 
 
 def _count(n: int) -> str:
