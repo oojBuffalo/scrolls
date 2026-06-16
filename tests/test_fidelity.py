@@ -149,6 +149,7 @@ def test_summary_carries_the_browse_fields_plus_fidelity():
         "stage": "fetched",
         "saved_at": NOW,
         "fidelity": "full",
+        "works": [],  # work membership defaults empty when none is passed
     }
 
 

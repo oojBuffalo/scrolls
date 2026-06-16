@@ -18,15 +18,28 @@ ADR 0097), so a search result tells an agent not just *what* matched but at
 what fidelity the library still holds it — the same tier `scrolls list` and
 the facets surface, now travelling with ranked hits too. It is derived from
 content *presence* read in SQL, never by hauling each match's body text.
+
+A hit also carries the scholarly work(s) it represents (ADR 0101): when two
+ranked hits are the same work — an arXiv preprint and its published Crossref
+record — each names the work's DOI and points at its canonical representation,
+so an agent searching "attention is all you need" sees the two top hits *are*
+one work and which form to prefer, rather than treating them as unrelated
+results. Computed by the same DOI clustering `scrolls works` reports.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from scrolls.items import fidelity_tier, item_filters, register_facet_functions
+from scrolls.items import (
+    fidelity_tier,
+    item_filters,
+    list_items,
+    register_facet_functions,
+)
+from scrolls.works import WorkRef, work_membership
 
 _BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
 _SNIPPET_TOKENS = 12
@@ -67,6 +80,7 @@ class SearchHit:
     score: float
     snippet: str
     fidelity: str
+    works: tuple[WorkRef, ...] = field(default_factory=tuple)
 
 
 def search_items(
@@ -103,7 +117,19 @@ def search_items(
         rows = conn.execute(sql, (match, *params, limit)).fetchall()
     finally:
         conn.close()
-    return [_hit(row) for row in rows]
+    hits = [_hit(row) for row in rows]
+    if not hits:
+        return hits
+    # Annotate each hit with the work(s) it represents (ADR 0101). Membership
+    # is a property of the *whole* library — a hit's sibling representation may
+    # be filtered out of this result, or rank below the limit — so it clusters
+    # over every item, not just the matched rows. The search facets are
+    # deliberately NOT passed to list_items here: applying them would re-hide
+    # the very siblings this annotation exists to surface, undercounting a work.
+    # Only computed when there are hits to annotate; the cost mirrors `scrolls
+    # works`, which list_items the library the same way.
+    membership = work_membership(list_items(db_path))
+    return [replace(hit, works=membership.get(hit.id, ())) for hit in hits]
 
 
 def _hit(row: tuple) -> SearchHit:

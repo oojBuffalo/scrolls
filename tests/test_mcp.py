@@ -219,8 +219,9 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
     assert [r["id"] for r in rows] == ["arxiv:2401.0001", "web:abc"]
     assert set(rows[0]) == {
         "id", "source", "url", "title", "category", "stage", "saved_at",
-        "fidelity",
+        "fidelity", "works",
     }
+    assert rows[0]["works"] == []  # neither item shares a work (ADR 0101)
 
     # facets AND together, mirroring scrolls list (incl. the tag membership facet)
     assert [r["id"] for r in mcp_server.list_scrolls(source="arxiv", tag="EFFICIENT")] == [
@@ -254,6 +255,37 @@ def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
 
     tiers = {r["id"]: r["fidelity"] for r in mcp_server.list_scrolls()}
     assert tiers == {"web:full": "full", "web:ref": "reference"}
+
+
+def test_list_and_search_scrolls_carry_work_membership(scrolls_home):
+    # which scholarly work a browse result represents travels with it (ADR 0101),
+    # the same way fidelity does — across both MCP browse surfaces
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv",
+        url="https://arxiv.org/abs/1706.03762", saved_at="2026-06-12T00:00:00+00:00",
+        title="Attention Is All You Need",
+        extracted_text="We propose the Transformer based on attention.",
+        links=("https://doi.org/10.5555/3295222",), stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref",
+        source_id="10.5555/3295222", url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T01:00:00+00:00", title="Attention Is All You Need",
+        extracted_text="We propose the Transformer based on attention.",
+        stage="fetched"))
+
+    listed = {r["id"]: r["works"] for r in mcp_server.list_scrolls()}
+    assert listed["arxiv:1706.03762"][0]["canonical"] == "crossref:10.5555/3295222"
+    assert listed["arxiv:1706.03762"][0]["is_canonical"] is False
+    assert listed["crossref:10.5555/3295222"][0]["is_canonical"] is True
+
+    searched = {h["id"]: h["works"] for h in mcp_server.search_scrolls("attention")}
+    assert searched["arxiv:1706.03762"][0]["representations"] == 2
+    assert searched["arxiv:1706.03762"][0]["canonical"] == "crossref:10.5555/3295222"
 
 
 def test_list_facets_enumerates_the_filterable_vocabulary(scrolls_home):

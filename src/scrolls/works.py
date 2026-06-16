@@ -118,6 +118,29 @@ class Work:
     canonical: Representation
 
 
+@dataclass(frozen=True)
+class WorkRef:
+    """One item's membership in a multi-representation work — the compact form
+    that travels with a browse hit (search, list), the way the custody
+    `fidelity` tier does (ADR 0100).
+
+    Where `Work` is the whole cluster with every representation, a `WorkRef` is
+    the single-item view: this item is one of `representations` saved forms of
+    the work named by `doi`, whose canonical representation (ADR 0095) is the
+    item with id `canonical`. `is_canonical` says whether *this* item is that
+    canonical one, so a search result can flag "you found the preprint; the
+    published record `crossref:…` is the canonical form" without the agent
+    re-deriving the clustering. Compact by design: an agent that wants the full
+    representation set asks `scrolls works --ref <id>` / `get_works(item=…)`.
+    """
+
+    doi: str
+    url: str
+    canonical: str
+    is_canonical: bool
+    representations: int
+
+
 def find_works(
     db_path: Path, *, min_representations: int = DEFAULT_MIN_REPRESENTATIONS
 ) -> list[Work]:
@@ -201,6 +224,61 @@ def works_for_item(items: list[ScrollItem], item_id: str) -> list[Work]:
         work
         for work in works_over(items, min_representations=1)
         if work.doi in target_dois
+    ]
+
+
+def work_membership(
+    items: list[ScrollItem], *, min_representations: int = DEFAULT_MIN_REPRESENTATIONS
+) -> dict[str, tuple[WorkRef, ...]]:
+    """Index each item id to the multi-representation work(s) it belongs to.
+
+    The browse-surface counterpart to `works_over`: that clusters the library
+    into works; this inverts the clustering to a per-item lookup so `scrolls
+    search` and `scrolls list` can annotate every hit with the work it
+    represents and which form is canonical — one shared clustering, not one
+    re-derived per surface. An item appears only when it belongs to a work with
+    at least `min_representations` members (default 2); items that name no DOI,
+    or whose DOI no sibling shares, are absent, and callers default a missing id
+    to an empty tuple — "this is not (yet) a known duplicate of anything saved".
+
+    An item that names two DOIs can be a representation of two works, so the
+    value is a tuple, in the order `works_over` emits the works (representation
+    count descending, then DOI — stable run to run), mirroring `works_for_item`'s
+    list rather than forcing a single membership.
+    """
+    membership: dict[str, list[WorkRef]] = {}
+    for work in works_over(items, min_representations=min_representations):
+        count = len(work.representations)
+        for rep in work.representations:
+            membership.setdefault(rep.id, []).append(
+                WorkRef(
+                    doi=work.doi,
+                    url=work.url,
+                    canonical=work.canonical.id,
+                    is_canonical=rep.id == work.canonical.id,
+                    representations=count,
+                )
+            )
+    return {item_id: tuple(refs) for item_id, refs in membership.items()}
+
+
+def membership_payload(refs: tuple[WorkRef, ...]) -> list[dict]:
+    """A browse hit's `works` field: its `WorkRef`s as JSON dicts (`[]` if none).
+
+    Shared by `scrolls search`, `scrolls list`, and their MCP twins so the
+    work-membership a hit carries has one shape across every browse surface
+    (the same single-definition discipline `item_summary` keeps for the rest of
+    a summary row).
+    """
+    return [
+        {
+            "doi": ref.doi,
+            "url": ref.url,
+            "canonical": ref.canonical,
+            "is_canonical": ref.is_canonical,
+            "representations": ref.representations,
+        }
+        for ref in refs
     ]
 
 

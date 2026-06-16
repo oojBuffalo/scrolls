@@ -42,7 +42,13 @@ from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.graph import build_graph, to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS as DEFAULT_WORK_MIN
-from scrolls.works import to_payload as works_payload, works_for_item, works_over
+from scrolls.works import (
+    membership_payload,
+    to_payload as works_payload,
+    work_membership,
+    works_for_item,
+    works_over,
+)
 from scrolls.items import (
     ScrollItem,
     get_item,
@@ -1416,19 +1422,30 @@ def _cmd_list(
     concept: str | None = None,
 ) -> int:
     paths = get_paths()
-    items = (
-        list_items(
-            paths.db_path,
-            stage=stage,
-            source=source,
-            category=category,
-            tag=tag,
-            concept=concept,
-        )
-        if paths.db_path.exists()
-        else []
+    if not paths.db_path.exists():
+        print(json.dumps([]))
+        return 0
+    items = list_items(
+        paths.db_path,
+        stage=stage,
+        source=source,
+        category=category,
+        tag=tag,
+        concept=concept,
     )
-    print(json.dumps([item_summary(item) for item in items]))
+    # Work membership is a whole-library property (ADR 0101): a filtered listing
+    # (e.g. source=arxiv) hides an item's sibling representation, so clustering
+    # over the filtered rows would undercount it. Cluster over every item, then
+    # annotate the rows this listing shows.
+    membership = work_membership(list_items(paths.db_path))
+    print(
+        json.dumps(
+            [
+                item_summary(item, membership_payload(membership.get(item.id, ())))
+                for item in items
+            ]
+        )
+    )
     return 0
 
 

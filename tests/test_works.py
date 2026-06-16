@@ -17,7 +17,13 @@ import pytest
 from scrolls.cli import main
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
-from scrolls.works import find_works, works_for_item, works_over
+from scrolls.works import (
+    find_works,
+    membership_payload,
+    work_membership,
+    works_for_item,
+    works_over,
+)
 
 
 @pytest.fixture
@@ -437,3 +443,120 @@ def test_cli_works_with_unknown_ref_errors(db, capsys):
     assert main(["works", "arxiv:does-not-exist"]) == 1
     err = json.loads(capsys.readouterr().err)
     assert err == {"error": "no such item: arxiv:does-not-exist"}
+
+
+# --- the browse-surface index: work_membership (ADR 0101) ------------------
+
+
+def test_work_membership_maps_each_representation_to_its_work():
+    preprint, published = _attention_pair()
+    membership = work_membership([preprint, published])
+    # both representations of the one work appear, each pointing at the work
+    assert set(membership) == {"arxiv:1706.03762", "crossref:10.5555/3295222"}
+    (preprint_ref,) = membership["arxiv:1706.03762"]
+    assert preprint_ref.doi == "10.5555/3295222"
+    assert preprint_ref.url == "https://doi.org/10.5555/3295222"
+    assert preprint_ref.representations == 2
+    # the published Crossref record is the canonical form (ADR 0095) ...
+    assert preprint_ref.canonical == "crossref:10.5555/3295222"
+    assert preprint_ref.is_canonical is False  # ... and the preprint is not it
+    (published_ref,) = membership["crossref:10.5555/3295222"]
+    assert published_ref.is_canonical is True
+
+
+def test_work_membership_omits_single_representation_works():
+    # a paper that names a DOI no sibling shares is not a duplicate of anything,
+    # so it carries no membership — the 2+ floor `works_over` applies by default
+    preprint, _ = _attention_pair()
+    assert work_membership([preprint]) == {}
+
+
+def test_work_membership_omits_items_with_no_doi():
+    plain = make_item("web:abc", links=("https://example.org/elsewhere",))
+    assert work_membership([plain]) == {}
+
+
+def test_work_membership_indexes_an_item_into_each_of_its_works():
+    # one item can name two DOIs and so be a representation of two works
+    # (mirrors test_one_item_can_belong_to_two_works); membership lists both
+    hub = make_item(
+        "arxiv:multi",
+        url="https://arxiv.org/abs/multi",
+        links=("https://doi.org/10.1000/a", "https://doi.org/10.2000/b"),
+    )
+    sib_a = make_item("crossref:10.1000/a", url="https://doi.org/10.1000/a")
+    sib_b = make_item("crossref:10.2000/b", url="https://doi.org/10.2000/b")
+    refs = work_membership([hub, sib_a, sib_b])["arxiv:multi"]
+    assert sorted(ref.doi for ref in refs) == ["10.1000/a", "10.2000/b"]
+
+
+def test_membership_payload_is_the_browse_json_shape():
+    preprint, published = _attention_pair()
+    refs = work_membership([preprint, published])["arxiv:1706.03762"]
+    assert membership_payload(refs) == [
+        {
+            "doi": "10.5555/3295222",
+            "url": "https://doi.org/10.5555/3295222",
+            "canonical": "crossref:10.5555/3295222",
+            "is_canonical": False,
+            "representations": 2,
+        }
+    ]
+    assert membership_payload(()) == []
+
+
+def test_cli_list_annotates_each_row_with_its_work(db, capsys):
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+    insert_item(db, make_item("web:lonely", url="https://example.org/lonely"))
+
+    assert main(["list"]) == 0
+    rows = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    # the preprint row points at the published canonical form
+    assert rows["arxiv:1706.03762"]["works"] == [
+        {
+            "doi": "10.5555/3295222",
+            "url": "https://doi.org/10.5555/3295222",
+            "canonical": "crossref:10.5555/3295222",
+            "is_canonical": False,
+            "representations": 2,
+        }
+    ]
+    assert rows["crossref:10.5555/3295222"]["works"][0]["is_canonical"] is True
+    # the unrelated item carries no membership
+    assert rows["web:lonely"]["works"] == []
+
+
+def test_cli_list_membership_survives_a_facet_filter(db, capsys):
+    # filtering to one source hides the sibling representation, but membership
+    # is computed over the whole library, so the shown row still reports 2 reps
+    preprint, published = _attention_pair()
+    insert_item(db, preprint)
+    insert_item(db, published)
+
+    assert main(["list", "--source", "arxiv"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in rows] == ["arxiv:1706.03762"]
+    assert rows[0]["works"][0]["representations"] == 2
+    assert rows[0]["works"][0]["canonical"] == "crossref:10.5555/3295222"
+
+
+def test_cli_search_hits_point_at_the_canonical_representation(db, capsys):
+    insert_item(db, make_item(
+        "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+        title="Attention Is All You Need",
+        extracted_text="We propose the Transformer based on attention.",
+        links=("https://doi.org/10.5555/3295222",),
+    ))
+    insert_item(db, make_item(
+        "crossref:10.5555/3295222", url="https://doi.org/10.5555/3295222",
+        title="Attention Is All You Need",
+        extracted_text="We propose the Transformer based on attention.",
+    ))
+
+    assert main(["search", "attention transformer"]) == 0
+    hits = {h["id"]: h for h in json.loads(capsys.readouterr().out)}
+    assert hits["arxiv:1706.03762"]["works"][0]["canonical"] == "crossref:10.5555/3295222"
+    assert hits["arxiv:1706.03762"]["works"][0]["is_canonical"] is False
+    assert hits["crossref:10.5555/3295222"]["works"][0]["is_canonical"] is True

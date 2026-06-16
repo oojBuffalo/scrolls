@@ -115,13 +115,21 @@ def get_fidelity(item: ScrollItem) -> str:
     )
 
 
-def item_summary(item: ScrollItem) -> dict[str, Any]:
+def item_summary(
+    item: ScrollItem, works: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """The compact browse record shared by `scrolls list` and MCP `list_scrolls`.
 
     Enough to scan and pick an item — id, source, url, title, category, stage,
     saved_at — plus its custody `fidelity` tier, so an agent browsing the
     library sees at a glance which items it holds in full and which are
     reference-only. One definition keeps the CLI and MCP surfaces identical.
+
+    `works` is the item's scholarly-work membership (ADR 0101): the JSON the
+    caller builds with `works.membership_payload`, or `None`/`[]` when the item
+    belongs to no multi-representation work. It is passed in rather than derived
+    here so this module stays free of the `works` clustering (which itself reads
+    items), and so a `list` over the whole library clusters once, not per row.
     """
     return {
         "id": item.id,
@@ -132,6 +140,7 @@ def item_summary(item: ScrollItem) -> dict[str, Any]:
         "stage": item.stage,
         "saved_at": item.saved_at,
         "fidelity": get_fidelity(item),
+        "works": works or [],
     }
 
 

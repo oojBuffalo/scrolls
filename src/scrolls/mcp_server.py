@@ -28,6 +28,7 @@ from scrolls.facets import compute_facets
 from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
+from scrolls.works import membership_payload, work_membership
 from scrolls.works import to_payload as works_payload
 from scrolls.works import works_for_item, works_over
 from scrolls.items import count_by_source, get_item, item_summary, list_items
@@ -87,6 +88,12 @@ def search_scrolls(
     (matched by slug, so "BM25" and "bm25" agree). Use them to ask, e.g.,
     what *papers* tagged efficient the library knows about a topic, not just
     what mentions it.
+
+    Each hit also carries the scholarly `works` it represents (ADR 0101):
+    empty for most hits, but when two hits are the same work — a preprint and
+    its published record — each names the work's DOI and which hit is the
+    canonical form, so you can collapse the duplicate and follow the canonical
+    rather than treating the two as unrelated matches.
     """
     paths = get_paths()
     hits = search_items(
@@ -119,10 +126,13 @@ def list_scrolls(
     (case-insensitive), and `concept` by membership (matched by slug). Items
     come oldest-saved first, capped at `limit` (default 50) to stay
     context-friendly — raise it to see more. Each entry is a summary (id,
-    source, url, title, category, stage, saved_at, and the custody `fidelity`
-    tier — full/partial/reference, ADR 0097); follow up with get_scroll for the
-    full record. Use it for "what arxiv papers tagged efficient are in the
-    library", which has no natural search query.
+    source, url, title, category, stage, saved_at, the custody `fidelity`
+    tier — full/partial/reference, ADR 0097 — and the scholarly `works` it
+    represents, ADR 0101: empty unless the item is one of several saved forms
+    of one work, in which case each entry names the work's DOI and canonical
+    form); follow up with get_scroll for the full record. Use it for "what
+    arxiv papers tagged efficient are in the library", which has no natural
+    search query.
     """
     paths = get_paths()
     if not paths.db_path.exists():
@@ -135,7 +145,14 @@ def list_scrolls(
         tag=tag,
         concept=concept,
     )[:limit]
-    return [item_summary(item) for item in items]
+    # Membership is a whole-library property (ADR 0101): cluster over every
+    # item so a filtered/limited listing still reports an item's siblings, then
+    # annotate the rows shown — the same approach `scrolls list` takes.
+    membership = work_membership(list_items(paths.db_path))
+    return [
+        item_summary(item, membership_payload(membership.get(item.id, ())))
+        for item in items
+    ]
 
 
 def list_facets(

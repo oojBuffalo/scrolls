@@ -502,10 +502,13 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     assert hit["id"] == "wikipedia:en:SQLite"
     assert hit["title"] == "SQLite"
     assert set(hit) == {
-        "id", "source", "title", "url", "stage", "score", "snippet", "fidelity"
+        "id", "source", "title", "url", "stage", "score", "snippet", "fidelity",
+        "works",
     }
     # a freshly fetched Wikipedia article holds a re-derivable body — full custody
     assert hit["fidelity"] == "full"
+    # a lone item is no duplicate of any saved work (ADR 0101)
+    assert hit["works"] == []
 
 
 def test_search_no_matches_prints_empty_array(scrolls_home, fake_wikipedia_api, capsys):
@@ -2006,9 +2009,10 @@ def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     for entry in payload:
         assert entry["stage"] == "detected"
         assert entry["fidelity"] == "reference"  # detected, no content held yet
+        assert entry["works"] == []  # neither is a saved form of a shared work
         assert set(entry) == {
             "id", "source", "url", "title", "category", "stage", "saved_at",
-            "fidelity",
+            "fidelity", "works",
         }
 
 

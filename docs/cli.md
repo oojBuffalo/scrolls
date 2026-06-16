@@ -1070,7 +1070,16 @@ Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
 (`test_list_after_adds_prints_summaries`,
 `test_list_before_init_prints_empty_array`). Summary keys: `id`,
-`source`, `url`, `title`, `category`, `stage`, `saved_at`.
+`source`, `url`, `title`, `category`, `stage`, `saved_at`, `fidelity`
+(the custody tier — `full`/`partial`/`reference`, ADR 0097/0100 — the same
+tier `scrolls search`/`scrolls facets fidelity` report), and `works`
+(ADR 0101): the scholarly work(s) the item represents, `[]` unless it is
+one of several saved forms of one work, in which case each entry names the
+work's `doi`/`url`, the `canonical` form's id, whether this item
+`is_canonical`, and the `representations` count. Membership is the
+whole-library DOI clustering `scrolls works` reports — a filtered listing
+(e.g. `--source arxiv`) still reports an item's full sibling count, even
+when those siblings are filtered out of the rows shown.
 
 Filters combine with AND
 (`test_list_filters_by_source_stage_and_category`): `--source` and
@@ -1088,16 +1097,16 @@ overload — a value that nothing has prints `[]`.
 
 ```console
 $ scrolls list
-[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
+[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00", "fidelity": "full", "works": []}, {"id": "x:2222", ...}, {"id": "arxiv:1706.03762", ..., "title": null, "stage": "detected", ...}, {"id": "x:3333", ...}]
 [exit 0]
 
 $ scrolls list --source x --category technique
-[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00"}]
+[{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "category": "technique", "stage": "fetched", "saved_at": "2026-06-04T04:27:46+00:00", "fidelity": "full", "works": []}]
 [exit 0]
 ```
 
 *(in the first call, array entries after the first are elided here for
-width — every entry has the same seven keys)*
+width — every entry has the same nine keys)*
 
 ### `scrolls facets [field] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
 
@@ -1195,15 +1204,26 @@ case-insensitive, `--concept` by slug, as `scrolls related` compares them
 `[]`, not an error.
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
-(matches bracketed, `…` for elided context), and `fidelity` — the custody
+(matches bracketed, `…` for elided context), `fidelity` — the custody
 tier (`full`/`partial`/`reference`, ADR 0097/0100) at which the library
 still holds the match, the same tier `scrolls list` and `scrolls facets
 fidelity` report, so a hit says not just *what* matched but how much of it
-you hold.
+you hold — and `works` (ADR 0101): the scholarly work(s) the hit
+represents, `[]` for most hits but, when two hits are the same work (an
+arXiv preprint and its published Crossref record), each carries the work's
+`doi`/`url`, the `canonical` form's id, whether this hit `is_canonical`,
+and the `representations` count, so an agent collapses the duplicate and
+follows the canonical instead of treating the two as unrelated matches.
+Membership is the whole-library DOI clustering `scrolls works` reports, so
+a hit knows its work even when its sibling ranks below the limit.
 
 ```console
 $ scrolls search "sqlite fts5"
-[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full"}]
+[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": []}]
+[exit 0]
+
+$ scrolls search "attention transformer"
+[{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "score": -3.40e-06, "snippet": "We propose the [Transformer] based on [attention] mechanisms.", "fidelity": "full", "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "is_canonical": false, "representations": 2}]}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "score": -3.40e-06, "snippet": "We propose the [Transformer] based on [attention] mechanisms.", "fidelity": "partial", "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "is_canonical": true, "representations": 2}]}]
 [exit 0]
 
 $ scrolls search "sqlite fts5" --source arxiv
@@ -1483,8 +1503,8 @@ The tools wrap the same engines as the CLI commands
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
-| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets and custody `fidelity`, optionally faceted |
-| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
+| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, custody `fidelity`, and `works` membership (ADR 0101), optionally faceted |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet (with `fidelity` and `works` membership, ADR 0101), no query (ADR 0060) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |

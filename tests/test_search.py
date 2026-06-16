@@ -111,6 +111,67 @@ def test_search_fidelity_matches_get_fidelity(db_path):
     assert hit.fidelity == get_fidelity(get_item(db_path, "wikipedia:en:SQLite"))
 
 
+def test_search_hits_carry_the_work_they_represent(db_path):
+    # two hits that are the same scholarly work — an arXiv preprint and its
+    # published Crossref record — each carry the work they represent (ADR 0101),
+    # so an agent sees the two top hits are one work, not two unrelated results.
+    insert_item(db_path, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer, a model based on attention mechanisms.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",),
+    ))
+    insert_item(db_path, make_item(
+        "crossref:10.5555/3295222", "Attention Is All You Need",
+        "We propose the Transformer, a model based on attention mechanisms.",
+        source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+    ))
+
+    by_id = {hit.id: hit for hit in search_items(db_path, "attention transformer")}
+    assert set(by_id) == {"arxiv:1706.03762", "crossref:10.5555/3295222"}
+    (preprint_work,) = by_id["arxiv:1706.03762"].works
+    assert preprint_work.doi == "10.5555/3295222"
+    assert preprint_work.representations == 2
+    # the published record is canonical; the preprint hit points at it
+    assert preprint_work.canonical == "crossref:10.5555/3295222"
+    assert preprint_work.is_canonical is False
+    assert by_id["crossref:10.5555/3295222"].works[0].is_canonical is True
+
+
+def test_search_hit_for_a_lone_item_carries_no_work(db_path):
+    # a hit that is not one of several saved forms of one work carries an empty
+    # works list — the common case, no false "duplicate of" signal
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+    ))
+    (hit,) = search_items(db_path, "database engine")
+    assert hit.works == ()
+
+
+def test_search_work_membership_spans_beyond_the_matched_rows(db_path):
+    # the sibling representation need not match the query: membership is a
+    # whole-library property, so a hit knows its work even when its sibling
+    # ranks nowhere in (or is absent from) the matched rows
+    insert_item(db_path, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer, a model based on attention.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",),
+    ))
+    # the sibling has no overlapping search terms with "transformer"
+    insert_item(db_path, make_item(
+        "crossref:10.5555/3295222", "A published record",
+        "Wholly unrelated prose about migratory waterfowl.",
+        source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+    ))
+    (hit,) = search_items(db_path, "transformer")
+    assert hit.id == "arxiv:1706.03762"
+    assert hit.works[0].representations == 2  # the unmatched sibling still counts
+
+
 def test_search_reflects_updates(db_path):
     item = make_item("wikipedia:en:SQLite", "SQLite", "Original text about databases.")
     insert_item(db_path, item)
