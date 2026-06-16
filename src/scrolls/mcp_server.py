@@ -22,7 +22,12 @@ from scrolls import feeds
 from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
-from scrolls.custody import live_recapture, record_events, verify_item
+from scrolls.custody import (
+    latest_events,
+    live_recapture,
+    record_events,
+    verify_item,
+)
 from scrolls.db import init_db
 from scrolls.generated import generated_body
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
@@ -270,10 +275,15 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     `include_isolated` widens it to every item; `stats.items` is the library
     total. Each node carries its custody `fidelity` tier (full/partial/
     reference, ADR 0097), the same tier get_related_scrolls reports, so a node
-    says how much of the item the library holds.
+    says how much of the item the library holds. `stats.custody` summarises how
+    custody stands across the whole `stats.items` scope — fidelity-tier and
+    drift-posture counts (the same tally doctor/facets/the headlines report), so
+    the graph's custody totals converge with them for the scope.
     """
     paths = get_paths()
-    return graph_payload(build_graph(paths.db_path, include_isolated=include_isolated))
+    graph = build_graph(paths.db_path, include_isolated=include_isolated)
+    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    return graph_payload(graph, verdicts)
 
 
 def get_works(

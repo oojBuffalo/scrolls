@@ -5,6 +5,8 @@ import json
 import pytest
 
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
+from scrolls.doctor import run_doctor
 from scrolls.graph import build_graph, connected_components, graph_over
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
@@ -35,6 +37,16 @@ def make_item(item_id, **overrides):
     )
     base.update(overrides)
     return ScrollItem(**base)
+
+
+def _all_reference_unverified(n):
+    """The `stats.custody` block for `n` bare items — every one `reference`
+    fidelity (no content) and `unverified` (never re-checked), the default
+    `make_item` shape these graph fixtures use."""
+    return {
+        "tiers": {"full": 0, "partial": 0, "reference": n},
+        "drift": {"verified": 0, "unverified": n, "drifted": 0, "rotted": 0, "error": 0},
+    }
 
 
 def test_edge_resolves_a_link_to_the_item_it_names(db):
@@ -208,7 +220,10 @@ def test_cli_graph_prints_nodes_edges_and_stats(db, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["stats"] == {"items": 3, "nodes": 2, "edges": 1, "clusters": 1}
+    assert payload["stats"] == {
+        "items": 3, "nodes": 2, "edges": 1, "clusters": 1,
+        "custody": _all_reference_unverified(3),  # over the whole library, not just nodes
+    }
     assert payload["edges"] == [
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
     ]
@@ -227,7 +242,10 @@ def test_cli_graph_all_includes_isolated_items(db, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert [n["id"] for n in payload["nodes"]] == ["wikipedia:en:Pelican"]
     # the lone isolate is a singleton, not a cluster: clusters counts 2+ only
-    assert payload["stats"] == {"items": 1, "nodes": 1, "edges": 0, "clusters": 0}
+    assert payload["stats"] == {
+        "items": 1, "nodes": 1, "edges": 0, "clusters": 0,
+        "custody": _all_reference_unverified(1),
+    }
 
 
 def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
@@ -236,7 +254,10 @@ def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
     exit_code = main(["graph"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0, "clusters": 0}}
+    assert payload == {"nodes": [], "edges": [], "stats": {
+        "items": 0, "nodes": 0, "edges": 0, "clusters": 0,
+        "custody": _all_reference_unverified(0),  # empty graph: honest zero counts
+    }}
 
 
 # --- connected_components (the KB graph.md clustering, ADR 0062) ----------
@@ -310,7 +331,72 @@ def test_cli_graph_stats_count_clusters(db, capsys):
     main(["graph", "--all"])
     payload = json.loads(capsys.readouterr().out)
     # the isolate inflates items/nodes but not clusters (2+ members only)
-    assert payload["stats"] == {"items": 5, "nodes": 5, "edges": 2, "clusters": 2}
+    assert payload["stats"] == {
+        "items": 5, "nodes": 5, "edges": 2, "clusters": 2,
+        "custody": _all_reference_unverified(5),
+    }
+
+
+# --- stats.custody (the graph-surface custody headline, roadmap H52) -------
+
+
+def test_graph_stats_custody_reflects_fidelity_and_drift(db, capsys):
+    # a full-fidelity item (raw + hash), a partial (extracted only), a reference
+    # pointer; one verify event so the drift axis spans verified + unverified
+    insert_item(db, make_item("web:full", raw_text="<raw>b</raw>",
+                              extracted_text="b", content_hash="sha256:full"))
+    insert_item(db, make_item("web:partial", extracted_text="b"))
+    insert_item(db, make_item("web:ref"))  # reference, never verified
+    record_events(db, [CustodyEvent(
+        "web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+        "sha256:full", "sha256:full")])
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert custody == {
+        "tiers": {"full": 1, "partial": 1, "reference": 1},
+        "drift": {"verified": 1, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0},
+    }
+
+
+def test_graph_stats_custody_is_independent_of_include_all(db, capsys):
+    # like item_count/clusters, the custody block counts the whole stats.items
+    # scope — the unlinked isolate is held custody either way, so --all (which
+    # only changes which items become *nodes*) must not change the tally
+    insert_item(db, make_item("web:a", links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b"))
+    insert_item(db, make_item("web:isolate"))  # no edges → not a default node
+    capsys.readouterr()
+
+    main(["graph"])
+    default = json.loads(capsys.readouterr().out)["stats"]
+    main(["graph", "--all"])
+    widened = json.loads(capsys.readouterr().out)["stats"]
+    assert default["nodes"] == 2 and widened["nodes"] == 3  # --all adds the isolate
+    assert default["custody"] == widened["custody"] == _all_reference_unverified(3)
+
+
+def test_graph_custody_block_converges_with_doctor(db, capsys):
+    # the H52 convergence: graph's custody totals equal doctor's for the same
+    # whole-library scope, with the one vocabulary mapping (ledger `unchanged`
+    # is the posture `verified`)
+    insert_item(db, make_item("web:full", raw_text="<raw>b</raw>",
+                              extracted_text="b", content_hash="sha256:full"))
+    insert_item(db, make_item("web:partial", extracted_text="b"))
+    insert_item(db, make_item("web:ref"))
+    record_events(db, [CustodyEvent(
+        "web:full", "2026-06-14T00:00:00+00:00", "drifted",
+        "sha256:full", "sha256:new")])
+    capsys.readouterr()
+
+    main(["graph"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    drift = run_doctor(get_paths())["custody"]
+    assert custody["tiers"] == drift["tiers"]
+    assert custody["drift"]["verified"] == drift["drift"]["unchanged"]
+    assert custody["drift"]["unverified"] == drift["drift"]["unverified"]
+    assert custody["drift"]["drifted"] == drift["drift"]["drifted"]
 
 
 def test_graph_over_drops_links_to_items_outside_the_given_set():

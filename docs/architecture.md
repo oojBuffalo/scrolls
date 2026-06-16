@@ -214,9 +214,14 @@ each command moves items between stages or derives artifacts from them.
   fidelity-tier and drift-posture counts over the in-bundle scrolls, roadmap H45)
   summarises how custody stands across the whole bundle; the *same* shared
   headline rides the `scrolls context` bundle from the `connected` tier up
-  (roadmap H47) and `scrolls status`'s custody block (H38), so the three scope
-  headlines converge for a scope by construction — one custody tally, three
-  surfaces. The full dogfood flow these
+  (roadmap H47) and `scrolls status`'s custody block (H38), so the scope
+  headlines converge for a scope by construction — one custody tally, many
+  surfaces. The `scrolls graph` payload carries the same tally as a JSON
+  `stats.custody` block (the count maps, not a rendered line, since graph emits
+  JSON) over its whole `stats.items` scope (roadmap H52), and `scrolls facets
+  fidelity`/`drift` (H48) are the browse aggregates of the two axes — all reading
+  `custody.custody_counts`, so the cross-surface convergence is pinned once in
+  `tests/test_custody_convergence.py` (H50). The full dogfood flow these
   surfaces compose into — *hold → prove (`doctor`) → detect (`verify`) → take it
   with me (`export`/`import bundle`)* — is narrated, with captured before/after
   custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against

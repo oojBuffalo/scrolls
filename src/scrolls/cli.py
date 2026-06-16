@@ -2015,7 +2015,8 @@ def _related_rows(hits: list) -> list[dict]:
 def _cmd_graph(include_all: bool) -> int:
     paths = get_paths()
     graph = build_graph(paths.db_path, include_isolated=include_all)
-    print(json.dumps(graph_payload(graph)))
+    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    print(json.dumps(graph_payload(graph, verdicts)))
     return 0
 
 

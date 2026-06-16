@@ -1,9 +1,10 @@
 """The custody-convergence cross-surface invariant (roadmap H50).
 
-The custody picture an agent reads is now surfaced in five places — `scrolls
+The custody picture an agent reads is now surfaced in six places — `scrolls
 status` (H38), the shareable bundle briefing (H45), the `scrolls context` bundle
-(H47), `scrolls facets fidelity`/`drift` (H48), and `doctor`'s `custody` block —
-each *claimed* to converge for a given scope because they all derive from one
+(H47), `scrolls facets fidelity`/`drift` (H48), the `scrolls graph` stats block
+(H52), and `doctor`'s `custody` block — each *claimed* to converge for a given
+scope because they all derive from one
 custody tally (`custody.custody_counts`/`custody_headline` over `get_fidelity` +
 `drift_posture`/`latest_events`). That claim is pinned per-surface in scattered
 tests; this module pins it *once*, the way `tests/test_completeness.py` pins the
@@ -159,6 +160,13 @@ def test_every_custody_surface_converges_on_one_picture(scrolls_home, capsys):
     assert main(["context", "topic"]) == 0
     context_out = capsys.readouterr().out
     assert headline in context_out
+
+    # 5. the graph stats block — the JSON custody counts (posture words, like
+    #    custody_counts) over the whole stats.items scope (roadmap H52)
+    assert main(["graph", "--all"]) == 0
+    graph_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert graph_custody["tiers"] == canonical["tiers"]
+    assert graph_custody["drift"] == canonical["drift"]
 
 
 def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):

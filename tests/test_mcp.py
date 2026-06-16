@@ -496,12 +496,27 @@ def test_get_link_graph_returns_directed_edges(scrolls_home):
     assert graph["edges"] == [
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
     ]
-    assert graph["stats"] == {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}
+    # both items are bare → reference fidelity, never re-checked → unverified;
+    # the custody block tallies the whole `stats.items` scope (roadmap H52)
+    assert graph["stats"] == {
+        "items": 2, "nodes": 2, "edges": 1, "clusters": 1,
+        "custody": {
+            "tiers": {"full": 0, "partial": 0, "reference": 2},
+            "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0},
+        },
+    }
 
 
 def test_get_link_graph_empty_library(scrolls_home):
     assert mcp_server.get_link_graph() == {
-        "nodes": [], "edges": [], "stats": {"items": 0, "nodes": 0, "edges": 0, "clusters": 0}
+        "nodes": [], "edges": [], "stats": {
+            "items": 0, "nodes": 0, "edges": 0, "clusters": 0,
+            "custody": {
+                "tiers": {"full": 0, "partial": 0, "reference": 0},
+                "drift": {"verified": 0, "unverified": 0, "drifted": 0,
+                          "rotted": 0, "error": 0},
+            },
+        },
     }
 
 

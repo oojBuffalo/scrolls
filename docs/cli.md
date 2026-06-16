@@ -1828,9 +1828,19 @@ KB's `graph.md` page renders (ADR 0062), so a singleton added by `--all` is
 not counted (`test_cli_graph_stats_count_clusters`). An empty or
 uninitialized library is an empty graph, exit 0.
 
+`stats.custody` is the graph-surface member of the custody-headline family
+(`scrolls status`, the bundle/`context` briefings, `facets fidelity`/`drift`):
+fidelity-tier and drift-posture count maps over the whole `stats.items` scope
+(not just the connected nodes), so it is independent of `--all`
+(`test_graph_stats_custody_is_independent_of_include_all`) and converges with
+`doctor`'s `custody` block, `facets`, and the scope headlines for the same scope
+(`test_graph_custody_block_converges_with_doctor`). Graph emits JSON, so the
+counts travel directly — `verified` is the ledger `unchanged` (custody §2.4),
+`unverified` the held items with no verdict.
+
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 

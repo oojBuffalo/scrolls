@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.custody import CustodyEvent, custody_counts
 from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -69,6 +70,11 @@ class Graph:
     nodes: tuple[Node, ...]
     edges: tuple[Edge, ...]
     item_count: int
+    # The whole input set the graph was resolved over — the `stats.items` scope,
+    # retained (not just `item_count`) so `to_payload` can tally a scope-level
+    # custody block over the same items `doctor`/`facets` count (roadmap H52).
+    # Independent of `include_isolated`, exactly like `item_count`.
+    items: tuple[ScrollItem, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -174,10 +180,17 @@ def graph_over(items: list[ScrollItem], *, include_isolated: bool = False) -> Gr
         if include_isolated or item.id in connected
     ]
     nodes.sort(key=lambda node: node.id)
-    return Graph(nodes=tuple(nodes), edges=tuple(edges), item_count=len(items))
+    return Graph(
+        nodes=tuple(nodes),
+        edges=tuple(edges),
+        item_count=len(items),
+        items=tuple(items),
+    )
 
 
-def to_payload(graph: Graph) -> dict:
+def to_payload(
+    graph: Graph, verdicts: dict[str, CustodyEvent] | None = None
+) -> dict:
     """The graph as the JSON object the CLI and MCP tool both emit.
 
     `from`/`to` rather than the dataclass's `from_id`/`to_id` because
@@ -187,6 +200,15 @@ def to_payload(graph: Graph) -> dict:
     KB's `graph.md` page renders (ADR 0062) — so a singleton isolate added
     by `--all` is *not* counted, and the count is the same notion whether or
     not isolates are included.
+
+    `stats.custody` is the graph-surface member of the custody-headline family
+    (roadmap H52): the shared `custody.custody_counts` tally — fidelity-tier and
+    drift-posture counts — over the *whole* `stats.items` scope (not just the
+    connected nodes), so the graph's custody totals converge with `doctor`,
+    `facets`, and the scope custody headlines for the same scope by construction.
+    Carried as count maps (graph emits JSON, not a Markdown headline). `verdicts`
+    is the `latest_events` ledger read the CLI/MCP pass; absent (the pure caller),
+    every held item reads `unverified` — honest, nothing has been checked.
     """
     clusters = sum(
         1 for component in connected_components(graph) if len(component.nodes) >= 2
@@ -212,6 +234,7 @@ def to_payload(graph: Graph) -> dict:
             "nodes": len(graph.nodes),
             "edges": len(graph.edges),
             "clusters": clusters,
+            "custody": custody_counts(list(graph.items), verdicts or {}),
         },
     }
 
