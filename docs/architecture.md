@@ -50,6 +50,22 @@ each command moves items between stages or derives artifacts from them.
   `media/<source>/`, and the KB compiler rebuilds `library/` from
   whatever is rendered (`src/scrolls/classify.py`,
   `src/scrolls/media.py`, `src/scrolls/kb.py`).
+- **Enrichment is provenance-complete and re-derivable** (PRD cap 8,
+  custody-vision §3.6). Every engine that writes a derived field records
+  *how* it was produced, in `provenance`, alongside (never replacing) the
+  capture facts: the rules engine stamps `classified_by="rules-v1"`
+  (`classify.py`), the LLM classifier adds `classified_model`
+  (`classify_llm.py`), and the LLM concept summaries store a `members_hash`
+  fingerprint of the scrolls they synthesize so an unchanged concept is
+  skipped on re-run (`kb_llm.py`). The cross-engine contract — method is
+  recorded, re-derivation is deterministic, the capture chain survives,
+  and nothing unmatched is fabricated — is pinned as one invariant in
+  `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way
+  `test_completeness.py` pins M2). *Known gap (roadmap H19):* the rules
+  engine records its version, not the precedence tier that fired; the
+  engine name suffices for deterministic re-derivation today, so finer
+  method granularity and a confidence/recency marker are deferred to
+  roadmap H20–H21.
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
