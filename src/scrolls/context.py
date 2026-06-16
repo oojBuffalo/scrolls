@@ -20,6 +20,14 @@ package's repo — ADR 0044). These are high-precision connections FTS can't
 find — the paper a match points at need not share its keywords — so the
 graph the adapters spent so many adapters building finally surfaces in the
 bundle an agent actually reads, not only in `scrolls related`/`graph`.
+
+Duplicate representations of one scholarly work are collapsed (ADR 0101):
+when a query matches both an arXiv preprint and its published Crossref
+record — the same work, near-identical content — the bundle keeps the
+best-ranked representation, names the folded sibling(s) and the work's
+canonical form, and excerpts the work once. A high-signal bundle should not
+spend two of its few slots on one work; the `works` membership search hits
+now carry makes the collapse a lookup, not a re-derivation.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ from pathlib import Path
 
 from scrolls.graph import build_graph
 from scrolls.items import ScrollItem, get_item
-from scrolls.search import search_items
+from scrolls.search import SearchHit, search_items
 
 _EXCERPT_CHARS = 700
 DEFAULT_LIMIT = 8
@@ -68,7 +76,11 @@ def build_context(
         tag=tag,
         concept=concept,
     )
-    items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
+    kept, folded = _collapse_by_work(hits)
+    # (hit, item) pairs in kept order; drop any hit whose row vanished
+    pairs = [(hit, get_item(db_path, hit.id)) for hit in kept]
+    pairs = [(hit, item) for hit, item in pairs if item]
+    items = [item for _, item in pairs]
 
     title = f"# Scrolls Context Bundle: {query}"
     scope = _scope_note(source, category, stage, tag, concept)
@@ -80,10 +92,13 @@ def build_context(
         return "\n".join(lines) + "\n"
 
     lines += ["## Best Matches", ""]
-    for rank, item in enumerate(items, start=1):
+    for rank, (hit, item) in enumerate(pairs, start=1):
         line = f"{rank}. {item.title or item.id} (`{item.id}`)"
         if item.category:
             line += f" — {item.category}"
+        note = _work_note(hit, folded.get(hit.id, []))
+        if note:
+            line += f" · {note}"
         lines.append(line)
 
     lines += ["", "## Excerpts"]
@@ -93,7 +108,11 @@ def build_context(
         if excerpt:
             lines += ["", excerpt]
 
-    connected = _connected_lines(db_path, [item.id for item in items])
+    # folded representations are the same work as a kept match, so they must
+    # not resurface as "connected" neighbours (the preprint links to the
+    # published DOI record it just absorbed) — exclude them too.
+    folded_ids = {item_id for ids in folded.values() for item_id in ids}
+    connected = _connected_lines(db_path, [item.id for item in items], folded_ids)
     if connected:
         lines += ["", "## Connected scrolls", ""] + connected
 
@@ -103,6 +122,58 @@ def build_context(
         for item in items
     ]
     return "\n".join(lines) + "\n"
+
+
+def _collapse_by_work(
+    hits: list[SearchHit],
+) -> tuple[list[SearchHit], dict[str, list[str]]]:
+    """Fold same-work duplicate hits into their best-ranked representation.
+
+    Walks the ranked hits keeping the first representation seen of each work
+    (ADR 0101): a later hit whose every work already has a kept representative
+    is folded under the earliest keeper it shares a work with — the published
+    record folded under the preprint that out-ranked it, or vice versa. A hit
+    that brings a *new* work (even while sharing an already-seen one) is kept,
+    so a multi-work item is never dropped. Returns the kept hits in rank order
+    and `{kept hit id: [folded hit id, …]}`. Hits with no work membership never
+    fold — they are not duplicates of anything.
+    """
+    seen_dois: set[str] = set()
+    owner: dict[str, str] = {}  # work DOI → the kept hit that represents it
+    kept: list[SearchHit] = []
+    folded: dict[str, list[str]] = {}
+    for hit in hits:
+        hit_dois = {ref.doi for ref in hit.works}
+        if hit_dois and hit_dois <= seen_dois:
+            keeper = next(owner[doi] for doi in hit_dois if doi in owner)
+            folded.setdefault(keeper, []).append(hit.id)
+            continue
+        kept.append(hit)
+        for doi in hit_dois - seen_dois:
+            owner[doi] = hit.id
+        seen_dois |= hit_dois
+    return kept, folded
+
+
+def _work_note(hit: SearchHit, folded_ids: list[str]) -> str:
+    """The Best-Matches annotation for a hit that absorbed same-work siblings.
+
+    Empty unless siblings were folded into this hit, so the note appears only
+    where the bundle actually collapsed a duplicate. Names the folded
+    representation(s) and the work's canonical form (ADR 0095) — which may be a
+    folded sibling, this very hit, or a representation that did not match at all
+    — so an agent sees the preferred form even though the bundle kept the
+    best-ranked one.
+    """
+    if not folded_ids:
+        return ""
+    note = "same work as " + ", ".join(f"`{item_id}`" for item_id in folded_ids)
+    canonical = hit.works[0].canonical if hit.works else None
+    if canonical == hit.id:
+        note += " (this is the canonical form)"
+    elif canonical:
+        note += f"; canonical `{canonical}`"
+    return note
 
 
 def _scope_note(
@@ -133,18 +204,21 @@ def _scope_note(
     return ", ".join(parts)
 
 
-def _connected_lines(db_path: Path, ranked_ids: list[str]) -> list[str]:
+def _connected_lines(
+    db_path: Path, ranked_ids: list[str], exclude: set[str] = frozenset()
+) -> list[str]:
     """Bullet lines for scrolls linked to/from the matches but not matched.
 
     Resolves the whole-library link graph (`graph.build_graph`, the same
     edges `scrolls graph` reports) and keeps the items on the far end of an
     edge whose near end is a match. A match itself is never listed — it is
-    already a keyword hit. Neighbors are ranked by how many distinct matches
-    they connect to (centrality), then by the best match's rank, then by id,
-    and capped at the match count so the bundle stays compact. Each line
-    names the strongest match that pulled the neighbor in, the direction of
-    the edge ("links to" / "linked from"), and how many further matches it
-    touches.
+    already a keyword hit — nor is any id in `exclude` (the representations
+    folded into a kept match, ADR 0101: the same work, already shown).
+    Neighbors are ranked by how many distinct matches they connect to
+    (centrality), then by the best match's rank, then by id, and capped at the
+    match count so the bundle stays compact. Each line names the strongest
+    match that pulled the neighbor in, the direction of the edge ("links to" /
+    "linked from"), and how many further matches it touches.
     """
     ranks = {item_id: rank for rank, item_id in enumerate(ranked_ids)}
     graph = build_graph(db_path)
@@ -161,6 +235,8 @@ def _connected_lines(db_path: Path, ranked_ids: list[str]) -> list[str]:
             match_id, neighbor_id, direction = edge.from_id, edge.to_id, "linked from"
         else:
             match_id, neighbor_id, direction = edge.to_id, edge.from_id, "links to"
+        if neighbor_id in exclude:  # a folded same-work representation
+            continue
         connections.setdefault(neighbor_id, {}).setdefault(match_id, direction)
 
     def order_key(neighbor_id: str) -> tuple:

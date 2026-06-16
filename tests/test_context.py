@@ -368,3 +368,128 @@ def test_context_blank_query_is_an_error(scrolls_home, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+# --- same-work collapse in the bundle (ADR 0101) ---------------------------
+
+
+def _insert_attention_pair(db):
+    # an arXiv preprint and its published Crossref record: one work, two
+    # near-identical matches for the same query
+    insert_item(db, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer based on attention mechanisms.",
+        source="arxiv", source_id="1706.03762", category="paper",
+        links=("https://doi.org/10.5555/3295222",),
+    ))
+    insert_item(db, make_item(
+        "crossref:10.5555/3295222", "Attention Is All You Need",
+        "We propose the Transformer based on attention mechanisms.",
+        source="crossref", source_id="10.5555/3295222", category="paper",
+    ))
+
+
+def test_context_collapses_same_work_representations(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _insert_attention_pair(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "attention transformer")
+    # exactly one Best-Matches entry for the work, not two
+    assert out.count("Attention Is All You Need (`") == 1
+    # the folded sibling and the canonical form are named on the kept line
+    assert "same work as `crossref:10.5555/3295222`" in out
+    assert "canonical `crossref:10.5555/3295222`" in out
+    # the work is excerpted once — its content appears a single time
+    assert out.count("We propose the Transformer based on attention mechanisms.") == 1
+    # only the kept representation is linked
+    assert "- [Attention Is All You Need]" in out
+    assert out.count("- [Attention Is All You Need]") == 1
+
+
+def test_collapse_by_work_folds_later_representations_of_a_seen_work():
+    # deterministic over hits we construct, independent of BM25 tie-breaks
+    from scrolls.context import _collapse_by_work
+    from scrolls.search import SearchHit
+    from scrolls.works import WorkRef
+
+    def hit(item_id, *dois, canonical):
+        works = tuple(
+            WorkRef(doi=d, url=f"https://doi.org/{d}", canonical=canonical,
+                    is_canonical=item_id == canonical, representations=2)
+            for d in dois
+        )
+        return SearchHit(id=item_id, source="s", title=item_id, url="u",
+                         stage="fetched", score=-1.0, snippet="", fidelity="full",
+                         works=works)
+
+    preprint = hit("arxiv:1706.03762", "10.5555/3295222", canonical="crossref:10.5555/3295222")
+    published = hit("crossref:10.5555/3295222", "10.5555/3295222", canonical="crossref:10.5555/3295222")
+    lone = hit("web:abc", canonical="")  # no works → never folds
+
+    kept, folded = _collapse_by_work([preprint, published, lone])
+    # the preprint ranked first, so it is kept; the published record folds in
+    assert [h.id for h in kept] == ["arxiv:1706.03762", "web:abc"]
+    assert folded == {"arxiv:1706.03762": ["crossref:10.5555/3295222"]}
+
+
+def test_collapse_keeps_a_hit_that_brings_a_new_work():
+    # a multi-work hit sharing one already-seen work but bringing another is kept
+    from scrolls.context import _collapse_by_work
+    from scrolls.search import SearchHit
+    from scrolls.works import WorkRef
+
+    def hit(item_id, *dois):
+        works = tuple(
+            WorkRef(doi=d, url=f"https://doi.org/{d}", canonical=item_id,
+                    is_canonical=True, representations=2)
+            for d in dois
+        )
+        return SearchHit(id=item_id, source="s", title=item_id, url="u",
+                         stage="fetched", score=-1.0, snippet="", fidelity="full",
+                         works=works)
+
+    a = hit("a", "10.1000/x")
+    b = hit("b", "10.1000/x", "10.2000/y")  # shares x, brings y → kept
+    kept, folded = _collapse_by_work([a, b])
+    assert [h.id for h in kept] == ["a", "b"]
+    assert folded == {}
+
+
+def test_work_note_marks_the_kept_hit_when_it_is_canonical():
+    from scrolls.context import _work_note
+    from scrolls.search import SearchHit
+    from scrolls.works import WorkRef
+
+    canonical_kept = SearchHit(
+        id="crossref:10.5555/3295222", source="crossref", title="t", url="u",
+        stage="fetched", score=-1.0, snippet="", fidelity="full",
+        works=(WorkRef(doi="10.5555/3295222", url="https://doi.org/10.5555/3295222",
+                       canonical="crossref:10.5555/3295222", is_canonical=True,
+                       representations=2),))
+    note = _work_note(canonical_kept, ["arxiv:1706.03762"])
+    assert "same work as `arxiv:1706.03762`" in note
+    assert "this is the canonical form" in note
+    # no folded siblings → no note at all
+    assert _work_note(canonical_kept, []) == ""
+
+
+def test_context_does_not_collapse_unrelated_matches(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite database",
+        "SQLite is a database engine with full text search.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Postgres", "Postgres database",
+        "Postgres is a database engine with full text search.",
+    ))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database engine")
+    # two distinct works (no shared DOI) — both kept, neither annotated
+    assert "SQLite database (`wikipedia:en:SQLite`)" in out
+    assert "Postgres database (`wikipedia:en:Postgres`)" in out
+    assert "same work as" not in out
