@@ -114,7 +114,7 @@ shape rather than erroring, so the payload shape never varies between "no
 library yet" and "library, no matches"
 (`test_before_init_is_empty_in_shape_across_surfaces`).
 
-### G2 — Honest scope, honest completeness *(`search`/`list`/`related` enforced via `--stats`; `context`/`works` enforced; `doctor` target: M2 H8)*
+### G2 — Honest scope, honest completeness *(enforced across every read surface — `search`/`list`/`related` via `--stats`, `works`/`context`/`doctor` always-on)*
 
 A scoped or `--limit`-capped result must let a reader that holds *only the
 result* — not the call that produced it — recover the scope it covered and
@@ -146,11 +146,16 @@ inventing a new one:
   `--stats` envelope uses, so a bundle and a `--stats` search over the same
   scope agree on the match total.
 - **`doctor` states what it verified.** The custody report distinguishes
-  what it confirmed network-free *this run* (scroll present, body
-  re-derives to the stored hash, provenance complete) from what only
-  `scrolls verify` can confirm against the live source: "unchanged as of
-  the last verify" is not "verified now" (ADR 0098). Drift the report has
-  not re-checked is named as un-rechecked, not as clean.
+  what it confirmed network-free *this run* (the integrity audit: scroll
+  present, hash re-derivable, provenance complete) from what only `scrolls
+  verify` can confirm against the live source: "unchanged as of the last
+  verify" is not "verified now" (ADR 0098). The `drift` block names its
+  `basis` (`last_verify` — its verdicts are read from the ledger, not
+  re-checked live) and `as_of` (the freshest verdict the picture rests on),
+  and counts `unverified` — held items the ledger has no verdict for, so
+  unknown, **not** clean. Drift the report has not re-checked is named as
+  un-rechecked, not folded into the healthy counts
+  (`test_drift_names_held_items_never_verified_as_unverified`).
 
 **Why the companion is opt-in, not the default shape.** G1 (above) locks
 the bare array as the *empty form* of `search`/`list` — `[]`, exit 0 — and
@@ -174,16 +179,16 @@ The enforcement order is fixed by the roadmap: **H6 (done)** adds the
 extends the same honesty to `related` (`count_related` is the past-the-cap
 denominator), `works` (a `scope` companion naming the floor/anchor, always
 on — `works` already emits an object, so there is no bare array to protect),
-and `context` (the `Coverage:` line, over `count_matches`); H8 sharpens
-`doctor`'s verified-now-vs-as-of-last-check report
-(`docs/agents/autonomous-roadmap.md`). Each lands with its own tests in the
-matching suite and flips this section's status marker for those surfaces
-from *target* to *enforced*. The MCP twins read from the same builders, so
-`get_works`/`get_context_bundle` carry the scope echo and coverage line too;
-the bare-list `search_scrolls`/`list_scrolls` twins keep returning the bare
-list for now, their G2 parity (an envelope option) following once the CLI
-shape has stabilized. G1 is the half that is already true across every
-surface and is locked now so it cannot regress while G2 lands.
+and `context` (the `Coverage:` line, over `count_matches`); **H8 (done)**
+sharpens `doctor`'s drift block — `basis`/`as_of`/`unverified` make it
+verified-now-vs-as-of-last-check honest (`docs/agents/autonomous-roadmap.md`).
+With H8, **G2 is enforced across every read surface and M2 is complete.**
+Each landed with its own tests in the matching suite. The MCP twins read
+from the same builders, so `get_works`/`get_context_bundle` carry the scope
+echo and coverage line too; the bare-list `search_scrolls`/`list_scrolls`
+twins keep returning the bare list for now, their G2 parity (an envelope
+option) following once the CLI shape has stabilized. G1 is the half that is
+already true across every surface and is locked so it cannot regress.
 
 ## Library lifecycle
 
@@ -311,6 +316,17 @@ repair). It holds the fidelity `tiers` distribution, per-item integrity
 `unchanged`/`drifted`/`rotted`/`error` counts, and the actionable
 `drifted`/`rotted` `events` themselves (ADR 0098;
 `test_drift_report_counts_each_verdict`).
+
+The drift block states *what it verified* (completeness contract G2): doctor
+is network-free, so its verdicts are read from the ledger, not confirmed live
+this run. `basis` names that source (`last_verify` — as-of-the-last-`scrolls
+verify`, not "verified now"), `as_of` is the freshest verdict timestamp the
+picture rests on (`null` when nothing is verified), and `unverified` counts
+held items the ledger has no verdict for — never re-checked, so unknown,
+**not** clean (`test_drift_names_held_items_never_verified_as_unverified`). A
+reader holding only the report can therefore tell "confirmed unchanged at the
+last verify" from "never checked", and never read an unverified item as a
+healthy one.
 
 ### `scrolls verify [id] [--all] [--limit N]`
 

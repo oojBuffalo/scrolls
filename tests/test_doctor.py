@@ -574,7 +574,9 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
         "score": 100, "issues": 0,
         "tiers": {"full": 1, "partial": 0, "reference": 0}, "findings": [],
         "drift": {
-            "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0,
+            "basis": "last_verify", "as_of": None,
+            "checked": 0, "unverified": 1,
+            "unchanged": 0, "drifted": 0, "rotted": 0,
             "error": 0, "events": [],
         },
     }
@@ -594,7 +596,11 @@ def test_drift_report_is_empty_without_any_verification(paths):
     insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True))
     drift = run_doctor(paths)["custody"]["drift"]
     assert drift == {
-        "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0,
+        # the held item has never been verified: it is unverified, not clean,
+        # and the block names its basis as the ledger, not a live re-check
+        "basis": "last_verify", "as_of": None,
+        "checked": 0, "unverified": 1,
+        "unchanged": 0, "drifted": 0, "rotted": 0,
         "error": 0, "events": [],
     }
 
@@ -609,12 +615,44 @@ def test_drift_report_counts_each_verdict(paths):
 
     drift = run_doctor(paths)["custody"]["drift"]
     assert drift["checked"] == 3
+    assert drift["unverified"] == 0  # every held item has a ledger verdict
     assert (drift["unchanged"], drift["drifted"], drift["rotted"], drift["error"]) == (
         1, 1, 1, 0,
     )
     # only the actionable losses (drift + rot) are itemized, sorted by id
     assert [e["id"] for e in drift["events"]] == sorted([b, c])
     assert {e["status"] for e in drift["events"]} == {"drifted", "rotted"}
+
+
+def test_drift_names_held_items_never_verified_as_unverified(paths):
+    # one item verified, two never checked: the two are unverified, NOT folded
+    # into "unchanged" — "not in the drift counts" must never read as "clean"
+    a = insert_and_id(paths, "https://example.com/a")
+    insert_and_id(paths, "https://example.com/b")
+    insert_and_id(paths, "https://example.com/c")
+    _record(paths, a, "unchanged")
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 1
+    assert drift["unverified"] == 2
+    assert drift["unchanged"] == 1  # only the verified item, not the other two
+
+
+def test_drift_states_its_verdicts_are_as_of_the_last_verify(paths):
+    # the block is honest that its verdicts come from the ledger (the last
+    # `scrolls verify`), not a live re-check this run, and how fresh that is
+    a = insert_and_id(paths, "https://example.com/a")
+    record_events(paths.db_path, [
+        CustodyEvent(a, "2026-06-10T00:00:00+00:00", "unchanged",
+                     "sha256:old", "sha256:old", None),
+        CustodyEvent(a, "2026-06-14T12:00:00+00:00", "unchanged",
+                     "sha256:old", "sha256:old", None),
+    ])
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["basis"] == "last_verify"
+    # as_of is the freshest verdict the picture rests on, not "now"
+    assert drift["as_of"] == "2026-06-14T12:00:00+00:00"
 
 
 def test_drift_report_uses_only_the_latest_event_per_item(paths):
@@ -637,6 +675,16 @@ def test_drift_report_ignores_events_for_deleted_items(paths):
     assert drift["events"] == []
 
 
+def test_drift_ignores_events_for_deleted_items_keeps_unverified_honest(paths):
+    # the ghost's verdict is dropped (not this library's drift), and the one
+    # held item — which has no verdict of its own — is named unverified
+    insert_item(paths.db_path, _web_item("https://example.com/a", fetched=True))
+    _record(paths, "web:ghost", "rotted", observed=None, detail="gone")
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["checked"] == 0
+    assert drift["unverified"] == 1
+
+
 def test_doctor_survives_a_library_without_the_ledger_table(paths):
     # a v6 library never migrated to v7 has no custody_events table; doctor's
     # drift aggregation must read it as empty, not crash
@@ -649,6 +697,9 @@ def test_doctor_survives_a_library_without_the_ledger_table(paths):
     drift = run_doctor(paths)["custody"]["drift"]
     assert drift["checked"] == 0
     assert drift["events"] == []
+    # no ledger at all, so the held item is unverified, not silently clean
+    assert drift["unverified"] == 1
+    assert drift["basis"] == "last_verify"
 
 
 def test_drift_does_not_affect_issues_or_exit_code(paths, capsys):

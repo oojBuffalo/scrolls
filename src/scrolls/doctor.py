@@ -66,7 +66,10 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
             "tiers": {"full": 0, "partial": 0, "reference": 0},
             "findings": [],
             "drift": {
+                "basis": "last_verify",
+                "as_of": None,
                 "checked": 0,
+                "unverified": 0,
                 "unchanged": 0,
                 "drifted": 0,
                 "rotted": 0,
@@ -328,6 +331,15 @@ def _check_custody_drift(
     counts. Like the integrity findings, drift is a *report*: it never feeds the
     structural ``issues``/``fixed`` or the exit code, because doctor cannot
     repair a source that changed upstream.
+
+    The block is honest about *what it verified* (completeness contract G2,
+    `docs/cli.md`): doctor is network-free, so every verdict here is read from
+    the ledger, not confirmed live this run. ``basis`` names that source
+    (``"last_verify"`` — these are as-of-the-last-`scrolls verify`, not
+    "verified now") and ``as_of`` the freshest ``checked_at`` the picture rests
+    on (``None`` when nothing is verified). ``unverified`` counts held items the
+    ledger has *no* verdict for — never re-checked, so unknown, **not** clean:
+    "absent from the drift counts" must never be read as "confirmed unchanged".
     """
     drift = report["custody"]["drift"]
     held = {item.id for item in items}
@@ -337,6 +349,8 @@ def _check_custody_drift(
         if item_id in held
     }
     drift["checked"] = len(latest)
+    drift["unverified"] = len(held) - len(latest)
+    drift["as_of"] = max((e.checked_at for e in latest.values()), default=None)
     for status in CUSTODY_STATUSES:
         drift[status] = sum(1 for e in latest.values() if e.status == status)
     drift["events"] = [

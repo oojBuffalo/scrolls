@@ -34,7 +34,7 @@ Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 | H5 | **✓ shipped.** M2 contract written into `docs/cli.md` as a new top-level "The completeness contract" section, split into **G1** (honest absence / honest failure — empty ≠ error, nothing fabricated) and **G2** (honest scope / truncation, the H6–H8 enforcement target). G1 is locked *now* by a cross-surface invariant module `tests/test_completeness.py` (search/list/related/works/context/doctor); cross-referenced from `docs/library-format.md` "What consumers may rely on". Full suite green (2318). | → M2, cap 7 |
 | H6 | **✓ shipped.** M2 G2 enforced on `search` + `list` via an opt-in `--stats` envelope. New pure builder `src/scrolls/scope.py` (`scope_envelope` → `{scope, stats, results}`, consistent with the `works`/`graph` stats companion); `search.py` gains `count_matches` (the honest denominator past the cap, so `truncated` iff `matched > returned`); `list` gains `--limit`. The bare array stays the default, so G1's locked `[]` empty form and the CLI/MCP list contract never regress (the documented additive resolution of the G1/G2 tension). Tests: `tests/test_scope.py`, `tests/test_search.py` (count_matches), `tests/test_cli.py` (scope echo, truncation, opt-in default, empty-scope honesty). `docs/cli.md` G2 marker flipped for these two surfaces; `README.md` updated. Full suite green (2347). | → M2, cap 7 |
 | H7 | **✓ shipped. M2 enforce on `context` + `related` + `works`.** `related`: `--stats` echoes anchor + limit + truncation, `count_related` the past-the-cap denominator. `works`: an always-on `scope` companion in `to_payload` naming the `--min` floor or the resolved `ref` anchor (no `--stats` flag — `works` already emits an object, no bare array to protect; uncapped, so the floor *is* its truncation story). `context`: a `Coverage:` line over `count_matches` — `all N` vs `top N of M matching scrolls` — with the empty bundle's G1 form untouched. CLI + MCP twins share the builders, so both surfaces carry the honesty. Tests in `tests/test_works.py`, `tests/test_context.py`, `tests/test_mcp.py`; `docs/cli.md` G2 markers flipped; README updated. | → M2, cap 7 |
-| H8 (next) | **M2 enforce on `doctor`.** Custody report states what it did and did not verify (network-free vs would-need-refetch). Tests in `tests/test_doctor.py`. Full suite. Commit. | → M2, cap 1/7 |
+| H8 | **✓ shipped. M2 enforce on `doctor` — M2 complete.** The custody `drift` block now states what it verified: `basis` (`last_verify` — verdicts read from the ledger, not re-checked live this run), `as_of` (the freshest verdict timestamp the picture rests on, `null` when none), and `unverified` (held items the ledger has no verdict for — never checked, so unknown, **not** clean). A reader holding only the report can tell "confirmed unchanged at the last verify" from "never checked". Tests in `tests/test_doctor.py` (drift unverified/basis/as_of, no-ledger-table honesty); `docs/cli.md` G2 marker flipped — **G2 now enforced across every read surface.** Full suite green (2365). | → M2, cap 1/7 |
 | H9 | **M3 context budgets — design.** Specify the budget tiers for `scrolls context` (index/identity first → deep bodies on demand), reusing the same-work collapse already shipped. | → M3, cap 10 |
 | H10 | **M3 implement budget flag.** Bound bundle size predictably; tests pin tiering and the collapse interaction. Update `docs/cli.md`. Commit. | → M3, cap 10 |
 | H11 | **Buffer refresh checkpoint** (see maintenance rule). Re-read repo state, mark completed slots, append the next 24h of slices below H12, prune stale ones. | maintenance |
@@ -54,13 +54,15 @@ cosmetic churn (CLAUDE.md, *Avoid trivial progress*).
   updated (H4). M2 (completeness invariant) **started**: the contract is written
   and its G1 half (honest absence/failure) is locked by `tests/test_completeness.py`
   (H5); G2 (scope echo + truncation) is enforced on `search` + `list` via the
-  opt-in `--stats` envelope (`src/scrolls/scope.py`, H6) and extended to
+  opt-in `--stats` envelope (`src/scrolls/scope.py`, H6), extended to
   `related` + `works` + `context` (H7 — `related`/`works` carry the scope
-  echo, `context` a `Coverage:` line over `count_matches`); only `doctor`
-  (H8) remains.
-- **Day 2 (2026-06-17):** M2 finished and tested on every browse/audit surface;
-  M3 (context budgets) shipped; M4 (custody bundle) designed with an ADR if the
-  bundle format is consequential.
+  echo, `context` a `Coverage:` line over `count_matches`), and finished on
+  `doctor` (H8 — the drift block's `basis`/`as_of`/`unverified` make it
+  verified-now-vs-as-of-last-check honest). **M2 complete: G2 enforced across
+  every read surface, ahead of the Day-2 target.**
+- **Day 2 (2026-06-17):** M2 **done early** (all of H5–H8 shipped Day 1).
+  Next: M3 (context budgets) shipped; M4 (custody bundle) designed with an ADR
+  if the bundle format is consequential.
 - **Day 3 (2026-06-18 → 2026-06-19):** M4 implemented with a round-trip fixture;
   M5 dogfood flow drafted and run offline against fixtures; capture a
   before/after custody score.
