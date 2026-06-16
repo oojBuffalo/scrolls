@@ -44,7 +44,7 @@ In rough dependency order:
 
 7. **Shareable, self-contained custody bundles.** Scoped export to a portable Markdown/HTML bundle that carries provenance and fidelity with it — a briefing that survives outside the running system and can be re-imported losslessly.
 
-8. **Dogfood workflows as the success metric.** End-to-end, agent-runnable flows: *hold a topic* (ingest → render → audit), *prove custody* (doctor → custody score), *detect loss* (recheck → drift report), *take it with me* (export bundle → reimport). If an agent can't run it unattended, it isn't done.
+8. **Dogfood workflows as the success metric.** End-to-end, agent-runnable flows: *hold a topic* (ingest → render → audit), *prove custody* (doctor → custody score), *detect loss* (recheck → drift report), *take it with me* (export bundle → reimport). If an agent can't run it unattended, it isn't done. **Shipped (MVP M5):** this flow runs offline against fixtures in `tests/test_dogfood.py` and is narrated, with captured before/after output, in [`docs/dogfood.md`](dogfood.md). Its sharp result: detecting source drift moves the *drift posture* (unverified → drifted, recorded) without lowering the *integrity score*, because raw is sacred and drift is an event, not an overwrite (§2.4).
 
 ## 4. What Should Be Modified or De-emphasized
 

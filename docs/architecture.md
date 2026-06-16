@@ -114,7 +114,11 @@ each command moves items between stages or derives artifacts from them.
   whole-library backup. `import bundle` reuses the `import items` path
   (`item_from_dict`, `INSERT OR IGNORE`), so losslessness is the ADR 0082/0099
   property already tested; the sentinel keeps the briefing body hand-annotatable
-  across a re-export (refresh-safe, ADR 0102).
+  across a re-export (refresh-safe, ADR 0102). The full dogfood flow these
+  surfaces compose into — *hold → prove (`doctor`) → detect (`verify`) → take it
+  with me (`export`/`import bundle`)* — is narrated, with captured before/after
+  custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against
+  fixtures in `tests/test_dogfood.py` (MVP M5).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

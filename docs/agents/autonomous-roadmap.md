@@ -21,7 +21,7 @@ half-done slice from the previous run first."
 
 ---
 
-## 24h buffer (concrete) — 2026-06-16 → 2026-06-17
+## 24h buffer (concrete) — 2026-06-16 → 2026-06-18
 
 Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 
@@ -39,9 +39,14 @@ Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 | H10 | **✓ shipped. M3 complete.** `scrolls context --budget {index,connected,full}` bounds bundle *depth* through nested tiers (`BUDGET_TIERS` in `context.py`): `index` is the catalog (Best Matches + Links, no graph build), `connected` adds `## Connected scrolls`, `full` (default) adds `## Excerpts` — the current bundle, unchanged. A tier below `full` carries a `_Budget:_` note disclosing what it held back (the depth-axis counterpart to the Coverage line's scope honesty; the two hold independently). Same-work collapse (ADR 0101) is index-level, so it holds at every tier. CLI + MCP twins share `build_context`. Tests in `tests/test_context.py` (10 new: tiering, default=full unchanged, budget note, coverage×budget independence, collapse×budget, empty-bundle/invalid-budget honesty) + `tests/test_mcp.py` (twin). `docs/cli.md`/`README.md` updated. Full suite green (2375). | → M3, cap 10 |
 | H11 | **✓ executed in the 2026-06-16 run that shipped H9/H10.** Buffer refresh checkpoint (maintenance rule): M1, M2, and M3 are all shipped ahead of schedule (M3 was the Day-2 target). M4 broken into the concrete vertical slices H12–H15 below; M5 into H16–H17. 3-day/week plans re-derived. | maintenance |
 | H12–H15 | **✓ shipped as one slice (ADR 0103). M4 complete.** `scrolls export bundle <query>` / `import bundle <path>`: one self-contained Markdown file that is both a readable topic *briefing* (per scroll: id, source, custody fidelity tier, capture timestamp, link, content-hash, capped excerpt) and a lossless re-import unit — the same `item_to_dict` JSONL `export items` writes, inside a ` ```jsonl ` fence wrapped in the ADR 0102 `@generated` sentinel (so the briefing body stays hand-annotatable). Scoped by the query + `context`/`search` facets and *complete about that scope* (every match, `count_matches` is the limit — no top-N), so it is the shareable, take-it-with-you complement to `export items`. New `src/scrolls/bundle.py` is an *envelope* reusing `search_items`/`count_matches`/`get_fidelity`/`dump_items_export`/`item_from_dict`/`generated.fence` — no new storage. `import bundle` reuses the `import items` path (`INSERT OR IGNORE`, custody-safe), so losslessness is the ADR 0082/0099 property already tested; the export→import→fresh-library round-trip is verified end to end. Tests: `tests/test_bundle.py` (11). Docs: `docs/cli.md` (two headings), README, `docs/architecture.md`, ADR 0103 + index. Done in one slice rather than the H12–H15 split because the round-trip core already existed — the bundle is an envelope, and the ADR lands with working code (repo convention). | → M4, cap 9 |
-| H16 | **M5 dogfood flow — draft.** Write the one agent-runnable end-to-end flow (custody-vision dogfood): *hold a topic → prove custody (`doctor` score) → detect loss (drift recheck) → take it with me (`export bundle` → `import bundle`)* — now fully unblocked (M1–M4 shipped). Script it against fixtures, offline. | → M5, cap 11 |
-| H17 | **M5 dogfood flow — run + score.** Run the flow offline against fixtures end to end; capture a before/after custody score; reference it from `docs/custody-vision.md`'s success section. **M5 complete → MVP M1–M5 done.** | → M5, cap 11 |
-| H18 | **Buffer refresh checkpoint** (maintenance rule). With the MVP complete, re-derive the post-MVP week plan (cap 8 re-derivable enrichment, scheduled custody maintenance) into concrete slices. | maintenance |
+| H16–H17 | **✓ shipped as one slice. M5 complete → MVP M1–M5 done.** The one agent-runnable end-to-end dogfood flow — *hold a topic → prove custody (`doctor` score) → detect loss (`verify` drift recheck) → take it with me (`export bundle` → `import bundle`)* — runs offline against fixtures in `tests/test_dogfood.py` (4 tests: each leg + the full ordered flow). Done as one slice (the H12–H15 precedent) because every underlying surface already shipped, so M5 is a *proof* tying M1–M4 together, not new feature code. The flow's two live edges (capture, recheck) are stood in for offline: **hold** seeds rendered full-fidelity items via the production `write_scroll` path; **detect** injects a scripted re-capture at the one `cli.live_recapture` seam (as `test_verify_cli.py` does). Captured before/after narrated in new `docs/dogfood.md`; referenced from `docs/custody-vision.md` §8. The sharp result the proof makes visible: detecting source drift moves the *drift posture* (`unverified` → `drifted`, recorded) **without** lowering the integrity `score` (held at 100) — because raw is sacred and drift is a recorded event, never an overwrite (custody §2.4). | → M5, cap 11 |
+| H18 | **✓ executed (with H16–H17).** Buffer refresh checkpoint (maintenance rule): MVP M1–M5 marked complete; 3-day/week plans re-derived below; post-MVP cap-8 enrichment + scheduled-custody-maintenance week broken into concrete slices H19–H24. | maintenance |
+| H19 | **Enrichment provenance audit (cap 8 — scope first).** Inspect what `classify.py` / `classify_llm.py` / `kb_llm.py` already record about *inputs + method* (provenance fields, members fingerprint) and where deterministic re-derivation is and isn't guaranteed. Produce a short gap note (in `docs/architecture.md` or an ADR stub) and a locking test for the determinism that already holds, so cap 8 gets a measured baseline before new markers are added. Network-free (rules engine + fixtures). | → cap 8 |
+| H20 | **Re-derivable classification records inputs + method.** Ensure `scrolls classify` (rules engine) records the engine + ruleset fingerprint in provenance so a re-classify is reproducible and auditable, and surface it on `show` (parity with `list`). Tests pin determinism (same inputs → same category + recorded method) and the surface echo. Builds on H19's baseline. | → cap 8 |
+| H21 | **Confidence / recency marker on enriched fields (obsidian "confidence levels").** Derive a confidence/recency marker for classification + summary (rule-matched vs llm-inferred vs unset; freshness vs capture), surfaced identically across browse surfaces (search ≡ list ≡ MCP ≡ facets) and scope-honest. Tests pin the derivation + surface parity. | → cap 8 |
+| H22 | **Scheduled custody maintenance flow — draft (obsidian "scheduled agents", custody-shaped).** Write the one agent-runnable maintenance pass — *audit → bounded drift recheck → regenerate views (`kb`) → report a custody delta* — as the dogfood flow's recurring sibling. Script it offline against fixtures (same `live_recapture` seam), the way `tests/test_dogfood.py` does. | → cap 8, maintenance framing |
+| H23 | **Custody-delta maintenance report — run + artifact.** Emit a custody delta (score / tier / drift change since the last run) as a durable artifact the scheduled worker writes; run the H22 flow offline end to end and capture a before/after delta. Tests pin the delta computation. | → cap 8, maintenance framing |
+| H24 | **Buffer refresh checkpoint** (maintenance rule). Re-derive the next post-MVP horizon; keep ≥6 un-started slots. Consider the deferred bi-temporal drift framing *only if* an agent workflow has shown the event record insufficient (else keep deferred per MVP out-of-scope). | maintenance |
 
 If the queue empties before the day does, deepen tests/fixtures on the slice
 just shipped or pick the next-highest PRD capability — never manufacture
@@ -72,15 +77,17 @@ cosmetic churn (CLAUDE.md, *Avoid trivial progress*).
   with an embedded lossless custody block, verified round-trip across a fresh
   library. Done as one slice because the round-trip core (ADR 0082) already
   existed; the bundle is an envelope.
-- **Day 2 (2026-06-17):** M2, M3, **and M4 done early** (H5–H15 all shipped
-  Day 1). Next: **M5** (dogfood proof) — the one agent-runnable end-to-end flow
-  *hold → prove → detect → take it with me*, now fully unblocked. Draft it
-  against fixtures (H16), then run it offline with a before/after custody score
-  (H17).
-- **Day 3 (2026-06-18 → 2026-06-19):** M5 finished and referenced from the
-  vision's dogfood section — **MVP M1–M5 complete.** Then begin the post-MVP
-  week plan (cap 8 re-derivable enrichment; framing the hourly worker as
-  scheduled custody maintenance).
+- **Day 2 (2026-06-17):** M2, M3, M4, **and M5 all done early** — the whole MVP
+  shipped ahead of schedule. M5 (H16–H17) landed as one slice: the dogfood proof
+  *hold → prove → detect → take it with me* runs offline against fixtures
+  (`tests/test_dogfood.py`), is narrated in `docs/dogfood.md`, and is referenced
+  from the vision's §8 success section. **MVP M1–M5 complete.** Next: begin the
+  post-MVP week (cap 8 re-derivable enrichment — H19–H21; scheduled custody
+  maintenance — H22–H23).
+- **Day 3 (2026-06-18 → 2026-06-19):** Post-MVP. Land the cap-8 enrichment
+  provenance baseline (H19) and re-derivable classification (H20), then the
+  confidence/recency marker (H21). Begin framing the hourly worker as scheduled
+  custody maintenance (H22 draft).
 
 Each day ends on a committed, tested, clean stopping point. Slips roll forward;
 the 3-day plan is re-derived at each buffer refresh.
@@ -135,8 +142,9 @@ The buffer rots if nobody refreshes it. The rule:
 | 24h H1–H4 | cap 6 (refresh-safe artifacts) | M1 + ADR 0102 |
 | 24h H5–H8 | cap 7 (completeness invariant) | M2 |
 | 24h H9–H10 | cap 10 (context budgets) | M3 |
-| 24h H12+ / Day 3 | cap 9 (custody bundle), cap 11 (dogfood) | M4, M5 |
-| Week | cap 8 (re-derivable enrichment), scheduled maintenance | post-MVP |
+| 24h H12+ | cap 9 (custody bundle), cap 11 (dogfood) | M4, M5 |
+| 24h H19–H21 / Week | cap 8 (re-derivable enrichment, confidence markers) | post-MVP |
+| 24h H22–H23 / Week | scheduled custody maintenance (cap 8 + maintenance framing) | post-MVP |
 
 The two obsidian-second-brain adoptions (M1 refresh-safe regeneration, M2
 completeness invariant) are intentionally first in the queue: they are the
