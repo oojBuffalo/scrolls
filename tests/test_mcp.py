@@ -564,6 +564,43 @@ def test_get_link_graph_empty_library(scrolls_home):
     }
 
 
+def test_node_shape_carries_drift_across_both_mcp_surfaces(scrolls_home):
+    # the per-item drift posture rides the node shape on both MCP node-shape
+    # twins — get_link_graph nodes and get_related_scrolls hits — and agrees (H56)
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="x:1111", source="x", url="https://x.com/a/status/1111",
+        saved_at="2026-06-12T00:00:00+00:00", title="thread", concepts=("ml",),
+        links=("https://arxiv.org/abs/2605.27848",), stage="fetched",
+    ))
+    insert_item(db, ScrollItem(
+        id="arxiv:2605.27848", source="arxiv", url="https://arxiv.org/abs/2605.27848",
+        saved_at="2026-06-12T00:00:00+00:00", title="A Paper", concepts=("ml",),
+        stage="fetched",
+    ))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "t", "drifted", "h", "x", None),
+        # x:1111 left unverified
+    ])
+
+    graph_nodes = {n["id"]: n for n in mcp_server.get_link_graph()["nodes"]}
+    assert graph_nodes["arxiv:2605.27848"]["drift"] == "drifted"
+    assert graph_nodes["x:1111"]["drift"] == "unverified"
+
+    related = {r["id"]: r for r in mcp_server.get_related_scrolls("x:1111")}
+    # the same item reads the same posture whichever node-shape surface reaches it
+    assert related["arxiv:2605.27848"]["drift"] == "drifted"
+    assert (
+        related["arxiv:2605.27848"]["drift"]
+        == graph_nodes["arxiv:2605.27848"]["drift"]
+    )
+
+
 def test_github_issue_thread_is_reachable_through_mcp(scrolls_home):
     # An issue/PR thread carries a '#' in its id (ADR 0084), a novel character
     # for the id<->URL resolver — confirm the agent-facing surface handles it:

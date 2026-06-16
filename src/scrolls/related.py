@@ -28,9 +28,12 @@ same work, *and* one points at the other), not double counting.
 Every hit carries human/agent-readable `reasons`, so downstream callers
 (and the MCP `get_related_scrolls`) can show *why* — same spirit as search
 snippets — plus the neighbour's custody `fidelity` tier (full/partial/
-reference, ADR 0097), so an agent following a related edge sees at a glance
-how much of the item it lands on the library actually holds, exactly as
-`scrolls list` and `scrolls search` report it.
+reference, ADR 0097) and its custody `drift` posture (verified/unverified/
+drifted/rotted/error, roadmap H56) read from the verify ledger, so an agent
+following a related edge sees at a glance both how much of the item it lands on
+the library holds *and* whether that source has drifted out from under the
+capture — the same two custody axes `scrolls list` and the graph node shape
+report.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.custody import drift_posture, latest_events
 from scrolls.graph import identity_tokens, link_tokens
 from scrolls.items import ScrollItem, get_fidelity, get_item, list_items
 from scrolls.render import slugify
@@ -62,6 +66,7 @@ class RelatedHit:
     score: int
     reasons: tuple
     fidelity: str
+    drift: str
 
 
 def find_related(
@@ -103,6 +108,11 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
     item_concepts = {slugify(c): c for c in item.concepts if slugify(c)}
     item_tags = {t.lower(): t for t in item.tags}
     item_work_dois = item_dois(item)
+    # One ledger read for the whole scoring pass: each hit's `drift` posture is
+    # `drift_posture` over its latest verdict, the same primitive the graph node
+    # shape and the bundle briefing read, so the posture an agent reads here and
+    # the count `doctor`/`facets drift` report can never disagree (roadmap H56).
+    verdicts = latest_events(db_path)
 
     hits = []
     for other in list_items(db_path):
@@ -163,6 +173,7 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
                     score=score,
                     reasons=tuple(reasons),
                     fidelity=get_fidelity(other),
+                    drift=drift_posture(verdicts.get(other.id)),
                 )
             )
 

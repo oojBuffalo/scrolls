@@ -87,6 +87,46 @@ def test_nodes_carry_their_custody_fidelity(db):
     assert by_id["arxiv:2605.27848"].fidelity == "full"
 
 
+def test_graph_nodes_carry_their_drift_posture(db, capsys):
+    # the node shape carries the second custody axis too: whether the source has
+    # drifted out from under the capture, read from the verify ledger (H56)
+    insert_item(db, make_item(
+        "x:1111", url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",)))
+    insert_item(db, make_item(
+        "arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "t", "drifted", "h", "x", None),
+        # x:1111 left unverified
+    ])
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert nodes["arxiv:2605.27848"]["drift"] == "drifted"
+    assert nodes["x:1111"]["drift"] == "unverified"  # honest default, never checked
+
+
+def test_graph_node_drift_matches_the_related_hit_drift(db, capsys):
+    # per-item parity across the two node-shape surfaces: the same item reads the
+    # same posture whether reached as a graph node or a related neighbour (H56)
+    from scrolls.related import find_related
+
+    insert_item(db, make_item("x:1111", concepts=("ml",),
+                              links=("https://example.org/arxiv:2605.27848",)))
+    insert_item(db, make_item("arxiv:2605.27848", concepts=("ml",)))
+    record_events(db, [
+        CustodyEvent("arxiv:2605.27848", "t", "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    graph_nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    related = {hit.id: hit for hit in find_related(db, "x:1111")}
+    assert graph_nodes["arxiv:2605.27848"]["drift"] == related["arxiv:2605.27848"].drift
+    assert graph_nodes["arxiv:2605.27848"]["drift"] == "drifted"
+
+
 def test_only_connected_items_are_nodes_by_default(db):
     insert_item(db, make_item(
         "x:1111",

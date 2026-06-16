@@ -302,6 +302,39 @@ def test_cli_related_hit_exposes_fidelity(db, capsys):
     assert hit["fidelity"] == "full"
 
 
+def test_related_hits_carry_the_neighbours_drift_posture(db):
+    # the node shape now carries both custody axes: how much (fidelity) and
+    # whether the source moved (drift), read from the verify ledger (H56)
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item("github:a/repo", concepts=("agents",)))
+    insert_item(db, make_item("github:drifted/repo", concepts=("agents",)))
+    insert_item(db, make_item("github:checked/repo", concepts=("agents",)))
+    insert_item(db, make_item("github:never/repo", concepts=("agents",)))
+    record_events(db, [
+        CustodyEvent("github:drifted/repo", "t", "drifted", "h", "x", None),
+        CustodyEvent("github:checked/repo", "t", "unchanged", "h", "h", None),
+        # github:never/repo left with no verdict
+    ])
+
+    by_id = {hit.id: hit for hit in find_related(db, "github:a/repo")}
+    assert by_id["github:drifted/repo"].drift == "drifted"
+    assert by_id["github:checked/repo"].drift == "verified"  # unchanged → verified
+    assert by_id["github:never/repo"].drift == "unverified"  # honest default
+
+
+def test_cli_related_hit_exposes_drift(db, capsys):
+    insert_item(db, make_item("x:1111", title="@a: thread", concepts=("ml",)))
+    insert_item(db, make_item("arxiv:2605.27848", title="A Paper", concepts=("ml",)))
+    capsys.readouterr()
+
+    # never re-checked → the honest unverified posture travels to the CLI surface
+    assert main(["related", "x:1111"]) == 0
+    (hit,) = json.loads(capsys.readouterr().out)
+    assert hit["id"] == "arxiv:2605.27848"
+    assert hit["drift"] == "unverified"
+
+
 def test_cli_related_prints_hits_json(db, capsys):
     insert_item(db, make_item(
         "x:1111",

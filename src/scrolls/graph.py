@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, custody_counts
+from scrolls.custody import CustodyEvent, custody_counts, drift_posture
 from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -54,7 +54,12 @@ class Node:
     `fidelity` is the item's custody tier (full/partial/reference, ADR 0097/
     0100), so a node an agent lands on while reading the graph says how much of
     it the library holds — the same tier `scrolls related` carries, keeping the
-    two shapes identical now that fidelity travels with related hits.
+    two shapes identical now that fidelity travels with related hits. The
+    item-intrinsic fields live on the node; the per-node custody **drift posture**
+    (which needs the verify ledger) is added in `to_payload` from the `verdicts`
+    it is passed (roadmap H56), so the node shape an agent reads carries both
+    custody axes — *how much* (fidelity) and *whether the source moved* (drift) —
+    without coupling graph building to the ledger.
     """
 
     id: str
@@ -201,6 +206,14 @@ def to_payload(
     by `--all` is *not* counted, and the count is the same notion whether or
     not isolates are included.
 
+    Each node also carries its per-item custody `drift` posture (roadmap H56) —
+    `custody.drift_posture` over its latest `verdicts` entry (`verified` /
+    `unverified` / `drifted` / `rotted` / `error`), the same posture the bundle
+    briefing and `scrolls related` hits carry — so an agent landing on a node sees
+    not just *how much* of it the library holds (`fidelity`) but *whether the
+    source drifted out from under it*. The per-item parity counterpart of the
+    scope-level `stats.custody` convergence.
+
     `stats.custody` is the graph-surface member of the custody-headline family
     (roadmap H52): the shared `custody.custody_counts` tally — fidelity-tier and
     drift-posture counts — over the *whole* `stats.items` scope (not just the
@@ -208,8 +221,11 @@ def to_payload(
     `facets`, and the scope custody headlines for the same scope by construction.
     Carried as count maps (graph emits JSON, not a Markdown headline). `verdicts`
     is the `latest_events` ledger read the CLI/MCP pass; absent (the pure caller),
-    every held item reads `unverified` — honest, nothing has been checked.
+    every held item reads `unverified` — honest, nothing has been checked. The
+    same `verdicts` feeds both the per-node `drift` and the `stats.custody` tally,
+    so a node's posture and its contribution to the count can never disagree.
     """
+    verdicts = verdicts or {}
     clusters = sum(
         1 for component in connected_components(graph) if len(component.nodes) >= 2
     )
@@ -222,6 +238,7 @@ def to_payload(
                 "url": node.url,
                 "stage": node.stage,
                 "fidelity": node.fidelity,
+                "drift": drift_posture(verdicts.get(node.id)),
             }
             for node in graph.nodes
         ],
@@ -234,7 +251,7 @@ def to_payload(
             "nodes": len(graph.nodes),
             "edges": len(graph.edges),
             "clusters": clusters,
-            "custody": custody_counts(list(graph.items), verdicts or {}),
+            "custody": custody_counts(list(graph.items), verdicts),
         },
     }
 

@@ -1804,10 +1804,12 @@ through source detection, so a tweet linking to `arxiv.org/abs/X` finds
 item `arxiv:X`), shared concepts, shared tags, same category/domain as
 weak corroboration. `score` is an integer (higher = more connected) and
 every hit carries its `reasons` plus the neighbour's `fidelity` tier
-(`full`/`partial`/`reference`, ADR 0097/0100) — so following an edge tells
-you how much of the item you land on the library actually holds, exactly as
-`scrolls search`/`scrolls list` report. Default limit 10. Unknown id is an
-error envelope on stderr.
+(`full`/`partial`/`reference`, ADR 0097/0100) and its custody `drift` posture
+(`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H56, read from the
+verify ledger) — so following an edge tells you both how much of the item you
+land on the library holds *and* whether that source has drifted out from under
+the capture, the same two custody axes the `graph` node shape carries. Default
+limit 10. Unknown id is an error envelope on stderr.
 
 `--stats` wraps the array in the same scope-honest `{scope, stats,
 results}` envelope `search`/`list` use (the completeness contract G2):
@@ -1820,7 +1822,7 @@ it the output is the bare array unchanged
 
 ```console
 $ scrolls related x:2222
-[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference"}]
+[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference", "drift": "unverified"}]
 [exit 0]
 
 $ scrolls related x:2222 --limit 1 --stats
@@ -1837,9 +1839,12 @@ saved item names another (a tweet citing a paper, a model's `arxiv:` tag,
 a preprint's published DOI), with `via` the link that matched. Resolution
 is the same two-sided, source-detecting match `related` uses (ADR 0023),
 so the graph is exactly the connections `related` would find, materialized
-at once. Nodes carry the `id`, `source`, `title`, `url`, `stage`, `fidelity`
-shape `related`/`search` hits use (the custody tier travels with the node,
-ADR 0100), sorted by id; edges sorted by `(from, to)`.
+at once. Nodes carry the `id`, `source`, `title`, `url`, `stage`, `fidelity`,
+`drift` shape `related` hits use — both custody axes travel with the node: the
+`fidelity` tier (how much is held, ADR 0100) and the `drift` posture (whether the
+source moved, roadmap H56, read from the verify ledger; the same posture a
+`related` hit and the bundle briefing carry, so a node reads the same wherever
+it is reached). Sorted by id; edges sorted by `(from, to)`.
 
 Nodes are the *connected* items by default — `--all` widens it to every
 item, isolated ones included. `stats.items` is always the library total,
@@ -1861,7 +1866,7 @@ counts travel directly — `verified` is the ledger `unchanged` (custody §2.4),
 
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified"}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 
@@ -1882,8 +1887,9 @@ an arXiv preprint and a PubMed record that both name `doi.org/D` are one
 work even when the `crossref:D` item that would link them is absent
 (`test_clusters_without_the_crossref_hub_present`). Each work carries its
 `doi`, canonical `url`, and `representations` (the `id`/`source`/`title`/
-`url`/`stage`/`fidelity` node shape `graph`/`related` use, so each
-representation reports the custody tier it is held at — the preprint may be
+`url`/`stage`/`fidelity` node shape — the fidelity-bearing subset of what
+`graph`/`related` carry, which add a `drift` posture too — so each
+representation reports the custody tier it is held at: the preprint may be
 full while the published record is a bare reference, ADR 0100), sorted by
 id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just

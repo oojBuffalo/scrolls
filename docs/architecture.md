@@ -699,7 +699,10 @@ choice (ADRs 0004, 0005).
   (merged by slug), shared tags, same category/domain as weak
   corroboration. A genuine same-work pair whose hub is present scores both
   the same-work and the link edge — complementary facts, not double counting.
-  Every hit carries its `reasons` (`tests/test_related.py`).
+  Every hit carries its `reasons`, its custody `fidelity` tier, and — from one
+  `latest_events` read per call — its custody `drift` posture (roadmap H56), so
+  a neighbour an agent follows reports both how much of it the library holds and
+  whether its source has drifted (`tests/test_related.py`).
 - **Link graph** (`graph.py`, ADR 0044) — `scrolls graph` resolves *every*
   item's links into directed edges across the whole library, the
   whole-library complement to `related`'s per-item lens. The link-resolution
@@ -708,7 +711,12 @@ choice (ADRs 0004, 0005).
   indexes every item's identity tokens once then probes with each link
   (linear, not the per-pair O(n²)); nodes are the connected items by
   default (`--all` adds isolates), `stats.items` the library total and
-  `stats.clusters` the number of 2+-member components. The
+  `stats.clusters` the number of 2+-member components. Each node carries both
+  custody axes — its `fidelity` tier (item-intrinsic, on the `Node`) and its
+  `drift` posture (added in `to_payload` from the same `verdicts` the
+  `stats.custody` tally reads, roadmap H56), so a node reads the same posture
+  whether reached here or as a `related` hit, and a node's posture never
+  disagrees with its contribution to the scope count. The
   same `{nodes, edges, stats}` payload backs the MCP `get_link_graph` tool
   (`tests/test_graph.py`). `connected_components` partitions the graph into
   clusters (edges undirected for the partition, the directed edges kept) and
