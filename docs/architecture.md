@@ -106,14 +106,19 @@ each command moves items between stages or derives artifacts from them.
   list` + MCP `list_scrolls`) and `search.SearchHit`/`hit_payload` (→ `scrolls
   search` + MCP `search_scrolls`) each carry a `drift` field beside `fidelity`,
   populated from one `latest_events` read per call passed in (the way `works`
-  membership is, so the surface reads the ledger once, not per row). So every
-  browse/landing surface — `list` rows, `search` hits, `related` hits (H56),
-  `graph` nodes (H56), and the bundle briefing (H42) — reports the *same*
-  two-axis per-item custody picture (`fidelity` = how much is held, `drift` =
-  whether the source moved), each through the same `custody.drift_posture` over
-  `latest_events`, so a given item reads the same posture wherever an agent
-  reaches it, and the posture a `list` row shows is exactly the one its `--drift`
-  filter selects on. The cross-engine contract — method is recorded,
+  membership is, so the surface reads the ledger once, not per row). The
+  *inspect* surface carries the same two axes (roadmap H61): `scrolls show` and
+  MCP `get_scroll` add a derived `fidelity` (via `get_fidelity`) and `drift` (via
+  `custody.drift_posture` over a single-id `item_events` read) beside the raw
+  record. So every browse/landing/inspect surface — `list` rows, `search` hits,
+  `related` hits (H56), `graph` nodes (H56), the bundle briefing (H42), and
+  `show`/`get_scroll` (H61) — reports the *same* two-axis per-item custody
+  picture (`fidelity` = how much is held, `drift` = whether the source moved),
+  each through the same `custody.drift_posture` over `latest_events`, so a given
+  item reads the same posture wherever an agent reaches it, and the posture a
+  `list` row shows is exactly the one its `--drift` filter selects on. That
+  per-item agreement is pinned across all six surfaces by the per-item invariant
+  in `tests/test_custody_convergence.py` (roadmap H59). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

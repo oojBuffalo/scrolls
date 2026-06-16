@@ -916,6 +916,65 @@ def test_show_surfaces_the_classification_method(scrolls_home, fake_wikipedia_ap
     assert payload["provenance"]["classified_basis"] == "curated-source"
 
 
+def test_show_carries_the_two_custody_axes(scrolls_home, capsys):
+    # H61: the inspect surface carries the same per-item custody picture the
+    # browse rows do — `fidelity` (how much is held) and `drift` (whether the
+    # source moved) — derived, beside the raw record, at parity with `list`.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="Held in full",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:a", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="Never checked",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:b", stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    main(["show", "web:a"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fidelity"] == "full"
+    assert payload["drift"] == "drifted"  # latest ledger verdict
+
+    # an item the ledger has no verdict for is honestly `unverified`
+    main(["show", "web:b"])
+    assert json.loads(capsys.readouterr().out)["drift"] == "unverified"
+
+
+def test_show_custody_axes_match_the_list_row(scrolls_home, capsys):
+    # H61 parity: the inspect surface reads the *same* fidelity/drift the browse
+    # row does for the same item — the per-item picture reads the same everywhere.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A scroll",
+        extracted_text="body", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "rotted", "h", None, "404"),
+    ])
+    capsys.readouterr()
+
+    main(["list"])
+    row = json.loads(capsys.readouterr().out)[0]
+    main(["show", "web:a"])
+    shown = json.loads(capsys.readouterr().out)
+    assert (shown["fidelity"], shown["drift"]) == (row["fidelity"], row["drift"])
+    assert shown["drift"] == "rotted"
+
+
 def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
     from scrolls.classify import RULESET_FINGERPRINT
 

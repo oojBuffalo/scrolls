@@ -473,6 +473,38 @@ def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):
     assert item["markdown_path"] == "scrolls/wikipedia/sqlite.md"
 
 
+def test_get_scroll_carries_the_two_custody_axes_at_parity_with_list(scrolls_home):
+    # H61: the MCP inspect twin carries the derived `fidelity` + `drift` axes,
+    # and agrees with the `list_scrolls` row for the same item (per-item parity).
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A scroll",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:a", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="Never checked",
+        extracted_text="body", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+    ])
+
+    scroll = mcp_server.get_scroll("web:a")
+    assert scroll["fidelity"] == "full"
+    assert scroll["drift"] == "drifted"
+    # agrees with the list_scrolls row for the same item
+    row = next(r for r in mcp_server.list_scrolls() if r["id"] == "web:a")
+    assert (scroll["fidelity"], scroll["drift"]) == (row["fidelity"], row["drift"])
+    # honest never-checked default for an item with no verdict
+    assert mcp_server.get_scroll("web:b")["drift"] == "unverified"
+
+
 def test_get_scroll_and_list_surface_the_classification_method(
     scrolls_home, fake_wikipedia_api
 ):

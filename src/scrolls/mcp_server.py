@@ -24,6 +24,7 @@ from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.custody import (
     drift_posture,
+    item_events,
     latest_events,
     live_recapture,
     record_events,
@@ -42,6 +43,7 @@ from scrolls.works import works_for_item, works_over
 from scrolls.items import (
     classification_provenance,
     count_by_source,
+    get_fidelity,
     get_item,
     item_summary,
     list_items,
@@ -239,6 +241,13 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     same normalize → detect → mint chain `ingest_url` registers with (ADR 0028).
     An unknown item is an error; if a URL was passed, the message names the id it
     resolved to so the resolution stays visible.
+
+    Beside the raw record, the payload carries the two derived per-item custody
+    axes the browse surfaces report (roadmap H61) — `fidelity` (the custody tier,
+    full/partial/reference) and `drift` (the verify-ledger posture, verified/
+    unverified/drifted/rotted/error) — plus the `classification` view (omitted on
+    honest absence), so the inspect surface reads at parity with `list_scrolls`/
+    `search_scrolls`.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
@@ -249,6 +258,12 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
+    # The two derived per-item custody axes (roadmap H61), matching the CLI
+    # `show` payload and the `list`/`search` rows: `fidelity` (how much is held)
+    # and `drift` (whether the source moved, from the latest ledger verdict).
+    payload["fidelity"] = get_fidelity(item)
+    events = item_events(paths.db_path, resolved)
+    payload["drift"] = drift_posture(events[0] if events else None)
     # The derived classification view alongside raw provenance, matching the CLI
     # `show` payload so both inspect surfaces present how the category was made.
     classification = classification_provenance(item)

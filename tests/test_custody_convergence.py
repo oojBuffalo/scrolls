@@ -21,14 +21,15 @@ so the browse filter and the aggregate can never disagree. A future change that
 desyncs any one surface fails here, in one obvious place.
 
 This module also pins the **per-item** counterpart of that scope-level invariant
-(roadmap H59). After H56/H58 the per-item `drift` posture rides every
-browse/landing surface — `list` rows, `search` hits, `related` hits, `graph`
-nodes, and the shareable bundle briefing — each claimed to read the same
-`custody.drift_posture` over `latest_events`. The per-item section asserts that
-over one seeded fixture a given item reads the *same* `drift` on every surface
-that carries it, and that each whole-library-enumerating surface's per-item
-posture counts total `facets drift`'s count for that posture — tying the
-per-item axis back to the aggregate the scope-level invariant pins.
+(roadmap H59). After H56/H58/H61 the per-item `drift` posture rides every
+browse/landing/inspect surface — `list` rows, `search` hits, `related` hits,
+`graph` nodes, the shareable bundle briefing, and `show`/`get_scroll` — each
+claimed to read the same `custody.drift_posture` over `latest_events`. The
+per-item section asserts that over one seeded fixture a given item reads the
+*same* `drift` on every surface that carries it, and that each
+whole-library-enumerating surface's per-item posture counts total `facets
+drift`'s count for that posture — tying the per-item axis back to the aggregate
+the scope-level invariant pins.
 """
 
 import json
@@ -308,12 +309,18 @@ def test_every_surface_agrees_on_an_items_drift_posture(scrolls_home, capsys):
     # related hits (H56) from web:1 — reaches every other item (link + shared tag)
     assert main(["related", "web:1"]) == 0
     related_drift = {h["id"]: h["drift"] for h in json.loads(capsys.readouterr().out)}
+    # show — the inspect surface (H61), one item at a time
+    show_drift = {}
+    for item_id in canonical:
+        assert main(["show", item_id]) == 0
+        show_drift[item_id] = json.loads(capsys.readouterr().out)["drift"]
 
     # every whole-library surface reports the canonical posture for every item
     assert list_drift == canonical
     assert search_drift == canonical
     assert graph_drift == canonical
     assert bundle_drift == canonical
+    assert show_drift == canonical
     # related carries every item *except its anchor*, each at the canonical posture
     assert related_drift == {
         item_id: posture

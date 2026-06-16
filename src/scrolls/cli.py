@@ -22,6 +22,7 @@ from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     drift_posture,
+    item_events,
     latest_events,
     live_recapture,
     record_events,
@@ -62,6 +63,7 @@ from scrolls.works import (
 from scrolls.items import (
     ScrollItem,
     classification_provenance,
+    get_fidelity,
     get_item,
     insert_item,
     item_summary,
@@ -2194,6 +2196,13 @@ def _cmd_show(item_id: str) -> int:
     payload = dataclasses.asdict(item)
     for name in ("tags", "concepts", "links", "media"):
         payload[name] = list(payload[name])
+    # The two derived per-item custody axes, so the inspect surface carries the
+    # same picture `list`/`search` rows do (roadmap H61): `fidelity` (how much is
+    # held) from the item alone, and `drift` (whether the source moved) from the
+    # item's latest verify-ledger verdict — `unverified` when never re-checked.
+    payload["fidelity"] = get_fidelity(item)
+    events = item_events(paths.db_path, item.id)
+    payload["drift"] = drift_posture(events[0] if events else None)
     # The derived classification view alongside the raw provenance, so `show`
     # presents how the category was produced at parity with `list` (and MCP).
     classification = classification_provenance(item)

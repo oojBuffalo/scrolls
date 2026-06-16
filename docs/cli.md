@@ -1698,8 +1698,16 @@ One item in full: every `ScrollItem` field
 (`docs/architecture.md` → "The data model"), with list fields always
 present as JSON arrays (`test_show_prints_full_item_json`). Unset fields
 are `null`, not omitted. The id may also be the item's URL — see
-Conventions (`test_show_accepts_item_url`). When an engine classified the
-item, `show` adds a derived `classification` block (`by` / `basis` /
+Conventions (`test_show_accepts_item_url`). Beside the raw record, `show`
+adds the two derived per-item custody axes the browse rows carry (roadmap H61):
+`fidelity` (the custody tier — `full`/`partial`/`reference`) and `drift` (the
+custody **drift posture** — `verified`/`unverified`/`drifted`/`rotted`/`error`,
+from the item's latest verify-ledger verdict; `unverified` when never
+re-checked) — so the inspect surface reads the same per-item custody picture as
+`scrolls list`/`search` for the same item
+(`test_show_carries_the_two_custody_axes`,
+`test_show_custody_axes_match_the_list_row`). When an engine classified the
+item, `show` also adds a derived `classification` block (`by` / `basis` /
 `ruleset`, plus `model` for the LLM engine, and a `confidence` trust/recency
 marker — see `classify`) alongside the raw `provenance` keys — the same view
 `scrolls list` and the MCP `get_scroll` / `list_scrolls` twins surface, so how
@@ -2187,7 +2195,7 @@ The tools wrap the same engines as the CLI commands
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, the two custody axes (`fidelity` + `drift`, H58), and `works` membership (ADR 0101), optionally faceted |
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the two custody axes `fidelity` + `drift` (H58) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
-| `get_scroll(item_id)` | `scrolls show` | full item record; `item_id` is an id or the item's URL (ADR 0028) |
+| `get_scroll(item_id)` | `scrolls show` | full item record + the two custody axes (`fidelity` + `drift`, H61) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
