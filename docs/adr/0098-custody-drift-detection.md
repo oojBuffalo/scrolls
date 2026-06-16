@@ -101,20 +101,29 @@ same exit posture as `fetch`.
 - The capture row is provably untouched by a `drifted` verdict
   (`test_verify_never_clobbers_the_capture`), so verification is safe to run
   repeatedly — the ledger grows, the captures do not move.
+- **The capability is reachable on every surface.** Beyond the CLI, the MCP
+  `verify_scroll(item_id)` tool exposes the single-item path to agents (the
+  primary users), mirroring the CLI contract — unknown item or missing baseline
+  hash raises (the MCP convention), a verdict otherwise — and pointing at
+  `scrolls doctor`'s `custody.drift` block for the aggregate report. This
+  honors the vision's surface-consistency principle: the same engine, framed
+  for each surface.
 - Verified offline: `tests/test_custody.py` (every verdict via injected
   recapture, the 404/410-vs-503 split, the no-write property, the
   `MAX(id)` latest-per-item tiebreak, the append-only history),
   `tests/test_doctor.py` drift section (per-verdict counts, latest-only,
-  deleted-item exclusion, exit-code isolation), and `tests/test_verify_cli.py`
+  deleted-item exclusion, exit-code isolation), `tests/test_verify_cli.py`
   (every CLI status path, the `id`-xor-`--all` argument contract, `--all`
-  baseline filtering and `--limit` pacing, and the verify→doctor handoff).
+  baseline filtering and `--limit` pacing, and the verify→doctor handoff), and
+  `tests/test_mcp.py` (the `verify_scroll` tool's drift verdict, unknown-item
+  and missing-baseline raises, and the locked tool surface).
 
 ## Deferred
 
-- **MCP `verify`.** The vision's surface-consistency principle wants verify
-  reachable via MCP too; this slice is CLI + doctor + engine. The engine is
-  already MCP-ready (pure, with `live_recapture` as the only network edge), so
-  the MCP tool is a thin follow-up.
+- **MCP batch / drift-report read.** The MCP tool verifies one item; the `--all`
+  batch and an MCP read of the aggregate drift report wait on a broader decision
+  about whether `scrolls doctor` itself should be an MCP tool (it carries
+  repair semantics the read tools do not).
 - **Re-capture-on-accept.** `verify` only records; a future "accept the drift"
   path (re-render from the fresh capture, recording the supersession) would be
   the natural complement, but overwriting a capture is a separate, heavier

@@ -7,6 +7,7 @@ the real FastMCP server to lock the registered tool surface.
 """
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -92,6 +93,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_tag_page",
         "list_sources",
         "ingest_url",
+        "verify_scroll",
         "follow_feed",
         "unfollow_feed",
         "list_feed_subscriptions",
@@ -115,6 +117,58 @@ def test_ingest_url_without_adapter_reports_error_as_data(scrolls_home):
     payload = mcp_server.ingest_url("https://x.com/karpathy/status/1111")
     assert payload["stage"] == "detected"
     assert "no fetch adapter" in payload["error"]
+
+
+def _seed_verifiable_item(content_hash="sha256:orig"):
+    """A rendered web item with a captured hash, for verify_scroll tests."""
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    paths = get_paths()
+    item = ScrollItem(
+        id="web:demo", source="web", source_id=None,
+        url="https://example.com/a", saved_at="2026-06-12T08:00:00+00:00",
+        content_hash=content_hash, extracted_text="captured body", stage="rendered",
+    )
+    insert_item(paths.db_path, item)
+    return item
+
+
+def test_verify_scroll_records_drift(scrolls_home, monkeypatch):
+    from scrolls.items import ScrollItem
+
+    _seed_verifiable_item(content_hash="sha256:old")
+    monkeypatch.setattr(
+        mcp_server, "live_recapture",
+        lambda i: ScrollItem(**{**dataclasses.asdict(i), "content_hash": "sha256:new"}),
+    )
+
+    event = mcp_server.verify_scroll("web:demo")
+    assert event["status"] == "drifted"
+    assert event["prior_hash"] == "sha256:old"
+    assert event["observed_hash"] == "sha256:new"
+    # the verdict reaches the doctor drift report
+    from scrolls.custody import latest_events
+
+    latest = latest_events(get_paths().db_path)
+    assert latest["web:demo"].status == "drifted"
+
+
+def test_verify_scroll_unknown_item_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError, match="no such item"):
+        mcp_server.verify_scroll("web:nope")
+
+
+def test_verify_scroll_without_baseline_hash_raises(scrolls_home):
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:ref", source="web", source_id=None, url="https://example.com/ref",
+        saved_at="2026-06-12T08:00:00+00:00", stage="detected"))
+    with pytest.raises(ValueError, match="no content hash"):
+        mcp_server.verify_scroll("web:ref")
 
 
 def test_search_scrolls_finds_ingested_content(scrolls_home, fake_wikipedia_api):

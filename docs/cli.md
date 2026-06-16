@@ -1477,6 +1477,7 @@ The tools wrap the same engines as the CLI commands
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
 | `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |
+| `verify_scroll(item_id)` | `scrolls verify <id>` | the custody event (`status` unchanged/drifted/rotted/error + hashes); records to the ledger, never clobbers the capture (ADR 0098; `test_verify_scroll_records_drift`) |
 | `follow_feed(url)` | `scrolls follow <url>` | the subscription plus `created` (ADR 0020) |
 | `unfollow_feed(ref)` | `scrolls unfollow <id>` | `{id, removed}`; accepts id or feed URL |
 | `list_feed_subscriptions()` | `scrolls follow` | subscriptions with sync state |

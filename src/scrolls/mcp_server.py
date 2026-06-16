@@ -15,11 +15,14 @@ raise (FastMCP turns the exception into a tool error for the client).
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime, timezone
 from typing import Any
 
 from scrolls import feeds
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
+from scrolls.custody import live_recapture, record_events, verify_item
+from scrolls.db import init_db
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import compute_facets
 from scrolls.graph import build_graph
@@ -53,7 +56,9 @@ _INSTRUCTIONS = (
     "get_concept_page (or get_tag_page) to follow connections, get_link_graph "
     "for the whole "
     "library's link structure at once, and ingest_url to save "
-    "something new. follow_feed subscribes the library to an RSS/Atom "
+    "something new. verify_scroll re-captures a held scroll and reports "
+    "whether its source has drifted or rotted since it was saved. "
+    "follow_feed subscribes the library to an RSS/Atom "
     "feed and sync_feeds registers its new entries. compile_library "
     "rebuilds the knowledge-base pages get_concept_page and get_tag_page serve."
 )
@@ -351,6 +356,36 @@ def ingest_url(url: str) -> dict[str, Any]:
     return _ingest_url(url)
 
 
+def verify_scroll(item_id: str) -> dict[str, Any]:
+    """Re-capture a held scroll and record whether its source drifted/rotted (network).
+
+    Re-fetches the item through its source adapter, diffs the fresh content
+    hash against the stored one, and appends a custody event to the ledger
+    *without* overwriting the original capture (ADR 0098). Returns the event:
+    `status` is `unchanged`, `drifted` (the source changed since capture),
+    `rotted` (gone — HTTP 404/410), or `error` (could not check now), with
+    `prior_hash`/`observed_hash`/`detail`. `item_id` is an id or the item's URL
+    (ADR 0028). Raises for an unknown item, or one holding no captured content
+    hash to verify against. Read the aggregate drift report with `scrolls
+    doctor` (its `custody.drift` block).
+    """
+    paths = get_paths()
+    item = (
+        get_item(paths.db_path, resolve_item_id(item_id))
+        if paths.db_path.exists()
+        else None
+    )
+    if item is None:
+        raise ValueError(f"no such item: {item_id}")
+    if not item.content_hash:
+        raise ValueError(f"item {item.id!r} holds no content hash to verify against")
+    init_db(paths.db_path)  # ensure the ledger table exists before recording
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    event = verify_item(item, live_recapture, now=now)
+    record_events(paths.db_path, [event])
+    return dataclasses.asdict(event)
+
+
 def follow_feed(url: str) -> dict[str, Any]:
     """Subscribe the library to an RSS/Atom feed for sync_feeds (network).
 
@@ -438,6 +473,7 @@ _TOOLS = (
     get_tag_page,
     list_sources,
     ingest_url,
+    verify_scroll,
     follow_feed,
     unfollow_feed,
     list_feed_subscriptions,
