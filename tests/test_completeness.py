@@ -112,6 +112,11 @@ CHECKED_EMPTY_CASES = {
         lambda out: json.loads(out)["issues"] == 0
         and json.loads(out)["delta"]["first_run"] is True,
     ),
+    # never maintained → an empty trend (honest absence), never a fabricated run
+    "maintain_history": (
+        ["maintain", "--history"],
+        lambda out: json.loads(out) == [],
+    ),
     # a query no item matches → a valid, importable bundle that says so
     "export_bundle": (
         ["export", "bundle", "zzznotatoken"],
@@ -229,6 +234,11 @@ BEFORE_INIT_CASES = {
     "export_bundle": (
         ["export", "bundle", "anything"],
         lambda out: "No matching scrolls." in out,
+    ),
+    # no library → an empty trend, never an error on a missing log
+    "maintain_history": (
+        ["maintain", "--history"],
+        lambda out: json.loads(out) == [],
     ),
 }
 

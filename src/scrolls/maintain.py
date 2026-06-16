@@ -24,6 +24,15 @@ once, and that single picture is both reported and recorded for next time. The
 delta tolerates a missing baseline (`first_run`) and missing axes (a snapshot
 written by an older schema), mirroring the forward-compatible item import
 (ADR 0082): unknown keys are ignored, absent counts default to zero.
+
+Alongside `last-run.json` (the single baseline for the next delta), each run
+also **appends** its `{recorded_at, snapshot, delta}` record to an append-only
+`<root>/.maintenance/log.jsonl` (roadmap H36). The log is the custody *trend*,
+not just the last diff: a worker or agent reads the score/drift trajectory over
+time from `scrolls maintain --history`. It follows the custody-ledger posture
+(custody-vision §2.4) — append, never rewrite — and the same degrade-safely
+read posture as the snapshot: a missing log is an empty history (never an
+error), and one corrupt line is skipped rather than hiding every good run.
 """
 
 from __future__ import annotations
@@ -39,11 +48,20 @@ from scrolls.paths import LibraryPaths
 _DRIFT_AXES = ("checked", "unverified", "unchanged", "drifted", "rotted", "error")
 
 SNAPSHOT_RELPATH = Path(".maintenance") / "last-run.json"
+LOG_RELPATH = Path(".maintenance") / "log.jsonl"
+
+# `scrolls maintain --history` with no count prints this many recent runs.
+DEFAULT_HISTORY_LIMIT = 10
 
 
 def snapshot_path(paths: LibraryPaths) -> Path:
     """Where a library's last maintenance snapshot is recorded."""
     return paths.root / SNAPSHOT_RELPATH
+
+
+def log_path(paths: LibraryPaths) -> Path:
+    """Where a library's append-only maintenance run log lives."""
+    return paths.root / LOG_RELPATH
 
 
 def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
@@ -138,3 +156,45 @@ def save_snapshot(path: Path, snapshot: dict[str, Any]) -> None:
     """Record this run's snapshot, creating `.maintenance/` if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+
+
+def append_log_entry(path: Path, entry: dict[str, Any]) -> None:
+    """Append one run's record to the maintenance log (append-only).
+
+    The custody-ledger posture (custody-vision §2.4): a maintenance run is an
+    event, so the log grows by appending a single JSON line, never by rewriting
+    earlier runs. `.maintenance/` is created on demand, mirroring `save_snapshot`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def read_log(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    """The recorded maintenance runs oldest-first; the last `limit` if given.
+
+    Custody-safe like `load_snapshot`: a missing log is an empty history (honest
+    absence, never an error), and a corrupt or blank line is skipped rather than
+    aborting the whole read — one bad append never hides the good runs before it.
+    A non-positive `limit` is an empty window; `None` returns the full history.
+    """
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            loaded = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(loaded, dict):
+            entries.append(loaded)
+    if limit is not None:
+        entries = entries[-limit:] if limit > 0 else []
+    return entries

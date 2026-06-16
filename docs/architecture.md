@@ -219,7 +219,12 @@ each command moves items between stages or derives artifacts from them.
   is never a compiled page and never created by `init`, so a lost/corrupt one just
   degrades to "first run". The delta makes the dogfood's custody point recurring:
   source drift moves the *drift posture* without lowering the integrity *score*
-  (`tests/test_maintain.py`; roadmap H22/H23/H34).
+  (`tests/test_maintain.py`; roadmap H22/H23/H34). Each run also **appends** its
+  `{recorded_at, snapshot, delta}` to an append-only `<root>/.maintenance/log.jsonl`
+  (the custody-ledger posture: append, never rewrite); `scrolls maintain --history
+  [N]` reads the last N runs back as a JSON array — the custody *trend*, not just
+  the last diff. The history read is custody-safe like the snapshot: a missing log
+  is an empty history and one corrupt line is skipped (roadmap H36).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters
@@ -821,14 +826,16 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34) — `scrolls maintain` is
-  the scheduled custody-maintenance pass: recheck → regenerate → audit →
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36) — `scrolls maintain`
+  is the scheduled custody-maintenance pass: recheck → regenerate → audit →
   custody delta vs the last run (snapshot at `<root>/.maintenance/last-run.json`).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
-  the module owns only the snapshot/delta layer. Report-only and idempotent —
-  records drift events and regenerates views, never repairs rows or
-  re-enriches — so it is a safe cron-able pass (`tests/test_maintain.py`).
-  Like doctor, deliberately not exposed over MCP (a mutating operator surface).
+  the module owns only the snapshot/delta layer plus the append-only run log
+  (`log.jsonl`, read back by `maintain --history [N]` — the custody trend).
+  Report-only and idempotent — records drift events and regenerates views, never
+  repairs rows or re-enriches — so it is a safe cron-able pass
+  (`tests/test_maintain.py`). Like doctor, deliberately not exposed over MCP (a
+  mutating operator surface).
 - **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
   files (scroll, captured media) and then its row, in that order, so an
   interrupted removal leaves a re-runnable item rather than orphan

@@ -151,3 +151,8 @@ regenerates views, but never repairs index rows, reclassifies, or re-summarizes 
 mutations. The delta makes the custody point above **recurring**: each pass shows
 the drift posture moving without the integrity score ever dropping. Proven offline
 in `tests/test_maintain.py` (the same `cli.live_recapture` seam this flow uses).
+
+Each pass also appends its `{recorded_at, snapshot, delta}` to an append-only
+`<root>/.maintenance/log.jsonl`, so `scrolls maintain --history [N]` reads the
+last N runs back as the custody **trend** — the score/drift *trajectory* an
+unattended worker watches over time, not just the single most recent diff.

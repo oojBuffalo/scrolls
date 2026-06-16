@@ -27,9 +27,12 @@ from scrolls.cli import main
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, get_item, item_to_dict, list_items, make_item_id
 from scrolls.maintain import (
+    append_log_entry,
     compute_delta,
     custody_snapshot,
     load_snapshot,
+    log_path,
+    read_log,
     save_snapshot,
     snapshot_path,
 )
@@ -148,6 +151,59 @@ def test_corrupt_snapshot_degrades_to_first_run(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text("{ not json", encoding="utf-8")
     assert load_snapshot(path) is None
+
+
+# --- the run log (pure, append-only) --------------------------------------
+
+
+def _log_entry(recorded_at, score):
+    return {
+        "recorded_at": recorded_at,
+        "snapshot": {"score": score, "tiers": {"full": 1}},
+        "delta": {"first_run": recorded_at == "t1"},
+    }
+
+
+def test_log_round_trips_oldest_first(tmp_path):
+    path = tmp_path / ".maintenance" / "log.jsonl"
+    assert read_log(path) == []  # no file yet → empty history, not an error
+    a, b = _log_entry("t1", 100), _log_entry("t2", 90)
+    append_log_entry(path, a)
+    append_log_entry(path, b)
+    assert read_log(path) == [a, b]  # appended in order, oldest first
+
+
+def test_append_never_rewrites_earlier_runs(tmp_path):
+    """The custody-ledger posture: a second run appends a line, the first stays."""
+    path = tmp_path / ".maintenance" / "log.jsonl"
+    append_log_entry(path, _log_entry("t1", 100))
+    first_bytes = path.read_text(encoding="utf-8")
+    append_log_entry(path, _log_entry("t2", 90))
+    grown = path.read_text(encoding="utf-8")
+    assert grown.startswith(first_bytes)  # the first line is byte-for-byte intact
+    assert len(grown.splitlines()) == 2
+
+
+def test_read_log_limit_returns_the_last_n(tmp_path):
+    path = tmp_path / ".maintenance" / "log.jsonl"
+    entries = [_log_entry(f"t{i}", 100 - i) for i in range(5)]
+    for entry in entries:
+        append_log_entry(path, entry)
+    assert read_log(path, limit=2) == entries[-2:]
+    assert read_log(path, limit=10) == entries  # limit past the end is the whole log
+    assert read_log(path, limit=0) == []  # an empty window is honest, not "all"
+    assert read_log(path, limit=None) == entries
+
+
+def test_read_log_skips_a_corrupt_line_without_losing_the_good_ones(tmp_path):
+    """One bad append must never hide every good run before or after it."""
+    path = tmp_path / ".maintenance" / "log.jsonl"
+    good_a, good_b = _log_entry("t1", 100), _log_entry("t2", 90)
+    append_log_entry(path, good_a)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("{ not json\n\n")  # a corrupt line and a blank line
+    append_log_entry(path, good_b)
+    assert read_log(path) == [good_a, good_b]
 
 
 # --- the command (offline, dogfood-style) ---------------------------------
@@ -379,3 +435,104 @@ def test_maintain_on_an_uninitialized_library_is_a_clean_no_op(home, capsys):
     assert report["compiled"]["items"] == 0
     assert report["delta"]["first_run"] is True
     assert report["issues"] == 0
+
+
+# --- the run log + `--history` (the custody trend, roadmap H36) ------------
+
+
+def test_each_maintain_run_appends_to_the_trend_log(home, monkeypatch, capsys):
+    """Two passes leave two log lines, oldest first, each carrying that run's
+    score and delta — the trajectory, not just the last diff."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert main(["maintain"]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    runs = read_log(log_path(home))
+    assert [r["recorded_at"] for r in runs] == [first["recorded_at"], second["recorded_at"]]
+    assert runs[0]["snapshot"]["score"] == 100 and runs[1]["snapshot"]["score"] == 100
+    # the first run is first_run, the second is a real delta vs the first
+    assert runs[0]["delta"]["first_run"] is True
+    assert runs[1]["delta"]["first_run"] is False
+    assert runs[1]["delta"]["since"] == first["recorded_at"]
+    # the log lives under .maintenance/, never as a compiled library page
+    assert not (home.library_dir / ".maintenance").exists()
+
+
+def test_history_prints_the_recorded_runs_oldest_first(home, monkeypatch, capsys):
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert main(["maintain"]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert main(["maintain", "--history"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert [r["recorded_at"] for r in printed] == [
+        first["recorded_at"],
+        second["recorded_at"],
+    ]
+
+
+def test_history_bounds_to_the_last_n(home, monkeypatch, capsys):
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    recorded = []
+    for _ in range(3):
+        assert main(["maintain"]) == 0
+        recorded.append(json.loads(capsys.readouterr().out)["recorded_at"])
+
+    assert main(["maintain", "--history", "2"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert [r["recorded_at"] for r in printed] == recorded[-2:]
+
+
+def test_history_is_read_only_and_never_runs_a_pass(home, monkeypatch, capsys):
+    """`--history` reads the log; it must not recheck, recompile, or append."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    before = read_log(log_path(home))
+
+    # no live_recapture call should happen; the seam is left as the identity stub
+    assert main(["maintain", "--history"]) == 0
+    capsys.readouterr()
+    after = read_log(log_path(home))
+    assert after == before  # history appended nothing — it only read the log
+
+
+def test_history_on_a_library_never_maintained_is_empty(home, capsys):
+    """A built library that has never run a pass → an empty history, exit 0."""
+    _build(_held_topic())
+    capsys.readouterr()
+    assert main(["maintain", "--history"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_history_before_init_is_empty_not_an_error(home, capsys):
+    assert main(["maintain", "--history"]) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out) == []
+    assert out.err == ""
+
+
+def test_history_is_mutually_exclusive_with_the_pass_flags(home, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["maintain", "--history", "--no-recheck"])
+    assert exc.value.code == 2

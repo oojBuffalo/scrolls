@@ -426,7 +426,7 @@ $ scrolls verify --all
 [exit 0]
 ```
 
-### `scrolls maintain [--limit N | --no-recheck]`
+### `scrolls maintain [--limit N | --no-recheck | --history [N]]`
 
 One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling
 (`docs/dogfood.md`), composed entirely from surfaces that already ship
@@ -450,6 +450,19 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
    baseline (`delta.first_run: true`, every `before`/`change` null); a baseline
    missing an axis (an older snapshot) reads that axis as zero, never null.
 
+Each run also **appends** its `{recorded_at, snapshot, delta}` record to an
+append-only `<root>/.maintenance/log.jsonl` — the custody *trend*, not just the
+last diff. `scrolls maintain --history [N]` prints the last `N` recorded runs
+(default 10) as a JSON array, oldest first, so a worker or agent reads the
+score/drift *trajectory* over time. It is read-only — it never runs a pass,
+rechecks, recompiles, or appends — and is mutually exclusive with `--limit` /
+`--no-recheck` (those run a pass; `--history` reads one back). Honest absence
+(the completeness contract): a library that has never run `maintain`, or no
+library at all, prints `[]`, never an error. The log follows the custody-ledger
+posture (append, never rewrite); like the snapshot it degrades safely — a
+missing log is an empty history, and one corrupt line is skipped, never aborting
+the read.
+
 This is **report-only and idempotent** (custody-vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or
 re-summarizes — `doctor --fix`, `classify --stale`, and `kb --stale` stay the
@@ -467,6 +480,10 @@ enrichment/summaries are reported, never a failure.
 ```console
 $ scrolls maintain --limit 50            # second run; one source has drifted
 {"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0}
+[exit 0]
+
+$ scrolls maintain --history 2           # the custody trajectory, oldest first
+[{"recorded_at": "2026-06-16T12:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 3, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": true, "since": null, "score": {"before": null, "after": 100, "change": null}}}, {"recorded_at": "2026-06-16T13:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}}}]
 [exit 0]
 ```
 

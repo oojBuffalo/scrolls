@@ -66,9 +66,13 @@ from scrolls.items_export import ItemsSourceError
 from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
 from scrolls.maintain import (
+    DEFAULT_HISTORY_LIMIT,
+    append_log_entry,
     compute_delta,
     custody_snapshot,
     load_snapshot,
+    log_path,
+    read_log,
     save_snapshot,
     snapshot_path,
 )
@@ -547,6 +551,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the live re-capture edge entirely — a fully offline pass that "
         "regenerates views and audits without touching any source",
     )
+    maintain_group.add_argument(
+        "--history",
+        nargs="?",
+        type=int,
+        const=DEFAULT_HISTORY_LIMIT,
+        default=None,
+        metavar="N",
+        help="Print the last N recorded maintenance runs (default "
+        f"{DEFAULT_HISTORY_LIMIT}) as a JSON array — the custody trajectory over "
+        "time — instead of running a pass; read-only, never runs maintenance",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -791,6 +806,8 @@ def main(argv: list[str] | None = None) -> int:
             args.stats,
         )
     if args.command == "maintain":
+        if args.history is not None:
+            return _cmd_maintain_history(args.history)
         return _cmd_maintain(args.recheck, args.limit)
     if args.command == "mcp":
         return _cmd_mcp()
@@ -913,11 +930,16 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
     report = run_doctor(paths)
     current = custody_snapshot(report)
 
-    # 4. DELTA vs the last recorded snapshot, then 5. record this run's.
+    # 4. DELTA vs the last recorded snapshot, then 5. record this run's: refresh
+    #    the single baseline AND append the run to the append-only trend log.
     path = snapshot_path(paths)
     previous = load_snapshot(path)
     delta = compute_delta(previous, current)
     save_snapshot(path, {**current, "recorded_at": now})
+    append_log_entry(
+        log_path(paths),
+        {"recorded_at": now, "snapshot": current, "delta": delta},
+    )
 
     print(
         json.dumps(
@@ -933,6 +955,20 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
     )
     # nonzero only on structural drift the operator must address (mirrors doctor)
     return 1 if report["issues"] > 0 else 0
+
+
+def _cmd_maintain_history(limit: int | None) -> int:
+    """Print the recorded maintenance runs — the custody trajectory (H36).
+
+    The read-only counterpart to a maintenance pass: rather than the single
+    `delta` vs the last run, it prints the last N runs' `{recorded_at, snapshot,
+    delta}` so a worker or agent reads the score/drift trend over time, not one
+    diff. Never runs a pass and never mutates the library. Honest absence: a
+    library that has never run `maintain` (or no library at all) prints `[]`.
+    """
+    runs = read_log(log_path(get_paths()), limit)
+    print(json.dumps(runs))
+    return 0
 
 
 def _recheck_held_items(paths: LibraryPaths, limit: int | None, now: str) -> dict:
