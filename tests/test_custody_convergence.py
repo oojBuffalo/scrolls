@@ -65,7 +65,9 @@ four batch selections over one shared trio of `custody` selectors —
 `--unverified` (`unverified_items`), `--stale-before` (`items_checked_before`),
 `--drift` (`items_in_posture`), plus `--all`. It asserts they relate as
 documented: `verify --drift <posture>` re-captures exactly the rows `list
---drift <posture>` enumerates (the shared selector backs both); `verify
+--drift <posture>` enumerates, and `verify --stale-before <ISO>` exactly those
+`list --stale-before <ISO>` enumerates (the shared `items_in_posture` /
+`items_checked_before` selectors back each read↔act pair, roadmap H85); `verify
 --stale-before <future>` subsumes `--unverified` and clears the same
 `doctor custody.drift.unverified` bucket; and every batch selection skips
 reference-only items identically — so the recheck set can never desync from the
@@ -785,6 +787,30 @@ def test_verify_drift_rechecks_exactly_what_list_drift_enumerates(scrolls_home, 
         assert main(["verify", "--drift", posture]) == 0
         rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
         assert rechecked == listed[posture]
+
+
+def test_list_stale_before_enumerates_exactly_the_verify_stale_before_set(scrolls_home, monkeypatch, capsys):
+    # H85: the read-side `list --stale-before B` enumerates exactly the set the
+    # act-side `verify --stale-before B` re-captures — the shared
+    # `items_checked_before` selector backs both, the time-axis counterpart of the
+    # `list --drift` ≡ `verify --drift` parity. The ring's three verdicts sit at
+    # 2026-06-14, so a 2026-06-14 boundary is a real partition: those three are
+    # fresh (checked *at* the exclusive boundary), web:4 (never checked) is stale.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    boundary = "2026-06-14T00:00:00+00:00"
+    # snapshot the read enumeration before any verify mutates the ledger
+    assert main(["list", "--stale-before", boundary]) == 0
+    listed = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert listed == {"web:4"}  # the never-checked one; the rest checked at the boundary
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    assert main(["verify", "--stale-before", boundary]) == 0
+    rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+    assert rechecked == listed  # the recheck set is exactly the enumerated set
 
 
 def test_verify_stale_before_future_subsumes_unverified_and_clears_the_signal(scrolls_home, monkeypatch, capsys):

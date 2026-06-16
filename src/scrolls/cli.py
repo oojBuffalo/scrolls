@@ -611,6 +611,17 @@ def build_parser() -> argparse.ArgumentParser:
         "for that posture",
     )
     list_parser.add_argument(
+        "--stale-before",
+        dest="stale_before",
+        default=None,
+        metavar="ISO",
+        help="Only items whose newest verify-ledger verdict predates this "
+        "ISO-8601 boundary — the stale set; the read-side companion of "
+        "`scrolls verify --stale-before` (the rows it shows are exactly the "
+        "set that recheck would re-capture). A never-checked item is "
+        "trivially stale, so it is included",
+    )
+    list_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -938,6 +949,7 @@ def main(argv: list[str] | None = None) -> int:
             args.tag,
             args.concept,
             args.drift,
+            args.stale_before,
             args.limit,
             args.stats,
         )
@@ -2093,6 +2105,7 @@ def _cmd_list(
     tag: str | None = None,
     concept: str | None = None,
     drift: str | None = None,
+    stale_before: str | None = None,
     limit: int | None = None,
     stats: bool = False,
 ) -> int:
@@ -2104,8 +2117,18 @@ def _cmd_list(
         "tag": tag,
         "concept": concept,
         "drift": drift,
+        "stale_before": stale_before,
         "limit": limit,
     }
+    # A `--stale-before` boundary normalizes through the one `checked_at`
+    # vocabulary (the `--since` family precedent, H79/H75); a malformed boundary
+    # is a loud usage error (exit 2) validated *before* the store read, so a typo
+    # never masquerades as a checked-and-empty listing.
+    try:
+        boundary = parse_since(stale_before)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
     if not paths.db_path.exists():
         # Empty in the surface's own shape, capped or not — never an error
         # (completeness contract G1). The --stats envelope says so explicitly:
@@ -2121,6 +2144,7 @@ def _cmd_list(
         tag=tag,
         concept=concept,
         drift=drift,
+        stale_before=boundary,
     )
     matched = len(items)
     if limit is not None:

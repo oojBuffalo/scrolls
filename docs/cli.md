@@ -1805,7 +1805,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--limit N] [--stats]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -1868,6 +1868,24 @@ count companion to that aggregate and the read-side sibling of `verify
 `[]` (`test_list_drift_is_honestly_empty_for_a_posture_with_no_items`); under
 `--stats`, `matched` is the post-drift count, so it equals the facet count, not
 the library total.
+
+`--stale-before <ISO>` is the other ledger-derived filter: it selects the held
+items whose *newest* verify-ledger verdict predates the boundary — the **stale
+set**. It is the read-side sibling of `scrolls verify --stale-before` (the
+act-side recheck), exactly as `--drift` is the read-side sibling of `scrolls
+verify --drift`: both share the one `custody.items_checked_before` selector, so
+the rows `list --stale-before B` shows are *exactly* the set `verify
+--stale-before B` would re-capture (drill-from-the-window convergence,
+`test_list_stale_before_enumerates_exactly_the_verify_stale_before_set`). A
+never-checked item is trivially stale (included); the boundary itself is *fresh*
+(the exclusive `< boundary`, the complement of the `checked_at >=` window
+`history --since`/`export events --since` keep). The boundary normalizes through
+the same `custody.parse_since` (a `Z` suffix / offset / date-only all work), so a
+malformed value is a loud usage error (exit 2, validated before the store read —
+`test_list_stale_before_rejects_a_malformed_boundary`), never a silently-empty
+listing. It composes with the stored facets (window then scope) and `--drift`
+(both ledger filters over one read), and each returned row's own `last_checked`
+(H84) shows *why* it is stale (`test_list_stale_before_selects_the_stale_set`).
 
 By default the listing is uncapped — every item in scope, oldest saved
 first. `--limit N` caps it to the first `N`; `--stats` then wraps the
@@ -2509,7 +2527,7 @@ The tools wrap the same engines as the CLI commands
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None, budget="full")` | `scrolls context` | Markdown bundle, optionally faceted; `budget` (`index`/`connected`/`full`) bounds depth |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, the per-item custody axes (`fidelity` + `drift` (H58) + `last_checked` (H84)), and `works` membership (ADR 0101), optionally faceted |
-| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54) |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, stale_before=None, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54), `stale_before` by staleness window (H85) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |

@@ -102,7 +102,14 @@ each command moves items between stages or derives artifacts from them.
   trivially stale, so a far-future boundary subsumes `--unverified`). Its
   boundary normalizes through the same `custody.parse_since` that `history
   --since` (H71) and `export events --since` (H75) use, so the `--since` family
-  now spans the read, the backup, *and* the recheck. The count is
+  now spans the read, the backup, *and* the recheck. That stale set is also
+  *enumerable* on the read side: `scrolls list --stale-before <ISO>` (+ the MCP
+  `list_scrolls` twin, roadmap H85) returns exactly the rows `verify
+  --stale-before <ISO>` would re-capture, through the same
+  `custody.items_checked_before` selector — the time-axis counterpart of the
+  `list --drift` ≡ `verify --drift` parity below, so a worker can preview the
+  stale set (each row's `last_checked` showing why) before committing the
+  recheck. The count is
   also *enumerable*: `scrolls list --drift <posture>` (+ the MCP `list_scrolls`
   twin, roadmap H54) selects the held items in a posture through the shared
   `custody.items_in_posture` selector (the read-side sibling of

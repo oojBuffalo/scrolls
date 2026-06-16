@@ -380,6 +380,40 @@ def test_list_scrolls_rejects_an_unknown_drift_posture(scrolls_home):
         mcp_server.list_scrolls(drift="drited")
 
 
+def test_list_scrolls_filters_by_stale_before(scrolls_home):
+    # the MCP twin of `scrolls list --stale-before` (H85): the stale set — items
+    # whose newest verdict predates the boundary, never-checked included.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    for name in ("old", "new", "never"):
+        insert_item(db, ScrollItem(
+            id=f"web:{name}", source="web", url=f"https://ex.com/{name}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {name}",
+            extracted_text="body", content_hash=f"sha256:{name}", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:old", "2026-06-10T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:new", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+    ])
+
+    stale = {r["id"] for r in mcp_server.list_scrolls(stale_before="2026-06-12T00:00:00+00:00")}
+    assert stale == {"web:old", "web:never"}
+
+
+def test_list_scrolls_rejects_a_malformed_stale_before(scrolls_home):
+    # a malformed boundary raises (the CLI maps the same ValueError to exit 2)
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.list_scrolls(stale_before="not-a-date")
+
+
 def test_list_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.list_scrolls() == []
 

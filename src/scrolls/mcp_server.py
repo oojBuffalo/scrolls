@@ -146,6 +146,7 @@ def list_scrolls(
     tag: str | None = None,
     concept: str | None = None,
     drift: str | None = None,
+    stale_before: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """Browse library items by facet — the enumeration counterpart to search_scrolls.
@@ -158,7 +159,11 @@ def list_scrolls(
     selects items by custody drift posture from the verify ledger
     (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the items returned
     total `list_facets("drift")`'s count for that posture, so you can drill from
-    the aggregate to the rows. Items come oldest-saved first, capped at `limit`
+    the aggregate to the rows. `stale_before` (an ISO-8601 boundary) selects the
+    items whose newest verify-ledger verdict predates it — the *stale* set, the
+    read-side companion of `verify --stale-before` (a never-checked item is
+    trivially stale, so it is included); a malformed boundary raises. Items come
+    oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
     summary (id, source, url, title, category, stage, saved_at, the custody
     axes — the `fidelity` tier (full/partial/reference, ADR 0097), the `drift`
@@ -172,6 +177,7 @@ def list_scrolls(
     search query.
     """
     paths = get_paths()
+    boundary = parse_since(stale_before)  # raises on a malformed boundary
     if not paths.db_path.exists():
         return []
     items = list_items(
@@ -182,6 +188,7 @@ def list_scrolls(
         tag=tag,
         concept=concept,
         drift=drift,
+        stale_before=boundary,
     )[:limit]
     # Membership is a whole-library property (ADR 0101): cluster over every
     # item so a filtered/limited listing still reports an item's siblings, then

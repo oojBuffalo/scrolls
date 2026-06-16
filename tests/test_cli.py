@@ -3016,6 +3016,100 @@ def test_list_row_drift_matches_the_drift_filter_value(scrolls_home, capsys):
         assert row["id"] in selected, f"{row['id']} shows {row['drift']} but isn't selected by it"
 
 
+def _seed_staleness():
+    """Three held, hash-bearing scrolls partitioned by a staleness boundary.
+
+    `web:old` last checked 2026-06-10 (stale before 2026-06-12), `web:new` last
+    checked 2026-06-14 (fresh after it), `web:never` never re-checked (trivially
+    stale at any boundary). The browse-side companion of `test_verify_cli`'s
+    stale-before fixtures.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    for name in ("old", "new", "never"):
+        insert_item(db, ScrollItem(
+            id=f"web:{name}", source="web", url=f"https://ex.com/{name}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {name}",
+            extracted_text="body", content_hash=f"sha256:{name}", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:old", "2026-06-10T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:new", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+        # web:never left unverified
+    ])
+    return db
+
+
+def test_list_stale_before_selects_the_stale_set(scrolls_home, capsys):
+    # H85: enumerate the held items whose newest verdict predates the boundary —
+    # the stale set. A never-checked item is trivially stale (included); an item
+    # checked exactly at the boundary is fresh (the exclusive `< boundary`).
+    main(["init"])
+    _seed_staleness()
+    capsys.readouterr()
+
+    main(["list", "--stale-before", "2026-06-12T00:00:00+00:00"])
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {"web:old", "web:never"}
+
+    # boundary is exclusive: web:new checked exactly at 2026-06-14 is fresh
+    main(["list", "--stale-before", "2026-06-14T00:00:00+00:00"])
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {"web:old", "web:never"}
+
+    # a date-only boundary normalizes to that day's midnight UTC (parse_since)
+    main(["list", "--stale-before", "2026-06-09"])
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {"web:never"}
+
+
+def test_list_stale_before_composes_with_facets_and_stats(scrolls_home, capsys):
+    # the time window ANDs with the stored facets (window then scope), and under
+    # --stats `matched` is the post-filter count (the `--drift` precedent)
+    main(["init"])
+    _seed_staleness()
+    from scrolls.items import ScrollItem, insert_item
+    insert_item(get_paths().db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:00+00:00", title="An old arxiv paper",
+        extracted_text="body", content_hash="sha256:ax", stage="fetched"))
+    capsys.readouterr()
+
+    # arxiv:1 is never-checked (stale) but excluded by --source web
+    main(["list", "--stale-before", "2026-06-12T00:00:00+00:00", "--source", "web", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["stale_before"] == "2026-06-12T00:00:00+00:00"
+    assert payload["scope"]["source"] == "web"
+    assert payload["stats"]["matched"] == 2  # web:old + web:never, not arxiv:1
+    assert {r["id"] for r in payload["results"]} == {"web:old", "web:never"}
+
+
+def test_list_stale_before_composes_with_drift(scrolls_home, capsys):
+    # both ledger-derived filters AND over one read: stale AND at a given posture
+    main(["init"])
+    _seed_staleness()
+    capsys.readouterr()
+
+    # web:old (verified, stale) and web:never (unverified, stale): filter to the
+    # stale set then to the `verified` posture → just web:old
+    main(["list", "--stale-before", "2026-06-12T00:00:00+00:00", "--drift", "verified"])
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {"web:old"}
+
+
+def test_list_stale_before_rejects_a_malformed_boundary(scrolls_home, capsys):
+    # a malformed boundary is a loud usage error (exit 2), validated before the
+    # store read — never a silently-empty listing (the `--since` family precedent)
+    main(["init"])
+    capsys.readouterr()
+    assert main(["list", "--stale-before", "not-a-date"]) == 2
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_list_stale_before_malformed_beats_a_missing_store(scrolls_home, capsys):
+    # validated before the db-existence check, so a typo'd boundary is exit 2 even
+    # before `init` — a usage error, not a checked-and-empty `[]`
+    assert main(["list", "--stale-before", "not-a-date"]) == 2
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 def test_search_hit_echoes_the_drift_posture(scrolls_home, capsys):
     # H58: the drift posture rides ranked hits on the CLI too (the search ≡ list
     # parity on the new axis). The seeded titles all carry "Post", so the FTS

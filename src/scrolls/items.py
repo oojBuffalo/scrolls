@@ -513,6 +513,7 @@ def list_items(
     tag: str | None = None,
     concept: str | None = None,
     drift: str | None = None,
+    stale_before: str | None = None,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
@@ -526,14 +527,25 @@ def list_items(
     and `facets`; its `items.`-qualified clauses run unchanged against this
     single-table `SELECT`.
 
-    `drift` is the one filter that is *not* a stored column: a custody drift
-    posture (`verified`/`unverified`/`drifted`/`rotted`/`error`) derived from the
-    verify ledger (roadmap H54). It is applied after the SQL filters, over a
-    single `latest_events` read, by the shared `custody.items_in_posture` selector
-    — so the rows it returns are exactly the items `facets drift` counts under that
-    posture for the same scope (drill-from-the-count convergence). An unknown
-    posture is a `ValueError` (a closed vocabulary, like `--stage`), never a
-    silent empty; the ledger is read only when `drift` is requested.
+    `drift` and `stale_before` are the two filters that are *not* stored columns:
+    both derive from the verify ledger and are applied after the SQL filters over
+    a *single* `latest_events` read (so they compose — AND — at no extra query
+    when both are given). `drift` selects a custody drift posture
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`) via the shared
+    `custody.items_in_posture` selector (roadmap H54) — so the rows it returns are
+    exactly the items `facets drift` counts under that posture for the same scope
+    (drill-from-the-count convergence). An unknown posture is a `ValueError` (a
+    closed vocabulary, like `--stage`), never a silent empty.
+
+    `stale_before` is a **pre-normalized** UTC ISO boundary (the caller funnels
+    the raw value through `custody.parse_since`): it selects the held items whose
+    newest ledger verdict predates the boundary — the *stale* set — via the same
+    `custody.items_checked_before` selector `scrolls verify --stale-before` acts
+    on (roadmap H85), so the rows it returns are exactly the set that recheck
+    would re-capture (drill-from-the-window convergence). A never-checked item is
+    trivially stale, so it is included; the boundary itself is *fresh* (the
+    `items_checked_before` `< boundary` semantics). The ledger is read only when
+    `drift` or `stale_before` is requested.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
@@ -547,16 +559,25 @@ def list_items(
     finally:
         conn.close()
     items = [_from_row(row) for row in rows]
-    if drift is not None:
+    if drift is not None or stale_before is not None:
         # lazy: custody imports items, so the reverse is import-time only here
-        from scrolls.custody import DRIFT_POSTURES, items_in_posture, latest_events
+        from scrolls.custody import (
+            DRIFT_POSTURES,
+            items_checked_before,
+            items_in_posture,
+            latest_events,
+        )
 
-        if drift not in DRIFT_POSTURES:
-            raise ValueError(
-                f"unknown drift posture {drift!r}; "
-                f"choose one of {', '.join(DRIFT_POSTURES)}"
-            )
-        items = items_in_posture(items, latest_events(db_path), drift)
+        verdicts = latest_events(db_path)
+        if drift is not None:
+            if drift not in DRIFT_POSTURES:
+                raise ValueError(
+                    f"unknown drift posture {drift!r}; "
+                    f"choose one of {', '.join(DRIFT_POSTURES)}"
+                )
+            items = items_in_posture(items, verdicts, drift)
+        if stale_before is not None:
+            items = items_checked_before(items, verdicts, stale_before)
     return items
 
 
