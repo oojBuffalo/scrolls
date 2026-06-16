@@ -224,7 +224,13 @@ The same module pins the **per-item** counterpart (roadmap H59): the per-item
 `custody.drift_posture` over `latest_events`. The invariant asserts a given item
 reads the *same* `drift` on every surface that carries it, and that each
 whole-library-enumerating surface's per-item posture counts total `facets drift`'s
-count for that posture — tying the per-item axis back to the aggregate.
+count for that posture — tying the per-item axis back to the aggregate. Those
+surfaces all carry only the *latest* posture; `scrolls history` reads the *full*
+per-item ledger back, and the invariant pins the tie (roadmap H70): the posture
+the head of the ledger `history` returns implies equals the `drift` every
+latest-posture surface shows for that item (and `[]` ⇒ `unverified`), so the
+full timeline an agent reads can never silently disagree with the postures that
+summarize it.
 
 ## Library lifecycle
 

@@ -32,6 +32,13 @@ posture counts total `facets drift`'s count for that posture — tying the
 per-item axis back to the aggregate the scope-level invariant pins. (`works`
 needs a DOI-sharing fixture — the ring seed forms no work — so it carries its
 own seed in `test_works_representation_agrees_on_an_items_drift_posture`.)
+
+Those surfaces all carry only the *latest* posture; `scrolls history` (roadmap
+H66) reads the *full* per-item ledger back. The per-item section also pins the
+tie (roadmap H70): the posture the head of the ledger `history` returns implies
+— `drift_posture` of its newest event — equals the `drift` every latest-posture
+surface shows for that item (and `[]` ⇒ `unverified`), so the full-timeline
+surface can never silently disagree with the postures that summarize it.
 """
 
 import json
@@ -399,3 +406,58 @@ def test_works_representation_agrees_on_an_items_drift_posture(scrolls_home, cap
 
     assert reps == canonical
     assert reps == list_drift
+
+
+def _posture_from_history(events):
+    """The drift posture an item's `history` head implies — the tie H70 pins.
+
+    `history` returns the full ledger newest-first (each `event_payload` dict);
+    the *head* is the latest verdict, so `drift_posture` of it must equal the
+    `drift` posture every browse/inspect surface shows. An empty ledger means
+    never checked, the `unverified` posture those surfaces default to.
+    """
+    if not events:
+        return "unverified"
+    head = events[0]
+    return drift_posture(CustodyEvent(
+        item_id="",
+        checked_at=head["checked_at"],
+        status=head["status"],
+        prior_hash=head["prior_hash"],
+        observed_hash=head["observed_hash"],
+        detail=head["detail"],
+    ))
+
+
+def test_history_head_agrees_with_the_per_item_drift_posture(scrolls_home, capsys):
+    # roadmap H70: `scrolls history` exposes the *full* ledger; the load-bearing
+    # tie is that the posture its newest event implies equals the `drift` every
+    # latest-posture surface (list/search/show/…) reports for the same item — and
+    # `[]` ⇒ `unverified`, the never-checked default they all share. So the
+    # full-timeline surface can never silently disagree with the postures that
+    # summarize it (the per-item-timeline analogue of H59).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    verdicts = latest_events(db)
+    canonical = {
+        item.id: drift_posture(verdicts.get(item.id)) for item in list_items(db)
+    }
+    # sanity: the fixture spans verified / drifted / rotted / unverified
+    assert set(canonical.values()) == {"verified", "drifted", "rotted", "unverified"}
+
+    history_posture = {}
+    for item_id in canonical:
+        assert main(["history", item_id]) == 0
+        history_posture[item_id] = _posture_from_history(
+            json.loads(capsys.readouterr().out)
+        )
+
+    # the head of the ledger `history` returns maps to the posture everywhere else
+    assert history_posture == canonical
+    # and the never-checked item is the honest empty timeline ⇒ unverified
+    assert main(["history", "web:4"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert canonical["web:4"] == "unverified"
