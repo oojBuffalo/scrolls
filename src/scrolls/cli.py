@@ -2278,7 +2278,14 @@ def _cmd_related(item_id: str, limit: int, stats: bool = False) -> int:
     matched = len(hits)
     rows = _related_rows(hits[:limit])
     scope = {"item": resolved, "limit": limit}
-    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched)))
+    # `stats.custody` (roadmap H99): the custody tally over the matched related
+    # *neighbourhood* — the full scored `hits` (pre-cap), each already carrying its
+    # own `fidelity`/`drift` (H56), so fold those through the same `tally_custody`
+    # `search`/`list --stats` (H98) use. `scored_related` excludes the anchor, so
+    # the tally answers "of the N items related to this one, how much is held in
+    # full and how much has drifted" without folding in the anchor's own custody.
+    custody = tally_custody((hit.fidelity, hit.drift) for hit in hits)
+    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
 

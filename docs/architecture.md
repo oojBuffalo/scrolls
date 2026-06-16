@@ -345,10 +345,12 @@ each command moves items between stages or derives artifacts from them.
   headlines converge for a scope by construction — one custody tally, many
   surfaces. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
-  JSON) over its whole `stats.items` scope (roadmap H52); the `search`/`list
-  --stats` envelope carries it as a `stats.custody` member too (roadmap H98) —
-  over the *matched* scope (the full match set past the cap, sourced from each
-  hit's own `fidelity`/`drift` for search, the uncapped matched items for list),
+  JSON) over its whole `stats.items` scope (roadmap H52); all three browse
+  surfaces' `--stats` envelopes — `search`, `list` (roadmap H98), and `related`
+  (roadmap H99) — carry it as a `stats.custody` member too, over the *matched*
+  scope (the full match set past the cap, sourced from each hit's own
+  `fidelity`/`drift` for search/related, the uncapped matched items for list; for
+  `related` the scope is the anchor's related neighbourhood, excluding the anchor),
   so a reader paging results sees the custody of everything that matched, not just
   the returned page, and for a filter-only `list` scope it equals `facets
   fidelity`/`drift`. And `scrolls facets fidelity`/`drift` (H48) are the browse

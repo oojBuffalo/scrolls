@@ -216,11 +216,15 @@ block all derive from one shared tally
 one vocabulary mapping: the posture `verified` is the ledger status
 `unchanged`). That scope-level convergence is pinned once, across every surface,
 in `tests/test_custody_convergence.py` — the custody-side analogue of
-`tests/test_completeness.py` (roadmap H50). The `search`/`list --stats` envelope's
-`custody` member (roadmap H98) is the browse-surface entry in that family: for a
-filter-only `list` scope it equals `facets fidelity`/`drift` for the same filters
-(`test_list_stats_custody_member_converges_with_facets`), the counts covering the
-matched scope, not just the returned page. The **compiled human-readable**
+`tests/test_completeness.py` (roadmap H50). The `--stats` envelope's `custody`
+member (roadmap H98/H99) is the browse-surface entry in that family, carried by
+all three browse surfaces — `search`, `list`, and `related` — through the same
+`custody.tally_custody` fold: for a filter-only `list` scope it equals `facets
+fidelity`/`drift` for the same filters
+(`test_list_stats_custody_member_converges_with_facets`), and on `related` it
+covers the anchor's related *neighbourhood* (the full scored set, excluding the
+anchor). In every case the counts cover the matched scope, not just the returned
+page. The **compiled human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
 line (H95) and in the landing `index.md` header (H96), and the invariant parses
@@ -2193,10 +2197,16 @@ limit 10. Unknown id is an error envelope on stderr.
 results}` envelope `search`/`list` use (the completeness contract G2):
 `scope` names the anchor `item` and the `limit`, and `stats` reports
 `returned`, `matched` (every item that relates, counted past the cap —
-`src/scrolls/related.py` `count_related`), and `truncated`. Opt-in: without
-it the output is the bare array unchanged
+`src/scrolls/related.py` `count_related`), `truncated`, and a `custody`
+tally (roadmap H99) — the same `{tiers, drift}` fidelity-tier/drift-posture
+maps `search`/`list --stats` carry, here folded over the anchor's *related
+neighbourhood* (the full scored set, pre-cap, excluding the anchor itself),
+so a reader sees "of the N items related to this one, how much is held in
+full and how much has drifted" without a second `facets` call. Each map sums
+to `matched`. Opt-in: without it the output is the bare array unchanged
 (`test_cli_related_stats_is_opt_in_default_stays_a_bare_array`,
-`test_cli_related_stats_echoes_anchor_and_marks_truncation`).
+`test_cli_related_stats_echoes_anchor_and_marks_truncation`,
+`test_cli_related_stats_custody_tallies_the_matched_related_set`).
 
 ```console
 $ scrolls related x:2222
@@ -2204,7 +2214,7 @@ $ scrolls related x:2222
 [exit 0]
 
 $ scrolls related x:2222 --limit 1 --stats
-{"scope": {"item": "x:2222", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true}, "results": [{"id": "arxiv:1706.03762", ...}]}
+{"scope": {"item": "x:2222", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 3}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}}, "results": [{"id": "arxiv:1706.03762", ...}]}
 [exit 0]
 ```
 

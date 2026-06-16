@@ -409,6 +409,17 @@ def _related_pool(db, count):
         insert_item(db, make_item(f"web:rel{index}", tags=("shared",)))
 
 
+def _core_stats(stats):
+    """The returned/matched/truncated trio, dropping the H99 `custody` member.
+
+    `related --stats` now also carries a `custody` tally over the matched related
+    set (roadmap H99, the parity with `search`/`list --stats`); these G2
+    truncation/scope tests pin the *denominator*, so they drop `custody` and let
+    the dedicated H99 tests below own its value.
+    """
+    return {key: value for key, value in stats.items() if key != "custody"}
+
+
 def test_find_related_is_the_capped_view_of_scored_related(db):
     """`find_related` is exactly `scored_related[:limit]` — same ranking."""
     _related_pool(db, 4)  # anchor + 3 neighbours
@@ -438,7 +449,7 @@ def test_cli_related_stats_echoes_anchor_and_marks_truncation(db, capsys):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["scope"] == {"item": "web:rel0", "limit": 1}
-    assert payload["stats"] == {"returned": 1, "matched": 3, "truncated": True}
+    assert _core_stats(payload["stats"]) == {"returned": 1, "matched": 3, "truncated": True}
     assert len(payload["results"]) == 1
     assert payload["results"][0]["reasons"]  # reasons survive into the envelope
 
@@ -464,7 +475,7 @@ def test_cli_related_stats_isolated_item_is_scope_honest_not_truncated(db, capsy
     payload = json.loads(capsys.readouterr().out)
     assert payload["results"] == []
     assert payload["scope"] == {"item": "web:lonely", "limit": 10}
-    assert payload["stats"] == {"returned": 0, "matched": 0, "truncated": False}
+    assert _core_stats(payload["stats"]) == {"returned": 0, "matched": 0, "truncated": False}
 
 
 def test_cli_related_stats_unknown_id_still_errors_loudly(scrolls_home, capsys):
@@ -476,3 +487,104 @@ def test_cli_related_stats_unknown_id_still_errors_loudly(scrolls_home, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+# --- H99: stats.custody — the custody tally over the matched related set ------
+
+
+def _related_custody_mix(db):
+    """An anchor + three neighbours all related by a shared tag, spanning the
+    custody axes: a `full` neighbour re-checked unchanged (→ verified), a
+    `partial` one drifted, a `reference` one never re-checked (→ unverified). The
+    anchor itself is `full` but recorded `rotted` — a posture no neighbour has —
+    so a tally that wrongly folded in the anchor would show `rotted: 1`; the
+    related set never contains the anchor, so it stays 0.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item(
+        "web:anchor", tags=("shared",), raw_text="<raw>", content_hash="sha256:a"))
+    insert_item(db, make_item(
+        "web:full", tags=("shared",), raw_text="<raw>", content_hash="sha256:f"))
+    insert_item(db, make_item("web:partial", tags=("shared",), extracted_text="body"))
+    insert_item(db, make_item("web:ref", tags=("shared",)))
+    record_events(db, [
+        CustodyEvent("web:anchor", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:a", None, "gone"),
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:f", "sha256:f", None),
+        CustodyEvent("web:partial", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:p", "sha256:x", None),
+        # web:ref left with no verdict → unverified
+    ])
+
+
+_RELATED_MIX_CUSTODY = {
+    "tiers": {"full": 1, "partial": 1, "reference": 1},
+    "drift": {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0},
+}
+
+
+def test_cli_related_stats_custody_tallies_the_matched_related_set(db, capsys):
+    # roadmap H99: `related --stats` carries the same `stats.custody` tally as
+    # `search`/`list --stats`, over the anchor's related *neighbourhood* — "of the
+    # N items related to this one, how much is held in full and how much drifted".
+    _related_custody_mix(db)
+    capsys.readouterr()
+
+    assert main(["related", "web:anchor", "--stats"]) == 0
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["custody"] == _RELATED_MIX_CUSTODY
+    # each section sums to `matched` (every related scroll has one tier + one posture)
+    assert sum(stats["custody"]["tiers"].values()) == stats["matched"] == 3
+    assert sum(stats["custody"]["drift"].values()) == stats["matched"]
+
+
+def test_cli_related_stats_custody_excludes_the_anchor(db, capsys):
+    # the anchor is `full` + `rotted`, a posture no neighbour has; the related set
+    # never contains the anchor, so the tally shows `rotted: 0` — the anchor's own
+    # custody is not folded into its neighbourhood picture.
+    _related_custody_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["custody"]["drift"]["rotted"] == 0  # anchor's posture, excluded
+
+
+def test_cli_related_stats_custody_covers_the_matched_set_past_the_cap(db, capsys):
+    # the load-bearing claim (mirroring H98 search/list): a `--limit 1` cap returns
+    # one hit but the custody tally still covers the *whole* related set, so paging
+    # never shrinks the custody picture.
+    _related_custody_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 3 and stats["truncated"] is True
+    # over the matched 3, not the returned 1
+    assert stats["custody"] == _RELATED_MIX_CUSTODY
+
+
+def test_cli_related_stats_custody_present_even_when_empty(db, capsys):
+    # an isolated anchor: no neighbours, but the custody member is present as the
+    # stable zeroed shape (the H98 empty-envelope posture), never omitted.
+    insert_item(db, make_item("web:lonely"))
+    capsys.readouterr()
+
+    main(["related", "web:lonely", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["custody"] == {
+        "tiers": {"full": 0, "partial": 0, "reference": 0},
+        "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+    }
+
+
+def test_cli_related_stats_custody_is_opt_in_absent_from_the_bare_array(db, capsys):
+    # the custody member rides only the opt-in envelope — the bare default array is
+    # unchanged, carrying no envelope and so no custody block.
+    _related_custody_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
