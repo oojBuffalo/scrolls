@@ -14,13 +14,14 @@ stored summary and fall back to the leading extracted text. A
 classification (ADR 0004) and LLM concept pages (ADR 0005).
 
 At the `full` budget each excerpt also carries two compact per-source trust
-tags beneath its meta line (roadmap H44 + H62): *how the category was derived*
-(the `classification_provenance` view, omitted on honest absence) and *whether
-the source has moved* (the `custody.drift_posture`, `unverified` stated
-explicitly). They derive from the same views every browse/inspect surface
-reads, so an excerpt an agent drops into its window reports the same provenance
-`show`/`list`/`search` would — the per-source counterpart of the scope-level
-`_Custody:_` headline.
+tags beneath its meta line (roadmap H44 + H62 + H90): *how the category was
+derived* (the `classification_provenance` view, omitted on honest absence) and
+*whether the source has moved, and as of when* (the `custody.drift_posture`
+followed by `· last seen <checked_at>` / `· never re-checked`, `unverified`
+stated explicitly). They derive from the same views every browse/inspect
+surface reads, so an excerpt an agent drops into its window reports the same
+provenance `show`/`list`/`search` would — the per-source counterpart of the
+scope-level `_Custody:_` headline.
 
 Beyond keyword matches the bundle carries a "Connected scrolls" section:
 items linked to or from the matches through the cross-item link graph the
@@ -43,7 +44,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, custody_headline, drift_posture, latest_events
+from scrolls.custody import (
+    CustodyEvent,
+    custody_headline,
+    drift_posture,
+    last_checked,
+    latest_events,
+)
 from scrolls.graph import build_graph
 from scrolls.items import (
     ScrollItem,
@@ -429,11 +436,16 @@ def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str
       so the method/confidence reads byte-identical across surfaces. Omitted on
       honest absence — an unclassified or user-set item claims no method, so the
       line is simply dropped (the excerpt's shape stays stable).
-    - **Drift** (roadmap H62) — *whether the source has moved*: the
-      `custody.drift_posture` over the item's latest verify-ledger verdict, the
-      per-source counterpart of the scope `_Custody:_` headline (H47). Always
-      shown, with `unverified` stated explicitly — never silently "clean", the
-      drift block's honesty on the per-excerpt axis.
+    - **Drift** (roadmap H62) — *whether the source has moved*, and *as of when*
+      (roadmap H90): the `custody.drift_posture` over the item's latest
+      verify-ledger verdict, followed by `· last seen <checked_at>` (the
+      `custody.last_checked` of the same verdict) — or `· never re-checked` when
+      the ledger holds no verdict, the honest-absence counterpart of the
+      `unverified` posture. The per-source counterpart of the scope `_Custody:_`
+      headline (H47). Always shown, with `unverified` stated explicitly — never
+      silently "clean", the drift block's honesty on the per-excerpt axis. So an
+      agent reads not just whether each excerpt's source moved but as of when,
+      and can pick a `verify --stale-before <ISO>` boundary by inspection.
 
     Both derive from the views every other surface reads (the same `verdicts`
     `latest_events` read the headline shares), so an excerpt reads the same
@@ -445,7 +457,9 @@ def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str
     view = classification_provenance(item)
     if view is not None:
         tags.append(f"_classified {classification_phrase(view)}_")
-    tags.append(f"_drift `{drift_posture(verdict)}`_")
+    checked = last_checked(verdict)
+    when = f"last seen {checked}" if checked else "never re-checked"
+    tags.append(f"_drift `{drift_posture(verdict)}` · {when}_")
     return tags
 
 

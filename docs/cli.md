@@ -2336,9 +2336,9 @@ aggregate (`test_context_custody_headline_converges_with_doctor`). Gated to
 tier stays a bare catalog (`test_context_custody_headline_gated_off_index`).
 
 At the `full` budget each excerpt also carries two compact **per-source trust
-tags** beneath its meta line (roadmap H44 + H62) — the per-excerpt counterpart
-of the scope `_Custody:_` headline, so an agent dropping an excerpt into its
-window sees *that source's* provenance, not just the scope aggregate:
+tags** beneath its meta line (roadmap H44 + H62 + H90) — the per-excerpt
+counterpart of the scope `_Custody:_` headline, so an agent dropping an excerpt
+into its window sees *that source's* provenance, not just the scope aggregate:
 
 - `_classified by \`<engine>\` (<basis|model …>) · confidence <level>[, <freshness>]_`
   — *how the category was derived*, the same `classification_provenance` view
@@ -2347,13 +2347,19 @@ window sees *that source's* provenance, not just the scope aggregate:
   across surfaces (`test_context_excerpt_classification_phrase_matches_the_shared_view`).
   Omitted on honest absence — an unclassified or user-set item claims no method, so
   the line is simply dropped (`test_context_excerpt_classification_omitted_on_honest_absence`).
-- `_drift \`<posture>\`_` — *whether the source has moved*, the
-  `custody.drift_posture` over the item's latest verify-ledger verdict
-  (`verified`/`unverified`/`drifted`/`rotted`/`error`). Always shown, with
-  `unverified` stated explicitly so a never-checked source is never read as "clean"
-  (`test_context_excerpt_drift_unverified_when_never_checked`); it reads the same
-  ledger the headline shares (one read), so the per-excerpt posture and the scope
-  count cannot disagree (`test_context_excerpt_drift_matches_the_ledger_primitive`).
+- `_drift \`<posture>\` · last seen <checked_at>_` — *whether the source has
+  moved, and as of when* (roadmap H90): the `custody.drift_posture` over the
+  item's latest verify-ledger verdict (`verified`/`unverified`/`drifted`/`rotted`/
+  `error`) followed by the `custody.last_checked` of that verdict, or
+  `· never re-checked` when the ledger holds no verdict — the honest-absence
+  counterpart of the `unverified` posture, never a faked time
+  (`test_context_excerpt_drift_unverified_when_never_checked`). Always shown, with
+  `unverified` stated explicitly so a never-checked source is never read as
+  "clean"; it reads the same ledger the headline shares (one read) through the
+  same `drift_posture`/`last_checked` every surface uses, so the per-excerpt
+  posture/staleness and the scope count cannot disagree
+  (`test_context_excerpt_drift_matches_the_ledger_primitives`). So an agent can
+  pick a `verify --stale-before <ISO>` boundary straight from an excerpt.
 
 Both are a `full`-only deepening (like `## Excerpts`): the `index`/`connected`
 tiers stay lean catalogs and carry no per-excerpt tag
@@ -2389,7 +2395,7 @@ _Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
 
 `x:1111` · x · scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md
 _classified by `rules-v1` (title-pattern) · confidence deterministic, current_
-_drift `unverified`_
+_drift `unverified` · never re-checked_
 
 SQLite FTS5 is criminally underrated for local search.
 

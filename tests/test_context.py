@@ -193,7 +193,9 @@ def test_context_excerpt_falls_back_to_capped_extracted_text(scrolls_home, capsy
     out = run_context(capsys, "databases")
     excerpt = out.split("### Long page\n")[1].split("\n## Links")[0]
     assert "databases …" in excerpt
-    assert len(excerpt) < 800  # capped well below the full text
+    # the block (meta + per-source tags + capped body) stays well below the
+    # ~2000-char full text; the H90 `· never re-checked` tag widened it slightly
+    assert len(excerpt) < 850
 
 
 def test_context_uses_canonical_url_in_links_when_present(scrolls_home, capsys):
@@ -710,7 +712,7 @@ def test_context_excerpt_classification_omitted_on_honest_absence(scrolls_home, 
 
     block = _excerpt_block(run_context(capsys, "database engine"), "An ordinary post")
     assert not any(line.startswith("_classified") for line in block)
-    assert "_drift `unverified`_" in block
+    assert "_drift `unverified` · never re-checked_" in block
 
 
 def test_context_full_excerpt_carries_drift_posture(scrolls_home, capsys):
@@ -726,12 +728,13 @@ def test_context_full_excerpt_carries_drift_posture(scrolls_home, capsys):
     capsys.readouterr()
 
     block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
-    assert "_drift `drifted`_" in block
+    # H90: the drift tag also carries *as of when* the verdict was taken
+    assert "_drift `drifted` · last seen 2026-06-14T00:00:00+00:00_" in block
 
 
 def test_context_excerpt_drift_unverified_when_never_checked(scrolls_home, capsys):
-    # honest absence on the drift axis: a never-checked item is `unverified`,
-    # stated explicitly — never silently "clean"
+    # honest absence on both axes: a never-checked item is `unverified`, stated
+    # explicitly — never silently "clean" — and `never re-checked`, not a faked time
     main(["init"])
     insert_item(get_paths().db_path, make_item(
         "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
@@ -739,13 +742,14 @@ def test_context_excerpt_drift_unverified_when_never_checked(scrolls_home, capsy
     capsys.readouterr()
 
     block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
-    assert "_drift `unverified`_" in block
+    assert "_drift `unverified` · never re-checked_" in block
 
 
-def test_context_excerpt_drift_matches_the_ledger_primitive(scrolls_home, capsys):
-    # the per-excerpt posture is the one shared `custody.drift_posture` over the
-    # latest verdict — so the excerpt reads the same posture every other surface does
-    from scrolls.custody import drift_posture, latest_events
+def test_context_excerpt_drift_matches_the_ledger_primitives(scrolls_home, capsys):
+    # the per-excerpt posture and timestamp are the shared `custody.drift_posture`
+    # / `custody.last_checked` over the latest verdict — so the excerpt reads the
+    # same posture *and* staleness every other surface does
+    from scrolls.custody import drift_posture, last_checked, latest_events
 
     main(["init"])
     db = get_paths().db_path
@@ -757,9 +761,11 @@ def test_context_excerpt_drift_matches_the_ledger_primitive(scrolls_home, capsys
     capsys.readouterr()
 
     block = _excerpt_block(run_context(capsys, "database engine"), "SQLite")
-    posture = drift_posture(latest_events(db)["wikipedia:en:SQLite"])
+    verdict = latest_events(db)["wikipedia:en:SQLite"]
+    posture = drift_posture(verdict)
+    checked = last_checked(verdict)
     assert posture == "verified"
-    assert f"_drift `{posture}`_" in block
+    assert f"_drift `{posture}` · last seen {checked}_" in block
 
 
 def test_context_excerpt_tags_absent_below_full(scrolls_home, capsys):
