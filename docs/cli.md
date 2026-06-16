@@ -55,6 +55,102 @@ claim cites the test that locks it; unless noted, tests live in
 - **Stages**: `detected → fetched → rendered`, advanced by
   `fetch` and `md`; `classify`, `media`, and `kb` are stage-neutral.
 
+## The completeness contract
+
+A custody library is only trustworthy if an agent can believe what its
+browse and audit surfaces *don't* say as much as what they do. The
+integrity boundary is the agent contract (custody-vision §6); false
+absence corrupts an agent's memory the same way a fabricated row does.
+So every read surface — `search`, `list`, `related`, `works`, `context`,
+`doctor`, and their MCP twins — honors one cross-cutting contract:
+**results are scope-honest and completeness-honest; "nothing found" is
+never confused with "not checked," and nothing is fabricated for content
+the library does not hold** (PRD cap 7, MVP M2, adapted from
+obsidian-second-brain's anti-fabrication rules — see
+`docs/agents/obsidian-second-brain-inspiration.md`). The contract has two
+guarantees.
+
+### G1 — Honest absence, honest failure *(enforced; `tests/test_completeness.py`)*
+
+The anti-fabrication core. Three claims, each true across all six surfaces
+and pinned as a single named invariant rather than re-proved per command:
+
+- **Checked-and-empty is exit 0 in the surface's normal shape.** A surface
+  that looked at its (possibly scoped) slice and found nothing returns the
+  *empty form of its own output* — `[]` for `search`/`list`/`related`,
+  `{"works": [], "stats": {…}}` for `works`, a `No matching scrolls.`
+  bundle for `context`, a zero-finding report for `doctor` — and exits 0.
+  An empty result is a real answer, never an error and never a fabricated
+  row (`test_checked_and_empty_is_exit_zero_in_normal_shape`).
+- **Could-not-check is exit ≠ 0 with an error envelope on stderr, and
+  stdout stays empty.** Bad input (a blank `search`/`context` query) and an
+  unknown id/URL (`related`, `works <ref>`, `show`) are *not checked*, and
+  they are loud: `{"error": "…"}` on stderr, exit 1, nothing on stdout
+  (`test_could_not_check_errors_loudly_not_emptily`).
+- **Therefore empty ≠ error.** The exit code plus the stream is the
+  discriminator an agent reads: exit 0 + empty-in-shape means "I checked
+  this slice and nothing matched"; exit ≠ 0 + `error` on stderr means "I
+  could not check." A surface never reports a check it could not perform
+  as an empty success (`test_empty_is_distinguishable_from_could_not_check`).
+
+The same invariant holds for the **MCP twins** (`search_scrolls`,
+`list_scrolls`, `get_related_scrolls`, `get_works`, `get_context_bundle`,
+`get_scroll`), where "exit 0 + empty shape" becomes "returns the empty
+form" and an error envelope becomes a raised tool error — so an agent gets
+the same honesty whether it reads the CLI or the protocol server
+(custody-vision §6, surface parity;
+`test_mcp_checked_and_empty_returns_the_empty_shape`,
+`test_mcp_could_not_check_raises_not_emptily`).
+
+A corollary already guaranteed elsewhere and reaffirmed here: a filter or
+facet that excludes every item yields the **empty shape, not an error**, so
+"nothing in *this* scope" is a first-class honest answer scoped to what was
+applied — never a silent claim about the whole library
+(`test_a_facet_that_excludes_everything_is_empty_not_error`). And no
+surface invents held content: a `reference`-only item reports fidelity
+`reference`, not a fabricated body or hash (the fidelity-travels contract,
+ADR 0100). Read-only commands on a missing library return the same empty
+shape rather than erroring, so the payload shape never varies between "no
+library yet" and "library, no matches"
+(`test_before_init_is_empty_in_shape_across_surfaces`).
+
+### G2 — Honest scope, honest completeness *(enforcement target: M2 H6–H8)*
+
+A scoped or `--limit`-capped result must let a reader that holds *only the
+result* — not the call that produced it — recover the scope it covered and
+whether it was truncated. Today a bare `search`/`related`/`list` array is
+silent about both: a 20-row answer to `search "x" --source arxiv --limit
+20` cannot be told from "those are all 200 arXiv matches" by an agent that
+didn't make the call, and every search is `LIMIT`-capped, so `len ==
+limit` is genuinely ambiguous. The contract closes that, building on
+mechanisms already in the codebase rather than inventing a new one:
+
+- **Applied scope travels with the result**, the way `context` already
+  prints its facets in the bundle title (`# Scrolls Context Bundle: <query>
+  (source=arxiv)`) and `works`/`graph` already carry a `stats` companion.
+  A scoped result names the filters it honored; an empty scoped result
+  names them too, so "honest about scope" holds for the empty case.
+- **Truncation is explicit.** A capped result distinguishes "this is every
+  match" from "top-N of more" — so absence below the cap is never read as
+  absence in the library. `--limit 0` already means *zero rows*, not
+  *unbounded*, so the cap is always meaningful.
+- **`doctor` states what it verified.** The custody report distinguishes
+  what it confirmed network-free *this run* (scroll present, body
+  re-derives to the stored hash, provenance complete) from what only
+  `scrolls verify` can confirm against the live source: "unchanged as of
+  the last verify" is not "verified now" (ADR 0098). Drift the report has
+  not re-checked is named as un-rechecked, not as clean.
+
+The enforcement order is fixed by the roadmap: H6 adds scope + truncation
+honesty to `search` and `list`; H7 extends it to `context`, `related`, and
+`works`; H8 sharpens `doctor`'s verified-now-vs-as-of-last-check report
+(`docs/agents/autonomous-roadmap.md`). Each lands with its own tests in the
+matching suite and updates this section's status marker from *target* to
+*enforced*. The mechanism (a scope/completeness companion consistent with
+the existing `stats` envelope) is a deliberate, documented evolution of the
+bare-array convention for the ranked and capped surfaces; G1 is the half
+that is already true and is locked now so it cannot regress while G2 lands.
+
 ## Library lifecycle
 
 ### `scrolls init`

@@ -1,0 +1,249 @@
+"""The completeness contract — anti-fabrication / scope honesty (M2 G1).
+
+`docs/cli.md` → "The completeness contract" promises that every browse and
+audit surface (`search`, `list`, `related`, `works`, `context`, `doctor`)
+is scope-honest and completeness-honest: "nothing found" is never confused
+with "not checked," and nothing is fabricated for content the library does
+not hold (PRD cap 7, MVP M2, custody-vision §6).
+
+These tests pin G1 — *honest absence, honest failure* — as a single
+cross-surface invariant rather than re-proving it per command, so the
+already-true half cannot regress while G2 (scope echo + truncation honesty,
+roadmap H6–H8) is implemented on top of it. The per-command empties and
+errors are also asserted in their own suites; here we assert them *as the
+contract*.
+"""
+
+import json
+
+import pytest
+
+from scrolls import mcp_server
+from scrolls.cli import main
+from scrolls.items import ScrollItem, insert_item
+from scrolls.paths import get_paths
+
+
+@pytest.fixture
+def scrolls_home(monkeypatch, tmp_path):
+    """Point the library root at a temp dir so tests never touch ~/.scrolls."""
+    root = tmp_path / "scrolls-home"
+    monkeypatch.setenv("SCROLLS_HOME", str(root))
+    return root
+
+
+def _item(item_id, **overrides):
+    base = dict(
+        id=item_id,
+        source=item_id.split(":")[0],
+        url=f"https://example.org/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00",
+        title=item_id,
+        extracted_text="alpha beta gamma delta",
+        summary="alpha beta gamma delta",
+        stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+@pytest.fixture
+def populated(scrolls_home):
+    """A non-empty, fully offline library.
+
+    Deliberately populated so a "checked-and-empty" result proves the
+    surface *looked at a real library and found nothing in scope* — not
+    merely that the store was empty (which `before_init` covers separately).
+    The lone item carries no links, tags, concepts, or DOI, so it is its own
+    isolated node: `related` finds no neighbour and `works` finds no sibling.
+    """
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:lonely"))
+    return db
+
+
+# --- The empty form of each surface's own output shape -----------------------
+#
+# Each entry: argv that *checks a real, non-empty library and finds nothing
+# in scope*, plus a predicate proving the surface returned the empty form of
+# ITS shape (not an error, not a fabricated row).
+
+CHECKED_EMPTY_CASES = {
+    # a query no item's text matches → empty ranked array
+    "search": (["search", "zzznotatoken"], lambda out: json.loads(out) == []),
+    # a tag nothing carries → empty summary array (scope-honest empty)
+    "list": (["list", "--tag", "nonexistent"], lambda out: json.loads(out) == []),
+    # an isolated item → empty neighbour array
+    "related": (["related", "web:lonely"], lambda out: json.loads(out) == []),
+    # no multi-representation work in the library → empty works, stats present
+    "works": (
+        ["works"],
+        lambda out: json.loads(out)["works"] == []
+        and "items" in json.loads(out)["stats"],
+    ),
+    # an item that names no DOI → empty per-item works lens, not an error
+    "works_ref": (
+        ["works", "web:lonely"],
+        lambda out: json.loads(out)["works"] == [],
+    ),
+    # a query nothing matches → a valid bundle that says so
+    "context": (["context", "zzznotatoken"], lambda out: "No matching scrolls." in out),
+    # a healthy library → a zero-finding report
+    "doctor": (["doctor"], lambda out: json.loads(out)["issues"] == 0),
+}
+
+
+@pytest.mark.parametrize("name", sorted(CHECKED_EMPTY_CASES))
+def test_checked_and_empty_is_exit_zero_in_normal_shape(populated, capsys, name):
+    argv, is_empty_shape = CHECKED_EMPTY_CASES[name]
+    capsys.readouterr()
+
+    exit_code = main(argv)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, f"{name}: checked-and-empty must be exit 0, not a failure"
+    assert captured.err == "", f"{name}: a real answer writes nothing to stderr"
+    assert is_empty_shape(captured.out), f"{name}: must return the empty form of its shape"
+
+
+# --- Could-not-check is loud: error envelope on stderr, empty stdout, exit≠0 --
+#
+# Bad input and unknown ids are "not checked." They must never masquerade as
+# an empty success — that is the half of "empty ≠ error" an agent leans on.
+
+COULD_NOT_CHECK_CASES = {
+    "search_blank": ["search", '""'],
+    "context_blank": ["context", '""'],
+    "related_unknown_id": ["related", "web:does-not-exist"],
+    "works_unknown_ref": ["works", "web:does-not-exist"],
+    "show_unknown_id": ["show", "web:does-not-exist"],
+}
+
+
+@pytest.mark.parametrize("name", sorted(COULD_NOT_CHECK_CASES))
+def test_could_not_check_errors_loudly_not_emptily(populated, capsys, name):
+    argv = COULD_NOT_CHECK_CASES[name]
+    capsys.readouterr()
+
+    exit_code = main(argv)
+
+    captured = capsys.readouterr()
+    assert exit_code != 0, f"{name}: a check that could not run must not exit 0"
+    assert captured.out == "", f"{name}: nothing on stdout when the check could not run"
+    assert "error" in json.loads(captured.err), f"{name}: an error envelope on stderr"
+
+
+def test_empty_is_distinguishable_from_could_not_check(populated, capsys):
+    """The contract's load-bearing distinction, asserted directly.
+
+    The same surface, two situations: a query it *checked* and one it
+    *could not parse*. Exit code + stream must tell them apart, so an agent
+    never mistakes a fabrication-safe empty for a swallowed failure.
+    """
+    capsys.readouterr()
+
+    # checked the library, found nothing
+    checked = main(["search", "zzznotatoken"])
+    checked_out = capsys.readouterr()
+    assert checked == 0
+    assert json.loads(checked_out.out) == []
+    assert checked_out.err == ""
+
+    # could not check: a blank query is unparseable input
+    unchecked = main(["search", '""'])
+    unchecked_out = capsys.readouterr()
+    assert unchecked != 0
+    assert unchecked_out.out == ""
+    assert "error" in json.loads(unchecked_out.err)
+
+
+def test_a_facet_that_excludes_everything_is_empty_not_error(populated, capsys):
+    """A scope that matches no item is a first-class empty answer.
+
+    "Nothing in *this* scope" must be the empty shape, exit 0 — never an
+    error, and never a silent claim about the whole library. Covers the
+    AND-ed facets on the query/browse surfaces.
+    """
+    surfaces = {
+        "search": (["search", "alpha", "--source", "doesnotexist"], list),
+        "list": (["list", "--category", "nope"], list),
+        "context": (["context", "alpha", "--source", "doesnotexist"], None),
+    }
+    for name, (argv, _kind) in surfaces.items():
+        capsys.readouterr()
+        exit_code = main(argv)
+        captured = capsys.readouterr()
+        assert exit_code == 0, f"{name}: an excluding facet is empty, not an error"
+        assert captured.err == "", f"{name}: no error envelope for an empty scope"
+        if name == "context":
+            assert "No matching scrolls." in captured.out
+        else:
+            assert json.loads(captured.out) == []
+
+
+# Surfaces that browse the whole library (no anchoring id) must answer with
+# the empty form of their shape before `init`, never an error — so the
+# payload shape never varies between "no library yet" and "no matches."
+BEFORE_INIT_CASES = {
+    "search": (["search", "anything"], lambda out: json.loads(out) == []),
+    "list": (["list"], lambda out: json.loads(out) == []),
+    "works": (["works"], lambda out: json.loads(out)["works"] == []),
+    "context": (["context", "anything"], lambda out: "No matching scrolls." in out),
+    "doctor": (["doctor"], lambda out: json.loads(out).get("issues") == 0),
+}
+
+
+@pytest.mark.parametrize("name", sorted(BEFORE_INIT_CASES))
+def test_before_init_is_empty_in_shape_across_surfaces(scrolls_home, capsys, name):
+    argv, is_empty_shape = BEFORE_INIT_CASES[name]
+    capsys.readouterr()
+
+    exit_code = main(argv)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, f"{name}: a missing library reads empty, not an error"
+    assert captured.err == "", f"{name}: no error envelope before init"
+    assert is_empty_shape(captured.out), f"{name}: empty form of its shape before init"
+
+
+# --- The MCP twins honor the same contract (surface parity) ------------------
+#
+# The contract claims G1 holds for "their MCP twins" too — the integrity
+# boundary is the same whether an agent reads the CLI or the MCP tools
+# (custody-vision §6: search ≡ list ≡ MCP ≡ facets). The MCP wrappers are
+# plain functions over the same engines, so the analog of "exit 0 + empty
+# shape" is "returns the empty form," and the analog of an error envelope on
+# stderr is a raised exception the framework surfaces as a tool error.
+
+MCP_CHECKED_EMPTY = {
+    "search_scrolls": lambda: mcp_server.search_scrolls("zzznotatoken") == [],
+    "list_scrolls": lambda: mcp_server.list_scrolls(tag="nonexistent") == [],
+    "get_related_scrolls": lambda: mcp_server.get_related_scrolls("web:lonely") == [],
+    "get_works": lambda: mcp_server.get_works()["works"] == [],
+    "get_works_item": lambda: mcp_server.get_works(item="web:lonely")["works"] == [],
+    "get_context_bundle": lambda: "No matching scrolls."
+    in mcp_server.get_context_bundle("zzznotatoken"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MCP_CHECKED_EMPTY))
+def test_mcp_checked_and_empty_returns_the_empty_shape(populated, name):
+    assert MCP_CHECKED_EMPTY[name](), f"{name}: checked-and-empty must be the empty form"
+
+
+MCP_COULD_NOT_CHECK = {
+    "search_scrolls_blank": lambda: mcp_server.search_scrolls("   "),
+    "get_context_bundle_blank": lambda: mcp_server.get_context_bundle("   "),
+    "get_related_unknown": lambda: mcp_server.get_related_scrolls("web:does-not-exist"),
+    "get_works_unknown_item": lambda: mcp_server.get_works(item="web:does-not-exist"),
+    "get_scroll_unknown": lambda: mcp_server.get_scroll("web:does-not-exist"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MCP_COULD_NOT_CHECK))
+def test_mcp_could_not_check_raises_not_emptily(populated, name):
+    # The MCP analog of "loud failure": a check it could not run raises, so the
+    # framework reports a tool error — never a silent empty success.
+    with pytest.raises(ValueError):
+        MCP_COULD_NOT_CHECK[name]()

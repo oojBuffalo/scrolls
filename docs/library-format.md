@@ -512,6 +512,15 @@ Stable — agents and scripts may depend on these:
 - Every generated page is wrapped in the sentinel fence (`<!-- @generated
   scrolls … -->` … `<!-- @end scrolls -->`). A re-compile replaces only the
   fenced region; an annotation outside the fence survives (ADR 0102).
+- Browse and audit surfaces are scope-honest and completeness-honest: an
+  empty result (`[]`, an empty works/`stats` payload, a `No matching
+  scrolls.` bundle, a zero-finding doctor report) means *checked and
+  nothing matched*, exit 0; a result that *could not be checked* (bad
+  input, unknown id) is an `error` envelope on stderr with exit ≠ 0 — never
+  a silent empty success. Nothing is fabricated for content the library
+  does not hold. This is the completeness contract (`docs/cli.md` → "The
+  completeness contract"; PRD cap 7 / MVP M2), enforced by
+  `tests/test_completeness.py`.
 
 Not stable — expect these to grow without notice:
 
