@@ -233,6 +233,50 @@ def test_list_scrolls_browses_by_facet(scrolls_home):
     assert len(mcp_server.list_scrolls(limit=1)) == 1
 
 
+def test_list_scrolls_filters_by_drift_posture(scrolls_home):
+    # the MCP twin of `scrolls list --drift` (H54): the items returned for a
+    # posture total `list_facets("drift")`'s count for it (drill-from-the-count)
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"web:{index}", source="web", url=f"https://ex.com/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {index}",
+            stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:0", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+        # web:2 left unverified
+    ])
+
+    assert [r["id"] for r in mcp_server.list_scrolls(drift="drifted")] == ["web:1"]
+    assert [r["id"] for r in mcp_server.list_scrolls(drift="verified")] == ["web:0"]
+    assert [r["id"] for r in mcp_server.list_scrolls(drift="unverified")] == ["web:2"]
+
+    # convergence with the facet aggregate the twin `list_facets` reports
+    counts = {
+        e["value"]: e["count"]
+        for e in mcp_server.list_facets("drift")["facets"]["drift"]
+    }
+    for posture, count in counts.items():
+        assert len(mcp_server.list_scrolls(drift=posture)) == count
+
+
+def test_list_scrolls_rejects_an_unknown_drift_posture(scrolls_home):
+    # a closed vocabulary: an unknown posture is an error, never a silent empty
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.list_scrolls(drift="drited")
+
+
 def test_list_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.list_scrolls() == []
 

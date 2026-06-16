@@ -17,6 +17,7 @@ import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
     item_events,
+    items_in_posture,
     latest_events,
     live_recapture,
     record_events,
@@ -237,6 +238,47 @@ def test_unverified_items_preserves_input_order_for_an_oldest_first_limit():
     # order is preserved (web:0, web:2, web:3), so a caller can bound the
     # oldest-saved-first slice with a limit
     assert [i.id for i in unverified_items(items, verdicts)] == ["web:0", "web:2", "web:3"]
+
+
+# --- items_in_posture selector (the `list --drift` read-side selection) ---
+
+
+def test_items_in_posture_selects_one_posture():
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "t", "unchanged", "h", "h"),
+        "web:b": CustodyEvent("web:b", "t", "drifted", "h", "x"),
+        # web:c has no verdict → unverified
+    }
+    # `unchanged` reads back as the `verified` posture (the documented mapping)
+    assert items_in_posture([a, b, c], verdicts, "verified") == [a]
+    assert items_in_posture([a, b, c], verdicts, "drifted") == [b]
+    assert items_in_posture([a, b, c], verdicts, "unverified") == [c]
+
+
+def test_items_in_posture_unverified_equals_unverified_items():
+    # the verify-axis selection is the same set as the `unverified` posture bucket
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {"web:1": CustodyEvent("web:1", "t", "unchanged", "h", "h")}
+    assert items_in_posture(items, verdicts, "unverified") == unverified_items(
+        items, verdicts
+    )
+
+
+def test_items_in_posture_preserves_input_order():
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {
+        f"web:{n}": CustodyEvent(f"web:{n}", "t", "drifted", "h", "x") for n in range(4)
+    }
+    assert [i.id for i in items_in_posture(items, verdicts, "drifted")] == [
+        "web:0", "web:1", "web:2", "web:3"
+    ]
+
+
+def test_items_in_posture_is_honestly_empty_when_no_item_matches():
+    # a valid posture with no items in it is [], not an error
+    items = [_item("web:a")]  # never verified → unverified
+    assert items_in_posture(items, {}, "drifted") == []
 
 
 def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):

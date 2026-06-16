@@ -522,6 +522,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only items carrying this concept (matched by slug)",
     )
     list_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only items at this custody drift posture (from the verify "
+        "ledger); the rows returned total `scrolls facets drift`'s count "
+        "for that posture",
+    )
+    list_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -823,6 +831,7 @@ def main(argv: list[str] | None = None) -> int:
             args.category,
             args.tag,
             args.concept,
+            args.drift,
             args.limit,
             args.stats,
         )
@@ -1865,6 +1874,7 @@ def _cmd_list(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    drift: str | None = None,
     limit: int | None = None,
     stats: bool = False,
 ) -> int:
@@ -1875,6 +1885,7 @@ def _cmd_list(
         "stage": stage,
         "tag": tag,
         "concept": concept,
+        "drift": drift,
         "limit": limit,
     }
     if not paths.db_path.exists():
@@ -1891,6 +1902,7 @@ def _cmd_list(
         category=category,
         tag=tag,
         concept=concept,
+        drift=drift,
     )
     matched = len(items)
     if limit is not None:

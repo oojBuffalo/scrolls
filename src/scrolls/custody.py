@@ -253,6 +253,28 @@ def unverified_items(
     return [item for item in items if item.id not in verdicts]
 
 
+def items_in_posture(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent], posture: str
+) -> list[ScrollItem]:
+    """The held items whose latest ledger drift posture is `posture`.
+
+    The read-side selection behind `scrolls list --drift <posture>` (roadmap
+    H54) — the browse-filter sibling of `unverified_items` (the verify-axis
+    selection): where that names the one never-checked bucket `verify
+    --unverified` acts on, this enumerates *any* posture's items, bucketed by the
+    same `drift_posture` over the same `latest_events` ledger read `facets drift`
+    and the scope custody headlines count. So the rows `list --drift X` returns
+    are exactly the items `facets drift` tallies under `X` for the same scope —
+    drill-from-the-count convergence by construction (`verified` ≡ ledger
+    ``unchanged``; an item absent from `verdicts` is ``unverified``). Preserves
+    input order, so an oldest-saved-first caller keeps that order. Note
+    `unverified_items(items, v)` equals `items_in_posture(items, v, "unverified")`
+    — kept distinct because the verify axis names its bucket by intent (the
+    never-checked set to re-verify), not by the posture string.
+    """
+    return [item for item in items if drift_posture(verdicts.get(item.id)) == posture]
+
+
 def custody_counts(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, int]]:

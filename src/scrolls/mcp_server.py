@@ -135,6 +135,7 @@ def list_scrolls(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    drift: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """Browse library items by facet — the enumeration counterpart to search_scrolls.
@@ -143,15 +144,18 @@ def list_scrolls(
     them with no query at all, filtered by the same facets (they AND
     together): `source` and `stage` match exactly, `category` exactly except
     an empty string which selects unclassified items, `tag` by membership
-    (case-insensitive), and `concept` by membership (matched by slug). Items
-    come oldest-saved first, capped at `limit` (default 50) to stay
-    context-friendly — raise it to see more. Each entry is a summary (id,
-    source, url, title, category, stage, saved_at, the custody `fidelity`
-    tier — full/partial/reference, ADR 0097 — and the scholarly `works` it
-    represents, ADR 0101: empty unless the item is one of several saved forms
-    of one work, in which case each entry names the work's DOI and canonical
-    form); follow up with get_scroll for the full record. Use it for "what
-    arxiv papers tagged efficient are in the library", which has no natural
+    (case-insensitive), and `concept` by membership (matched by slug). `drift`
+    selects items by custody drift posture from the verify ledger
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the items returned
+    total `list_facets("drift")`'s count for that posture, so you can drill from
+    the aggregate to the rows. Items come oldest-saved first, capped at `limit`
+    (default 50) to stay context-friendly — raise it to see more. Each entry is a
+    summary (id, source, url, title, category, stage, saved_at, the custody
+    `fidelity` tier — full/partial/reference, ADR 0097 — and the scholarly
+    `works` it represents, ADR 0101: empty unless the item is one of several
+    saved forms of one work, in which case each entry names the work's DOI and
+    canonical form); follow up with get_scroll for the full record. Use it for
+    "what arxiv papers tagged efficient are in the library", which has no natural
     search query.
     """
     paths = get_paths()
@@ -164,6 +168,7 @@ def list_scrolls(
         category=category,
         tag=tag,
         concept=concept,
+        drift=drift,
     )[:limit]
     # Membership is a whole-library property (ADR 0101): cluster over every
     # item so a filtered/limited listing still reports an item's siblings, then

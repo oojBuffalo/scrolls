@@ -464,6 +464,7 @@ def list_items(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    drift: str | None = None,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
@@ -476,6 +477,15 @@ def list_items(
     filters. Shares the one clause builder (`item_filters`) with `search`
     and `facets`; its `items.`-qualified clauses run unchanged against this
     single-table `SELECT`.
+
+    `drift` is the one filter that is *not* a stored column: a custody drift
+    posture (`verified`/`unverified`/`drifted`/`rotted`/`error`) derived from the
+    verify ledger (roadmap H54). It is applied after the SQL filters, over a
+    single `latest_events` read, by the shared `custody.items_in_posture` selector
+    — so the rows it returns are exactly the items `facets drift` counts under that
+    posture for the same scope (drill-from-the-count convergence). An unknown
+    posture is a `ValueError` (a closed vocabulary, like `--stage`), never a
+    silent empty; the ledger is read only when `drift` is requested.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
@@ -488,7 +498,18 @@ def list_items(
         rows = conn.execute(query + " ORDER BY saved_at, id", tuple(params)).fetchall()
     finally:
         conn.close()
-    return [_from_row(row) for row in rows]
+    items = [_from_row(row) for row in rows]
+    if drift is not None:
+        # lazy: custody imports items, so the reverse is import-time only here
+        from scrolls.custody import DRIFT_POSTURES, items_in_posture, latest_events
+
+        if drift not in DRIFT_POSTURES:
+            raise ValueError(
+                f"unknown drift posture {drift!r}; "
+                f"choose one of {', '.join(DRIFT_POSTURES)}"
+            )
+        items = items_in_posture(items, latest_events(db_path), drift)
+    return items
 
 
 def item_to_dict(item: ScrollItem) -> dict[str, Any]:

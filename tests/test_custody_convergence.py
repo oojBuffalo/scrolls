@@ -14,8 +14,11 @@ Over one seeded fidelity/drift fixture it asserts that every surface reports the
 *same* fidelity-tier counts and the *same* drift-posture counts for the whole-
 library scope, with the one documented vocabulary mapping: the posture
 ``verified`` is the ledger status ``unchanged`` (`doctor`/`status` keep the
-ledger word; the headlines and `facets drift` read the posture word). A future
-change that desyncs any one surface fails here, in one obvious place.
+ledger word; the headlines and `facets drift` read the posture word). It also
+pins the *enumeration* drilled from those counts — `scrolls list --drift
+<posture>` (roadmap H54) returns rows that total each posture's canonical count,
+so the browse filter and the aggregate can never disagree. A future change that
+desyncs any one surface fails here, in one obvious place.
 """
 
 import json
@@ -167,6 +170,14 @@ def test_every_custody_surface_converges_on_one_picture(scrolls_home, capsys):
     graph_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
     assert graph_custody["tiers"] == canonical["tiers"]
     assert graph_custody["drift"] == canonical["drift"]
+
+    # 6. `list --drift <posture>` — the row enumeration drilled from the count.
+    #    The rows for each posture *total* that posture's canonical count, so the
+    #    browse filter and the aggregate can never disagree (roadmap H54).
+    for posture, count in canonical["drift"].items():
+        assert main(["list", "--drift", posture]) == 0
+        rows = json.loads(capsys.readouterr().out)
+        assert len(rows) == count, f"list --drift {posture}: {len(rows)} != {count}"
 
 
 def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):

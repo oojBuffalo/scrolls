@@ -1521,7 +1521,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--limit N] [--stats]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -1558,6 +1558,21 @@ concepts (matched by slug, so "BM25" and "bm25" agree), the same way
 `test_list_items_filters_by_concept`). They carry no empty-string
 overload — a value that nothing has prints `[]`.
 
+`--drift D` is the one filter that is not a stored column: a custody **drift
+posture** read from the verify ledger (`verified`/`unverified`/`drifted`/
+`rotted`/`error`, a closed vocabulary — a typo is a usage error, exit 2 —
+`test_list_rejects_an_unknown_drift_posture`). It selects the held items whose
+latest ledger verdict maps to that posture, via the same `custody.drift_posture`
+over `latest_events` that `scrolls facets drift` counts — so the rows `--drift
+drifted` returns *total* `facets drift`'s `drifted` count for the same scope
+(`test_list_drift_rows_total_the_facets_drift_count`). It is the drill-from-the-
+count companion to that aggregate and the read-side sibling of `verify
+--unverified`'s act-side selection: `facets drift` says *how many* are drifted,
+`list --drift drifted` says *which ones*. A valid posture nothing is in prints
+`[]` (`test_list_drift_is_honestly_empty_for_a_posture_with_no_items`); under
+`--stats`, `matched` is the post-drift count, so it equals the facet count, not
+the library total.
+
 By default the listing is uncapped — every item in scope, oldest saved
 first. `--limit N` caps it to the first `N`; `--stats` then wraps the
 array in the scope-honest `{scope, stats, results}` envelope (the
@@ -1577,6 +1592,12 @@ $ scrolls list --source x --category technique
 
 $ scrolls list --source x --limit 1 --stats
 {"scope": {"source": "x", "limit": 1}, "stats": {"returned": 1, "matched": 2, "truncated": true}, "results": [{"id": "x:1111", ...}]}
+[exit 0]
+
+$ scrolls facets drift                      # the aggregate: how many at each posture
+{"facets": {"drift": [{"value": "unverified", "count": 3}, {"value": "drifted", "count": 1}]}}
+$ scrolls list --drift drifted              # drill to the rows: which one drifted
+[{"id": "arxiv:1706.03762", "source": "arxiv", ..., "fidelity": "full", "works": []}]
 [exit 0]
 ```
 

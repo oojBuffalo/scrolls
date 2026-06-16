@@ -94,7 +94,14 @@ each command moves items between stages or derives artifacts from them.
   delegates to — is made actionable by `scrolls verify --unverified` (roadmap
   H51), which re-checks exactly that hash-bearing set, so a re-check clears the
   bucket those surfaces flag (the report→refresh pairing `classify --stale` /
-  `kb --stale` have on the enrichment axes, on the verify axis). The cross-engine contract — method is recorded,
+  `kb --stale` have on the enrichment axes, on the verify axis). The count is
+  also *enumerable*: `scrolls list --drift <posture>` (+ the MCP `list_scrolls`
+  twin, roadmap H54) selects the held items in a posture through the shared
+  `custody.items_in_posture` selector (the read-side sibling of
+  `unverified_items`, over the same `drift_posture`/`latest_events`), so the rows
+  it returns total `facets drift`'s count for that posture — drill from the
+  aggregate to the items, the read-side companion of `verify --unverified`'s
+  act-side selection. The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

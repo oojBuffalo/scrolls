@@ -2585,6 +2585,94 @@ def test_list_rejects_an_unknown_stage(scrolls_home):
     assert excinfo.value.code == 2
 
 
+def _seed_drift_postures():
+    """Three held items in distinct drift postures; library must already exist.
+
+    `web:0` verified (re-checked unchanged), `web:1` drifted (source changed),
+    `web:2` unverified (never re-checked). Returns the db path.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"web:{index}", source="web", url=f"https://ex.com/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {index}",
+            stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:0", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+        # web:2 left unverified
+    ])
+    return db
+
+
+def test_list_drift_selects_items_by_custody_posture(scrolls_home, capsys):
+    # the read-side companion of `facets drift`: enumerate the items in a posture
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["list", "--drift", "drifted"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:1"]
+
+    main(["list", "--drift", "verified"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:0"]
+
+    main(["list", "--drift", "unverified"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:2"]
+
+
+def test_list_drift_rows_total_the_facets_drift_count(scrolls_home, capsys):
+    # drill-from-the-count convergence: the rows `--drift X` returns total the
+    # `facets drift` count for X, over the same scope (H54)
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["facets", "drift"])
+    counts = {
+        e["value"]: e["count"]
+        for e in json.loads(capsys.readouterr().out)["facets"]["drift"]
+    }
+    for posture, count in counts.items():
+        main(["list", "--drift", posture])
+        rows = json.loads(capsys.readouterr().out)
+        assert len(rows) == count, f"{posture}: {len(rows)} rows != facet count {count}"
+
+
+def test_list_drift_is_honestly_empty_for_a_posture_with_no_items(scrolls_home, capsys):
+    # a valid posture nothing is in is [], never an error (completeness G1)
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["list", "--drift", "rotted"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_drift_is_echoed_in_the_stats_scope(scrolls_home, capsys):
+    # the --stats envelope names the drift filter it honored, and matched is the
+    # post-drift count (so it equals the facet count, not the library total)
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    main(["list", "--drift", "unverified", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["drift"] == "unverified"
+    assert payload["stats"]["matched"] == 1
+    assert [r["id"] for r in payload["results"]] == ["web:2"]
+
+
+def test_list_rejects_an_unknown_drift_posture(scrolls_home):
+    # drift postures are a closed vocabulary; a typo should not silently match nothing
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list", "--drift", "drited"])
+    assert excinfo.value.code == 2
+
+
 # --- scrolls facets (ADR 0080) ---
 
 
