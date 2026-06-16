@@ -20,6 +20,18 @@ pins the *enumeration* drilled from those counts — `scrolls list --drift
 so the browse filter and the aggregate can never disagree. A future change that
 desyncs any one surface fails here, in one obvious place.
 
+The **human-readable compiled** surface carries that scope picture too (roadmap
+H97): the KB compiler writes the shared `custody.custody_headline` under each
+compiled `library/` group list page's count line (H95, over the page's members)
+and in the landing `index.md` header (H96, over the rendered library). That
+scope-level headline is parsed back off a compiled page (`_library_headline`) and
+asserted to total `custody_counts` for that page's scope *and* `facets
+fidelity`/`facets drift` for the same `--source` filter — and the `index.md`
+headline to equal `custody_counts` over the whole rendered library *and*
+`doctor`'s `custody` aggregate. So the compiled library's *scope* custody summary
+reads the same as the agent aggregates — the scope-level counterpart of H91's
+per-item compiled-page tie, completing the compiled-surface custody theme.
+
 This module also pins the **per-item** counterpart of that scope-level invariant
 (roadmap H59). After H56/H58/H61/H64 the per-item `drift` posture rides every
 browse/landing/inspect surface — `list` rows, `search` hits, `related` hits,
@@ -375,6 +387,147 @@ def _library_markers(text):
         if m:
             markers[m.group(1)] = (m.group(2), m.group(3), m.group(4))
     return markers
+
+
+def _library_headline(text):
+    """Parse the compiled `_Custody:_` scope headline into non-zero count maps.
+
+    The KB compiler writes a `custody.custody_headline` line — `_Custody: N
+    scroll(s) · fidelity <tier counts> · drift <posture counts>._` — under each
+    group list page's count line (roadmap H95) and in the landing `index.md`
+    header (H96). This parses that one line back into its scroll count and the
+    *non-zero* fidelity-tier / drift-posture count maps (the headline shows only
+    non-zero sections), the way `_library_markers` parses the per-row markers
+    (H91), so the compiled *scope* summary can be compared against
+    `custody_counts` / `facets` / `doctor` for the same scope. Returns `None`
+    when the page carries no headline (the rollup pages, roadmap H95 scope).
+    """
+    line = next((l for l in text.splitlines() if l.startswith("_Custody:")), None)
+    if line is None:
+        return None
+    inner = line[len("_Custody: "):-len("._")]  # strip the `_Custody: ` … `._` frame
+    sections = inner.split(" · ")
+    count = int(re.match(r"(\d+) scroll", sections[0]).group(1))
+    tiers, drift = {}, {}
+    for section in sections[1:]:
+        if section.startswith("fidelity "):
+            target, body = tiers, section[len("fidelity "):]
+        elif section.startswith("drift "):
+            target, body = drift, section[len("drift "):]
+        else:  # pragma: no cover - the headline has only these two sections
+            continue
+        for pair in body.split(", "):
+            name, value = pair.rsplit(" ", 1)
+            target[name] = int(value)
+    return {"count": count, "tiers": tiers, "drift": drift}
+
+
+def _seed_compiled_scope_fixture(db):
+    """Rendered scrolls spanning the fidelity/drift axes across *two* sources, so a
+    `--source` filter genuinely narrows the index scope to a group page's scope.
+
+    Three `web` scrolls (a full+verified, a full+drifted, a reference+never) land
+    on `sources/web.md`; one `arxiv` scroll (a partial+rotted) lands on
+    `sources/arxiv.md`. Every item is rendered (`markdown_path` set) so the KB
+    includes it *and* `facets` (over held items) counts the same set the compiled
+    pages render. The `web` group-page scope is a proper subset of the whole
+    rendered library the `index.md` headline summarises, so the test pins
+    convergence at two distinct scopes, not one.
+    """
+    insert_item(db, _item(
+        "web:fv", "Scope full verified", stage="rendered",
+        markdown_path="scrolls/web/scope-full-verified.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fv"))
+    insert_item(db, _item(
+        "web:fd", "Scope full drifted", stage="rendered",
+        markdown_path="scrolls/web/scope-full-drifted.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fd"))
+    insert_item(db, _item(
+        "web:ru", "Scope reference unverified", stage="rendered",
+        markdown_path="scrolls/web/scope-reference-unverified.md"))  # no content → reference
+    insert_item(db, _item(
+        "arxiv:pr", "Scope partial rotted", source="arxiv",
+        url="https://arxiv.org/abs/pr", stage="rendered",
+        markdown_path="scrolls/arxiv/scope-partial-rotted.md",
+        extracted_text="only extracted"))  # extracted, no hash/raw → partial
+    record_events(db, [
+        CustodyEvent("web:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:fv", "sha256:fv", None),
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:fd", "sha256:x", None),
+        CustodyEvent("arxiv:pr", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:pr", None, "HTTP Error 404"),
+        # web:ru left unverified
+    ])
+
+
+def test_compiled_library_pages_agree_on_the_scope_custody_headline(scrolls_home, capsys):
+    # roadmap H97: H95 put a `_Custody:_` scope headline on the compiled group list
+    # pages (over the page's members) and H96 on the landing `index.md` (over the
+    # rendered library), each built from the shared `custody.custody_headline` and
+    # *claimed* to converge with `custody_counts`/`facets`/`doctor` for its scope —
+    # but that scope-level convergence is pinned only per-surface in `test_kb.py`.
+    # Fold it into the cross-surface invariant: parse the headline off a compiled
+    # page and assert its tier/posture totals equal the canonical tally for that
+    # page's scope. The scope-level analogue of H91's per-item compiled-page tie.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_compiled_scope_fixture(db)
+    capsys.readouterr()
+
+    verdicts = latest_events(db)
+    items = list_items(db)
+    web_members = [item for item in items if item.source == "web"]
+
+    # the canonical pictures the compiled headlines must reproduce
+    web_canonical = custody_counts(web_members, verdicts)
+    library_canonical = custody_counts(items, verdicts)  # all items here are rendered
+    # sanity: the group-page scope is a proper subset of the whole library
+    assert _nonzero(web_canonical["tiers"]) == {"full": 2, "reference": 1}
+    assert _nonzero(web_canonical["drift"]) == {"verified": 1, "unverified": 1, "drifted": 1}
+    assert _nonzero(library_canonical["tiers"]) == {"full": 2, "partial": 1, "reference": 1}
+    assert _nonzero(library_canonical["drift"]) == {
+        "verified": 1, "unverified": 1, "drifted": 1, "rotted": 1}
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+
+    # 1. the group page (`sources/web.md`) headline == custody_counts(web members)
+    #    == facets fidelity/drift scoped to `--source web` — the human-readable
+    #    scope summary drilled from, and totalling, the page's own scope
+    web_page = (library / "sources" / "web.md").read_text(encoding="utf-8")
+    web_headline = _library_headline(web_page)
+    assert web_headline["count"] == len(web_members)
+    assert web_headline["tiers"] == _nonzero(web_canonical["tiers"])
+    assert web_headline["drift"] == _nonzero(web_canonical["drift"])
+    web_fidelity = _facet_map(
+        compute_facets(db, field="fidelity", source="web")["facets"]["fidelity"])
+    web_drift = _facet_map(
+        compute_facets(db, field="drift", source="web")["facets"]["drift"])
+    assert web_headline["tiers"] == web_fidelity
+    assert web_headline["drift"] == web_drift
+
+    # 2. the landing `index.md` headline == custody_counts over the whole rendered
+    #    library == `doctor`'s custody aggregate (all items rendered here) == the
+    #    whole-library facets — the compiled counterpart of the `status` headline
+    index_headline = _library_headline((library / "index.md").read_text(encoding="utf-8"))
+    assert index_headline["count"] == len(items)
+    assert index_headline["tiers"] == _nonzero(library_canonical["tiers"])
+    assert index_headline["drift"] == _nonzero(library_canonical["drift"])
+    custody = run_doctor(get_paths())["custody"]
+    assert _nonzero(custody["tiers"]) == index_headline["tiers"]
+    assert _nonzero(_posture_from_ledger_counts(custody["drift"])) == index_headline["drift"]
+    assert index_headline["tiers"] == _facet_map(
+        compute_facets(db, field="fidelity")["facets"]["fidelity"])
+    assert index_headline["drift"] == _facet_map(
+        compute_facets(db, field="drift")["facets"]["drift"])
+
+    # 3. the rollup pages carry no scope headline (roadmap H95 scope boundary), so
+    #    the parser returns None — the compiled-surface convergence is exactly the
+    #    group pages + the index
+    for rollup in ("graph.md", "works.md"):
+        assert _library_headline((library / rollup).read_text(encoding="utf-8")) is None
 
 
 def _seed_marker_fixture(db):

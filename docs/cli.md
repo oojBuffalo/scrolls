@@ -215,7 +215,15 @@ and `scrolls context` headlines, `scrolls facets fidelity`/`drift`, and
 one vocabulary mapping: the posture `verified` is the ledger status
 `unchanged`). That scope-level convergence is pinned once, across every surface,
 in `tests/test_custody_convergence.py` — the custody-side analogue of
-`tests/test_completeness.py` (roadmap H50).
+`tests/test_completeness.py` (roadmap H50). The **compiled human-readable**
+surface carries that scope picture too (roadmap H97): the KB compiler writes the
+same `custody_headline` under each compiled `library/` group list page's count
+line (H95) and in the landing `index.md` header (H96), and the invariant parses
+it back off a compiled page and asserts its totals equal `custody_counts` for
+that page's scope, `facets fidelity`/`drift` for the same `--source` filter, and —
+for `index.md` — `doctor`'s `custody` aggregate over the whole rendered library.
+So the compiled library's *scope* custody summary reads the same as the agent
+aggregates, the scope-level counterpart of the per-item compiled-page tie below.
 
 The same module pins the **per-item** counterpart (roadmap H59): the per-item
 `drift` posture now rides every browse/landing surface — `scrolls list` rows and
