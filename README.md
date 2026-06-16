@@ -139,6 +139,7 @@ uv run scrolls doctor --fix   # repair what is safe offline: merge dupes, rewrit
 uv run scrolls maintain       # one scheduled custody pass: recheck → regenerate views → audit → custody delta since last run, as JSON
 uv run scrolls maintain --no-recheck  # the offline pass: regenerate + audit + delta, no live re-capture
 uv run scrolls maintain --history     # the custody trend: last N recorded runs (score/drift trajectory), as JSON
+uv run scrolls maintain --history --trend  # + a one-word posture (improving/holding/regressing) over the window
 uv run scrolls mcp            # serve the library to MCP clients over stdio
 uv run pytest                 # test suite
 ```

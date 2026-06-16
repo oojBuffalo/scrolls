@@ -426,7 +426,7 @@ $ scrolls verify --all
 [exit 0]
 ```
 
-### `scrolls maintain [--limit N | --no-recheck | --history [N]]`
+### `scrolls maintain [--limit N | --no-recheck | --history [N]] [--trend]`
 
 One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling
 (`docs/dogfood.md`), composed entirely from surfaces that already ship
@@ -463,6 +463,18 @@ posture (append, never rewrite); like the snapshot it degrades safely — a
 missing log is an empty history, and one corrupt line is skipped, never aborting
 the read.
 
+`scrolls maintain --history --trend` wraps the runs in a `{trend, runs}`
+envelope (the opt-in-envelope pattern, like `search --stats`, so the bare array
+stays the default and the completeness contract's empty `[]` never regresses).
+The `trend` distils the window's *direction* so a worker reads it without
+diffing entries: the net `score` change first→last, the net drift movement
+(Δ`drifted`+Δ`rotted`), and a one-word `posture` — `regressing` if the score
+dropped *or* more scrolls drifted/rotted (integrity-first), `improving` if the
+score rose or drift cleared, else `holding`. A window of fewer than two runs is
+not a trajectory, so it carries null deltas and `posture: insufficient-history`
+(honest absence). `--trend` only shapes a `--history` read; passed alone it is a
+usage error (exit 2), never a silently-ignored flag that runs a full pass.
+
 This is **report-only and idempotent** (custody-vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or
 re-summarizes — `doctor --fix`, `classify --stale`, and `kb --stale` stay the
@@ -484,6 +496,10 @@ $ scrolls maintain --limit 50            # second run; one source has drifted
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first
 [{"recorded_at": "2026-06-16T12:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 3, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": true, "since": null, "score": {"before": null, "after": 100, "change": null}}}, {"recorded_at": "2026-06-16T13:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}}}]
+[exit 0]
+
+$ scrolls maintain --history --trend     # the trajectory's direction in one word
+{"trend": {"runs": 2, "since": "2026-06-16T12:00:00+00:00", "score": {"first": 100, "last": 100, "change": 0}, "drift_change": 1, "posture": "regressing"}, "runs": [{"recorded_at": "2026-06-16T12:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 3, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": true, "since": null}}, {"recorded_at": "2026-06-16T13:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00"}}]}
 [exit 0]
 ```
 

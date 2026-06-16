@@ -69,6 +69,7 @@ from scrolls.maintain import (
     DEFAULT_HISTORY_LIMIT,
     append_log_entry,
     compute_delta,
+    compute_trend,
     custody_snapshot,
     load_snapshot,
     log_path,
@@ -562,6 +563,13 @@ def build_parser() -> argparse.ArgumentParser:
         f"{DEFAULT_HISTORY_LIMIT}) as a JSON array — the custody trajectory over "
         "time — instead of running a pass; read-only, never runs maintenance",
     )
+    maintain_parser.add_argument(
+        "--trend",
+        action="store_true",
+        help="With --history: wrap the runs in a {trend, runs} envelope whose "
+        "trend distils the window's net score/drift movement into one posture "
+        "(improving / holding / regressing); requires --history",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -807,7 +815,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "maintain":
         if args.history is not None:
-            return _cmd_maintain_history(args.history)
+            return _cmd_maintain_history(args.history, args.trend)
+        if args.trend:
+            print(
+                json.dumps({"error": "--trend requires --history"}), file=sys.stderr
+            )
+            return 2
         return _cmd_maintain(args.recheck, args.limit)
     if args.command == "mcp":
         return _cmd_mcp()
@@ -957,17 +970,25 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
     return 1 if report["issues"] > 0 else 0
 
 
-def _cmd_maintain_history(limit: int | None) -> int:
-    """Print the recorded maintenance runs — the custody trajectory (H36).
+def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
+    """Print the recorded maintenance runs — the custody trajectory (H36/H46).
 
     The read-only counterpart to a maintenance pass: rather than the single
     `delta` vs the last run, it prints the last N runs' `{recorded_at, snapshot,
     delta}` so a worker or agent reads the score/drift trend over time, not one
     diff. Never runs a pass and never mutates the library. Honest absence: a
     library that has never run `maintain` (or no library at all) prints `[]`.
+
+    With ``--trend`` (H46) the runs are wrapped in a ``{trend, runs}`` envelope
+    whose `trend` distils the window's net score/drift movement into one posture
+    — the opt-in-envelope pattern (like `search --stats`), so the bare array
+    stays the default and the completeness contract's empty `[]` never regresses.
     """
     runs = read_log(log_path(get_paths()), limit)
-    print(json.dumps(runs))
+    if trend:
+        print(json.dumps({"trend": compute_trend(runs), "runs": runs}))
+    else:
+        print(json.dumps(runs))
     return 0
 
 

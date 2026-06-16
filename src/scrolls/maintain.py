@@ -158,6 +158,68 @@ def save_snapshot(path: Path, snapshot: dict[str, Any]) -> None:
     path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
 
 
+def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Distil a window of maintenance runs into a custody *trajectory* (H46).
+
+    Reads only the first and last run's recorded snapshot in the window — the
+    net `score` change and the net drift/rot movement across the span — plus a
+    one-word `posture` so an unattended worker reads the direction directly,
+    without diffing entries itself. The rule, integrity-first:
+
+    - a *drop* in `score` is `regressing` (we hold less faithfully than before);
+    - else *more* drifted/rotted scrolls is `regressing` (the sources moved);
+    - else a *rise* in `score` or *fewer* drifted/rotted is `improving`;
+    - else `holding`.
+
+    Honest absence (the H21/H29 posture): a window of fewer than two runs is not
+    a trajectory — a single point has no direction — so it carries null deltas
+    and `posture` ``insufficient-history``. A `score` that is ``None`` on either
+    end (an uninitialized-library run) yields a null score `change`, never a
+    fabricated zero; the drift movement is still computed (absent counts read 0).
+    """
+    n = len(runs)
+    if n < 2:
+        return {
+            "runs": n,
+            "since": None,
+            "score": None,
+            "drift_change": None,
+            "posture": "insufficient-history",
+        }
+
+    first, last = runs[0], runs[-1]
+    first_snap, last_snap = first.get("snapshot", {}), last.get("snapshot", {})
+    first_score, last_score = first_snap.get("score"), last_snap.get("score")
+    score_change = (
+        None if first_score is None or last_score is None else last_score - first_score
+    )
+
+    def _drift_total(snap: dict[str, Any]) -> int:
+        drift = snap.get("drift", {})
+        return drift.get("drifted", 0) + drift.get("rotted", 0)
+
+    drift_change = _drift_total(last_snap) - _drift_total(first_snap)
+
+    if score_change is not None and score_change < 0:
+        posture = "regressing"
+    elif drift_change > 0:
+        posture = "regressing"
+    elif score_change is not None and score_change > 0:
+        posture = "improving"
+    elif drift_change < 0:
+        posture = "improving"
+    else:
+        posture = "holding"
+
+    return {
+        "runs": n,
+        "since": first.get("recorded_at"),
+        "score": {"first": first_score, "last": last_score, "change": score_change},
+        "drift_change": drift_change,
+        "posture": posture,
+    }
+
+
 def append_log_entry(path: Path, entry: dict[str, Any]) -> None:
     """Append one run's record to the maintenance log (append-only).
 

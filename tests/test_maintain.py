@@ -29,6 +29,7 @@ from scrolls.items import ScrollItem, get_item, item_to_dict, list_items, make_i
 from scrolls.maintain import (
     append_log_entry,
     compute_delta,
+    compute_trend,
     custody_snapshot,
     load_snapshot,
     log_path,
@@ -204,6 +205,77 @@ def test_read_log_skips_a_corrupt_line_without_losing_the_good_ones(tmp_path):
         handle.write("{ not json\n\n")  # a corrupt line and a blank line
     append_log_entry(path, good_b)
     assert read_log(path) == [good_a, good_b]
+
+
+# --- the derived trend (pure, roadmap H46) --------------------------------
+
+
+def _run(recorded_at, score, drifted=0, rotted=0):
+    return {
+        "recorded_at": recorded_at,
+        "snapshot": {
+            "score": score,
+            "drift": {"drifted": drifted, "rotted": rotted},
+        },
+        "delta": {},
+    }
+
+
+def test_trend_under_two_runs_is_not_a_trajectory():
+    """A single point has no direction — honest absence, not a fabricated zero."""
+    for window in ([], [_run("t1", 100)]):
+        trend = compute_trend(window)
+        assert trend["posture"] == "insufficient-history"
+        assert trend["score"] is None and trend["drift_change"] is None
+        assert trend["runs"] == len(window)
+
+
+def test_trend_holding_when_nothing_moved():
+    trend = compute_trend([_run("t1", 100), _run("t2", 100)])
+    assert trend["posture"] == "holding"
+    assert trend["since"] == "t1"
+    assert trend["runs"] == 2
+    assert trend["score"] == {"first": 100, "last": 100, "change": 0}
+    assert trend["drift_change"] == 0
+
+
+def test_trend_regressing_on_a_score_drop():
+    trend = compute_trend([_run("t1", 100), _run("t2", 80)])
+    assert trend["posture"] == "regressing"
+    assert trend["score"]["change"] == -20
+
+
+def test_trend_regressing_when_drift_accumulates_even_at_a_steady_score():
+    """The dogfood point recurring: integrity holds, but more sources drifted —
+    a recurring drift accumulation is still a regression worth surfacing."""
+    trend = compute_trend([_run("t1", 100, drifted=0), _run("t2", 100, drifted=2)])
+    assert trend["posture"] == "regressing"
+    assert trend["score"]["change"] == 0
+    assert trend["drift_change"] == 2
+
+
+def test_trend_improving_when_drift_clears():
+    trend = compute_trend(
+        [_run("t1", 100, drifted=2, rotted=1), _run("t2", 100, drifted=0, rotted=0)]
+    )
+    assert trend["posture"] == "improving"
+    assert trend["drift_change"] == -3
+
+
+def test_trend_score_change_is_null_when_an_endpoint_has_no_library():
+    """A window spanning an uninitialized run (score None) yields a null score
+    change, never a fabricated number; drift movement is still computed."""
+    trend = compute_trend([_run("t1", None, drifted=0), _run("t2", 100, drifted=0)])
+    assert trend["score"]["change"] is None
+    assert trend["drift_change"] == 0
+    assert trend["posture"] == "holding"
+
+
+def test_trend_spans_first_to_last_across_the_whole_window():
+    trend = compute_trend([_run("t1", 100), _run("t2", 90), _run("t3", 95)])
+    # first→last, not adjacent diffs: 100 → 95
+    assert trend["score"] == {"first": 100, "last": 95, "change": -5}
+    assert trend["posture"] == "regressing"
 
 
 # --- the command (offline, dogfood-style) ---------------------------------
@@ -536,3 +608,65 @@ def test_history_is_mutually_exclusive_with_the_pass_flags(home, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["maintain", "--history", "--no-recheck"])
     assert exc.value.code == 2
+
+
+def test_history_trend_wraps_the_runs_in_a_trend_envelope(home, monkeypatch, capsys):
+    """`--history --trend` reads the trajectory direction across the window: a
+    drift the second run records makes the posture `regressing` while the bare
+    `--history` array stays the default shape."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(items[0].id))
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"trend", "runs"}
+    assert len(payload["runs"]) == 2
+    # score held at 100 across both runs, but one source drifted → regressing
+    assert payload["trend"]["score"]["change"] == 0
+    assert payload["trend"]["drift_change"] == 1
+    assert payload["trend"]["posture"] == "regressing"
+
+
+def test_history_without_trend_stays_a_bare_array(home, monkeypatch, capsys):
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert isinstance(payload, list)  # the completeness-contract bare array
+
+
+def test_trend_on_a_single_run_window_is_insufficient_history(home, monkeypatch, capsys):
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["trend"]["posture"] == "insufficient-history"
+    assert len(payload["runs"]) == 1
+
+
+def test_trend_requires_history(home, capsys):
+    """`--trend` only shapes a `--history` read; alone it is a usage error, not a
+    silently-ignored flag that runs a full pass."""
+    exit_code = main(["maintain", "--trend"])
+    out = capsys.readouterr()
+    assert exit_code == 2
+    assert out.out == ""
+    assert "history" in json.loads(out.err)["error"].lower()

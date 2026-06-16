@@ -224,7 +224,13 @@ each command moves items between stages or derives artifacts from them.
   (the custody-ledger posture: append, never rewrite); `scrolls maintain --history
   [N]` reads the last N runs back as a JSON array — the custody *trend*, not just
   the last diff. The history read is custody-safe like the snapshot: a missing log
-  is an empty history and one corrupt line is skipped (roadmap H36).
+  is an empty history and one corrupt line is skipped (roadmap H36). `--history
+  --trend` (roadmap H46) wraps the window in a `{trend, runs}` envelope (the
+  opt-in `search --stats` pattern, so the bare array stays the default and the
+  completeness `[]` never regresses) whose `compute_trend` distils the first→last
+  net `score`/drift movement into one `posture` — `regressing`/`improving`/`holding`,
+  integrity-first; <2 runs is `insufficient-history` (a single point has no
+  direction).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters
