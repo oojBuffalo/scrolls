@@ -86,6 +86,7 @@ from scrolls.custody import (
     custody_counts,
     custody_headline,
     drift_posture,
+    last_checked,
     latest_events,
     record_events,
 )
@@ -321,6 +322,31 @@ def _bundle_postures(text):
     return postures
 
 
+def _bundle_last_checked(text):
+    """Map item id → `last_checked` parsed from a bundle briefing's custody lines.
+
+    The briefing's `_drift_line` (roadmap H42) carries the timestamp in prose:
+    a ``custody`` line ending ``as of <checked_at>`` for a checked scroll, or
+    ``never re-checked against its source`` for one with no verdict. So the time
+    axis is *present* in the Markdown surface too — parse the ``as of`` date (or
+    `None` for never-checked) to compare it against the JSON surfaces'
+    `last_checked` (roadmap H88).
+    """
+    stamps = {}
+    current = None
+    for line in text.splitlines():
+        heading = re.match(r"^## \d+\. .*\(`([^`]+)`\)\s*$", line)
+        if heading:
+            current = heading.group(1)
+            continue
+        custody = re.match(r"^- custody `\w+`.* as of (\S+)\s*$", line)
+        never = re.match(r"^- custody `unverified` — never re-checked", line)
+        if current is not None and (custody or never):
+            stamps[current] = custody.group(1) if custody else None
+            current = None
+    return stamps
+
+
 def test_every_surface_agrees_on_an_items_drift_posture(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -369,6 +395,66 @@ def test_every_surface_agrees_on_an_items_drift_posture(scrolls_home, capsys):
         item_id: posture
         for item_id, posture in canonical.items()
         if item_id != "web:1"
+    }
+
+
+def test_every_surface_agrees_on_an_items_last_checked(scrolls_home, capsys):
+    # roadmap H88: the time-axis analogue of the drift-posture invariant above.
+    # `last_checked` now rides every per-item surface (list/search/show H84,
+    # related/graph H86, the bundle briefing's `as of` line H42); this asserts a
+    # given item reads the *same* timestamp on every one of them, with `null` ⇔ the
+    # bundle's "never re-checked" ⇔ the JSON surfaces' null. (`works` has no work in
+    # this ring fixture — its parity is pinned in the works-seed test.)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    # the canonical per-item timestamp: last_checked over each item's latest verdict
+    verdicts = latest_events(db)
+    canonical = {
+        item.id: last_checked(verdicts.get(item.id)) for item in list_items(db)
+    }
+    # sanity: three checked at the fixture timestamp, web:4 never
+    assert canonical == {
+        "web:1": "2026-06-14T00:00:00+00:00",
+        "web:2": "2026-06-14T00:00:00+00:00",
+        "web:3": "2026-06-14T00:00:00+00:00",
+        "web:4": None,
+    }
+
+    # list rows (H84)
+    assert main(["list"]) == 0
+    list_ts = {r["id"]: r["last_checked"] for r in json.loads(capsys.readouterr().out)}
+    # search hits (H84)
+    assert main(["search", "topic"]) == 0
+    search_ts = {h["id"]: h["last_checked"] for h in json.loads(capsys.readouterr().out)}
+    # graph nodes (H86)
+    assert main(["graph"]) == 0
+    graph_ts = {
+        n["id"]: n["last_checked"] for n in json.loads(capsys.readouterr().out)["nodes"]
+    }
+    # bundle briefing (H42) — the `as of <date>` / "never re-checked" prose
+    assert main(["export", "bundle", "topic"]) == 0
+    bundle_ts = _bundle_last_checked(capsys.readouterr().out)
+    # related hits (H86) from web:1 — reaches every other item
+    assert main(["related", "web:1"]) == 0
+    related_ts = {h["id"]: h["last_checked"] for h in json.loads(capsys.readouterr().out)}
+    # show — the inspect surface (H84), one item at a time
+    show_ts = {}
+    for item_id in canonical:
+        assert main(["show", item_id]) == 0
+        show_ts[item_id] = json.loads(capsys.readouterr().out)["last_checked"]
+
+    # every whole-library surface reports the canonical timestamp for every item
+    assert list_ts == canonical
+    assert search_ts == canonical
+    assert graph_ts == canonical
+    assert bundle_ts == canonical
+    assert show_ts == canonical
+    # related carries every item *except its anchor*, each at the canonical stamp
+    assert related_ts == {
+        item_id: ts for item_id, ts in canonical.items() if item_id != "web:1"
     }
 
 

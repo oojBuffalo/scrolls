@@ -230,12 +230,17 @@ per-item ledger back, and the invariant pins the tie (roadmap H70): the posture
 the head of the ledger `history` returns implies equals the `drift` every
 latest-posture surface shows for that item (and `[]` ⇒ `unverified`), so the
 full timeline an agent reads can never silently disagree with the postures that
-summarize it. The time-axis counterpart (roadmap H84/H86) is pinned the same way:
-the `last_checked` timestamp `scrolls list`/`search`/`show` rows, `scrolls
-related` hits, and `scrolls graph` nodes carry beside `drift` equals the
-`checked_at` of that `history` head (and `null` ⇔ the empty timeline ⇔ never
-re-checked), so the staleness an agent reads off a browse row or a node matches
-the ledger exactly.
+summarize it. The time-axis counterpart (roadmap H84/H86/H87) is pinned the same
+way: the `last_checked` timestamp `scrolls list`/`search`/`show` rows, `scrolls
+related` hits, `scrolls graph` nodes, and `scrolls works` representations carry
+beside `drift` equals the `checked_at` of that `history` head (and `null` ⇔ the
+empty timeline ⇔ never re-checked), so the staleness an agent reads off a browse
+row, a node, or a representation matches the ledger exactly. And just as the drift
+posture has a single whole-library agreement test, the time axis has its mirror
+(roadmap H88): one fixture, one assertion that a given item reads the *same*
+`last_checked` on every surface that carries it — including the `export bundle`
+briefing, whose `as of <date>` / "never re-checked" prose carries the timestamp in
+Markdown — so a desync on any surface fails in one obvious place.
 
 The module also pins the **portable-custody** round-trip (roadmap H73): since
 the verify ledger travels (in the `export bundle` and as the whole-library
