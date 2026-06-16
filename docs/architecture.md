@@ -83,7 +83,12 @@ each command moves items between stages or derives artifacts from them.
   aggregate axis of the same view (roadmap H28): the library bucketed by how each
   held category was produced — `rules-v1` / `llm-v1`, or the honest `user-set` /
   `unclassified` buckets — built from the same `classification_view`, so the
-  counts and the per-item view never disagree. The cross-engine contract — method is recorded,
+  counts and the per-item view never disagree. The custody axes are browsable
+  too: `scrolls facets fidelity` buckets by custody tier and `scrolls facets
+  drift` (roadmap H48) by drift posture (`verified`/`unverified`/`drifted`/
+  `rotted`/`error`) read through the same `custody.drift_posture`/`latest_events`
+  `doctor`'s `custody.drift` and the scope custody headlines use, so the browse
+  aggregate converges with them for a scope. The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

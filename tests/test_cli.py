@@ -2634,6 +2634,7 @@ def test_facets_uninitialized_library_is_empty_but_well_shaped(scrolls_home, cap
             "tags": [],
             "concepts": [],
             "fidelity": [],
+            "drift": [],
             "method": [],
         }
     }
@@ -2669,6 +2670,32 @@ def test_facets_method_buckets_how_categories_were_produced(scrolls_home, capsys
         {"value": "unclassified", "count": 1},
         {"value": "user-set", "count": 1},
     ]
+
+
+def test_facets_drift_buckets_held_items_by_custody_posture(scrolls_home, capsys):
+    # the browse aggregate of the verify ledger (H48): held items by drift posture
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"web:{index}", source="web", url=f"https://ex.com/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {index}", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:0", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+        # web:2 left unverified
+    ])
+    capsys.readouterr()
+
+    main(["facets", "drift"])
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["facets"]) == {"drift"}
+    assert {e["value"]: e["count"] for e in payload["facets"]["drift"]} == {
+        "verified": 1, "drifted": 1, "unverified": 1,
+    }
 
 
 def test_facets_reports_every_dimension(scrolls_home, capsys):

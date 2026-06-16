@@ -335,6 +335,7 @@ def test_list_facets_before_init_is_empty_but_well_shaped(scrolls_home):
             "tags": [],
             "concepts": [],
             "fidelity": [],
+            "drift": [],
             "method": [],
         }
     }
@@ -362,6 +363,29 @@ def test_list_facets_method_buckets_how_categories_were_produced(scrolls_home):
         {"value": "rules-v1", "count": 1},
         {"value": "unclassified", "count": 1},
     ]
+
+
+def test_list_facets_drift_buckets_held_items_by_custody_posture(scrolls_home):
+    # the MCP twin of `scrolls facets drift` (H48): held items by drift posture
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"web:{index}", source="web", url=f"https://ex.com/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Post {index}", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:0", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h", None),
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+        # web:2 left unverified
+    ])
+
+    drift = mcp_server.list_facets("drift")["facets"]["drift"]
+    assert {entry["value"]: entry["count"] for entry in drift} == {
+        "verified": 1, "drifted": 1, "unverified": 1,
+    }
 
 
 def test_get_scroll_returns_the_full_item(scrolls_home, fake_wikipedia_api):

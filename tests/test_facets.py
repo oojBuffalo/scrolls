@@ -2,6 +2,7 @@
 
 import pytest
 
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.db import init_db
 from scrolls.facets import FIELDS, compute_facets
 from scrolls.items import ScrollItem, insert_item
@@ -125,6 +126,74 @@ def test_all_dimensions_returned_by_default(db_path):
     assert list(payload["facets"].keys()) == list(FIELDS)
     assert payload["facets"]["sources"] == [{"value": "web", "count": 1}]
     assert payload["facets"]["tags"] == [{"value": "x", "count": 1}]
+
+
+# --- drift (custody posture from the verify ledger, roadmap H48) -----------
+
+
+def _event(item_id, status, observed=None):
+    return CustodyEvent(
+        item_id=item_id, checked_at="2026-06-14T00:00:00+00:00", status=status,
+        prior_hash="deadbeef", observed_hash=observed,
+    )
+
+
+def test_drift_counts_by_posture(db_path):
+    # the browse aggregate of the verify ledger: each held item by drift posture,
+    # with the never-checked ones counted as `unverified`, never silently dropped
+    seed(db_path, [make_item(f"web:{index}") for index in range(5)])
+    record_events(db_path, [
+        _event("web:0", "unchanged", observed="deadbeef"),  # → verified
+        _event("web:1", "unchanged", observed="deadbeef"),  # → verified
+        _event("web:2", "drifted", observed="cafe1234"),
+        _event("web:3", "rotted"),
+        # web:4 left unverified
+    ])
+    drift = compute_facets(db_path, field="drift")["facets"]["drift"]
+    assert {entry["value"]: entry["count"] for entry in drift} == {
+        "verified": 2, "drifted": 1, "rotted": 1, "unverified": 1,
+    }
+    # ranked by count desc then value asc, like every other dimension
+    assert drift[0] == {"value": "verified", "count": 2}
+
+
+def test_drift_facet_respects_the_scoping_filters(db_path):
+    # the same facets that scope the other dimensions scope `drift` too
+    seed(db_path, [
+        make_item("arxiv:1", source="arxiv"),
+        make_item("web:1", source="web"),
+    ])
+    record_events(db_path, [_event("arxiv:1", "drifted", observed="cafe1234")])
+    scoped = compute_facets(db_path, field="drift", source="arxiv")["facets"]["drift"]
+    assert scoped == [{"value": "drifted", "count": 1}]
+
+
+def test_drift_facet_empty_library_is_well_shaped(db_path):
+    assert compute_facets(db_path, field="drift") == {"facets": {"drift": []}}
+
+
+def test_drift_facet_converges_with_doctor_custody_drift(db_path, tmp_path):
+    # `facets drift` and `doctor`'s `custody.drift` read the same ledger via the
+    # same primitives, so they agree for the same scope (verified ≡ unchanged)
+    from scrolls.doctor import run_doctor
+    from scrolls.paths import get_paths
+
+    seed(db_path, [make_item(f"web:{index}") for index in range(4)])
+    record_events(db_path, [
+        _event("web:0", "unchanged", observed="deadbeef"),
+        _event("web:1", "drifted", observed="cafe1234"),
+        _event("web:2", "rotted"),
+        # web:3 left unverified
+    ])
+    drift = {
+        entry["value"]: entry["count"]
+        for entry in compute_facets(db_path, field="drift")["facets"]["drift"]
+    }
+    doctor = run_doctor(get_paths(tmp_path))["custody"]["drift"]
+    assert drift.get("verified", 0) == doctor["unchanged"] == 1
+    assert drift.get("drifted", 0) == doctor["drifted"] == 1
+    assert drift.get("rotted", 0) == doctor["rotted"] == 1
+    assert drift.get("unverified", 0) == doctor["unverified"] == 1
 
 
 # --- method (how each held category was produced, roadmap H28) -------------

@@ -1563,8 +1563,8 @@ those values can be, so an agent learns the library's real categories,
 tags, and concept slugs before filtering. Output is
 `{"facets": {dimension: [{"value", "count", …}, …]}}`; with no `field`,
 every dimension (`sources`, `categories`, `tags`, `concepts`, `fidelity`,
-`method`) is reported, in that order, and a `field` narrows the payload to
-that one (`test_facets_reports_every_dimension`,
+`drift`, `method`) is reported, in that order, and a `field` narrows the
+payload to that one (`test_facets_reports_every_dimension`,
 `test_facets_single_field_returns_only_that_dimension`). An empty or
 uninitialized library reports every dimension as `[]`
 (`test_facets_uninitialized_library_is_empty_but_well_shaped`); an
@@ -1589,9 +1589,18 @@ facets that scope `search` scope the counts here, so
 `scrolls facets concepts --source arxiv` answers "which concepts do my
 arXiv papers carry?".
 
-`fidelity` and `method` are *derived* dimensions, not stored columns.
-`fidelity` counts items by custody tier (`full`/`partial`/`reference`,
-ADR 0097), the same tier `search`/`list` carry per item. `method` counts
+`fidelity`, `drift`, and `method` are *derived* dimensions, not stored
+columns. `fidelity` counts items by custody tier (`full`/`partial`/`reference`,
+ADR 0097), the same tier `search`/`list` carry per item. `drift` counts them by
+custody **drift posture** read from the verify ledger
+(`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H48) — the browse
+aggregate of the same `custody.drift_posture` over `latest_events` that
+`doctor`'s `custody.drift` block and the scope custody headlines (H45/H47) read,
+so `scrolls facets drift` converges with them for the same scope (`verified` ≡
+doctor's `unchanged`; a never-checked item is counted as `unverified`, never
+silently dropped). It answers "how much of my library has drifted, and how much
+has never been re-checked?" (`test_drift_counts_by_posture`,
+`test_drift_facet_converges_with_doctor_custody_drift`). `method` counts
 them by how each held category was produced — `rules-v1` / `llm-v1` for an
 engine-classified item, `user-set` for a hand-set category with no engine
 stamp, and `unclassified` for none — the aggregate counterpart of the

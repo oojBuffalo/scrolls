@@ -16,12 +16,16 @@ facets grouped exactly as the KB and the `--tag`/`--concept` filters group them
 the filters key on. Each tag/concept count is the number of *distinct* items
 carrying it, so two spellings of one concept on one item count it once.
 
-The `fidelity` and `method` dimensions are *derived* tiers rather than stored
-columns: `fidelity` counts items by custody tier (ADR 0097), and `method`
-counts them by how each held category was produced (`rules-v1`/`llm-v1`, or the
-honest `user-set`/`unclassified` buckets) — the aggregate counterpart of the
-per-item `classification` view (roadmap H20/H26), built from the same
-`classification_view` derivation so the two never disagree.
+The `fidelity`, `drift`, and `method` dimensions are *derived* rather than
+stored columns. `fidelity` counts items by custody tier (ADR 0097); `drift`
+counts them by custody **drift posture** read from the verify ledger
+(`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H48 — the browse
+aggregate of `custody.drift_posture` over `latest_events`, so it converges with
+`doctor`'s `custody.drift` and the scope custody headlines for the same scope);
+`method` counts them by how each held category was produced (`rules-v1`/
+`llm-v1`, or the honest `user-set`/`unclassified` buckets) — the aggregate
+counterpart of the per-item `classification` view (roadmap H20/H26), built from
+the same `classification_view` derivation so the two never disagree.
 
 The same optional facets that scope search scope the enumeration too, reusing
 `items.item_filters`. `None` never filters.
@@ -35,6 +39,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from scrolls.custody import drift_posture, latest_events
 from scrolls.items import (
     ScrollItem,
     classification_view,
@@ -44,7 +49,7 @@ from scrolls.items import (
 )
 from scrolls.kb import group_concepts, group_tags
 
-FIELDS = ("sources", "categories", "tags", "concepts", "fidelity", "method")
+FIELDS = ("sources", "categories", "tags", "concepts", "fidelity", "drift", "method")
 
 DEFAULT_LIMIT = 20
 
@@ -94,6 +99,8 @@ def compute_facets(
                 )
         if "fidelity" in wanted:
             facets["fidelity"] = _fidelity_counts(conn, where, params, limit)
+        if "drift" in wanted:
+            facets["drift"] = _drift_counts(conn, where, params, limit, db_path=db_path)
         if "method" in wanted:
             facets["method"] = _method_counts(conn, where, params, limit)
     finally:
@@ -217,6 +224,34 @@ def _fidelity_counts(
         for row in rows
     )
     entries = [{"value": tier, "count": count} for tier, count in counts.items()]
+    return _rank(entries, limit)
+
+
+def _drift_counts(
+    conn: sqlite3.Connection,
+    where: str,
+    params: list[str],
+    limit: int | None,
+    *,
+    db_path: Path,
+) -> list[dict[str, Any]]:
+    """Count held items by custody drift posture (roadmap H48).
+
+    The browse aggregate of the verify ledger — the one custody axis that had no
+    `facets` dimension (fidelity and method already do). Each scoped held item is
+    bucketed by `custody.drift_posture` over its latest ledger verdict:
+    `verified` (re-checked unchanged), `unverified` (never re-checked — counted,
+    never silently dropped), or `drifted`/`rotted`/`error`. Because it reads the
+    same `latest_events` ledger and the same `drift_posture` primitive `doctor`'s
+    `custody.drift` block and the scope custody headlines (roadmap H45/H47) read,
+    `facets drift` converges with them for the same scope by construction
+    (`verified` ≡ doctor's `unchanged`; `unverified` = held − verdicts). Reads
+    only item ids here and the ledger, never the bodies, like `_fidelity_counts`.
+    """
+    rows = conn.execute(f"SELECT id FROM items{where}", params).fetchall()
+    verdicts = latest_events(db_path)
+    counts = Counter(drift_posture(verdicts.get(row["id"])) for row in rows)
+    entries = [{"value": posture, "count": count} for posture, count in counts.items()]
     return _rank(entries, limit)
 
 
