@@ -247,3 +247,104 @@ def test_verify_feeds_the_doctor_drift_report(paths, monkeypatch, capsys):
     assert drift["drifted"] == 1
     assert drift["events"][0]["id"] == item.id
     assert drift["events"][0]["observed_hash"] == "sha256:new"
+
+
+# --- unverified selection (--unverified) ----------------------------------
+
+
+def test_verify_unverified_checks_only_never_verified_items(paths, monkeypatch, capsys):
+    a = _item("https://example.com/a", content_hash="sha256:a")
+    b = _item("https://example.com/b", content_hash="sha256:b")
+    insert_item(paths.db_path, a)
+    insert_item(paths.db_path, b)
+    _stub_recapture(monkeypatch, lambda i: i)  # all unchanged
+
+    main(["verify", a.id])  # a now has a ledger verdict; b never checked
+    capsys.readouterr()  # drain
+
+    main(["verify", "--unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1
+    assert [r["id"] for r in out["results"]] == [b.id]
+
+
+def test_verify_unverified_clears_the_doctor_signal(paths, monkeypatch, capsys):
+    # the held − verdicts set --unverified re-checks is exactly what doctor
+    # reports as `unverified`, so the re-check drives that count to zero
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item("https://example.com/b", content_hash="sha256:b"))
+    _stub_recapture(monkeypatch, lambda i: i)  # all unchanged
+
+    main(["doctor"])
+    before = json.loads(capsys.readouterr().out)["custody"]["drift"]
+    assert before["unverified"] == 2 and before["checked"] == 0
+
+    main(["verify", "--unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2 and out["unchanged"] == 2
+
+    main(["doctor"])
+    after = json.loads(capsys.readouterr().out)["custody"]["drift"]
+    assert after["unverified"] == 0 and after["checked"] == 2
+
+
+def test_verify_unverified_skips_reference_only_items(paths, monkeypatch, capsys):
+    # a reference-only capture is `unverified` (doctor counts it) but has no
+    # baseline to diff a re-fetch against, so --unverified skips it like --all —
+    # it honestly stays unverified, there is nothing to verify it on
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1  # only the hash-bearing item
+
+    main(["doctor"])
+    drift = json.loads(capsys.readouterr().out)["custody"]["drift"]
+    assert drift["unverified"] == 1  # the reference-only item remains
+
+
+def test_verify_unverified_limit_caps_attempts(paths, monkeypatch, capsys):
+    for n in range(3):
+        insert_item(paths.db_path, _item(
+            f"https://example.com/{n}", content_hash=f"sha256:{n}"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--unverified", "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2  # oldest saved first, the third left unverified
+
+
+def test_verify_unverified_on_empty_library(scrolls_home, capsys):
+    exit_code = main(["verify", "--unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert out["checked"] == 0
+
+
+def test_verify_unverified_no_targets_is_a_noop(paths, monkeypatch, capsys):
+    # every hash-bearing item already verified ⇒ nothing left, no network touched
+    item = _item("https://example.com/a", content_hash="sha256:a")
+    insert_item(paths.db_path, item)
+
+    def explode(_):
+        raise AssertionError("recapture must not run when there is nothing to verify")
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", item.id])  # records a verdict
+    capsys.readouterr()  # drain
+    _stub_recapture(monkeypatch, explode)
+
+    exit_code = main(["verify", "--unverified"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert out["checked"] == 0
+
+
+def test_verify_rejects_all_and_unverified_together(paths, capsys):
+    exit_code = main(["verify", "--all", "--unverified"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)

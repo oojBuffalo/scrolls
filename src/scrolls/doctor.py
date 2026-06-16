@@ -19,7 +19,7 @@ from dataclasses import replace
 from typing import Any, Iterable
 
 from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
-from scrolls.custody import CUSTODY_STATUSES, latest_events
+from scrolls.custody import CUSTODY_STATUSES, latest_events, unverified_items
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import eligible_concepts, members_hash, summary_freshness
 from scrolls.items import (
@@ -372,7 +372,10 @@ def _check_custody_drift(
         if item_id in held
     }
     drift["checked"] = len(latest)
-    drift["unverified"] = len(held) - len(latest)
+    # `held − verdicts` via the one shared predicate `scrolls verify --unverified`
+    # selects on, so the count doctor reports and the set a re-check clears can
+    # never disagree (convergence by construction).
+    drift["unverified"] = len(unverified_items(items, latest))
     drift["as_of"] = max((e.checked_at for e in latest.values()), default=None)
     for status in CUSTODY_STATUSES:
         drift[status] = sum(1 for e in latest.values() if e.status == status)

@@ -233,6 +233,26 @@ def drift_posture(event: CustodyEvent | None) -> str:
     return "verified" if event.status == "unchanged" else event.status
 
 
+def unverified_items(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> list[ScrollItem]:
+    """The held items the custody ledger has *no* verdict for — ``held − verdicts``.
+
+    The single "never re-checked" predicate behind both the *count* every custody
+    surface reports as ``unverified`` (`doctor`'s ``custody.drift.unverified``,
+    `facets drift`, and the scope custody headlines — all the
+    `drift_posture(None)` items) and the *selection* `scrolls verify --unverified`
+    re-checks, so a re-check clears exactly the bucket those surfaces flag — the
+    report↔refresh convergence `classify --stale` (H27) and `kb --stale` (H31)
+    have on the enrichment axes, now on the verify axis. ``verdicts`` is the
+    `latest_events` ledger read keyed by item id; an item absent from it has never
+    been verified, so its posture is ``unverified`` (unknown), never silently
+    "clean". Preserves input order, so an oldest-saved-first caller can bound a
+    re-check with a limit.
+    """
+    return [item for item in items if item.id not in verdicts]
+
+
 def custody_counts(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, int]]:

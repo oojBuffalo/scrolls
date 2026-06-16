@@ -20,7 +20,13 @@ from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.bundle import BundleError, build_bundle, parse_bundle
 from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
-from scrolls.custody import live_recapture, record_events, verify_item
+from scrolls.custody import (
+    latest_events,
+    live_recapture,
+    record_events,
+    unverified_items,
+    verify_item,
+)
 from scrolls.context import BUDGET_TIERS as CONTEXT_BUDGET_TIERS
 from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
@@ -717,10 +723,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify every item that has a captured content hash to diff against",
     )
     verify_parser.add_argument(
+        "--unverified",
+        action="store_true",
+        help="Verify only held items the ledger has no verdict for — the "
+        "`unverified` bucket doctor/facets/status report (oldest saved first)",
+    )
+    verify_parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Attempt at most N re-captures this run (--all only), oldest saved first",
+        help="Attempt at most N re-captures this run (--all/--unverified only), "
+        "oldest saved first",
     )
 
     return parser
@@ -856,7 +869,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
     if args.command == "verify":
-        return _cmd_verify(args.id, args.verify_all, args.limit)
+        return _cmd_verify(args.id, args.verify_all, args.unverified, args.limit)
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
@@ -1422,21 +1435,30 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_verify(ref: str | None, verify_all: bool, limit: int | None = None) -> int:
+def _cmd_verify(
+    ref: str | None,
+    verify_all: bool,
+    unverified: bool = False,
+    limit: int | None = None,
+) -> int:
     """Re-capture items and record drift/rot custody events (ADR 0098).
 
     Verifying re-fetches an item through its adapter, diffs the fresh content
     hash against the stored one, and appends a custody event — never touching
     the original capture, so proving the source changed can't lose what we
-    held. Exactly one of an item ref or `--all` is required: `--all` re-checks
-    every held item that carries a captured hash to diff against; a single ref
-    must itself have one. `error` (could-not-check) drives a nonzero exit;
-    `drifted`/`rotted` are successful checks that found a custody event.
+    held. Exactly one *selection* is required: a single item ref, `--all`
+    (every held item carrying a captured hash), or `--unverified` (only the
+    held, hash-bearing items the ledger has no verdict for — the `unverified`
+    bucket doctor/facets/status report, made actionable). `error`
+    (could-not-check) drives a nonzero exit; `drifted`/`rotted` are successful
+    checks that found a custody event.
     """
     paths = get_paths()
-    if (ref is None) == (not verify_all):
+    if sum((ref is not None, verify_all, unverified)) != 1:
         print(
-            json.dumps({"error": "verify needs exactly one of an item id or --all"}),
+            json.dumps(
+                {"error": "verify needs exactly one of an item id, --all, or --unverified"}
+            ),
             file=sys.stderr,
         )
         return 1
@@ -1445,7 +1467,8 @@ def _cmd_verify(ref: str | None, verify_all: bool, limit: int | None = None) -> 
         if limit is not None:
             print(
                 json.dumps(
-                    {"error": "--limit paces --all runs; drop it when verifying one item"}
+                    {"error": "--limit paces --all/--unverified runs; drop it "
+                     "when verifying one item"}
                 ),
                 file=sys.stderr,
             )
@@ -1464,10 +1487,19 @@ def _cmd_verify(ref: str | None, verify_all: bool, limit: int | None = None) -> 
             return 1
         items = [item]
     else:
-        # --all re-checks only items with a captured baseline hash: a
-        # reference-only or detected item has nothing to diff a re-fetch against.
+        # Both batch modes re-check only items with a captured baseline hash: a
+        # reference-only or detected item has nothing to diff a re-fetch against
+        # (so it stays `unverified` — honestly, there is nothing to verify it on).
         all_items = list_items(paths.db_path) if paths.db_path.exists() else []
-        items = [item for item in all_items if item.content_hash]
+        hash_bearing = [item for item in all_items if item.content_hash]
+        if unverified:
+            # The held − verdicts set doctor's `custody.drift.unverified` counts,
+            # via the one shared predicate, so this re-check clears exactly the
+            # bucket that block flags. Empty ledger ⇒ no verdicts ⇒ all of them.
+            verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+            items = unverified_items(hash_bearing, verdicts)
+        else:
+            items = hash_bearing
 
     if paths.db_path.exists():
         init_db(paths.db_path)  # ensure the ledger table exists before recording

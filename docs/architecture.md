@@ -88,7 +88,13 @@ each command moves items between stages or derives artifacts from them.
   drift` (roadmap H48) by drift posture (`verified`/`unverified`/`drifted`/
   `rotted`/`error`) read through the same `custody.drift_posture`/`latest_events`
   `doctor`'s `custody.drift` and the scope custody headlines use, so the browse
-  aggregate converges with them for a scope. The cross-engine contract — method is recorded,
+  aggregate converges with them for a scope. The `unverified` bucket all of these
+  count — held items the ledger has no verdict for, the one
+  `custody.unverified_items` predicate `doctor`'s `custody.drift.unverified` now
+  delegates to — is made actionable by `scrolls verify --unverified` (roadmap
+  H51), which re-checks exactly that hash-bearing set, so a re-check clears the
+  bucket those surfaces flag (the report→refresh pairing `classify --stale` /
+  `kb --stale` have on the enrichment axes, on the verify axis). The cross-engine contract — method is recorded,
   re-derivation is deterministic, the capture chain survives, and nothing
   unmatched is fabricated — is pinned as one invariant in
   `tests/test_enrichment_provenance.py` (the cap-8 baseline, the way

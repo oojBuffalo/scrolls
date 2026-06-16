@@ -20,6 +20,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     record_events,
+    unverified_items,
     verify_item,
 )
 from scrolls.db import init_db
@@ -214,6 +215,28 @@ def test_latest_events_empty_ledger(tmp_path):
     db_path = tmp_path / "db.sqlite"
     init_db(db_path)
     assert latest_events(db_path) == {}
+
+
+# --- unverified_items predicate (held − verdicts) ------------------------
+
+
+def test_unverified_items_returns_held_without_a_verdict():
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {"web:b": CustodyEvent("web:b", "t", "unchanged", "h", "h")}
+    assert unverified_items([a, b, c], verdicts) == [a, c]
+
+
+def test_unverified_items_empty_ledger_is_all_held():
+    items = [_item("web:a"), _item("web:b")]
+    assert unverified_items(items, {}) == items
+
+
+def test_unverified_items_preserves_input_order_for_an_oldest_first_limit():
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {"web:1": CustodyEvent("web:1", "t", "unchanged", "h", "h")}
+    # order is preserved (web:0, web:2, web:3), so a caller can bound the
+    # oldest-saved-first slice with a limit
+    assert [i.id for i in unverified_items(items, verdicts)] == ["web:0", "web:2", "web:3"]
 
 
 def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):

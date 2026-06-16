@@ -410,7 +410,7 @@ the explicit refresh that re-synthesizes exactly the concepts reported here — 
 summary-axis counterpart of `classify --stale`
 (`test_kb_stale_clears_the_doctor_stale_signal`).
 
-### `scrolls verify [id] [--all] [--limit N]`
+### `scrolls verify [id] [--all | --unverified] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
 copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
@@ -420,12 +420,23 @@ the stored one, and appends a **custody event** to the ledger — it never
 overwrites the original capture, so proving a source changed can never lose
 what was held.
 
-One of an item `id`/URL or `--all` is required, never both
-(`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`).
-`--all` re-checks every held item carrying a captured `content_hash` to diff
-against — a reference-only or still-`detected` item has no baseline and is
-skipped — and `--limit N` paces a large run (oldest saved first), like
-`scrolls fetch`. A single `id` must itself hold a content hash
+Exactly one *selection* is required — a single item `id`/URL, `--all`, or
+`--unverified` — never more than one (`test_verify_needs_an_id_or_all`,
+`test_verify_rejects_id_and_all_together`,
+`test_verify_rejects_all_and_unverified_together`). `--all` re-checks every held
+item carrying a captured `content_hash` to diff against — a reference-only or
+still-`detected` item has no baseline and is skipped. `--unverified` narrows
+that to only the hash-bearing items the ledger has *no* verdict for — the same
+`held − verdicts` set `doctor`'s `custody.drift.unverified`, `facets drift`, and
+the scope custody headlines report, so re-checking clears exactly the
+`unverified` bucket those surfaces flag (the report→refresh pairing
+`classify --stale` and `kb --stale` have on the enrichment axes, on the verify
+axis; `test_verify_unverified_checks_only_never_verified_items`,
+`test_verify_unverified_clears_the_doctor_signal`). A reference-only capture has
+nothing to diff a re-fetch against, so it honestly *stays* unverified
+(`test_verify_unverified_skips_reference_only_items`). `--limit N` paces a large
+`--all`/`--unverified` run (oldest saved first), like `scrolls fetch`. A single
+`id` must itself hold a content hash
 (`test_verify_item_without_content_hash_is_an_error`).
 
 Each result carries a `status`:
@@ -451,6 +462,10 @@ $ scrolls verify web:af2e70e87b6d        # source rewritten since capture
 
 $ scrolls verify --all
 {"checked": 2, "unchanged": 1, "drifted": 0, "rotted": 1, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}, {"id": "x:1111", "status": "rotted", "prior_hash": "sha256:77ab…", "observed_hash": null, "detail": "web request failed: HTTP Error 404: Not Found"}]}
+[exit 0]
+
+$ scrolls verify --unverified      # only the held items doctor flags `unverified`
+{"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "x:2222", "status": "unchanged", "prior_hash": "sha256:5e1a…", "observed_hash": "sha256:5e1a…", "detail": null}]}
 [exit 0]
 ```
 
