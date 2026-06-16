@@ -16,7 +16,11 @@ import pytest
 import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
+    event_export_dict,
+    event_from_dict,
     event_payload,
+    events_for_items,
+    import_events,
     item_events,
     item_history,
     items_in_posture,
@@ -347,6 +351,122 @@ def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):
 
     assert latest_events(db_path) == {}
     assert item_events(db_path, "web:a") == []
+
+
+# --- portable custody: export/import the ledger (roadmap H67) ---------------
+
+
+def test_event_export_dict_includes_the_item_id():
+    # the bundle-export shape carries item_id (the block spans many items),
+    # unlike event_payload (the per-item `history` shape, which omits it)
+    event = CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "rotted", "h1", None, "gone")
+    assert event_export_dict(event) == {
+        "item_id": "web:a",
+        "checked_at": "2026-06-15T00:00:00+00:00",
+        "status": "rotted",
+        "prior_hash": "h1",
+        "observed_hash": None,
+        "detail": "gone",
+    }
+    # round-trips through event_from_dict (the autoincrement id is not exported)
+    assert event_from_dict(event_export_dict(event)) == event
+
+
+def test_event_from_dict_tolerates_unknown_keys():
+    data = {
+        "item_id": "web:a", "checked_at": "2026-06-15T00:00:00+00:00",
+        "status": "unchanged", "prior_hash": "h", "observed_hash": "h",
+        "detail": None, "id": 7, "future_field": "ignored",
+    }
+    assert event_from_dict(data) == CustodyEvent(
+        "web:a", "2026-06-15T00:00:00+00:00", "unchanged", "h", "h", None
+    )
+
+
+def test_events_for_items_scopes_to_the_id_set_in_append_order(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:b", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h", "h3"),
+    ])
+    # only the requested items, in the append (chronological/id) order
+    scoped = events_for_items(db_path, ["web:a"])
+    assert [(e.item_id, e.status) for e in scoped] == [
+        ("web:a", "unchanged"), ("web:a", "drifted")
+    ]
+    # empty id set is an empty read, never the whole ledger
+    assert events_for_items(db_path, []) == []
+
+
+def test_events_for_items_tolerates_a_pre_v7_library(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("DROP TABLE custody_events")
+    conn.close()
+    assert events_for_items(db_path, ["web:a"]) == []
+
+
+def test_import_events_restores_into_a_fresh_ledger(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    events = [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h", "h2"),
+    ]
+    assert import_events(db_path, events) == (2, 0)
+    # newest-first read back, and the latest verdict is the chronologically-latest
+    assert [e.status for e in item_events(db_path, "web:a")] == ["drifted", "unchanged"]
+    assert latest_events(db_path)["web:a"].status == "drifted"
+
+
+def test_import_events_dedups_by_content_so_re_import_is_a_no_op(tmp_path):
+    # the idempotent-restore key: same (item_id, checked_at, status, prior, observed)
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    events = [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("web:b", "2026-06-14T00:00:00+00:00", "drifted", "h", "h2", "moved"),
+    ]
+    assert import_events(db_path, events) == (2, 0)
+    # a second import of the same events adds nothing — a custody no-op
+    assert import_events(db_path, events) == (0, 2)
+    # the ledger did not grow
+    conn = sqlite3.connect(db_path)
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM custody_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert total == 2
+
+
+def test_import_events_dedup_ignores_the_id_and_detail(tmp_path):
+    # detail is not part of the identity: a same-check row with a different
+    # detail message still dedups (the 5-tuple identifies the check)
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    import_events(db_path, [
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "error", "h", None, "timeout"),
+    ])
+    again = import_events(db_path, [
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "error", "h", None, "different message"),
+    ])
+    assert again == (0, 1)
+
+
+def test_import_events_orders_inserts_by_checked_at_for_correct_recency(tmp_path):
+    # an out-of-order block still yields the chronologically-latest posture: the
+    # restore sorts by checked_at before appending, so latest_events is correct
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    import_events(db_path, [
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted", "h", "h2"),
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged", "h", "h"),
+    ])
+    assert latest_events(db_path)["web:a"].status == "drifted"
 
 
 def test_ledger_is_append_only_history(tmp_path):

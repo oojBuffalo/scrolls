@@ -4,12 +4,17 @@ import json
 
 import pytest
 
-from scrolls.bundle import BundleError, build_bundle, parse_bundle
+from scrolls.bundle import (
+    BundleError,
+    build_bundle,
+    parse_bundle,
+    parse_bundle_events,
+)
 from scrolls.classify import ENGINE as RULES_ENGINE
 from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.cli import main
-from scrolls.custody import CustodyEvent, record_events
+from scrolls.custody import CustodyEvent, item_events, item_history, record_events
 from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, get_item, insert_item, item_to_dict
 from scrolls.kb import ConceptSummary, save_concept_summary
@@ -431,6 +436,135 @@ def test_import_bundle_never_overwrites_an_existing_scroll(scrolls_home, tmp_pat
     report = json.loads(capsys.readouterr().out)
     assert report["imported"] == 0
     assert report["skipped"] == 1
+
+
+# --- portable custody: the verify ledger travels in the bundle (H67) --------
+
+
+def test_bundle_carries_a_custody_events_block(scrolls_home):
+    # the in-scope items' verify ledger travels as a second @generated region,
+    # so an item's drift *history* — not just the last-seen posture — is portable
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    record_events(db, [
+        _event("wikipedia:en:SQLite", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:SQLite", "drifted", observed="cafe1234"),
+    ])
+
+    bundle = build_bundle(db, "database")
+    # a second self-describing fenced block alongside the items block
+    assert "scrolls export bundle (custody events)" in bundle
+    # parse_bundle_events recovers both checks, with the item id (the block
+    # spans many items, so each row names its own)
+    events = parse_bundle_events(bundle)
+    assert [(e.item_id, e.status) for e in events] == [
+        ("wikipedia:en:SQLite", "unchanged"),
+        ("wikipedia:en:SQLite", "drifted"),
+    ]
+
+
+def test_custody_events_round_trip_into_a_fresh_library(scrolls_home, monkeypatch, tmp_path, capsys):
+    # custody itself is portable: export the ledger from A, restore it in empty B
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    record_events(db_a, [
+        _event("wikipedia:en:SQLite", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:SQLite", "drifted", observed="cafe1234"),
+    ])
+    capsys.readouterr()
+    main(["export", "bundle", "database"])
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    # before import, B has never checked the source — honest unverified
+    capsys.readouterr()
+    main(["import", "bundle", str(bundle_path)])
+    report = json.loads(capsys.readouterr().out)
+    assert report["events"] == {"imported": 2, "skipped": 0}
+    # the full ledger landed in B, newest-first, and the latest posture is the
+    # exporter's — drift travels, it is not frozen as prose
+    assert [e["status"] for e in item_history(db_b, "wikipedia:en:SQLite")] == [
+        "drifted", "unchanged"
+    ]
+    posture_b = next(
+        line for line in build_bundle(db_b, "database").splitlines()
+        if "custody `" in line
+    )
+    assert "custody `drifted`" in posture_b
+
+
+def test_re_importing_a_bundle_dedups_the_custody_events(scrolls_home, tmp_path, capsys):
+    # idempotent restore: re-importing the same bundle is a custody no-op
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    record_events(db, [_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")])
+    capsys.readouterr()
+    main(["export", "bundle", "database"])
+    bundle_path = tmp_path / "b.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # first import is back into the same library: the event already exists → skipped
+    main(["import", "bundle", str(bundle_path)])
+    report = json.loads(capsys.readouterr().out)
+    assert report["events"] == {"imported": 0, "skipped": 1}
+    # the ledger did not grow — still exactly the one original check
+    assert len(item_events(db, "wikipedia:en:SQLite")) == 1
+
+
+def test_an_unverified_scope_carries_an_empty_events_block(scrolls_home):
+    # a bundle whose scope has no verify history still carries the (empty) events
+    # block, so the structure is stable; it parses to no events
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+
+    bundle = build_bundle(db, "database")
+    assert "scrolls export bundle (custody events)" in bundle
+    assert parse_bundle_events(bundle) == []
+
+
+def test_a_pre_h67_bundle_without_an_events_block_imports_items_only(scrolls_home, tmp_path, capsys):
+    # backward compatibility: an older bundle has only the items block (one
+    # @generated region). parse_bundle_events sees no second region → [], so it
+    # imports items and simply carries no events — never a crash
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    legacy = (
+        "# Scrolls Custody Bundle: database\n\n"
+        "<!-- @generated scrolls — regenerated by `scrolls export bundle` -->\n"
+        "```jsonl\n"
+        + json.dumps(item_to_dict(get_item(db, "wikipedia:en:SQLite"))) + "\n"
+        "```\n<!-- @end scrolls -->\n"
+    )
+    assert parse_bundle_events(legacy) == []
+    legacy_path = tmp_path / "legacy.md"
+    legacy_path.write_text(legacy, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["import", "bundle", str(legacy_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["items"] == 1
+    assert report["events"] == {"imported": 0, "skipped": 0}
+
+
+def test_a_corrupt_custody_events_block_is_reported(scrolls_home):
+    # a malformed event row fails loudly, naming the record, never silently
+    # dropping a check (losing drift history would lose the proof of a verify)
+    bad = (
+        "# Scrolls Custody Bundle: x\n\n"
+        "<!-- @generated scrolls — regenerated by `scrolls export bundle` -->\n"
+        "```jsonl\n```\n<!-- @end scrolls -->\n"
+        "<!-- @generated scrolls — regenerated by `scrolls export bundle (custody events)` -->\n"
+        "```jsonl\n{not valid json\n```\n<!-- @end scrolls -->\n"
+    )
+    with pytest.raises(BundleError, match="custody-events block record 1"):
+        parse_bundle_events(bad)
 
 
 # --- scope, completeness, honesty ------------------------------------------

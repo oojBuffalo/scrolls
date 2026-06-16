@@ -32,6 +32,7 @@ it is grounded in the actual status code, not a string match on the message.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -242,6 +243,121 @@ def item_history(
     """
     events = [event_payload(event) for event in item_events(db_path, item_id)]
     return events if limit is None else events[:limit]
+
+
+def event_export_dict(event: CustodyEvent) -> dict[str, str | None]:
+    """One ledger event as a full export row — every column, ``item_id`` included.
+
+    The bundle-export shape (roadmap H67), distinct from `event_payload` (the
+    `scrolls history` read shape, which *omits* ``item_id`` because it is scoped
+    to one item): a shareable bundle's custody-events block spans many items, so
+    each row must name its own. Reuses `event_payload` for the five per-check
+    fields and prepends the id, so the two serializers can never drift on the
+    shared fields.
+    """
+    return {"item_id": event.item_id, **event_payload(event)}
+
+
+def dump_events_export(events: Iterable[CustodyEvent]) -> str:
+    """Serialize custody events to JSON Lines — the bundle custody-events block.
+
+    One JSON object per event per line (newline-terminated), the full
+    `event_export_dict` row, in the given order. Mirrors `dump_items_export`
+    (the items block): an empty iterable produces an empty string — a valid empty
+    document, the shape an unverified library's events block carries.
+    """
+    return "".join(json.dumps(event_export_dict(e)) + "\n" for e in events)
+
+
+def event_from_dict(data: dict) -> CustodyEvent:
+    """Reconstruct a `CustodyEvent` from an export row — the `event_export_dict`
+    inverse. Unknown keys are tolerated (forward compatibility) and the
+    autoincrement ledger id is intentionally absent: it is per-library, never
+    exported, so a restored event is re-numbered by the target ledger. Identity
+    validation (required fields present) is the caller's, like `item_from_dict`.
+    """
+    return CustodyEvent(
+        item_id=data["item_id"],
+        checked_at=data["checked_at"],
+        status=data["status"],
+        prior_hash=data.get("prior_hash"),
+        observed_hash=data.get("observed_hash"),
+        detail=data.get("detail"),
+    )
+
+
+def events_for_items(
+    db_path: Path, item_ids: Iterable[str]
+) -> list[CustodyEvent]:
+    """Every custody event for a set of items, in append (chronological) order.
+
+    The export-side read behind the shareable bundle's custody-events block
+    (roadmap H67): the in-scope items' full ledger so their drift *history*
+    travels, not just the exporter's last-seen posture. Ordered by the
+    monotonic `id` (the append order `verify` writes, i.e. chronological), so a
+    fresh-library import re-appends them in the same order and `latest_events`
+    there picks the same latest verdict. Filters the whole ledger in Python by
+    the id set rather than a large ``IN`` clause, so a bundle covering many
+    matches never hits SQLite's bound-parameter limit; reuses `_query_events`,
+    so a pre-v7 library with no ledger table reads as an empty history.
+    """
+    wanted = set(item_ids)
+    if not wanted:
+        return []
+    rows = _query_events(db_path, "SELECT * FROM custody_events ORDER BY id")
+    return [_from_row(row) for row in rows if row["item_id"] in wanted]
+
+
+# The content key that identifies a check across libraries — the autoincrement
+# `id` is per-library (never exported) and `detail` describes the same check, so
+# neither is part of the identity. Two ledger rows with this 5-tuple equal are
+# the same custody event (roadmap H67's idempotent-restore key).
+_EVENT_IDENTITY = ("item_id", "checked_at", "status", "prior_hash", "observed_hash")
+
+
+def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, int]:
+    """Restore custody events into the ledger, deduped by content; return
+    ``(imported, skipped)``.
+
+    The verify-axis sibling of `import items`' ``INSERT OR IGNORE`` (ADR 0082):
+    an event is skipped when the ledger already holds a content-identical row —
+    same `_EVENT_IDENTITY` 5-tuple — so importing the *same* ledger twice is a
+    custody no-op (the events are append-only with an autoincrement id; a blind
+    append would grow the ledger on every re-import). The live append path
+    `record_events` is left untouched — only this restore dedups, because only
+    import can re-present an event the ledger already holds.
+
+    Events are inserted oldest-`checked_at` first (a stable sort over the
+    chronological export order), so in a fresh target the restored ids run in
+    time order and `latest_events` picks the chronologically-latest verdict —
+    the posture an agent reads after import matches the exporter's. Within-batch
+    duplicates also dedup: the first insert makes the next iteration's existence
+    check see it. NULL hashes compare NULL-safely (SQLite ``IS``).
+    """
+    ordered = sorted(events, key=lambda e: e.checked_at)
+    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
+    insert_cols = ", ".join(_EVENT_COLUMNS)
+    placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
+    imported = skipped = 0
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            for e in ordered:
+                identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+                exists = conn.execute(
+                    f"SELECT 1 FROM custody_events WHERE {where} LIMIT 1", identity
+                ).fetchone()
+                if exists is not None:
+                    skipped += 1
+                    continue
+                conn.execute(
+                    f"INSERT INTO custody_events ({insert_cols}) VALUES ({placeholders})",
+                    (*identity, e.detail),
+                )
+                imported += 1
+    finally:
+        conn.close()
+    return imported, skipped
 
 
 def latest_events(db_path: Path) -> dict[str, CustodyEvent]:

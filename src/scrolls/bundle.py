@@ -39,6 +39,15 @@ Two layers in one file:
    tested by ADR 0082/0099. The sentinel makes the block machine-locatable and
    lets the briefing body above and below it carry hand annotations a
    re-export won't clobber (the refresh-safe contract, ADR 0102).
+3. A custody-events block (roadmap H67) — the in-scope items' verify ledger
+   (`custody_events`) as a second sibling `@generated` JSONL region, so an
+   item's drift *history* travels, not just the exporter's last-seen posture
+   frozen in the briefing prose: "lossless round-trip is a guarantee" (custody
+   vision) extended from the item to its custody record. `import bundle`
+   restores it with an idempotent, content-keyed dedup (`custody.import_events`)
+   so a re-import is a custody no-op. The items block stays the first region and
+   byte-identical to `export items`, so its round-trip is untouched; a pre-H67
+   bundle simply has no second region and imports items only.
 
 Completeness is honest (the M2 contract): the bundle carries *every* scroll in
 scope, never a truncated top-N — a take-it-with-you custody artifact must not
@@ -58,9 +67,12 @@ from scrolls.custody import (
     CustodyEvent,
     custody_headline,
     drift_posture,
+    dump_events_export,
+    event_from_dict,
+    events_for_items,
     latest_events,
 )
-from scrolls.generated import GENERATED_END, fence, generated_body
+from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
 from scrolls.items import (
     ScrollItem,
     classification_phrase,
@@ -78,10 +90,16 @@ from scrolls.search import count_matches, search_items
 
 _EXCERPT_CHARS = 600
 _REGENERATED_BY = "scrolls export bundle"
+# the sibling custody-events block's label, so a reader can tell the two
+# `@generated` regions apart (roadmap H67 — portable custody)
+_EVENTS_REGENERATED_BY = "scrolls export bundle (custody events)"
 
 # An item with no id/source/url/saved_at isn't a Scrolls item — mirror the
 # items-export validation so a corrupt custody block fails loudly, not silently.
 _REQUIRED = ("id", "source", "url", "saved_at")
+# A custody event with no item_id/checked_at/status isn't a ledger row — the
+# minimal identity an event must carry to be restorable (roadmap H67).
+_EVENT_REQUIRED = ("item_id", "checked_at", "status")
 
 
 class BundleError(Exception):
@@ -158,8 +176,9 @@ def build_bundle(
         lines += [
             f"_{len(items)} scroll(s), the whole scope — self-contained. "
             "Re-import losslessly with `scrolls import bundle <file>`. Each "
-            "scroll's full custody record (raw text, provenance, fidelity) "
-            "travels in the fenced block below._",
+            "scroll's full custody record (raw text, provenance, fidelity) and "
+            "its verify-ledger custody events travel in the fenced blocks "
+            "below._",
             "",
         ]
         for rank, item in enumerate(items, start=1):
@@ -171,6 +190,18 @@ def build_bundle(
     jsonl = dump_items_export(items)
     block = f"```jsonl\n{jsonl}```"
     lines += [fence(block, _REGENERATED_BY).rstrip("\n")]
+
+    # the sibling custody-events block (roadmap H67): the in-scope items' verify
+    # ledger so their drift *history* travels, not just the exporter's last-seen
+    # posture frozen in the briefing prose. A second `@generated` region (the
+    # items block stays byte-identical to `export items`, so its round-trip is
+    # the same already-tested property); `import bundle` restores it deduped. An
+    # unverified scope has no events — an empty block, the same shape an empty
+    # items block takes — so the bundle's structure is stable.
+    events = events_for_items(db_path, [item.id for item in items]) if items else []
+    events_jsonl = dump_events_export(events)
+    events_block = f"```jsonl\n{events_jsonl}```"
+    lines += [fence(events_block, _EVENTS_REGENERATED_BY).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 
@@ -217,6 +248,51 @@ def parse_bundle(text: str) -> list[ScrollItem]:
             )
         items.append(item_from_dict(data))
     return items
+
+
+def parse_bundle_events(text: str) -> list[CustodyEvent]:
+    """Reconstruct the custody events from a bundle's custody-events block.
+
+    The verify-ledger counterpart of `parse_bundle` (roadmap H67): reads the
+    *second* `@generated` region (the items block is the first), strips the
+    ` ```jsonl ` code fence, and parses each row through `event_from_dict`.
+    Returns ``[]`` when the bundle carries no second region — a **pre-H67
+    bundle** with only the items block, so its events simply do not travel (the
+    prior behavior), or a present-but-empty events block (an unverified scope).
+    Raises BundleError on a malformed row, naming the record, so a corrupt
+    custody ledger fails loudly rather than silently dropping a check — losing
+    drift history from a custody artifact would lose the proof of *when* a source
+    was verified.
+    """
+    bodies = generated_bodies(text)
+    if len(bodies) < 2:  # only the items block (a pre-H67 bundle) — no events
+        return []
+    events: list[CustodyEvent] = []
+    record_no = 0
+    for raw in bodies[1].splitlines():
+        line = raw.strip()
+        if not line or line.startswith("```"):  # blank or the code-fence lines
+            continue
+        record_no += 1
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise BundleError(
+                f"custody-events block record {record_no}: not valid JSON ({exc.msg})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise BundleError(
+                f"custody-events block record {record_no}: expected a JSON object, "
+                f"got {type(data).__name__}"
+            )
+        missing = [name for name in _EVENT_REQUIRED if not data.get(name)]
+        if missing:
+            raise BundleError(
+                f"custody-events block record {record_no}: missing required "
+                "field(s): " + ", ".join(missing)
+            )
+        events.append(event_from_dict(data))
+    return events
 
 
 def _briefing_entry(

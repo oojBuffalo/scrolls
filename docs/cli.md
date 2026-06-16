@@ -1122,6 +1122,18 @@ JSON Lines inside a ` ```jsonl ` code fence, wrapped in the ADR 0102
 by ADR 0082/0099; the sentinel makes the block machine-locatable and keeps the
 briefing body around it hand-annotatable across a re-export.
 
+A second sibling `@generated` block — the **custody-events block** (roadmap
+H67) — carries the in-scope items' verify ledger (`custody_events`) as JSON
+Lines, so an item's drift *history* travels with it, not just the exporter's
+last-seen posture frozen in the briefing prose: "lossless round-trip is a
+guarantee" extended from the item to its custody record. The items block stays
+the first region and byte-identical to `export items` (its round-trip
+untouched); an unverified scope carries an empty events block, so the structure
+is stable. `import bundle` restores the events with an idempotent, content-keyed
+dedup, so a re-import is a custody no-op
+(`test_custody_events_round_trip_into_a_fresh_library`,
+`test_re_importing_a_bundle_dedups_the_custody_events`).
+
 It is the shareable complement to `export items` (the whole-library/faceted
 backup) and the re-importable complement to `scrolls context` (a lossy excerpt
 bundle for a model's context, not a round-trip). Scope is the same query +
@@ -1156,17 +1168,30 @@ rebuild from the rows via `scrolls doctor --fix` / `scrolls kb`, as with
 library is verified end to end
 (`test_export_import_round_trips_across_a_fresh_library`).
 
+The importer also restores the bundle's **custody-events block** (roadmap H67)
+into the target's verify ledger, deduped by content — the 5-tuple
+`(item_id, checked_at, status, prior_hash, observed_hash)`, *not* the
+per-library autoincrement id — so a re-import is a custody no-op and never
+double-counts a check (`test_re_importing_a_bundle_dedups_the_custody_events`).
+Events ride for every in-scope item whether its row was freshly inserted or
+already held (custody history merges); a pre-H67 bundle with no events block
+imports items only, never crashing
+(`test_a_pre_h67_bundle_without_an_events_block_imports_items_only`). The
+restored ledger is the same one `scrolls history`/`doctor`/`facets drift` read,
+so an imported item's drift posture is its exporter's.
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new scrolls inserted |
 | `skipped` | already present (id collision is the dedupe working) |
 | `items` | scroll records read from the custody block |
+| `events` | `{imported, skipped}` custody events restored / deduped from the events block |
 
 ```console
 $ scrolls export bundle "database engine" > briefing.md
 
 $ scrolls import bundle briefing.md
-{"imported": 2, "skipped": 0, "items": 2}
+{"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0}}
 [exit 0]
 ```
 

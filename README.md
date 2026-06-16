@@ -92,8 +92,8 @@ uv run scrolls export opml    # export feed subscriptions as an OPML document, t
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
 uv run scrolls export items   # export items as a lossless JSONL stream (back up / migrate), to stdout
-uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block, shareable & re-importable
-uv run scrolls import bundle <path>  # restore scrolls from a custody bundle, losslessly (the "take it with me" half), as JSON
+uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block + verify-ledger events, shareable & re-importable
+uv run scrolls import bundle <path>  # restore scrolls AND their custody ledger from a bundle, losslessly (the "take it with me" half); events dedup on re-import (H67), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -1668,6 +1668,10 @@ capture, and `scrolls doctor` aggregates the latest verdict per item into its
 what changed, since I saved it?" (ADR 0098). `scrolls history <id>` reads that
 ledger back per item — the full timeline of every check, newest first — so an
 agent can see *when* a source drifted and *how often* it has been re-checked,
-not just its current posture.
+not just its current posture. That custody record is **portable**: a
+`scrolls export bundle` carries the in-scope items' verify ledger alongside
+their canonical rows, and `scrolls import bundle` restores it — deduped so a
+re-import is a custody no-op — so a recipient inherits the drift *history*, not
+just the exporter's last-seen posture frozen in prose (H67).
 
 The library root is `~/.scrolls`, overridable with `$SCROLLS_HOME`.

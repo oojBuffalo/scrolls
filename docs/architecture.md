@@ -251,7 +251,20 @@ each command moves items between stages or derives artifacts from them.
   whole-library backup. `import bundle` reuses the `import items` path
   (`item_from_dict`, `INSERT OR IGNORE`), so losslessness is the ADR 0082/0099
   property already tested; the sentinel keeps the briefing body hand-annotatable
-  across a re-export (refresh-safe, ADR 0102). Above the entries a one-line scope
+  across a re-export (refresh-safe, ADR 0102). **Portable custody** (roadmap
+  H67): a *second* sibling `@generated` JSONL block carries the in-scope items'
+  verify ledger (`custody.events_for_items`/`dump_events_export`), so an item's
+  drift *history* travels, not just the exporter's last-seen posture — "lossless
+  round-trip" extended from the item to its custody record. `import bundle`
+  restores it through `custody.import_events`, deduped by the content 5-tuple
+  `(item_id, checked_at, status, prior_hash, observed_hash)` (not the
+  per-library autoincrement id, not `detail`), so a re-import is a custody no-op
+  — the verify-axis sibling of the items' `INSERT OR IGNORE`. The items block
+  stays the first region and byte-identical to `export items` (round-trip
+  untouched), so a pre-H67 bundle with no second region imports items only;
+  `generated.generated_bodies` is the multi-region reader that locates both
+  blocks. The restored ledger is the one `scrolls history`/`doctor`/`facets
+  drift` read, so an imported item's posture is its exporter's. Above the entries a one-line scope
   **custody headline** (`custody.custody_headline`/`custody_counts`: N scrolls,
   fidelity-tier and drift-posture counts over the in-bundle scrolls, roadmap H45)
   summarises how custody stands across the whole bundle; the *same* shared

@@ -17,11 +17,17 @@ from scrolls import __version__
 from scrolls.agents import install_agent_docs
 from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
 from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
-from scrolls.bundle import BundleError, build_bundle, parse_bundle
+from scrolls.bundle import (
+    BundleError,
+    build_bundle,
+    parse_bundle,
+    parse_bundle_events,
+)
 from scrolls.classify import classify_item, is_stale_classification
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     drift_posture,
+    import_events,
     item_events,
     item_history,
     latest_events,
@@ -1355,6 +1361,7 @@ def _cmd_import_bundle(path: str) -> int:
     try:
         text = Path(path).expanduser().read_text(encoding="utf-8")
         imported_items = parse_bundle(text)
+        imported_events = parse_bundle_events(text)
     except OSError as exc:
         print(json.dumps({"error": f"cannot read {path}: {exc}"}), file=sys.stderr)
         return 1
@@ -1373,7 +1380,17 @@ def _cmd_import_bundle(path: str) -> int:
             counts["imported"] += 1
         else:
             counts["skipped"] += 1
-    print(json.dumps({**counts, "items": len(imported_items)}))
+    # restore the portable custody ledger (roadmap H67), deduped by content so a
+    # re-import is a custody no-op — the verify-axis sibling of the items'
+    # INSERT OR IGNORE. Events ride for *every* in-scope item, whether its row was
+    # freshly inserted or already held (custody history merges), since dedup
+    # prevents double-counting.
+    ev_imported, ev_skipped = import_events(paths.db_path, imported_events)
+    print(json.dumps({
+        **counts,
+        "items": len(imported_items),
+        "events": {"imported": ev_imported, "skipped": ev_skipped},
+    }))
     return 0
 
 

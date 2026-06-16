@@ -10,6 +10,7 @@ from scrolls.generated import (
     GENERATED_END,
     begin_marker,
     fence,
+    generated_bodies,
     generated_body,
     has_user_content,
     splice,
@@ -77,6 +78,21 @@ def test_generated_body_is_the_inverse_of_user_regions():
     # ignores the surrounding user regions
     wrapped = "TOP\n" + out + "BOTTOM\n"
     assert generated_body(wrapped) == body + "\n"
+
+
+def test_generated_bodies_returns_each_sibling_region_in_order():
+    # the multi-region reader behind the shareable bundle's items + custody-events
+    # blocks (roadmap H67): two sibling fences yield two bodies, in order
+    text = fence("items", "scrolls export bundle") + fence(
+        "events", "scrolls export bundle (custody events)"
+    )
+    assert generated_bodies(text) == ["items\n", "events\n"]
+    # generated_body (singular) still returns only the first region
+    assert generated_body(text) == "items\n"
+
+
+def test_generated_bodies_of_a_marker_less_text_is_empty():
+    assert generated_bodies("# no fence here\n") == []
 
 
 def test_has_user_content_distinguishes_annotated_from_bare_pages():

@@ -50,23 +50,36 @@ def fence(body: str, regenerated_by: str) -> str:
     return f"{begin_marker(regenerated_by)}\n{body}\n{GENERATED_END}\n"
 
 
-def _fence_span(lines: list[str]) -> tuple[int, int] | None:
-    """The (begin, end) line indices of the first well-formed fence, or None.
+def _fence_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """The (begin, end) line indices of every well-formed fence, in order.
 
-    The first `@generated` line and the first `@end` line after it delimit the
-    region; a text missing either carries no fence.
+    Each `@generated` line pairs with the first `@end` line after it; the scan
+    then resumes past that `@end`, so a file with several sibling fences (the
+    shareable custody bundle's items + custody-events blocks, roadmap H67) yields
+    one span per region. A dangling `@generated` with no matching `@end` is not a
+    region and is dropped.
     """
-    begin = end = None
+    spans: list[tuple[int, int]] = []
+    begin: int | None = None
     for i, line in enumerate(lines):
         stripped = line.strip()
         if begin is None and stripped.startswith(_BEGIN_TOKEN):
             begin = i
         elif begin is not None and stripped.startswith(_END_TOKEN):
-            end = i
-            break
-    if begin is None or end is None:
-        return None
-    return begin, end
+            spans.append((begin, i))
+            begin = None
+    return spans
+
+
+def _fence_span(lines: list[str]) -> tuple[int, int] | None:
+    """The (begin, end) line indices of the first well-formed fence, or None.
+
+    The first `@generated` line and the first `@end` line after it delimit the
+    region; a text missing either carries no fence. The single-region API the
+    compiled `library/`/`agents/` pages use (each carries exactly one fence).
+    """
+    spans = _fence_spans(lines)
+    return spans[0] if spans else None
 
 
 def user_regions(text: str) -> tuple[str, str] | None:
@@ -99,6 +112,23 @@ def generated_body(text: str) -> str | None:
         return None
     begin, end = span
     return "".join(lines[begin + 1 : end])
+
+
+def generated_bodies(text: str) -> list[str]:
+    """The content inside every fence, in order — the multi-region reader.
+
+    The plural of `generated_body`: where that returns the first fenced region,
+    this returns one body per `@generated`…`@end` region. The shareable custody
+    bundle (roadmap H67) carries two sibling regions — the lossless items block
+    and the custody-events block — so an importer reads ``[0]`` for items and
+    ``[1]`` for events; a pre-H67 bundle with only the items block yields a
+    one-element list, so the events reader sees no second region (events simply
+    do not travel, the prior behavior). The single-fence callers
+    (`user_regions`/`generated_body`/`splice`) are unaffected: a compiled page
+    carries exactly one fence, so they keep operating on the first region.
+    """
+    lines = text.splitlines(keepends=True)
+    return ["".join(lines[begin + 1 : end]) for begin, end in _fence_spans(lines)]
 
 
 def has_user_content(text: str) -> bool:
