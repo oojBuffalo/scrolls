@@ -61,8 +61,9 @@ A custody library is only trustworthy if an agent can believe what its
 browse and audit surfaces *don't* say as much as what they do. The
 integrity boundary is the agent contract (custody-vision §6); false
 absence corrupts an agent's memory the same way a fabricated row does.
-So every read surface — `search`, `list`, `related`, `works`, `context`,
-`doctor`, and their MCP twins — honors one cross-cutting contract:
+So every read and audit surface — `search`, `list`, `related`, `works`,
+`context`, `doctor`, `maintain` (run offline with `--no-recheck`), and their
+MCP twins — honors one cross-cutting contract:
 **results are scope-honest and completeness-honest; "nothing found" is
 never confused with "not checked," and nothing is fabricated for content
 the library does not hold** (PRD cap 7, MVP M2, adapted from
@@ -72,16 +73,19 @@ guarantees.
 
 ### G1 — Honest absence, honest failure *(enforced; `tests/test_completeness.py`)*
 
-The anti-fabrication core. Three claims, each true across all six surfaces
+The anti-fabrication core. Three claims, each true across all seven surfaces
 and pinned as a single named invariant rather than re-proved per command:
 
 - **Checked-and-empty is exit 0 in the surface's normal shape.** A surface
   that looked at its (possibly scoped) slice and found nothing returns the
   *empty form of its own output* — `[]` for `search`/`list`/`related`,
   `{"works": [], "stats": {…}}` for `works`, a `No matching scrolls.`
-  bundle for `context`, a zero-finding report for `doctor` — and exits 0.
-  An empty result is a real answer, never an error and never a fabricated
-  row (`test_checked_and_empty_is_exit_zero_in_normal_shape`).
+  bundle for `context`, a zero-finding report for `doctor`, and for `maintain`
+  a zero-`issues` report whose audit never fabricates a custody picture (an
+  uninitialized library reads `score: null`, never a perfect `100`) — and
+  exits 0. An empty result is a real answer, never an error and never a
+  fabricated row (`test_checked_and_empty_is_exit_zero_in_normal_shape`,
+  `test_before_init_is_empty_in_shape_across_surfaces`).
 - **Could-not-check is exit ≠ 0 with an error envelope on stderr, and
   stdout stays empty.** Bad input (a blank `search`/`context` query) and an
   unknown id/URL (`related`, `works <ref>`, `show`) are *not checked*, and

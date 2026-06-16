@@ -1,10 +1,17 @@
 """The completeness contract — anti-fabrication / scope honesty (M2 G1).
 
 `docs/cli.md` → "The completeness contract" promises that every browse and
-audit surface (`search`, `list`, `related`, `works`, `context`, `doctor`)
-is scope-honest and completeness-honest: "nothing found" is never confused
-with "not checked," and nothing is fabricated for content the library does
-not hold (PRD cap 7, MVP M2, custody-vision §6).
+audit surface (`search`, `list`, `related`, `works`, `context`, `doctor`,
+`maintain`) is scope-honest and completeness-honest: "nothing found" is never
+confused with "not checked," and nothing is fabricated for content the library
+does not hold (PRD cap 7, MVP M2, custody-vision §6).
+
+`maintain` (the scheduled custody pass, roadmap H34) is an audit-shaped surface
+too: run network-free with `--no-recheck`, its report must never fabricate a
+custody picture for content the library does not hold — an uninitialized library
+reports ``score: null`` (honest "no library"), never a perfect ``100``, and a
+first run carries ``first_run: true`` with null deltas, never a fabricated
+"no change". That honesty is the same G1 invariant, pinned here as the contract.
 
 These tests pin G1 — *honest absence, honest failure* — as a single
 cross-surface invariant rather than re-proving it per command, so the
@@ -91,6 +98,12 @@ CHECKED_EMPTY_CASES = {
     "context": (["context", "zzznotatoken"], lambda out: "No matching scrolls." in out),
     # a healthy library → a zero-finding report
     "doctor": (["doctor"], lambda out: json.loads(out)["issues"] == 0),
+    # a healthy library, offline pass → zero structural issues, honest delta
+    "maintain": (
+        ["maintain", "--no-recheck"],
+        lambda out: json.loads(out)["issues"] == 0
+        and json.loads(out)["delta"]["first_run"] is True,
+    ),
 }
 
 
@@ -191,6 +204,13 @@ BEFORE_INIT_CASES = {
     "works": (["works"], lambda out: json.loads(out)["works"] == []),
     "context": (["context", "anything"], lambda out: "No matching scrolls." in out),
     "doctor": (["doctor"], lambda out: json.loads(out).get("issues") == 0),
+    # no library → honest null score (never a fabricated 100), first-run delta
+    "maintain": (
+        ["maintain", "--no-recheck"],
+        lambda out: json.loads(out)["issues"] == 0
+        and json.loads(out)["custody"]["score"] is None
+        and json.loads(out)["delta"]["first_run"] is True,
+    ),
 }
 
 
