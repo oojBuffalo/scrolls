@@ -30,7 +30,7 @@ from typing import Any
 
 from scrolls.items import (
     ScrollItem,
-    get_fidelity,
+    fidelity_tier,
     item_filters,
     register_facet_functions,
 )
@@ -85,9 +85,7 @@ def compute_facets(
                     group_concepts(items), limit, slug=True
                 )
         if "fidelity" in wanted:
-            facets["fidelity"] = _fidelity_counts(
-                _load_fidelity_columns(conn, where, params), limit
-            )
+            facets["fidelity"] = _fidelity_counts(conn, where, params, limit)
     finally:
         conn.close()
     return {"facets": {name: facets[name] for name in wanted}}
@@ -177,40 +175,36 @@ def _rank(entries: list[dict[str, Any]], limit: int | None) -> list[dict[str, An
     entries.sort(key=lambda record: (-record["count"], record["value"]))
     return entries[:limit] if limit is not None else entries
 
-def _load_fidelity_columns(
-    conn: sqlite3.Connection, where: str, params: list[str]
-) -> list[ScrollItem]:
-    """Filtered items carrying only the columns `get_fidelity` reads.
+def _fidelity_counts(
+    conn: sqlite3.Connection, where: str, params: list[str], limit: int | None
+) -> list[dict[str, Any]]:
+    """Count items by derived custody-fidelity tier (ADR 0097).
 
-    The fidelity tier is derived from content presence and stage, not from the
-    array columns the tag/concept facets need, so this loads `raw_text`,
-    `extracted_text`, `summary`, `content_hash`, and `stage` instead. Loading
-    the wrong columns is exactly the bug that made every item read as
-    `reference`; the tier facet only means something with these present.
+    The tier is derived from content *presence* and stage, not the body text
+    itself, so this selects four `has_*` booleans and `stage` — never the
+    bodies — and folds each row through `fidelity_tier`, the same primitive
+    `scrolls search` derives its per-hit tier from. (Loading the array columns
+    instead is the bug that once made every item read as `reference`; presence
+    flags can't repeat it.)
     """
     rows = conn.execute(
-        "SELECT id, raw_text, extracted_text, summary, content_hash, stage "
-        f"FROM items{where}",
+        "SELECT "
+        "(raw_text IS NOT NULL AND raw_text != '') AS has_raw, "
+        "(extracted_text IS NOT NULL AND extracted_text != '') AS has_extracted, "
+        "(summary IS NOT NULL AND summary != '') AS has_summary, "
+        "(content_hash IS NOT NULL AND content_hash != '') AS has_hash, "
+        f"stage FROM items{where}",
         params,
     ).fetchall()
-    return [
-        ScrollItem(
-            id=row["id"],
-            source="",
-            url="",
-            saved_at="",
-            raw_text=row["raw_text"],
-            extracted_text=row["extracted_text"],
-            summary=row["summary"],
-            content_hash=row["content_hash"],
+    counts = Counter(
+        fidelity_tier(
+            has_raw=bool(row["has_raw"]),
+            has_extracted=bool(row["has_extracted"]),
+            has_summary=bool(row["has_summary"]),
+            has_hash=bool(row["has_hash"]),
             stage=row["stage"],
         )
         for row in rows
-    ]
-
-
-def _fidelity_counts(items: list[ScrollItem], limit: int | None) -> list[dict[str, Any]]:
-    """Count items by derived custody-fidelity tier (`get_fidelity`)."""
-    counts = Counter(get_fidelity(item) for item in items)
+    )
     entries = [{"value": tier, "count": count} for tier, count in counts.items()]
     return _rank(entries, limit)

@@ -501,7 +501,11 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     hit = payload[0]
     assert hit["id"] == "wikipedia:en:SQLite"
     assert hit["title"] == "SQLite"
-    assert set(hit) == {"id", "source", "title", "url", "stage", "score", "snippet"}
+    assert set(hit) == {
+        "id", "source", "title", "url", "stage", "score", "snippet", "fidelity"
+    }
+    # a freshly fetched Wikipedia article holds a re-derivable body — full custody
+    assert hit["fidelity"] == "full"
 
 
 def test_search_no_matches_prints_empty_array(scrolls_home, fake_wikipedia_api, capsys):

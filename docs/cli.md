@@ -1195,11 +1195,15 @@ case-insensitive, `--concept` by slug, as `scrolls related` compares them
 `[]`, not an error.
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
-(matches bracketed, `…` for elided context).
+(matches bracketed, `…` for elided context), and `fidelity` — the custody
+tier (`full`/`partial`/`reference`, ADR 0097/0100) at which the library
+still holds the match, the same tier `scrolls list` and `scrolls facets
+fidelity` report, so a hit says not just *what* matched but how much of it
+you hold.
 
 ```console
 $ scrolls search "sqlite fts5"
-[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search."}]
+[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full"}]
 [exit 0]
 
 $ scrolls search "sqlite fts5" --source arxiv
@@ -1218,12 +1222,15 @@ Deterministic, explainable connections (IDEAS.md §10,
 through source detection, so a tweet linking to `arxiv.org/abs/X` finds
 item `arxiv:X`), shared concepts, shared tags, same category/domain as
 weak corroboration. `score` is an integer (higher = more connected) and
-every hit carries its `reasons`. Default limit 10. Unknown id is an
+every hit carries its `reasons` plus the neighbour's `fidelity` tier
+(`full`/`partial`/`reference`, ADR 0097/0100) — so following an edge tells
+you how much of the item you land on the library actually holds, exactly as
+`scrolls search`/`scrolls list` report. Default limit 10. Unknown id is an
 error envelope on stderr.
 
 ```console
 $ scrolls related x:2222
-[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"]}]
+[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference"}]
 [exit 0]
 ```
 
@@ -1473,11 +1480,11 @@ The tools wrap the same engines as the CLI commands
 | Tool | CLI equivalent | Returns |
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls context` | Markdown bundle, optionally faceted |
-| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, optionally faceted |
+| `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets and custody `fidelity`, optionally faceted |
 | `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, limit=50)` | `scrolls list` | item summaries by facet, no query (ADR 0060) |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record; `item_id` is an id or the item's URL (ADR 0028) |
-| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons`; `item_id` is an id or URL (ADR 0028) |
+| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and custody `fidelity`; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

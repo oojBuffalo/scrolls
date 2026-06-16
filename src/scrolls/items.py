@@ -50,6 +50,42 @@ class ScrollItem:
 _FIELD_NAMES = tuple(f.name for f in fields(ScrollItem))
 
 
+# The stages at which a held body counts as full custody: the pipeline has
+# finished capturing the item, so the body it holds is the one it stands behind.
+_CAPTURED_STAGES = ("fetched", "rendered")
+
+
+def fidelity_tier(
+    *,
+    has_raw: bool,
+    has_extracted: bool,
+    has_summary: bool,
+    has_hash: bool,
+    stage: str,
+) -> str:
+    """The custody-fidelity tier from content-presence flags alone (ADR 0097).
+
+    The decision `get_fidelity` makes, expressed over booleans instead of a
+    whole `ScrollItem`, so a caller that knows only *whether* each content
+    column is populated — a search row that selects presence rather than
+    hauling a multi-kilobyte body — derives the identical tier. `get_fidelity`
+    is the convenience wrapper for callers that already hold the item.
+
+    - ``full``: a re-derivable body is held (`has_raw`, or `has_extracted`
+      paired with a `has_hash` fingerprint) and the item reached a captured
+      stage (`fetched`/`rendered`).
+    - ``partial``: some content survives (`has_raw`, `has_extracted`, or
+      `has_summary`) but not enough to qualify as full.
+    - ``reference``: only the pointer and provenance are held, no content.
+    """
+    has_body = has_raw or (has_extracted and has_hash)
+    if has_body and stage in _CAPTURED_STAGES:
+        return "full"
+    if has_raw or has_extracted or has_summary:
+        return "partial"
+    return "reference"
+
+
 def get_fidelity(item: ScrollItem) -> str:
     """Derive the explicit custody-fidelity tier for an item (ADR 0097).
 
@@ -67,17 +103,16 @@ def get_fidelity(item: ScrollItem) -> str:
 
     Degradation is honest, not a failure: a reference-only item is a complete
     custody record of a thing we deliberately hold by reference. Lives with the
-    item model so every surface (doctor, facets, list) derives it identically.
+    item model so every surface (doctor, facets, list, search, related) derives
+    it identically — delegating to `fidelity_tier` so the rule has one home.
     """
-    has_raw = bool(item.raw_text)
-    has_extracted = bool(item.extracted_text)
-    has_body = has_raw or (has_extracted and bool(item.content_hash))
-
-    if has_body and item.stage in ("fetched", "rendered"):
-        return "full"
-    if has_raw or has_extracted or item.summary:
-        return "partial"
-    return "reference"
+    return fidelity_tier(
+        has_raw=bool(item.raw_text),
+        has_extracted=bool(item.extracted_text),
+        has_summary=bool(item.summary),
+        has_hash=bool(item.content_hash),
+        stage=item.stage,
+    )
 
 
 def item_summary(item: ScrollItem) -> dict[str, Any]:

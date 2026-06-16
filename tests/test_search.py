@@ -68,6 +68,49 @@ def test_search_ranks_title_matches_for_relevance(db_path):
     assert len(hits) == 2
 
 
+def test_search_hits_carry_their_custody_fidelity(db_path):
+    # the tier travels with a ranked hit exactly as it does with `scrolls list`,
+    # derived from content presence + stage. `make_item`'s default — extracted
+    # text and a summary but no content_hash, at the fetched stage — is itself a
+    # partial capture (a body that can't be re-derived without a hash to diff).
+    insert_item(db_path, make_item(
+        "wikipedia:en:Full", "Full database engine",
+        "A database engine held in full.",
+        raw_text="A database engine held in full.", content_hash="sha256:f",
+        stage="rendered",
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Partial", "Partial database engine",
+        "A database engine, summary only.",
+    ))
+    # a reference-only item: no body, no summary, only a title to match on
+    insert_item(db_path, ScrollItem(
+        id="wikipedia:en:Ref", source="wikipedia",
+        url="https://example.org/ref", saved_at="2026-06-12T00:00:00+00:00",
+        title="Reference database engine", stage="detected",
+    ))
+
+    by_id = {hit.id: hit for hit in search_items(db_path, "database engine")}
+    assert by_id["wikipedia:en:Full"].fidelity == "full"
+    assert by_id["wikipedia:en:Partial"].fidelity == "partial"
+    assert by_id["wikipedia:en:Ref"].fidelity == "reference"
+
+
+def test_search_fidelity_matches_get_fidelity(db_path):
+    # the search row derives the same tier `get_fidelity` would from the item —
+    # one rule, whether read off presence flags in SQL or off a whole item.
+    from scrolls.items import get_fidelity, get_item
+
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine.",
+        raw_text="SQLite is a database engine.", content_hash="sha256:x",
+        stage="rendered",
+    ))
+    (hit,) = search_items(db_path, "database")
+    assert hit.fidelity == get_fidelity(get_item(db_path, "wikipedia:en:SQLite"))
+
+
 def test_search_reflects_updates(db_path):
     item = make_item("wikipedia:en:SQLite", "SQLite", "Original text about databases.")
     insert_item(db_path, item)

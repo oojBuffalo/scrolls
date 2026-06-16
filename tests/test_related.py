@@ -271,6 +271,37 @@ def test_unknown_id_raises(db):
         find_related(db, "x:missing")
 
 
+def test_related_hits_carry_the_neighbours_custody_fidelity(db):
+    # following a related edge lands on an item; the hit says at what fidelity
+    # the library holds *that* item, the same tier `scrolls list`/`search` give.
+    insert_item(db, make_item("github:a/repo", concepts=("agents",)))
+    insert_item(db, make_item(
+        "github:full/repo", concepts=("agents",),
+        raw_text="the whole readme", content_hash="sha256:r", stage="rendered",
+    ))
+    insert_item(db, make_item(
+        "github:ref/repo", concepts=("agents",), stage="detected",
+    ))  # no body, no summary — a reference-only neighbour
+
+    by_id = {hit.id: hit for hit in find_related(db, "github:a/repo")}
+    assert by_id["github:full/repo"].fidelity == "full"
+    assert by_id["github:ref/repo"].fidelity == "reference"
+
+
+def test_cli_related_hit_exposes_fidelity(db, capsys):
+    insert_item(db, make_item("x:1111", title="@a: thread", concepts=("ml",)))
+    insert_item(db, make_item(
+        "arxiv:2605.27848", title="A Paper", concepts=("ml",),
+        raw_text="the abstract and body", content_hash="sha256:p", stage="rendered",
+    ))
+    capsys.readouterr()
+
+    assert main(["related", "x:1111"]) == 0
+    (hit,) = json.loads(capsys.readouterr().out)
+    assert hit["id"] == "arxiv:2605.27848"
+    assert hit["fidelity"] == "full"
+
+
 def test_cli_related_prints_hits_json(db, capsys):
     insert_item(db, make_item(
         "x:1111",

@@ -75,7 +75,10 @@ def search_scrolls(
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
-    `score` is SQLite bm25(): more negative means a stronger match. The
+    `score` is SQLite bm25(): more negative means a stronger match. Each hit
+    also carries its custody `fidelity` tier (full/partial/reference,
+    ADR 0097), so a result says not just *what* matched but at what fidelity
+    the library still holds it — the same tier `list_scrolls` reports. The
     optional facets scope the ranked match (they AND together): `source`
     limits to one source (e.g. arxiv, github, web), `category` to one
     category (an empty string selects unclassified items), `stage` to one
@@ -200,9 +203,11 @@ def get_related_scrolls(
     preprint and its published article, bound by a shared DOI — the strongest
     signal, and one that binds representations even when no link edge does),
     then link edges, shared concepts, shared tags, and same category/domain.
-    Each hit's `reasons` say why it matched. `item_id` is the item's id or the
-    URL that saved it (ADR 0028), resolved like `get_scroll`'s. An unknown
-    item is an error.
+    Each hit's `reasons` say why it matched and its `fidelity` says at what
+    custody tier the library holds the neighbour (full/partial/reference,
+    ADR 0097), the same tier `list_scrolls` and `search_scrolls` report.
+    `item_id` is the item's id or the URL that saved it (ADR 0028), resolved
+    like `get_scroll`'s. An unknown item is an error.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)

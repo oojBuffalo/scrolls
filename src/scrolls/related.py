@@ -26,8 +26,11 @@ same-work edge and the link edge — complementary facts (these are the
 same work, *and* one points at the other), not double counting.
 
 Every hit carries human/agent-readable `reasons`, so downstream callers
-(and the future MCP `get_related_scrolls`) can show *why* — same spirit
-as search snippets.
+(and the MCP `get_related_scrolls`) can show *why* — same spirit as search
+snippets — plus the neighbour's custody `fidelity` tier (full/partial/
+reference, ADR 0097), so an agent following a related edge sees at a glance
+how much of the item it lands on the library actually holds, exactly as
+`scrolls list` and `scrolls search` report it.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scrolls.graph import identity_tokens, link_tokens
-from scrolls.items import ScrollItem, get_item, list_items
+from scrolls.items import ScrollItem, get_fidelity, get_item, list_items
 from scrolls.render import slugify
 from scrolls.works import DOI_RESOLVER, item_dois
 
@@ -58,6 +61,7 @@ class RelatedHit:
     stage: str
     score: int
     reasons: tuple
+    fidelity: str
 
 
 def find_related(
@@ -136,6 +140,7 @@ def find_related(
                     stage=other.stage,
                     score=score,
                     reasons=tuple(reasons),
+                    fidelity=get_fidelity(other),
                 )
             )
 

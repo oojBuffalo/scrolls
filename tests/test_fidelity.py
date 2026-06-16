@@ -12,7 +12,7 @@ import pytest
 from scrolls.db import init_db
 from scrolls.doctor import get_fidelity
 from scrolls.facets import compute_facets
-from scrolls.items import ScrollItem, insert_item, item_summary
+from scrolls.items import ScrollItem, fidelity_tier, insert_item, item_summary
 
 NOW = "2026-06-15T00:00:00+00:00"
 
@@ -64,6 +64,33 @@ def test_a_lone_hash_with_no_body_is_not_full():
     # a fingerprint without the content it fingerprints is not a held body
     item = _item("orphan", content_hash="sha256:abc", stage="fetched")
     assert get_fidelity(item) == "reference"
+
+
+# --- the presence-flag primitive (what search/facets derive the tier from) ---
+
+
+def test_fidelity_tier_agrees_with_get_fidelity_over_every_shape():
+    # `fidelity_tier` is the rule expressed over presence booleans; deriving it
+    # from an item's flags must yield exactly what `get_fidelity` reads off the
+    # item, for every combination of presence and stage.
+    bodies = [
+        dict(),
+        dict(raw_text="b"),
+        dict(extracted_text="b"),
+        dict(extracted_text="b", content_hash="sha256:x"),
+        dict(summary="s"),
+        dict(content_hash="sha256:x"),
+    ]
+    for stage in ("detected", "fetched", "rendered"):
+        for body in bodies:
+            item = _item("x", stage=stage, **body)
+            assert fidelity_tier(
+                has_raw=bool(item.raw_text),
+                has_extracted=bool(item.extracted_text),
+                has_summary=bool(item.summary),
+                has_hash=bool(item.content_hash),
+                stage=item.stage,
+            ) == get_fidelity(item)
 
 
 # --- the fidelity facet ---
