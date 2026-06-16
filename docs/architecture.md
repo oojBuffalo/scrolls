@@ -179,9 +179,15 @@ each command moves items between stages or derives artifacts from them.
   **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
   self-contained Markdown file that is both a readable topic *briefing* (per
   scroll: id, source, custody fidelity tier, capture timestamp, link, capped
-  excerpt) and a lossless re-import unit — the same `item_to_dict` JSONL
-  `export items` writes, embedded in a code fence wrapped in the ADR 0102
-  `@generated` sentinel. The bundle is *scoped* (a query + the `context`/`search`
+  excerpt, and — when an engine classified it — the `classification` view
+  `by`/`basis`/`confidence`; a `--concept`-scoped bundle also carries that
+  concept's synthesized summary and its `summary_provenance`, roadmap H35, so
+  *how a result was derived* travels in the reading, not only the data) and a
+  lossless re-import unit — the same `item_to_dict` JSONL `export items` writes,
+  embedded in a code fence wrapped in the ADR 0102 `@generated` sentinel. The
+  briefing's provenance lines are *derived read views* (omitted on honest
+  absence), outside the fence, so the round-trip stays a property of the JSONL
+  block alone. The bundle is *scoped* (a query + the `context`/`search`
   facets) and *complete about that scope* (every match, not a top-N), so it is
   the "take it with me" half of the dogfood flow where `export items` is the
   whole-library backup. `import bundle` reuses the `import items` path

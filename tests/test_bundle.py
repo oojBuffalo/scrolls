@@ -5,8 +5,14 @@ import json
 import pytest
 
 from scrolls.bundle import BundleError, build_bundle, parse_bundle
+from scrolls.classify import ENGINE as RULES_ENGINE
+from scrolls.classify import RULESET_FINGERPRINT
+from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.cli import main
 from scrolls.items import ScrollItem, get_item, insert_item, item_to_dict
+from scrolls.kb import ConceptSummary, save_concept_summary
+from scrolls.kb_llm import ENGINE as SUMMARY_ENGINE
+from scrolls.kb_llm import members_hash
 from scrolls.paths import get_paths
 
 
@@ -90,6 +96,139 @@ def test_bundle_carries_the_raw_body_even_when_the_excerpt_is_capped(scrolls_hom
     assert "…" in briefing  # the readable excerpt is capped
     recovered = parse_bundle(bundle)[0]
     assert recovered.raw_text == long_body.strip()  # the block is complete
+
+
+# --- enrichment provenance travels in the readable briefing (roadmap H35) ---
+
+
+def _rules_provenance(basis="documentation-url", ruleset=RULESET_FINGERPRINT):
+    return {
+        "fetched_at": "2026-06-12T00:00:00+00:00",
+        "via": "test",
+        "classified_by": RULES_ENGINE,
+        "classified_basis": basis,
+        "classified_ruleset": ruleset,
+    }
+
+
+def test_briefing_carries_the_classification_view_for_a_rules_category(scrolls_home):
+    # how the category was derived reads in the briefing, not just the JSONL
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+        category="documentation", provenance=_rules_provenance(),
+    ))
+
+    bundle = build_bundle(db, "database engine")
+    assert "classified `documentation` by `rules-v1` (documentation-url)" in bundle
+    # the rules engine is reproducible from signals and current vs the live ruleset
+    assert "confidence deterministic, current" in bundle
+
+
+def test_briefing_classification_view_for_the_llm_engine_omits_freshness(scrolls_home):
+    # the LLM engine is inferred and claims no ruleset freshness — honest absence
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:2401.0001", "Paper", "A database paper.",
+        source="arxiv", url="https://arxiv.org/abs/2401.0001", category="research",
+        provenance={
+            "fetched_at": "2026-06-12T00:00:00+00:00", "via": "test",
+            "classified_by": LLM_ENGINE, "classified_model": "claude-test",
+        },
+    ))
+
+    bundle = build_bundle(db, "database")
+    assert "classified `research` by `llm-v1` (model claude-test)" in bundle
+    assert "confidence inferred" in bundle
+    assert "confidence inferred," not in bundle  # no freshness appended for the LLM
+
+
+def test_briefing_omits_classification_when_no_engine_stamped_it(scrolls_home):
+    # an unclassified item and a user-set category both carry no engine method
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Postgres", "Postgres", "Postgres is a database.",
+        category="favorites",  # user-set: no classified_by stamp
+    ))
+
+    briefing, _, _block = build_bundle(db, "database").partition("@generated scrolls")
+    assert "classified" not in briefing  # honest absence, no method fabricated
+
+
+def test_classification_provenance_still_round_trips_in_the_block(scrolls_home):
+    # adding the readable line leaves the lossless custody block untouched
+    main(["init"])
+    db = get_paths().db_path
+    original = make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database.",
+        category="documentation", provenance=_rules_provenance(),
+    )
+    insert_item(db, original)
+
+    recovered = parse_bundle(build_bundle(db, "database"))[0]
+    assert item_to_dict(recovered) == item_to_dict(original)
+
+
+def test_concept_scoped_bundle_carries_summary_provenance(scrolls_home):
+    # a concept-scoped bundle is *about* the concept, so its synthesized summary
+    # and how that summary was derived belong in the briefing
+    main(["init"])
+    db = get_paths().db_path
+    members = [
+        make_item("wikipedia:en:SQLite", "SQLite", "SQLite is a database.",
+                  concepts=("Databases",)),
+        make_item("wikipedia:en:Postgres", "Postgres", "Postgres is a database.",
+                  concepts=("Databases",)),
+    ]
+    for member in members:
+        insert_item(db, member)
+    save_concept_summary(db, ConceptSummary(
+        slug="databases", display="Databases",
+        summary="Databases store and query structured data.",
+        members_hash=members_hash(members), engine=SUMMARY_ENGINE,
+        model="claude-test", generated_at="2026-06-12T00:00:00+00:00",
+    ))
+
+    bundle = build_bundle(db, "database", concept="Databases")
+    assert "**Concept summary** — Databases store and query structured data." in bundle
+    assert f"Summary by `{SUMMARY_ENGINE}`, current" in bundle
+
+
+def test_concept_scoped_bundle_without_a_summary_omits_the_block(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database.",
+        concepts=("Databases",),
+    ))
+
+    bundle = build_bundle(db, "database", concept="Databases")
+    assert "Concept summary" not in bundle  # honest absence, none synthesized
+
+
+def test_concept_summary_provenance_is_stale_when_members_changed(scrolls_home):
+    # the freshness is computed against the concept's live members, so a summary
+    # stored under an outdated fingerprint reads stale (regenerable)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite",
+                              "SQLite is a database.", concepts=("Databases",)))
+    insert_item(db, make_item("wikipedia:en:Postgres", "Postgres",
+                              "Postgres is a database.", concepts=("Databases",)))
+    save_concept_summary(db, ConceptSummary(
+        slug="databases", display="Databases", summary="Old synthesis.",
+        members_hash="stalefingerprint", engine=SUMMARY_ENGINE,
+        model="claude-test", generated_at="2026-06-12T00:00:00+00:00",
+    ))
+
+    bundle = build_bundle(db, "database", concept="Databases")
+    assert f"Summary by `{SUMMARY_ENGINE}`, stale" in bundle
 
 
 # --- full export → import round-trip across libraries (ADR 0099) ------------

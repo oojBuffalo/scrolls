@@ -956,8 +956,15 @@ A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
 `tests/test_bundle.py`). Two layers in one file: a readable **briefing**
 (title + scope, then one entry per in-scope scroll naming its id, source,
-custody **fidelity** tier, capture timestamp, link, content hash, and a capped
-excerpt), and an embedded **custody block** — the lossless canonical rows as
+custody **fidelity** tier, capture timestamp, link, content hash, a capped
+excerpt, and — when an engine classified it — *how the category was derived*:
+the same `classification` view `list`/`show`/`search` carry (`by`/`basis`/
+`confidence`, roadmap H20/H21/H35), omitted for an unclassified or user-set
+category, the same honest absence the structured surfaces keep. A
+`--concept`-scoped bundle also carries that concept's synthesized LLM summary
+and its `summary_provenance` (engine + members-fingerprint freshness, roadmap
+H29) — so a reader of the briefing sees provenance without parsing the JSONL),
+and an embedded **custody block** — the lossless canonical rows as
 JSON Lines inside a ` ```jsonl ` code fence, wrapped in the ADR 0102
 `@generated`…`@end` sentinel. The block's JSONL is byte-identical to what
 `export items` writes, so the bundle's losslessness is the same already tested

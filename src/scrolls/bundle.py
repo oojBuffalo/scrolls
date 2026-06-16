@@ -18,8 +18,13 @@ context, not to round-trip.
 Two layers in one file:
 
 1. A briefing body (Markdown) — title + scope, then one entry per in-scope
-   scroll naming its id, source, fidelity tier, capture timestamp, link, and a
-   capped excerpt. This is what a human or agent *reads*.
+   scroll naming its id, source, fidelity tier, capture timestamp, link, a
+   capped excerpt, and — when an engine classified it — *how the category was
+   derived* (the `classification_provenance` view: `by`/`basis`/`confidence`,
+   roadmap H35). A `concept`-scoped bundle also carries that concept's
+   synthesized LLM summary and its `summary_provenance` (engine + freshness).
+   This is what a human or agent *reads*, and it now carries provenance without
+   anyone parsing the JSONL ("provenance travels with every result").
 2. A custody block — the canonical rows as JSON Lines inside a ` ```jsonl `
    code fence, wrapped in the ADR 0102 sentinel (`@generated`…`@end`). This is
    what `import bundle` round-trips against; the JSONL is byte-identical to
@@ -43,8 +48,18 @@ import json
 from pathlib import Path
 
 from scrolls.generated import GENERATED_END, fence, generated_body
-from scrolls.items import ScrollItem, get_fidelity, get_item, item_from_dict
+from scrolls.items import (
+    ScrollItem,
+    classification_provenance,
+    get_fidelity,
+    get_item,
+    item_from_dict,
+    list_items,
+)
 from scrolls.items_export import dump_items_export
+from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
+from scrolls.kb_llm import members_hash, summary_provenance
+from scrolls.render import slugify
 from scrolls.search import count_matches, search_items
 
 _EXCERPT_CHARS = 600
@@ -106,6 +121,10 @@ def build_bundle(
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
+    # a concept-scoped bundle is *about* that concept, so its synthesized
+    # summary and how that summary was derived belong in the briefing (H35)
+    if concept is not None:
+        lines += _concept_summary_block(db_path, concept)
 
     if not items:
         lines += ["No matching scrolls.", ""]
@@ -183,11 +202,86 @@ def _briefing_entry(rank: int, item: ScrollItem) -> list[str]:
     out.append(f"- {item.canonical_url or item.url}")
     if item.content_hash:
         out.append(f"- content-hash `{item.content_hash}`")
+    classification = _classification_line(item)
+    if classification:
+        out.append(classification)
     excerpt = _excerpt(item)
     if excerpt:
         out += ["", excerpt]
     out.append("")
     return out
+
+
+def _classification_line(item: ScrollItem) -> str | None:
+    """How the item's category was derived — the classification view, made readable.
+
+    Renders the same derived `classification_provenance` view `list`/`show`/
+    `search` carry (roadmap H20/H21/H26) into one briefing line, so a reader of
+    the bundle sees *how the category was produced* (`by`/`basis`/`confidence`)
+    without parsing the embedded JSONL — "provenance travels with every result"
+    on the readable side too (roadmap H35). Returns None when no engine stamped
+    the category — an unclassified or user-set item — the same honest absence the
+    structured surfaces keep: no method is claimed for a category no engine
+    produced, so the line is simply omitted (the row's shape stays stable).
+
+    The ruleset *fingerprint* the view also carries (`ruleset`) is deliberately
+    left out: it is the re-derivation key (in the JSONL block for that), not
+    reading material, and `confidence.freshness` already reports what it implies.
+    """
+    view = classification_provenance(item)
+    if view is None:
+        return None
+    detail = view.get("basis") or (
+        f"model {view['model']}" if view.get("model") else None
+    )
+    head = f"classified `{item.category}` by `{view['by']}`"
+    if detail:
+        head += f" ({detail})"
+    confidence = view["confidence"]
+    marker = confidence["level"]
+    if "freshness" in confidence:
+        marker += f", {confidence['freshness']}"
+    return f"- {head} · confidence {marker}"
+
+
+def _concept_summary_block(db_path: Path, concept: str) -> list[str]:
+    """The bundled concept's synthesized summary + its provenance, when one exists.
+
+    The summary-axis counterpart of `_classification_line` (roadmap H35): for a
+    `concept`-scoped bundle the bundle is *about* that concept, so its stored LLM
+    concept summary (ADR 0025) — and how that summary was derived — belongs in
+    the readable briefing. Freshness is computed against the concept's *whole*
+    live membership (`summary_provenance`/`summary_freshness`), not the bundle's
+    query-filtered subset, because a summary is a synthesis of the entire concept;
+    filtering the members for a bundle does not change whether a re-synthesis
+    would reproduce the stored summary.
+
+    Returns [] when the concept has no stored summary — honest absence
+    (`summary_provenance` returns None), no synthesis claimed for one that does
+    not exist. The summary text here is a *readable derived view*, not part of
+    the lossless custody block: only the item rows in the `@generated` JSONL
+    round-trip through `import bundle` (the round-trip invariant H35 leaves
+    untouched).
+    """
+    slug = slugify(concept)
+    if not slug:
+        return []
+    stored: ConceptSummary | None = load_concept_summaries(db_path).get(slug)
+    if stored is None:
+        return []
+    rendered = [item for item in list_items(db_path) if item.markdown_path]
+    entry = group_concepts(rendered).get(slug)
+    live = members_hash(entry["items"]) if entry else ""
+    view = summary_provenance(stored, live)
+    if view is None:  # unreachable while `stored` is set, but keeps the contract local
+        return []
+    return [
+        f"**Concept summary** — {stored.summary}",
+        "",
+        f"_Summary by `{view['by']}`, {view['freshness']} "
+        f"(members fingerprint `{view['members_hash'][:12]}`)._",
+        "",
+    ]
 
 
 def _scope_note(
