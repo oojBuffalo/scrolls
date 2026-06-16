@@ -27,7 +27,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, drift_posture, latest_events
+from scrolls.custody import CustodyEvent, drift_posture, last_checked, latest_events
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, get_fidelity, list_items
@@ -580,22 +580,38 @@ def _item_line(item: ScrollItem, page_dir: str, note: str | None = None,
 
 
 def _custody_marker(item: ScrollItem, verdicts: dict[str, CustodyEvent]) -> str:
-    """A compact `· <fidelity> · <drift>` per-row custody marker (roadmap H89).
+    """A compact `· <fidelity> · <drift> · <when>` per-row custody marker (H89/H93).
 
-    The two-axis per-item custody picture every agent-facing surface already
-    carries — the fidelity tier (`get_fidelity`, how much we still hold) and the
-    drift posture (`custody.drift_posture` over the item's latest `latest_events`
-    verdict, whether the source has moved) — rendered for a human browsing the
-    compiled `library/` list pages, the one surface the per-item picture skipped.
-    Trails the row's existing note rather than replacing it. A never-checked item
-    is honestly ``unverified`` (`drift_posture(None)`), never silently "clean";
-    the marker reads the same posture `doctor`/`facets drift`/the browse rows do,
-    from the one ledger read `compile_kb` shares across the whole compile.
-    Report-only: the marker is a derived read, never a stored or mutated field
-    (custody §2.4). Rendered inside the page's `@generated` fence (ADR 0102), so a
-    recompile refreshes it without touching a hand annotation outside the block.
+    The full per-item custody picture every agent-facing surface already carries,
+    rendered for a human browsing the compiled `library/` list pages — the one
+    surface the picture skipped. Three axes, from the one `latest_events` read
+    `compile_kb` shares across the whole compile:
+
+    - **fidelity** (`get_fidelity`, how much we still hold);
+    - **drift** (`custody.drift_posture` over the item's latest verdict, whether
+      the source has moved) — honestly ``unverified`` when never re-checked
+      (`drift_posture(None)`), never silently "clean";
+    - **when** (roadmap H93) — ``checked <checked_at>`` carrying the verbatim
+      `custody.last_checked` of that same verdict (so *as of when* the posture was
+      taken — a human can pick a `verify --stale-before <ISO>` boundary by
+      inspection, the H84 rationale on the human-readable surface), or
+      ``never checked`` for the honest-absence `last_checked(None) is None`.
+
+    The timestamp is the stored value verbatim (not a wall-clock-relative "x
+    ago"), matching the bundle briefing's `as of <checked_at>` (H42) and the
+    `context` excerpt's `last seen <checked_at>` (H90) — so the three axes equal
+    what every other surface reports for the item, and the marker's timestamp
+    equals the head of its `scrolls history` ledger by construction (the H88 tie,
+    on the compiled surface). Trails the row's existing note rather than replacing
+    it. Report-only: a derived read, never a stored or mutated field (custody
+    §2.4). Rendered inside the page's `@generated` fence (ADR 0102), so a recompile
+    refreshes it (after a re-verify moves the posture *or* its timestamp) without
+    touching a hand annotation outside the block.
     """
-    return f" · {get_fidelity(item)} · {drift_posture(verdicts.get(item.id))}"
+    verdict = verdicts.get(item.id)
+    checked = last_checked(verdict)
+    when = f"checked {checked}" if checked else "never checked"
+    return f" · {get_fidelity(item)} · {drift_posture(verdict)} · {when}"
 
 
 def _count(n: int) -> str:

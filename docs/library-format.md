@@ -222,7 +222,7 @@ inside the fence); on disk each page is wrapped as above.
 
 1 scroll.
 
-- [SQLite](../../scrolls/wikipedia/sqlite.md) — reference · full · unverified
+- [SQLite](../../scrolls/wikipedia/sqlite.md) — reference · full · unverified · never checked
 ```
 
 - The H1 is `Source: <name>`, `Category: <name>`,
@@ -231,16 +231,23 @@ inside the fence); on disk each page is wrapped as above.
   file — sorted by case-folded title with the item id as tiebreak. The
   ` — note` suffix is the item's category on source pages, and its
   source on category, concept, and tag pages.
-- Each bullet ends with a **custody marker** — `· <fidelity> · <drift>` —
-  carrying the same per-item custody picture an agent reads from `scrolls
-  list`/`search`: the fidelity tier (`full`/`partial`/`reference`) and the
-  drift posture (`verified`/`unverified`/`drifted`/`rotted`/`error`) from the
-  item's latest `verify` (`unverified` when never re-checked, never silently
-  "clean"). It is a derived read refreshed on each compile from one
-  verify-ledger read — inside the `@generated` fence, so a recompile updates it
-  without touching annotations, and never a stored or mutated field (roadmap
-  H89; `test_kb_list_pages_carry_per_item_custody_markers`,
-  `test_kb_list_page_marker_reflects_the_drift_ledger`).
+- Each bullet ends with a **custody marker** — `· <fidelity> · <drift> ·
+  <when>` — carrying the same per-item custody picture an agent reads from
+  `scrolls list`/`search`: the fidelity tier (`full`/`partial`/`reference`),
+  the drift posture (`verified`/`unverified`/`drifted`/`rotted`/`error`) from
+  the item's latest `verify` (`unverified` when never re-checked, never
+  silently "clean"), and *when* that verdict was taken — `checked <ISO
+  timestamp>` (the verbatim ledger time) or `never checked` for an item with no
+  verdict (roadmap H93). The timestamp is the stored value verbatim (not a
+  wall-clock-relative "x ago"), matching the bundle briefing's `as of
+  <checked_at>` and `context`'s `last seen <checked_at>` — so a human auditing
+  staleness can pick a `verify --stale-before <ISO>` boundary by inspection. It
+  is a derived read refreshed on each compile from one verify-ledger read —
+  inside the `@generated` fence, so a recompile updates it without touching
+  annotations, and never a stored or mutated field (roadmap H89/H93;
+  `test_kb_list_pages_carry_per_item_custody_markers`,
+  `test_kb_list_page_marker_reflects_the_drift_ledger`,
+  `test_kb_list_page_marker_carries_last_checked_timestamp`).
 - Concept pages merge spellings that slugify identically (`RAG` and
   `rag` are one page) and display the lexically smallest spelling
   (`test_kb_groups_concepts_across_spellings`).
@@ -305,24 +312,27 @@ representation as a **nested** bullet linking to its own scroll:
 2 scrolls.
 
 - **Attention Is All You Need** — 2 representations ([doi.org/10.5555/3295222](https://doi.org/10.5555/3295222))
-  - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv · reference · unverified
-  - [Attention Is All You Need](../../scrolls/crossref/attention-is-all-you-need.md) — crossref · reference · unverified
+  - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv · reference · unverified · never checked
+  - [Attention Is All You Need](../../scrolls/crossref/attention-is-all-you-need.md) — crossref · reference · unverified · never checked
 ```
 
 Each item bullet (here the nested representations; on `sources/`,
 `categories/`, `concepts/`, and `tags/` list pages the top-level bullets too)
-trails a compact **custody marker** — `· <fidelity> · <drift>` — so a human
-browsing the compiled library reads the same per-item custody picture an agent
-reads from `scrolls list`/`search`: the fidelity tier (`full`/`partial`/
-`reference`, how much we still hold) and the drift posture
+trails a compact **custody marker** — `· <fidelity> · <drift> · <when>` — so a
+human browsing the compiled library reads the same per-item custody picture an
+agent reads from `scrolls list`/`search`: the fidelity tier (`full`/`partial`/
+`reference`, how much we still hold), the drift posture
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, whether the source has
-moved at its last `verify`). A never-checked item is honestly `unverified`,
-never silently "clean". The marker is a derived read refreshed on each
+moved at its last `verify`), and *as of when* that verdict was taken —
+`checked <ISO timestamp>` or `never checked` (roadmap H93, the time axis). A
+never-checked item is honestly `unverified` / `never checked`, never silently
+"clean" or a faked time. The marker is a derived read refreshed on each
 `scrolls kb` from one verify-ledger read, rendered inside the `@generated`
-fence so a recompile updates it without disturbing a hand annotation outside
-the block; it never mutates a stored field (roadmap H89). The bold work
-heading and the index/`graph`/`works` rollup rows carry no marker — they are
-not per-item rows (`test_kb_list_pages_carry_per_item_custody_markers`,
+fence so a recompile updates it (after a re-verify moves the posture *or* its
+timestamp) without disturbing a hand annotation outside the block; it never
+mutates a stored field (roadmap H89/H93). The bold work heading and the
+index/`graph`/`works` rollup rows carry no marker — they are not per-item rows
+(`test_kb_list_pages_carry_per_item_custody_markers`,
 `test_kb_list_page_marker_reflects_the_drift_ledger`,
 `test_kb_custody_markers_are_refresh_safe`).
 

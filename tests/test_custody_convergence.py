@@ -354,21 +354,26 @@ def _bundle_last_checked(text):
 
 
 def _library_markers(text):
-    """Map item title → (fidelity, drift) parsed from a compiled list page's rows.
+    """Map item title → (fidelity, drift, last_checked) from a compiled page's rows.
 
-    Each per-item row on a compiled `library/` group page ends with the H89
-    custody marker `· <fidelity> · <drift>`; this parses the two trailing tokens
-    and the row's link title so the human-readable Markdown surface can be
-    compared against the JSON surfaces. Keyed by title (unique in the fixture)
-    because the row's link encodes the scroll path, not the item id. The greedy
-    `.*` before the anchored ` · <fid> · <drift>$` lets the optional ` — <note>`
-    segment fall inside it, so the parse works whether or not a row carries a note.
+    Each per-item row on a compiled `library/` group page ends with the H89/H93
+    custody marker `· <fidelity> · <drift> · checked <ts>` (or `· never checked`
+    for an item with no ledger verdict); this parses the three trailing tokens and
+    the row's link title so the human-readable Markdown surface can be compared
+    against the JSON surfaces. Keyed by title (unique in the fixture) because the
+    row's link encodes the scroll path, not the item id. The greedy `.*` before the
+    anchored marker lets the optional ` — <note>` segment fall inside it, so the
+    parse works whether or not a row carries a note; the time token is
+    `checked <ts>` → the verbatim timestamp, or `never checked` → `None` (the
+    honest-absence timestamp, the `null` counterpart of the `unverified` posture).
     """
     markers = {}
     for line in text.splitlines():
-        m = re.match(r"^\s*- \[([^\]]+)\]\([^)]+\).* · (\w+) · (\w+)\s*$", line)
+        m = re.match(
+            r"^\s*- \[([^\]]+)\]\([^)]+\).* · (\w+) · (\w+) · "
+            r"(?:checked (\S+)|never checked)\s*$", line)
         if m:
-            markers[m.group(1)] = (m.group(2), m.group(3))
+            markers[m.group(1)] = (m.group(2), m.group(3), m.group(4))
     return markers
 
 
@@ -408,11 +413,13 @@ def _seed_marker_fixture(db):
 
 
 def test_compiled_library_page_agrees_on_the_per_item_custody_marker(scrolls_home, capsys):
-    # roadmap H91: H89 put the `· <fidelity> · <drift>` marker on the compiled
+    # roadmap H91/H93: H89 put the `· <fidelity> · <drift>` marker on the compiled
     # `library/` list-page rows — the human-readable surface the per-item picture
-    # skipped. Fold it into the convergence invariant: the marker a human reads
-    # off a compiled page equals the canonical (`get_fidelity`, `drift_posture`)
-    # *and* the JSON `list` surface's `fidelity`+`drift`, for every item.
+    # skipped — and H93 folded in the time axis (`· checked <ts>` / `· never
+    # checked`). Fold it all into the convergence invariant: the marker a human
+    # reads off a compiled page equals the canonical (`get_fidelity`,
+    # `drift_posture`, `last_checked`) *and* the JSON `list` surface's
+    # `fidelity`+`drift`+`last_checked`, for every item.
     main(["init"])
     db = get_paths().db_path
     _seed_marker_fixture(db)
@@ -421,33 +428,49 @@ def test_compiled_library_page_agrees_on_the_per_item_custody_marker(scrolls_hom
     verdicts = latest_events(db)
     items = list_items(db)
     canonical = {
-        item.title: (get_fidelity(item), drift_posture(verdicts.get(item.id)))
+        item.title: (
+            get_fidelity(item),
+            drift_posture(verdicts.get(item.id)),
+            last_checked(verdicts.get(item.id)),
+        )
         for item in items
     }
-    # sanity: the fixture spans the fidelity axis crossed with four postures
+    # sanity: the fixture spans the fidelity axis crossed with four postures, each
+    # checked item carrying its verdict's timestamp and the never-checked item the
+    # honest `None` (the H93 time axis)
     assert set(canonical.values()) == {
-        ("full", "verified"), ("full", "drifted"),
-        ("partial", "rotted"), ("reference", "unverified"),
+        ("full", "verified", "2026-06-14T00:00:00+00:00"),
+        ("full", "drifted", "2026-06-14T00:00:00+00:00"),
+        ("partial", "rotted", "2026-06-14T00:00:00+00:00"),
+        ("reference", "unverified", None),
     }
 
-    # the JSON browse surface (H58): fidelity + drift per item, keyed by title
+    # the JSON browse surface (H58/H84): fidelity + drift + last_checked per item
     assert main(["list"]) == 0
     title_by_id = {item.id: item.title for item in items}
     list_markers = {
-        title_by_id[r["id"]]: (r["fidelity"], r["drift"])
+        title_by_id[r["id"]]: (r["fidelity"], r["drift"], r["last_checked"])
         for r in json.loads(capsys.readouterr().out)
     }
 
-    # the compiled human-readable surface (H89): the markers on sources/web.md
+    # the compiled human-readable surface (H89/H93): the markers on sources/web.md
     assert main(["kb"]) == 0
     capsys.readouterr()
     page = (get_paths().library_dir / "sources" / "web.md").read_text(encoding="utf-8")
     compiled_markers = _library_markers(page)
 
     # all three agree, for every item — the compiled library reads the same
-    # per-item custody picture as the agent surfaces
+    # per-item custody picture (fidelity + drift + as-of-when) as the agent surfaces
     assert compiled_markers == canonical
     assert list_markers == canonical
+
+    # and the marker's timestamp equals the head of each item's `history` ledger
+    # (the H88 tie on the compiled surface): `None` ⇔ the empty timeline
+    for item in items:
+        assert main(["history", item.id]) == 0
+        events = json.loads(capsys.readouterr().out)
+        head_checked_at = events[0]["checked_at"] if events else None
+        assert compiled_markers[item.title][2] == head_checked_at
 
 
 def test_every_surface_agrees_on_an_items_drift_posture(scrolls_home, capsys):

@@ -145,13 +145,17 @@ each command moves items between stages or derives artifacts from them.
   moved), each through the same `custody.drift_posture` over `latest_events`, so
   a given item reads the same posture wherever an agent reaches it, and the
   posture a `list` row shows is exactly the one its `--drift` filter selects on.
-  The same two-axis picture also rides the **human-readable** surface those JSON
-  rows previously skipped — the compiled `library/` group list pages, where each
-  per-item row carries a `· <fidelity> · <drift>` custody marker (roadmap H89,
-  the `kb.py` row renderer) from the one `latest_events` read per compile — so a
-  human browsing the library reads the same `fidelity`/`drift` an agent does.
-  Every surface that carries the `drift` posture also carries the *time* axis of
-  it (roadmap H84/H86/H87): a `last_checked` field beside `drift`, the `checked_at`
+  The same picture also rides the **human-readable** surface those JSON rows
+  previously skipped — the compiled `library/` group list pages, where each
+  per-item row carries a `· <fidelity> · <drift> · <when>` custody marker
+  (roadmap H89 for the two custody axes, H93 for the time axis; the `kb.py` row
+  renderer) from the one `latest_events` read per compile — `checked <ISO
+  timestamp>` (the verbatim ledger time) or `never checked` for an item with no
+  verdict — so a human browsing the library reads the same
+  `fidelity`/`drift`/`last_checked` an agent does and can pick a `verify
+  --stale-before <ISO>` boundary by inspection. Every surface that carries the
+  `drift` posture also carries the *time* axis of it (roadmap H84/H86/H87/H93):
+  a `last_checked` field beside `drift`, the `checked_at`
   of the same latest verdict via the `custody.last_checked` sibling of
   `drift_posture` (`null` when never re-checked) — on the primary browse/inspect
   rows (`list`/`search`/`show`, H84), the node-shape surfaces (`related` hits,
@@ -894,18 +898,24 @@ choice (ADRs 0004, 0005).
   to its scroll) instead of several flat bullets; source pages stay flat
   (single-source, no cross-source reps co-occur) and the count line still
   counts scrolls. **Every per-item row on these group pages carries a compact
-  custody marker** — `· <fidelity> · <drift>` (roadmap H89) — so a human
-  browsing the compiled library reads the same per-item custody picture an
-  agent reads from `scrolls list`/`search`: the `get_fidelity` tier and the
-  `custody.drift_posture` over the item's latest verify-ledger verdict
-  (`unverified` when never re-checked, never silently "clean"). It is a derived
-  read computed from one `latest_events` read per compile (the bundle/context
-  pattern), rendered *inside* the `@generated` fence so a recompile refreshes it
-  without disturbing annotations, and report-only — never a stored or mutated
-  field (custody-vision §2.4). The bold work heading and the
-  `index`/`graph`/`works` rollup rows carry no marker (they are not per-item
-  rows); this is the human-readable surface the per-item custody picture
-  previously skipped. Concept pages merge spellings by
+  custody marker** — `· <fidelity> · <drift> · <when>` (roadmap H89 for the two
+  custody axes, H93 for the time axis) — so a human browsing the compiled
+  library reads the same per-item custody picture an agent reads from `scrolls
+  list`/`search`: the `get_fidelity` tier, the `custody.drift_posture` over the
+  item's latest verify-ledger verdict (`unverified` when never re-checked, never
+  silently "clean"), and *as of when* that verdict was taken via the
+  `custody.last_checked` sibling — `checked <ISO timestamp>` (the verbatim
+  ledger time, never a wall-clock-relative "x ago") or `never checked` for the
+  honest absence — so a human auditing staleness can pick a `verify
+  --stale-before <ISO>` boundary by inspection (the H84 rationale on the
+  human-readable surface). It is a derived read computed from one
+  `latest_events` read per compile (the bundle/context pattern), rendered
+  *inside* the `@generated` fence so a recompile refreshes it (after a re-verify
+  moves the posture *or* its timestamp) without disturbing annotations, and
+  report-only — never a stored or mutated field (custody-vision §2.4). The bold
+  work heading and the `index`/`graph`/`works` rollup rows carry no marker (they
+  are not per-item rows); this is the human-readable surface the per-item
+  custody picture previously skipped. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,

@@ -431,9 +431,9 @@ def test_kb_custody_markers_are_refresh_safe(scrolls_home, capsys):
 
     page_path = scrolls_home / "library" / "categories" / "news.md"
     page = page_path.read_text(encoding="utf-8")
-    assert "· full · unverified" in page
+    assert "· full · unverified · never checked" in page
     # the marker lives inside the generated fence (it is part of the body)
-    assert "· full · unverified" in generated_body(page)
+    assert "· full · unverified · never checked" in generated_body(page)
     # a human annotation appended outside the fence
     page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
 
@@ -441,9 +441,37 @@ def test_kb_custody_markers_are_refresh_safe(scrolls_home, capsys):
     _drift(db, "web:x", "drifted", checked_at="2026-06-12T00:00:00+00:00")
     run_kb(capsys)
     refreshed = page_path.read_text(encoding="utf-8")
-    assert "· full · drifted" in refreshed  # marker refreshed in the fenced region
-    assert "· full · unverified" not in refreshed
+    # both axes refresh in the fenced region: the posture *and* its timestamp
+    assert "· full · drifted · checked 2026-06-12T00:00:00+00:00" in refreshed
+    assert "· full · unverified · never checked" not in refreshed
     assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
+def test_kb_list_page_marker_carries_last_checked_timestamp(scrolls_home, capsys):
+    """The marker's time axis (roadmap H93): `· checked <ts>` for a row with a
+    ledger verdict, `· never checked` for one with none (honest absence)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:seen", "web", "Checked post", category="news",
+        raw_text="body", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:never", "web", "New post", category="news",
+        raw_text="body", content_hash="h2"))
+    _drift(db, "web:seen", "drifted", checked_at="2026-06-14T00:00:00+00:00")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    # a checked row trails the verbatim ledger timestamp — the time-axis sibling
+    # of the drift posture, the same `checked_at` the `history` head and the JSON
+    # browse rows show; a never-checked row is honestly `never checked`, never a
+    # faked time (the `null`/`unverified` honest-absence counterpart)
+    assert ("- [Checked post](../../scrolls/web/checked-post.md) — web"
+            " · full · drifted · checked 2026-06-14T00:00:00+00:00") in page
+    assert ("- [New post](../../scrolls/web/new-post.md) — web"
+            " · full · unverified · never checked") in page
 
 
 def test_kb_index_and_graph_pages_omit_the_custody_marker(scrolls_home, capsys):
@@ -911,7 +939,8 @@ def test_kb_category_page_uses_canonical_title_and_interleaves(scrolls_home, cap
     bullets = _category_bullets(scrolls_home, "paper")
     # the singleton 'Apex Paper' sorts before the work header 'Zeta Published Title'
     assert bullets[0] == (
-        "- [Apex Paper](../../scrolls/web/apex-paper.md) — web · reference · unverified")
+        "- [Apex Paper](../../scrolls/web/apex-paper.md) — web"
+        " · reference · unverified · never checked")
     # the canonical (crossref) title heads the consolidated work, not the preprint's
     assert bullets[1].startswith("- **Zeta Published Title** — 2 representations")
     assert "Zeta Preprint Title" not in bullets[1]
@@ -932,7 +961,7 @@ def test_kb_category_page_leaves_single_representation_uncollapsed(scrolls_home,
     bullets = _category_bullets(scrolls_home, "paper")
     assert bullets == [
         "- [Solo Preprint](../../scrolls/arxiv/solo-preprint.md) — arxiv"
-        " · reference · unverified"]
+        " · reference · unverified · never checked"]
 
 
 def test_kb_source_pages_do_not_consolidate(scrolls_home, capsys):
@@ -1021,8 +1050,8 @@ def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home
         "\n"
         "2 scrolls.\n"
         "\n"
-        "- [A](../../scrolls/web/a.md) — web · reference · unverified\n"
-        "- [B](../../scrolls/web/b.md) — web · reference · unverified\n"
+        "- [A](../../scrolls/web/a.md) — web · reference · unverified · never checked\n"
+        "- [B](../../scrolls/web/b.md) — web · reference · unverified · never checked\n"
         "\n"
         "## Related Concepts\n"
         "\n"
