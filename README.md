@@ -121,6 +121,7 @@ uv run scrolls search <query> --source arxiv --category paper  # scope the ranke
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
+uv run scrolls verify [id | --all | --unverified | --stale-before ISO] [--limit N]  # re-capture held items and record a drift/rot custody event; selections re-check the whole library, only the never-checked, or only those stale since a boundary (H51, H79); as JSON
 uv run scrolls history <id> [--limit N] [--since ISO] [--status V]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; three filter axes applied verdict → window → cap: --status (unchanged/drifted/rotted/error), --since (time), --limit (count); [] when never verified (H66, H69, H71, H77)
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
@@ -1673,7 +1674,12 @@ changed since capture), `rotted` (HTTP 404/410, gone), or `error` (could not
 check) — into an append-only ledger *without* overwriting the original
 capture, and `scrolls doctor` aggregates the latest verdict per item into its
 `custody.drift` report, so the library can always answer "what have I lost, or
-what changed, since I saved it?" (ADR 0098). `scrolls history <id>` reads that
+what changed, since I saved it?" (ADR 0098). A recheck can target a worth-it
+subset rather than the whole library: `--all` re-checks every held item,
+`--unverified` only the never-checked ones (the bucket doctor flags), and
+`--stale-before <ISO>` only those not re-checked since a boundary — the act-side
+of the `--since` family that `scrolls history <id>` and `scrolls export events`
+already window the ledger by. `scrolls history <id>` reads that
 ledger back per item — the full timeline of every check, newest first — so an
 agent can see *when* a source drifted and *how often* it has been re-checked,
 not just its current posture. That custody record is **portable**: a

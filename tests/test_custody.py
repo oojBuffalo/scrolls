@@ -23,6 +23,7 @@ from scrolls.custody import (
     import_events,
     item_events,
     item_history,
+    items_checked_before,
     items_in_posture,
     latest_events,
     live_recapture,
@@ -476,6 +477,60 @@ def test_items_in_posture_is_honestly_empty_when_no_item_matches():
     # a valid posture with no items in it is [], not an error
     items = [_item("web:a")]  # never verified → unverified
     assert items_in_posture(items, {}, "drifted") == []
+
+
+# --- items_checked_before selector (the `verify --stale-before` act window) --
+
+
+def test_items_checked_before_selects_verdicts_strictly_before_the_boundary():
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-10T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:b": CustodyEvent("web:b", "2026-06-20T00:00:00+00:00", "unchanged", "h", "h"),
+        # web:c has no verdict → never checked → trivially stale
+    }
+    boundary = "2026-06-15T00:00:00+00:00"
+    # web:a (checked before) and web:c (never checked) are stale; web:b is fresh
+    assert items_checked_before([a, b, c], verdicts, boundary) == [a, c]
+
+
+def test_items_checked_before_treats_an_at_boundary_check_as_fresh():
+    # the boundary itself is fresh — the exact complement of the `>= boundary`
+    # window `history --since` / `export events --since` keep (predates = `<`)
+    a = _item("web:a")
+    boundary = "2026-06-15T00:00:00+00:00"
+    verdicts = {"web:a": CustodyEvent("web:a", boundary, "unchanged", "h", "h")}
+    assert items_checked_before([a], verdicts, boundary) == []
+
+
+def test_items_checked_before_never_checked_is_trivially_stale():
+    # an item the ledger has no verdict for is stale at any boundary
+    items = [_item("web:a"), _item("web:b")]
+    assert items_checked_before(items, {}, "2000-01-01T00:00:00+00:00") == items
+
+
+def test_items_checked_before_with_a_future_boundary_subsumes_unverified():
+    # a far-future boundary makes every verdict "before" it, so the stale set is
+    # everything — a superset of the never-checked `unverified_items` set
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-10T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:b": CustodyEvent("web:b", "2026-06-12T00:00:00+00:00", "drifted", "h", "x"),
+    }
+    future = "2099-01-01T00:00:00+00:00"
+    stale = items_checked_before([a, b, c], verdicts, future)
+    assert stale == [a, b, c]
+    # ⊇ the never-checked set
+    stale_ids = {i.id for i in stale}
+    assert all(i.id in stale_ids for i in unverified_items([a, b, c], verdicts))
+
+
+def test_items_checked_before_preserves_input_order():
+    items = [_item(f"web:{n}") for n in range(4)]  # all never checked → all stale
+    boundary = "2026-06-15T00:00:00+00:00"
+    assert [i.id for i in items_checked_before(items, {}, boundary)] == [
+        "web:0", "web:1", "web:2", "web:3"
+    ]
 
 
 def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):

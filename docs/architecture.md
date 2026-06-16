@@ -94,7 +94,15 @@ each command moves items between stages or derives artifacts from them.
   delegates to — is made actionable by `scrolls verify --unverified` (roadmap
   H51), which re-checks exactly that hash-bearing set, so a re-check clears the
   bucket those surfaces flag (the report→refresh pairing `classify --stale` /
-  `kb --stale` have on the enrichment axes, on the verify axis). The count is
+  `kb --stale` have on the enrichment axes, on the verify axis). `verify
+  --stale-before <ISO>` (roadmap H79) generalizes that to a *time* window — the
+  hash-bearing items whose newest verdict predates the boundary (plus the
+  never-checked), via the `custody.items_checked_before` selector (the read-side
+  sibling of `unverified_items`/`items_in_posture`; a never-checked item is
+  trivially stale, so a far-future boundary subsumes `--unverified`). Its
+  boundary normalizes through the same `custody.parse_since` that `history
+  --since` (H71) and `export events --since` (H75) use, so the `--since` family
+  now spans the read, the backup, *and* the recheck. The count is
   also *enumerable*: `scrolls list --drift <posture>` (+ the MCP `list_scrolls`
   twin, roadmap H54) selects the held items in a posture through the shared
   `custody.items_in_posture` selector (the read-side sibling of

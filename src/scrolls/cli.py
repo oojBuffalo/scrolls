@@ -33,6 +33,7 @@ from scrolls.custody import (
     import_events,
     item_events,
     item_history,
+    items_checked_before,
     latest_events,
     live_recapture,
     parse_since,
@@ -815,11 +816,20 @@ def build_parser() -> argparse.ArgumentParser:
         "`unverified` bucket doctor/facets/status report (oldest saved first)",
     )
     verify_parser.add_argument(
+        "--stale-before",
+        dest="stale_before",
+        metavar="ISO",
+        default=None,
+        help="Verify only held items whose newest ledger verdict predates this "
+        "ISO-8601 boundary (plus never-checked items) — the stale set since the "
+        "last sweep (oldest saved first)",
+    )
+    verify_parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Attempt at most N re-captures this run (--all/--unverified only), "
-        "oldest saved first",
+        help="Attempt at most N re-captures this run "
+        "(--all/--unverified/--stale-before only), oldest saved first",
     )
 
     return parser
@@ -964,7 +974,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
     if args.command == "verify":
-        return _cmd_verify(args.id, args.verify_all, args.unverified, args.limit)
+        return _cmd_verify(
+            args.id, args.verify_all, args.unverified, args.limit, args.stale_before
+        )
     return 2  # pragma: no cover - argparse enforces a valid command
 
 
@@ -1601,6 +1613,7 @@ def _cmd_verify(
     verify_all: bool,
     unverified: bool = False,
     limit: int | None = None,
+    stale_before: str | None = None,
 ) -> int:
     """Re-capture items and record drift/rot custody events (ADR 0098).
 
@@ -1608,28 +1621,52 @@ def _cmd_verify(
     hash against the stored one, and appends a custody event — never touching
     the original capture, so proving the source changed can't lose what we
     held. Exactly one *selection* is required: a single item ref, `--all`
-    (every held item carrying a captured hash), or `--unverified` (only the
+    (every held item carrying a captured hash), `--unverified` (only the
     held, hash-bearing items the ledger has no verdict for — the `unverified`
-    bucket doctor/facets/status report, made actionable). `error`
+    bucket doctor/facets/status report, made actionable), or `--stale-before
+    <ISO>` (the held, hash-bearing items whose newest verdict predates the
+    boundary, plus the never-checked — the staleness-bounded recheck, the
+    act-side sibling of `history --since` / `export events --since`). `error`
     (could-not-check) drives a nonzero exit; `drifted`/`rotted` are successful
     checks that found a custody event.
     """
     paths = get_paths()
-    if sum((ref is not None, verify_all, unverified)) != 1:
+    if sum((ref is not None, verify_all, unverified, stale_before is not None)) != 1:
         print(
             json.dumps(
-                {"error": "verify needs exactly one of an item id, --all, or --unverified"}
+                {"error": "verify needs exactly one of an item id, --all, "
+                 "--unverified, or --stale-before"}
             ),
             file=sys.stderr,
         )
         return 1
 
+    # Normalize (and validate) the staleness boundary before any item lookup, so
+    # a malformed --stale-before is a loud usage error (exit 2, the
+    # `export events --since` / `maintain --trend` precedent), never a silently
+    # empty recheck that could mask a typo'd boundary.
+    boundary: str | None = None
+    if stale_before is not None:
+        try:
+            boundary = parse_since(stale_before)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        if boundary is None:
+            print(
+                json.dumps(
+                    {"error": "--stale-before needs an ISO-8601 timestamp boundary"}
+                ),
+                file=sys.stderr,
+            )
+            return 2
+
     if ref is not None:
         if limit is not None:
             print(
                 json.dumps(
-                    {"error": "--limit paces --all/--unverified runs; drop it "
-                     "when verifying one item"}
+                    {"error": "--limit paces --all/--unverified/--stale-before runs; "
+                     "drop it when verifying one item"}
                 ),
                 file=sys.stderr,
             )
@@ -1648,19 +1685,25 @@ def _cmd_verify(
             return 1
         items = [item]
     else:
-        # Both batch modes re-check only items with a captured baseline hash: a
+        # Every batch mode re-checks only items with a captured baseline hash: a
         # reference-only or detected item has nothing to diff a re-fetch against
         # (so it stays `unverified` — honestly, there is nothing to verify it on).
         all_items = list_items(paths.db_path) if paths.db_path.exists() else []
         hash_bearing = [item for item in all_items if item.content_hash]
-        if unverified:
-            # The held − verdicts set doctor's `custody.drift.unverified` counts,
-            # via the one shared predicate, so this re-check clears exactly the
-            # bucket that block flags. Empty ledger ⇒ no verdicts ⇒ all of them.
-            verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
-            items = unverified_items(hash_bearing, verdicts)
-        else:
+        if verify_all:
             items = hash_bearing
+        else:
+            # Both ledger-driven selections read the latest verdict per item.
+            # `--unverified` takes the held − verdicts set doctor's
+            # `custody.drift.unverified` counts (so a re-check clears exactly that
+            # bucket); `--stale-before` takes the items whose newest verdict
+            # predates the boundary (plus the never-checked — it subsumes
+            # `--unverified`). Empty ledger ⇒ no verdicts ⇒ all of them.
+            verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+            if unverified:
+                items = unverified_items(hash_bearing, verdicts)
+            else:  # stale_before
+                items = items_checked_before(hash_bearing, verdicts, boundary)
 
     if paths.db_path.exists():
         init_db(paths.db_path)  # ensure the ledger table exists before recording

@@ -350,6 +350,140 @@ def test_verify_rejects_all_and_unverified_together(paths, capsys):
     assert "error" in json.loads(capsys.readouterr().err)
 
 
+# --- staleness-bounded recheck (--stale-before ISO, H79) ------------------
+#
+# The act-side `--since` sibling: re-verify only the held, hash-bearing items
+# whose newest ledger verdict predates the boundary (plus the never-checked) —
+# "re-check everything not seen since the last sweep". Completes the `--since`
+# family across the read (`history --since`), the backup (`export events
+# --since`), and the recheck.
+
+
+def _seed_verdict(paths, item, checked_at, status="unchanged"):
+    """Append one custody verdict for `item` stamped at a chosen `checked_at`."""
+    record_events(
+        paths.db_path,
+        [CustodyEvent(item.id, checked_at, status, item.content_hash,
+                      item.content_hash, None)],
+    )
+
+
+def test_verify_stale_before_selects_only_stale_and_never_checked(paths, monkeypatch, capsys):
+    stale = _item("https://example.com/stale", content_hash="sha256:s")
+    fresh = _item("https://example.com/fresh", content_hash="sha256:f")
+    never = _item("https://example.com/never", content_hash="sha256:n")
+    for it in (stale, fresh, never):
+        insert_item(paths.db_path, it)
+    _seed_verdict(paths, stale, "2026-06-10T00:00:00+00:00")  # before boundary
+    _seed_verdict(paths, fresh, "2026-06-20T00:00:00+00:00")  # after boundary
+    # `never` has no verdict → trivially stale
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--stale-before", "2026-06-15T00:00:00+00:00"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2
+    assert sorted(r["id"] for r in out["results"]) == sorted([stale.id, never.id])
+
+
+def test_verify_stale_before_treats_an_at_boundary_check_as_fresh(paths, monkeypatch, capsys):
+    # the boundary itself is fresh (predates = strictly before), the complement
+    # of the `>= boundary` window `history --since` keeps
+    item = _item("https://example.com/a", content_hash="sha256:a")
+    insert_item(paths.db_path, item)
+    boundary = "2026-06-15T00:00:00+00:00"
+    _seed_verdict(paths, item, boundary)
+
+    def explode(_):
+        raise AssertionError("an at-boundary check is fresh; must not be re-verified")
+
+    _stub_recapture(monkeypatch, explode)
+    exit_code = main(["verify", "--stale-before", boundary])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_stale_before_future_boundary_subsumes_unverified(paths, monkeypatch, capsys):
+    # a far-future boundary makes every verdict stale, so it re-checks the
+    # never-checked set --unverified would *and* the long-ago-checked
+    checked = _item("https://example.com/checked", content_hash="sha256:c")
+    never = _item("https://example.com/never", content_hash="sha256:n")
+    insert_item(paths.db_path, checked)
+    insert_item(paths.db_path, never)
+    _seed_verdict(paths, checked, "2026-06-10T00:00:00+00:00")
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--stale-before", "2099-01-01T00:00:00+00:00"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2
+    assert sorted(r["id"] for r in out["results"]) == sorted([checked.id, never.id])
+
+
+def test_verify_stale_before_accepts_a_date_only_boundary(paths, monkeypatch, capsys):
+    # the boundary normalizes through parse_since (date-only → that day's UTC
+    # midnight), like `history --since`
+    stale = _item("https://example.com/stale", content_hash="sha256:s")
+    fresh = _item("https://example.com/fresh", content_hash="sha256:f")
+    insert_item(paths.db_path, stale)
+    insert_item(paths.db_path, fresh)
+    _seed_verdict(paths, stale, "2026-06-14T23:00:00+00:00")  # before midnight
+    _seed_verdict(paths, fresh, "2026-06-15T01:00:00+00:00")  # after midnight
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--stale-before", "2026-06-15"])
+    out = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in out["results"]] == [stale.id]
+
+
+def test_verify_stale_before_limit_caps_attempts(paths, monkeypatch, capsys):
+    for n in range(3):  # all never checked → all stale before a future boundary
+        insert_item(paths.db_path, _item(
+            f"https://example.com/{n}", content_hash=f"sha256:{n}"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--stale-before", "2099-01-01T00:00:00+00:00", "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2  # oldest saved first, the third left for next pass
+
+
+def test_verify_stale_before_skips_reference_only_items(paths, monkeypatch, capsys):
+    # a reference-only capture has no baseline to diff a re-fetch against, so it
+    # is skipped like --all/--unverified even though it is never-checked
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--stale-before", "2099-01-01T00:00:00+00:00"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1  # only the hash-bearing item
+
+
+def test_verify_stale_before_on_empty_library(scrolls_home, capsys):
+    exit_code = main(["verify", "--stale-before", "2099-01-01T00:00:00+00:00"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_stale_before_malformed_boundary_is_a_loud_usage_error(paths, capsys):
+    exit_code = main(["verify", "--stale-before", "yesterday"])
+    assert exit_code == 2  # the export-events / maintain --trend precedent
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_stale_before_blank_boundary_is_a_usage_error(paths, capsys):
+    # a blank boundary names no window — a loud usage error, not "select nothing"
+    exit_code = main(["verify", "--stale-before", "   "])
+    assert exit_code == 2
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_rejects_all_and_stale_before_together(paths, capsys):
+    exit_code = main(["verify", "--all", "--stale-before", "2026-06-15T00:00:00+00:00"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 # --- scrolls history <id> — the per-item custody ledger timeline (H66) -----
 #
 # `verify` appends an append-only event per check; `show`/`list` carry only the

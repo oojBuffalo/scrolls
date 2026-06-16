@@ -508,6 +508,46 @@ def items_in_posture(
     return [item for item in items if drift_posture(verdicts.get(item.id)) == posture]
 
 
+def items_checked_before(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent], boundary: str
+) -> list[ScrollItem]:
+    """The held items whose newest ledger verdict predates `boundary` — the
+    *stale* set a time-bounded recheck targets.
+
+    The act-side time window behind `scrolls verify --stale-before <ISO>`
+    (roadmap H79), completing the `--since` family across all three custody
+    surfaces: the per-item *read* (`history --since`, H71) and the *backup*
+    (`export events --since`, H75) already window the ledger by time; this
+    windows the *recheck* — "re-verify everything not seen since the last
+    sweep".
+
+    An item is stale when **either** the ledger holds no verdict for it (never
+    re-checked, so trivially stale at any boundary) **or** its latest verdict's
+    `checked_at` is strictly *before* `boundary`. The boundary itself is
+    therefore *fresh*: an item last checked exactly at `boundary` is not stale.
+    That makes this selection the exact complement of the
+    ``checked_at >= boundary`` window `history --since` / `export events --since`
+    keep, so a verdicted item is either fresh (at/after the boundary) or
+    stale-before it, never both — and because a never-checked item is always in,
+    `items_checked_before(items, v, <future>)` is a superset of
+    `unverified_items(items, v)`: it subsumes the `--unverified` selection and
+    adds the long-unchecked.
+
+    `boundary` is a **pre-normalized** UTC ISO string (see `parse_since`, which
+    the CLI edge calls), so the lexicographic `checked_at < boundary` compare is
+    apples-to-apples with the stored timestamp. `verdicts` is the `latest_events`
+    ledger read keyed by item id — the same read `unverified_items` /
+    `items_in_posture` use. Preserves input order, so an oldest-saved-first
+    caller can bound a recheck with a `--limit` and make monotone coverage
+    progress (roadmap H55).
+    """
+    return [
+        item
+        for item in items
+        if (event := verdicts.get(item.id)) is None or event.checked_at < boundary
+    ]
+
+
 def custody_counts(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, int]]:

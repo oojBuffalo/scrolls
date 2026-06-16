@@ -442,7 +442,7 @@ the explicit refresh that re-synthesizes exactly the concepts reported here — 
 summary-axis counterpart of `classify --stale`
 (`test_kb_stale_clears_the_doctor_stale_signal`).
 
-### `scrolls verify [id] [--all | --unverified] [--limit N]`
+### `scrolls verify [id] [--all | --unverified | --stale-before ISO] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
 copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
@@ -452,12 +452,13 @@ the stored one, and appends a **custody event** to the ledger — it never
 overwrites the original capture, so proving a source changed can never lose
 what was held.
 
-Exactly one *selection* is required — a single item `id`/URL, `--all`, or
-`--unverified` — never more than one (`test_verify_needs_an_id_or_all`,
-`test_verify_rejects_id_and_all_together`,
-`test_verify_rejects_all_and_unverified_together`). `--all` re-checks every held
-item carrying a captured `content_hash` to diff against — a reference-only or
-still-`detected` item has no baseline and is skipped. `--unverified` narrows
+Exactly one *selection* is required — a single item `id`/URL, `--all`,
+`--unverified`, or `--stale-before` — never more than one
+(`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`,
+`test_verify_rejects_all_and_unverified_together`,
+`test_verify_rejects_all_and_stale_before_together`). `--all` re-checks every
+held item carrying a captured `content_hash` to diff against — a reference-only
+or still-`detected` item has no baseline and is skipped. `--unverified` narrows
 that to only the hash-bearing items the ledger has *no* verdict for — the same
 `held − verdicts` set `doctor`'s `custody.drift.unverified`, `facets drift`, and
 the scope custody headlines report, so re-checking clears exactly the
@@ -466,9 +467,28 @@ the scope custody headlines report, so re-checking clears exactly the
 axis; `test_verify_unverified_checks_only_never_verified_items`,
 `test_verify_unverified_clears_the_doctor_signal`). A reference-only capture has
 nothing to diff a re-fetch against, so it honestly *stays* unverified
-(`test_verify_unverified_skips_reference_only_items`). `--limit N` paces a large
-`--all`/`--unverified` run (oldest saved first), like `scrolls fetch`. A single
-`id` must itself hold a content hash
+(`test_verify_unverified_skips_reference_only_items`).
+
+`--stale-before <ISO>` is the **staleness-bounded** recheck — the act-side
+sibling of `history --since` and `export events --since`, completing the
+`--since` family across the read, the backup, and the recheck. It re-checks only
+the hash-bearing items whose newest ledger verdict *predates* the boundary, plus
+the never-checked (trivially stale at any boundary) — "re-verify everything not
+seen since the last sweep". The boundary itself is *fresh*: an item last checked
+exactly at it is not stale (the exact complement of the `checked_at >= boundary`
+window the two reads keep; `test_verify_stale_before_selects_only_stale_and_never_checked`,
+`test_verify_stale_before_treats_an_at_boundary_check_as_fresh`). Because a
+never-checked item is always in, a far-future boundary subsumes `--unverified`
+(`test_verify_stale_before_future_boundary_subsumes_unverified`). The boundary
+normalizes through the shared `parse_since` (so a `Z` suffix, a different offset,
+or a date-only `2026-06-15` all work; `test_verify_stale_before_accepts_a_date_only_boundary`),
+and a malformed boundary is a loud usage error (exit 2, the `export events`
+precedent), never a silently-empty recheck
+(`test_verify_stale_before_malformed_boundary_is_a_loud_usage_error`).
+
+`--limit N` paces a large `--all`/`--unverified`/`--stale-before` run (oldest
+saved first), like `scrolls fetch` — so a bounded pass makes monotone coverage
+progress. A single `id` must itself hold a content hash
 (`test_verify_item_without_content_hash_is_an_error`).
 
 Each result carries a `status`:
@@ -498,6 +518,10 @@ $ scrolls verify --all
 
 $ scrolls verify --unverified      # only the held items doctor flags `unverified`
 {"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "x:2222", "status": "unchanged", "prior_hash": "sha256:5e1a…", "observed_hash": "sha256:5e1a…", "detail": null}]}
+[exit 0]
+
+$ scrolls verify --stale-before 2026-06-15   # only items not re-checked since the last sweep
+{"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]}
 [exit 0]
 ```
 
