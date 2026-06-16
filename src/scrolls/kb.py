@@ -9,21 +9,25 @@ with a stored synthesized summary when the LLM concept engine
 (`kb_llm.py`, ADR 0025) has written one; the store lives here so the
 compiler reads it without importing the engine.
 
-The generated tree (`index.md`, `graph.md`, `sources/`, `categories/`,
-`concepts/`, `tags/`) is rebuilt from scratch on every run so stale pages
-can't linger; anything else under `library/` is left alone. Compiling is a
-library-level operation like the FTS index, so it never changes item
-stages.
+The generated tree (`index.md`, `graph.md`, `works.md`, `sources/`,
+`categories/`, `concepts/`, `tags/`) is rebuilt on every run so stale pages
+can't linger; anything else under `library/` is left alone. Each generated
+page is written inside a sentinel fence (`scrolls.generated`, ADR 0102): a
+re-compile replaces only the fenced region, so a hand annotation outside it
+survives. A page whose group vanishes is removed — unless it carries such an
+annotation, in which case it is kept with the generated region tombstoned.
+Compiling is a library-level operation like the FTS index, so it never
+changes item stages.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, list_items
 from scrolls.paths import LibraryPaths
@@ -32,9 +36,17 @@ from scrolls.works import Work, works_over
 
 _GENERATED_DIRS = ("sources", "categories", "concepts", "tags")
 _GENERATED_FILES = ("index.md", "graph.md", "works.md")
+_REGENERATED_BY = "scrolls kb"
 _RECENT_LIMIT = 10
 _RELATED_CONCEPTS_LIMIT = 10
 _RELATED_TAGS_LIMIT = 10
+# Replaces the generated region of a page that has gone stale (its group is now
+# empty) but carries a user annotation we must not drop (ADR 0102).
+_STALE_BODY = (
+    "_This page is no longer part of the compiled library — its group is now "
+    "empty — but your annotation outside this block was kept. Move the note "
+    "elsewhere if you want this page removed on the next recompile._"
+)
 
 
 @dataclass(frozen=True)
@@ -187,13 +199,15 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     works = works_over(items)
     items_by_id = {item.id: item for item in items}
 
-    _clear_generated(paths.library_dir)
     paths.library_dir.mkdir(parents=True, exist_ok=True)
+    # Pages written this run; a prior page absent from this set is stale and
+    # reconciled below (removed, or tombstoned if it carries a user annotation).
+    written: set[Path] = set()
 
     pages = 1  # the index
     for source, members in by_source.items():
         _write_page(
-            paths, f"sources/{slugify(source) or 'untitled'}.md",
+            paths, written, f"sources/{slugify(source) or 'untitled'}.md",
             f"Source: {source}", members, note=lambda i: i.category,
         )
         pages += 1
@@ -203,7 +217,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         # arxiv/crossref/pubmed manifestations co-occur, since they share a
         # category but not a source
         _write_page(
-            paths, f"categories/{slugify(category) or 'untitled'}.md",
+            paths, written, f"categories/{slugify(category) or 'untitled'}.md",
             f"Category: {category}", members, note=lambda i: i.source,
             consolidate_works=items_by_id,
         )
@@ -213,7 +227,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         stored = summaries.get(slug)
         summarized += 1 if stored else 0
         _write_page(
-            paths, f"concepts/{slug}.md",
+            paths, written, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
             lead=stored.summary if stored else None,
             trailer=_related_lines(
@@ -223,7 +237,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         pages += 1
     for key, entry in by_tag.items():
         _write_page(
-            paths, f"tags/{tag_filenames[key]}.md",
+            paths, written, f"tags/{tag_filenames[key]}.md",
             f"Tag: {entry['display']}", entry["items"], note=lambda i: i.source,
             trailer=_related_lines(
                 "Related Tags", related_tag_map.get(key, []),
@@ -231,14 +245,15 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             ),
         )
         pages += 1
-    _write_graph_page(paths, components, items_by_id)
+    _write_graph_page(paths, written, components, items_by_id)
     pages += 1
-    _write_works_page(paths, works, items_by_id)
+    _write_works_page(paths, written, works, items_by_id)
     pages += 1
     _write_index(
-        paths, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+        paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
         components, works,
     )
+    _reconcile_generated(paths.library_dir, written)
 
     return KbResult(
         items=len(items),
@@ -254,7 +269,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
 
 
 def _write_index(
-    paths, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+    paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
     components, works,
 ) -> None:
     lines = [
@@ -301,10 +316,10 @@ def _write_index(
         lines += ["", "## Recent", ""]
         for item in list(reversed(items))[:_RECENT_LIMIT]:
             lines.append(_item_line(item, page_dir="library"))
-    (paths.library_dir / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _emit(paths.library_dir / "index.md", lines, written)
 
 
-def _write_page(paths: LibraryPaths, relpath: str, title: str,
+def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: str,
                 members: list[ScrollItem], note, lead: str | None = None,
                 trailer: list[str] | None = None,
                 consolidate_works: dict[str, ScrollItem] | None = None) -> None:
@@ -320,9 +335,19 @@ def _write_page(paths: LibraryPaths, relpath: str, title: str,
         lines += [_item_line(item, page_dir, note(item)) for item in ordered]
     if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
         lines += trailer
-    target = paths.library_dir / relpath
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _emit(paths.library_dir / relpath, lines, written)
+
+
+def _emit(target: Path, lines: list[str], written: set[Path]) -> None:
+    """Write one generated page inside its sentinel fence and record it.
+
+    The page body (`lines`) replaces only the fenced region, so a user
+    annotation outside the fence survives the recompile (ADR 0102). `written`
+    accumulates every page produced this run so `_reconcile_generated` can tell
+    a freshly written page from a stale one.
+    """
+    write_generated(target, "\n".join(lines), _REGENERATED_BY)
+    written.add(target)
 
 
 def _entry_sort_key(item) -> tuple[str, str]:
@@ -411,6 +436,7 @@ def _tag_filenames(by_tag: dict[str, dict]) -> dict[str, str]:
 
 def _write_graph_page(
     paths: LibraryPaths,
+    written: set[Path],
     components: tuple[Component, ...],
     items_by_id: dict[str, ScrollItem],
 ) -> None:
@@ -447,7 +473,7 @@ def _write_graph_page(
                     target = items_by_id[edge.to_id]
                     link = os.path.relpath(target.markdown_path, start=page_dir)
                     lines.append(f"  - → [{target.title or target.id}]({link})")
-    (paths.library_dir / "graph.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _emit(paths.library_dir / "graph.md", lines, written)
 
 
 def _graph_index_line(components: tuple[Component, ...]) -> str:
@@ -467,6 +493,7 @@ def _cluster_count(n: int) -> str:
 
 def _write_works_page(
     paths: LibraryPaths,
+    written: set[Path],
     works: list[Work],
     items_by_id: dict[str, ScrollItem],
 ) -> None:
@@ -505,9 +532,7 @@ def _write_works_page(
                 if rep.id == work.canonical.id:
                     note = f"{note} · canonical"
                 lines.append(_item_line(item, page_dir, note=note))
-    (paths.library_dir / "works.md").write_text(
-        "\n".join(lines) + "\n", encoding="utf-8"
-    )
+    _emit(paths.library_dir / "works.md", lines, written)
 
 
 def _works_index_line(works: list[Work]) -> str:
@@ -539,13 +564,38 @@ def _count(n: int) -> str:
     return f"{n} scroll{'' if n == 1 else 's'}"
 
 
-def _clear_generated(library_dir: Path) -> None:
-    for name in _GENERATED_FILES:
-        path = library_dir / name
-        if path.exists():
+def _reconcile_generated(library_dir: Path, written: set[Path]) -> None:
+    """Clear stale generated pages a recompile left behind, sparing annotations.
+
+    A generated file from a prior run that this run did not rewrite (its group
+    vanished — a reclassified category, a dropped concept) is removed, keeping
+    the "stale pages can't linger" guarantee. The exception is a page that
+    carries a user annotation outside its sentinel fence: that file is kept, its
+    generated region replaced by a tombstone, so the annotation is never
+    silently dropped (ADR 0102). Always-written pages (`index.md`, `graph.md`,
+    `works.md`) are in `written`, so they are never reconciled here.
+    """
+    candidates: list[Path] = [library_dir / name for name in _GENERATED_FILES]
+    for name in _GENERATED_DIRS:
+        directory = library_dir / name
+        if directory.is_dir():
+            candidates += sorted(p for p in directory.iterdir() if p.is_file())
+    for path in candidates:
+        if path in written or not path.exists():
+            continue
+        existing = path.read_text(encoding="utf-8")
+        if has_user_content(existing):
+            prefix, suffix = user_regions(existing)
+            path.write_text(
+                prefix + fence(_STALE_BODY, _REGENERATED_BY) + suffix,
+                encoding="utf-8",
+            )
+        else:
             path.unlink()
     for name in _GENERATED_DIRS:
-        shutil.rmtree(library_dir / name, ignore_errors=True)
+        directory = library_dir / name
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
 
 
 # --- The concept-summary store (ADR 0025) ---------------------------------

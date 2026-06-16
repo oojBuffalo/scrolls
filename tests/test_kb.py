@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scrolls.cli import main
+from scrolls.generated import generated_body
 from scrolls.items import ScrollItem, insert_item, update_item
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
@@ -103,7 +104,8 @@ def test_kb_index_links_recent_scrolls_newest_first(scrolls_home, capsys):
     capsys.readouterr()
 
     run_kb(capsys)
-    index_text = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    index_text = generated_body(
+        (scrolls_home / "library" / "index.md").read_text(encoding="utf-8"))
     recent = index_text.split("## Recent\n")[1].strip().splitlines()
     assert len(recent) == 10  # capped
     assert recent[0] == "- [Post 11](../scrolls/web/post-11.md)"
@@ -158,7 +160,8 @@ def test_kb_concept_page_lists_related_concepts(scrolls_home, capsys):
     capsys.readouterr()
 
     run_kb(capsys)
-    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    page = generated_body(
+        (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8"))
     assert "## Related Concepts" in page
     related = page.split("## Related Concepts\n")[1].strip().splitlines()
     # ordered by shared-scroll count descending (strength), link relative to siblings
@@ -268,7 +271,8 @@ def test_kb_tag_page_lists_related_tags(scrolls_home, capsys):
     capsys.readouterr()
 
     run_kb(capsys)
-    page = (scrolls_home / "library" / "tags" / "mit.md").read_text(encoding="utf-8")
+    page = generated_body(
+        (scrolls_home / "library" / "tags" / "mit.md").read_text(encoding="utf-8"))
     assert "## Related Tags" in page
     related = page.split("## Related Tags\n")[1].strip().splitlines()
     assert related == [
@@ -329,6 +333,103 @@ def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, cap
     assert notes.read_text() == "user notes must survive recompiles\n"
 
 
+# --- refresh-safe regeneration: the sentinel fence (ADR 0102) -------------
+
+
+def test_kb_generated_pages_carry_the_sentinel_fence(scrolls_home, capsys):
+    from scrolls.generated import GENERATED_END
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "wikipedia:en:SQLite", "wikipedia", "SQLite",
+        category="reference", concepts=("Database",), tags=("db",)))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    for relpath in ("index.md", "graph.md", "works.md", "sources/wikipedia.md",
+                    "categories/reference.md", "concepts/database.md", "tags/db.md"):
+        text = (library / relpath).read_text(encoding="utf-8")
+        assert "<!-- @generated scrolls" in text, relpath
+        assert text.rstrip().endswith(GENERATED_END), relpath
+
+
+def test_kb_recompile_preserves_a_user_annotation_outside_the_fence(scrolls_home, capsys):
+    """The headline M1 contract: a @user note survives while generated refreshes."""
+    main(["init"])
+    db = get_paths().db_path
+    item = make_rendered("web:abc", "web", "First Post")
+    insert_item(db, item)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    # a human annotates the generated index, both above and below the fence
+    index = scrolls_home / "library" / "index.md"
+    body = index.read_text(encoding="utf-8")
+    index.write_text(
+        "<!-- @user -->\nRead the FTS page first.\n\n" + body + "\nMy closing note.\n",
+        encoding="utf-8",
+    )
+
+    # new data arrives and the library is recompiled
+    insert_item(db, make_rendered("web:def", "web", "Second Post"))
+    run_kb(capsys)
+
+    refreshed = index.read_text(encoding="utf-8")
+    # the annotations outside the fence survived verbatim
+    assert refreshed.startswith("<!-- @user -->\nRead the FTS page first.\n\n")
+    assert refreshed.rstrip().endswith("My closing note.")
+    # the generated region refreshed: the new item is in, the old count is gone
+    assert "Second Post" in generated_body(refreshed)
+    assert "1 scroll from 1 source." not in refreshed
+    assert "2 scrolls from 1 source." in generated_body(refreshed)
+
+
+def test_kb_marker_less_page_is_overwritten_wholesale(scrolls_home, capsys):
+    """A hand-written generated page with no fence is replaced (migration path)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:abc", "web", "A Post"))
+    capsys.readouterr()
+
+    # pre-sentinel / hand-written index with no fence to anchor on
+    index = scrolls_home / "library" / "index.md"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.write_text("# Hand-written\n\nnothing generated here.\n", encoding="utf-8")
+
+    run_kb(capsys)
+    refreshed = index.read_text(encoding="utf-8")
+    assert "Hand-written" not in refreshed  # wholesale overwrite, as before
+    assert "<!-- @generated scrolls" in refreshed  # now fenced for next time
+
+
+def test_kb_stale_annotated_page_is_kept_with_a_tombstone(scrolls_home, capsys):
+    """A vanished group's page is kept (not deleted) when it carries a note."""
+    import dataclasses
+
+    main(["init"])
+    db = get_paths().db_path
+    item = make_rendered("web:abc", "web", "A handy utility", category="tool")
+    insert_item(db, item)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = scrolls_home / "library" / "categories" / "tool.md"
+    page.write_text(page.read_text(encoding="utf-8") + "\nMy note on tools.\n",
+                    encoding="utf-8")
+
+    # the only `tool` item is reclassified, so the tool category page goes stale
+    update_item(db, dataclasses.replace(item, category="reference"))
+    run_kb(capsys)
+
+    assert page.exists()  # kept, because it carries an annotation
+    text = page.read_text(encoding="utf-8")
+    assert "My note on tools." in text  # the annotation survived
+    assert "A handy utility" not in generated_body(text)  # stale rollup gone
+    assert "no longer part of the compiled library" in generated_body(text)
+
+
 def test_kb_empty_initialized_library_writes_empty_index(scrolls_home, capsys):
     main(["init"])
     capsys.readouterr()
@@ -379,7 +480,8 @@ def test_kb_graph_page_is_empty_when_no_scrolls_link(scrolls_home, capsys):
     payload = run_kb(capsys)
     assert payload["clusters"] == 0
 
-    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    graph = generated_body(
+        (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8"))
     assert graph == "# Scrolls Link Graph\n\nNo linked scrolls yet.\n"
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "[Link graph](graph.md) — no linked scrolls yet." in index
@@ -422,7 +524,8 @@ def test_kb_recompile_clears_a_stale_graph_cluster(scrolls_home, capsys):
 
     update_item(db, dataclasses.replace(a, links=()))  # the link is gone
     run_kb(capsys)
-    graph = (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8")
+    graph = generated_body(
+        (scrolls_home / "library" / "graph.md").read_text(encoding="utf-8"))
     assert graph == "# Scrolls Link Graph\n\nNo linked scrolls yet.\n"
 
 
@@ -498,7 +601,8 @@ def test_kb_works_page_is_empty_when_no_shared_doi(scrolls_home, capsys):
     payload = run_kb(capsys)
     assert payload["works"] == 0  # the crossref DOI has only one representation
 
-    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    works = generated_body(
+        (scrolls_home / "library" / "works.md").read_text(encoding="utf-8"))
     assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
     index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
     assert "[Works](works.md) — no works held in multiple representations yet." in index
@@ -548,7 +652,8 @@ def test_kb_recompile_clears_a_stale_work(scrolls_home, capsys):
 
     update_item(db, dataclasses.replace(preprint, links=()))  # the DOI edge is gone
     run_kb(capsys)
-    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    works = generated_body(
+        (scrolls_home / "library" / "works.md").read_text(encoding="utf-8"))
     assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
 
 
@@ -686,7 +791,8 @@ def test_kb_concept_page_leads_with_stored_summary(scrolls_home, capsys):
     assert payload["concepts"] == 2
     assert payload["summaries"] == 1  # only bm25 has a stored summary
 
-    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    page = generated_body(
+        (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8"))
     assert page.startswith(
         "# Concept: BM25\n"
         "\n"
@@ -695,7 +801,8 @@ def test_kb_concept_page_leads_with_stored_summary(scrolls_home, capsys):
         "2 scrolls.\n"
     )
     # pages without a stored summary keep the plain shape
-    sqlite_page = (scrolls_home / "library" / "concepts" / "sqlite.md").read_text(encoding="utf-8")
+    sqlite_page = generated_body(
+        (scrolls_home / "library" / "concepts" / "sqlite.md").read_text(encoding="utf-8"))
     assert sqlite_page.startswith("# Concept: SQLite\n\n1 scroll.\n")
 
 
@@ -711,7 +818,8 @@ def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home
     capsys.readouterr()
 
     run_kb(capsys)
-    page = (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    page = generated_body(
+        (scrolls_home / "library" / "concepts" / "bm25.md").read_text(encoding="utf-8"))
     assert page == (
         "# Concept: BM25\n"
         "\n"

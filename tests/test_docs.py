@@ -18,6 +18,7 @@ from scrolls import __version__
 from scrolls.agents import _TARGETS
 from scrolls.cli import build_parser
 from scrolls.db import SCHEMA_VERSION, init_db
+from scrolls.generated import begin_marker, fence, generated_body, splice
 from scrolls.items import ScrollItem, insert_item
 from scrolls.kb import _GENERATED_DIRS, _GENERATED_FILES, compile_kb
 from scrolls.paths import get_paths
@@ -255,7 +256,9 @@ def test_library_format_kb_index_example_matches_compiler_output(tmp_path):
     insert_item(paths.db_path, _EXAMPLE_NEIGHBOR)
     compile_kb(paths)
     index = (paths.library_dir / "index.md").read_text(encoding="utf-8")
-    assert index == _pinned_block("example-kb-index"), (
+    # the examples document the generated region; on disk it is sentinel-fenced
+    # (see test_library_format_sentinel_fence_example_matches_helper)
+    assert generated_body(index) == _pinned_block("example-kb-index"), (
         "docs/library-format.md's example library/index.md no longer matches "
         "compile_kb() output for the documented fixture items"
     )
@@ -269,7 +272,7 @@ def test_library_format_graph_page_example_matches_compiler_output(tmp_path):
     insert_item(paths.db_path, _EXAMPLE_MODEL)
     compile_kb(paths)
     graph = (paths.library_dir / "graph.md").read_text(encoding="utf-8")
-    assert graph == _pinned_block("example-graph-page"), (
+    assert generated_body(graph) == _pinned_block("example-graph-page"), (
         "docs/library-format.md's example library/graph.md no longer matches "
         "compile_kb() output for the documented fixture items"
     )
@@ -283,7 +286,7 @@ def test_library_format_works_page_example_matches_compiler_output(tmp_path):
     insert_item(paths.db_path, _EXAMPLE_WORK_PUBLISHED)
     compile_kb(paths)
     works = (paths.library_dir / "works.md").read_text(encoding="utf-8")
-    assert works == _pinned_block("example-works-page"), (
+    assert generated_body(works) == _pinned_block("example-works-page"), (
         "docs/library-format.md's example library/works.md no longer matches "
         "compile_kb() output for the documented fixture items"
     )
@@ -299,10 +302,32 @@ def test_library_format_category_consolidation_example_matches_compiler_output(t
     insert_item(paths.db_path, _EXAMPLE_WORK_PUBLISHED)
     compile_kb(paths)
     page = (paths.library_dir / "categories" / "paper.md").read_text(encoding="utf-8")
-    assert page == _pinned_block("example-category-consolidation"), (
+    assert generated_body(page) == _pinned_block("example-category-consolidation"), (
         "docs/library-format.md's example consolidated category page no longer "
         "matches compile_kb() output for the documented fixture items"
     )
+
+
+def test_library_format_sentinel_fence_example_matches_helper():
+    # The on-disk shape of a generated page a human annotated, then recompiled:
+    # the @user note outside the fence survives while the generated region is
+    # refreshed (ADR 0102). Reconstructed from the real generated.splice helper,
+    # so the documented marker strings can't drift from what the code writes.
+    annotated = (
+        "<!-- @user -->\n"
+        "My note: start with the full-text-search concept page.\n"
+        "\n"
+        + fence("# Scrolls Library\n\n2 scrolls from 2 sources.", "scrolls kb")
+    )
+    refreshed = splice(
+        annotated, "# Scrolls Library\n\n3 scrolls from 2 sources.", "scrolls kb"
+    )
+    assert refreshed == _pinned_block("example-sentinel-fence"), (
+        "docs/library-format.md's sentinel-fence example no longer matches the "
+        "generated.splice() output (the marker strings or splice rule drifted)"
+    )
+    # the begin marker the doc shows is the one the code emits
+    assert begin_marker("scrolls kb") in refreshed
 
 
 def test_library_format_names_every_generated_artifact():

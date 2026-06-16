@@ -23,6 +23,7 @@ from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
 from scrolls.custody import live_recapture, record_events, verify_item
 from scrolls.db import init_db
+from scrolls.generated import generated_body
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import compute_facets
 from scrolls.graph import build_graph
@@ -347,7 +348,8 @@ def get_tag_page(tag: str) -> str:
     the way the `--tag` facet matches. Tag pages share a slug when distinct
     tags fold to it (`C++` and `C#` both slugify to "c"), so the page is found
     among the slug's candidate files by its `# Tag: <display>` heading rather
-    than by filename alone.
+    than by filename alone. The heading is read from the page's generated
+    region, inside the sentinel fence (ADR 0102).
     """
     paths = get_paths()
     base = slugify(tag) or "untitled"
@@ -357,7 +359,8 @@ def get_tag_page(tag: str) -> str:
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         for page in candidates:
             text = page.read_text(encoding="utf-8")
-            heading = text.split("\n", 1)[0]
+            body = generated_body(text) or text
+            heading = body.split("\n", 1)[0]
             if heading.startswith("# Tag: ") and heading[len("# Tag: "):].casefold() == wanted:
                 return text
     raise ValueError(
