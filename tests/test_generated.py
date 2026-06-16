@@ -98,3 +98,37 @@ def test_write_generated_round_trips_an_annotation(tmp_path):
     assert out.startswith("MY NOTE\n")  # annotation survived the regenerate
     assert "FIRST" not in out  # generated region refreshed
     assert "SECOND" in out
+
+
+def test_splice_with_header_keeps_a_generated_header_at_the_top():
+    # a header (e.g. YAML frontmatter whose `---` must be byte 0) always
+    # precedes the fence and is itself regenerated; only the suffix is preserved
+    existing = "OLD HEADER\n" + fence("OLD", "scrolls agent install") + "MY NOTE\n"
+    out = splice(existing, "NEW", "scrolls agent install", header="HEADER\n")
+    assert out.startswith("HEADER\n")  # fresh header, not the old one
+    assert "OLD HEADER" not in out  # the prefix region is the header, not user content
+    assert "OLD" not in out  # generated region refreshed
+    assert "NEW" in out
+    assert out.endswith("MY NOTE\n")  # the suffix annotation survived
+
+
+def test_splice_with_header_into_nothing_is_header_then_fence():
+    out = splice(None, "BODY", "scrolls agent install", header="HEADER\n")
+    assert out == "HEADER\n" + fence("BODY", "scrolls agent install")
+
+
+def test_write_generated_with_header_preserves_only_the_suffix(tmp_path):
+    page = tmp_path / "SKILL.md"
+    write_generated(page, "FIRST", "scrolls agent install", header="---\nx: 1\n---\n\n")
+    out = page.read_text(encoding="utf-8")
+    assert out.startswith("---\n")  # the frontmatter stays at the very top
+    # a human appends a note after the fence, and (mistakenly) above it too
+    page.write_text("ABOVE\n" + out + "BELOW\n", encoding="utf-8")
+
+    write_generated(page, "SECOND", "scrolls agent install", header="---\nx: 2\n---\n\n")
+    out = page.read_text(encoding="utf-8")
+    assert out.startswith("---\nx: 2\n---\n\n")  # header regenerated, still at byte 0
+    assert "ABOVE" not in out  # a header file does not preserve a user prefix
+    assert "FIRST" not in out  # generated region refreshed
+    assert "SECOND" in out
+    assert out.endswith("BELOW\n")  # the suffix annotation survived

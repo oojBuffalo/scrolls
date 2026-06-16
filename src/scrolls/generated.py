@@ -107,25 +107,42 @@ def has_user_content(text: str) -> bool:
     return regions is not None and bool(regions[0].strip() or regions[1].strip())
 
 
-def splice(existing: str | None, body: str, regenerated_by: str) -> str:
+def splice(
+    existing: str | None, body: str, regenerated_by: str, *, header: str = ""
+) -> str:
     """Render `body` into the fence, preserving any user regions of `existing`.
 
-    With no prior file (or a marker-less one) this is just ``fence(body)``; with
-    a fenced prior file the prefix and suffix user regions are spliced back
+    With no prior file (or a marker-less one) this is just ``header + fence(body)``;
+    with a fenced prior file the prefix and suffix user regions are spliced back
     unchanged around the freshly generated region.
+
+    `header` is generated content that must stay at the very top of the file —
+    YAML frontmatter, whose `---` has to be byte 0 for a skill page to parse
+    (`scrolls agent install`). It is *always* regenerated, so when a header is
+    given the region before the fence is treated as a stale header, not a user
+    prefix: the fresh header replaces it and only the suffix after `@end` is
+    preserved. With the default empty header both user regions are kept, as the
+    compiled `library/` pages need (their content can be annotated either side).
     """
     regions = user_regions(existing) if existing is not None else None
     prefix, suffix = regions if regions is not None else ("", "")
+    if header:
+        prefix = header
     return f"{prefix}{fence(body, regenerated_by)}{suffix}"
 
 
-def write_generated(path: Path, body: str, regenerated_by: str) -> None:
+def write_generated(
+    path: Path, body: str, regenerated_by: str, *, header: str = ""
+) -> None:
     """Write a generated page at `path`, preserving its user regions (ADR 0102).
 
     Reads any existing file first so a hand annotation outside the fence
     survives, then writes the spliced result. `body` is the fresh generated
-    content with no wrapping fence or trailing newline.
+    content with no wrapping fence or trailing newline. `header`, when given, is
+    a regenerated header pinned above the fence (see `splice`).
     """
     existing = path.read_text(encoding="utf-8") if path.exists() else None
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(splice(existing, body, regenerated_by), encoding="utf-8")
+    path.write_text(
+        splice(existing, body, regenerated_by, header=header), encoding="utf-8"
+    )

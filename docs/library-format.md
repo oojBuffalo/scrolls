@@ -479,9 +479,19 @@ three files — `agents/claude/SKILL.md`, `agents/codex/AGENTS.md`,
 skill frontmatter for Claude Code and Hermes and left plain for Codex
 (`test_skill_files_carry_frontmatter_and_commands`,
 `test_codex_file_is_plain_markdown_without_frontmatter`). They are
-regenerated templates, overwritten on every install run
-(`test_agent_install_regenerates_edited_files`): customize the copy you
-wire into your tool, not the originals.
+regenerated templates, but — like the compiled `library/` pages —
+**regeneration is refresh-safe** (`scrolls.generated`, ADR
+[0102](adr/0102-obsidian-second-brain-inspiration-and-refresh-safe-artifacts.md)):
+the shared body is the `@generated`…`@end` fenced region, so a reinstall
+refreshes it while an annotation appended after the `@end` marker survives
+(`test_agent_install_preserves_annotation_outside_the_fence`). The skill
+frontmatter is a regenerated header pinned at byte 0 (it has to be the first
+line to load as a skill), so for `SKILL.md` only a suffix annotation is kept;
+Codex's header-less `AGENTS.md` keeps a note on either side of the fence.
+A reinstall over a pre-sentinel or fully hand-rewritten file finds no fence to
+anchor on and overwrites it wholesale, restoring the template
+(`test_agent_install_regenerates_edited_files`). Customize the copy you
+wire into your tool, or annotate after the `@end` marker — not the body inside.
 `test_library_format_names_every_generated_artifact` keeps this section
 in sync with what the code actually writes.
 

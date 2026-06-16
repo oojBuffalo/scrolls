@@ -675,7 +675,13 @@ choice (ADRs 0004, 0005).
   once dropped into context.
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
-  (`tests/test_agents.py`).
+  (`tests/test_agents.py`). Regeneration is **refresh-safe** the same way the
+  KB compiler is (`generated.py`, ADR 0102): the shared command-reference body
+  is the fenced `@generated` region, so a reinstall refreshes it while a note
+  appended after the `@end` marker survives. Skill frontmatter is a regenerated
+  *header* pinned above the fence — its `---` must stay at byte 0 to load as a
+  skill — so for SKILL.md only a suffix annotation is preserved; Codex's
+  header-less AGENTS.md keeps an annotation either side, like a `library/` page.
 - **Doctor** (`doctor.py`, ADR 0026) — `scrolls doctor` diagnoses drift
   between the index and the file tree: duplicate url-hash items left by
   pre-normalization URLs (ADR 0023's deferred debt), recorded scroll

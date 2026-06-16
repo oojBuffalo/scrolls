@@ -29,9 +29,9 @@ Ordered queue. `→ Mn` marks the MVP slice; `cap N` marks the PRD capability.
 | --- | --- | --- |
 | H1 (2026-06-16) | **✓ shipped.** Sentinel boundary defined and implemented for compiled `library/` pages: pure helper `src/scrolls/generated.py` (`@generated`…`@end` fence, preserve user regions, tombstone stale-annotated pages) wired through `src/scrolls/kb.py`. Tests in `tests/test_generated.py`, `tests/test_kb.py`. See ADR 0102. | → M1, cap 6 |
 | H2 | **✓ shipped (with H1).** KB compiler writes every generated region inside the fence; a re-compile replaces only the fenced content and keeps annotations outside it. `docs/library-format.md` regenerated (pinned examples now assert the generated body; new sentinel-fence example added). MCP `get_tag_page` reads the heading from the fenced body. | → M1, cap 6 |
-| H3 (next) | **M1 extend to generated `agents/` files** (`src/scrolls/agents.py` / `agent install`): reuse `generated.write_generated` so a hand-annotated agent file is not clobbered. Note: `agents/` files round-trip through `_TARGETS` and are asserted by `tests/test_agents.py` + `test_library_format_names_every_generated_artifact` — update those. Tests. | → M1, cap 6 |
-| H4 | **M1 wrap-up:** add a line to `docs/architecture.md` describing the refresh-safe regeneration boundary; confirm ADR 0102 consequences match what shipped. Full `uv run pytest`. Commit. | → M1, cap 6 |
-| H5 | **M2 contract spec.** Write the anti-fabrication / search-completeness invariant into `docs/cli.md` (scope-honest results; "nothing found" ≠ "not checked") as the testable contract before touching code. | → M2, cap 7 |
+| H3 | **✓ shipped.** M1 extended to generated `agents/` files: `install_agent_docs` now writes through `generated.write_generated`, with skill frontmatter as a regenerated *header* pinned at byte 0 (new `header=` arg on `splice`/`write_generated`) and the shared body as the fenced region. A note after `@end` survives a reinstall; `SKILL.md` keeps a suffix annotation, header-less `AGENTS.md` either side. Tests in `tests/test_agents.py`, `tests/test_generated.py`; `_TARGETS` now maps relpath→header. | → M1, cap 6 |
+| H4 | **✓ shipped (with H3).** `docs/architecture.md` Agent-install entry now describes the refresh-safe boundary; `docs/library-format.md` agents section documents the contract and points at `test_agent_install_preserves_annotation_outside_the_fence`. ADR 0102 consequences confirmed: both `kb.py` and `agents.py` now carry the generated-vs-user boundary it predicted. Full `uv run pytest` green (2297). **M1 complete.** | → M1, cap 6 |
+| H5 (next) | **M2 contract spec.** Write the anti-fabrication / search-completeness invariant into `docs/cli.md` (scope-honest results; "nothing found" ≠ "not checked") as the testable contract before touching code. | → M2, cap 7 |
 | H6 | **M2 enforce on `search` + `list`.** A result over a filtered slice must not imply library-wide completeness; pin with `tests/test_search.py` / `tests/test_cli.py`. | → M2, cap 7 |
 | H7 | **M2 enforce on `context` + `related` + `works`.** Same scope-honesty; tests in the matching suites. | → M2, cap 7 |
 | H8 | **M2 enforce on `doctor`.** Custody report states what it did and did not verify (network-free vs would-need-refetch). Tests in `tests/test_doctor.py`. Full suite. Commit. | → M2, cap 1/7 |
@@ -49,9 +49,9 @@ cosmetic churn (CLAUDE.md, *Avoid trivial progress*).
 ## 3-day plan (tentative) — through 2026-06-19
 
 - **Day 1 (2026-06-16):** M1 (refresh-safe generated artifacts, ADR 0102)
-  shipped for compiled `library/` pages (H1+H2); remaining M1 is `agents/`
-  files (H3) and the architecture-doc line (H4). M2 (completeness invariant)
-  begins once M1 closes.
+  **complete** — shipped for compiled `library/` pages (H1+H2) and generated
+  `agents/` instruction files (H3), with the architecture/library-format docs
+  updated (H4). M2 (completeness invariant) begins next at H5.
 - **Day 2 (2026-06-17):** M2 finished and tested on every browse/audit surface;
   M3 (context budgets) shipped; M4 (custody bundle) designed with an ADR if the
   bundle format is consequential.
