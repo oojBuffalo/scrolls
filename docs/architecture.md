@@ -452,10 +452,13 @@ each command moves items between stages or derives artifacts from them.
   by construction (roadmap H123). Distilled from that map, the report also carries
   an **`attention`** member (`maintain.weakest_source`) — the single source with
   the most actionable loss (most `drifted` + `rotted`, tie-broken by most
-  `reference`-only then name), `{source, tiers, drift, reason}`, so the log flags
-  the one to act on without scanning every source; honest `null` when nothing
-  stands out (empty, single-source, or fully-clean — reference-only is a
-  tie-breaker, never a trigger), live-pass only like `by_source` (roadmap H119).
+  `reference`-only then name), `{source, tiers, drift, reason, command}`, so the
+  log flags the one to act on without scanning every source; the `command` is the
+  exact `scrolls verify --source <source>` recheck (roadmap H137) — the bridge to
+  the act, a recheck not a `doctor --fix` repair, so it rides `attention` beside
+  the source, never `suggested`. Honest `null` when nothing stands out (empty,
+  single-source, or fully-clean — reference-only is a tie-breaker, never a
+  trigger), live-pass only like `by_source` (roadmap H119).
 - `scrolls status` carries a one-line **custody headline** under its item
   counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
   the stale enrichment/summary counts — "how custody stands" without parsing a
@@ -1212,7 +1215,9 @@ choice (ADRs 0004, 0005).
   folds in, H121) so the log names which source's custody is weakest (or least
   covered), and distils it to a single **`attention`** member (`maintain.weakest_source`
   — the source with the most actionable loss, most `drifted`+`rotted` tie-broken by
-  most `reference`-only then name, with its tally and a one-line reason; `null` when
+  most `reference`-only then name, with its tally, a one-line reason, and the exact
+  `scrolls verify --source <source>` recheck `command` (roadmap H137 — the bridge to
+  the act, a recheck not a repair, so on `attention` not `suggested`); `null` when
   nothing stands out — empty, single-source, or fully-clean, roadmap H119); like
   `suggested` both are live-pass-only members (absent from the snapshot/log, so
   `--history`/`--trend` carry none). Like doctor, deliberately not exposed over MCP

@@ -611,6 +611,9 @@ def test_maintain_attention_converges_with_doctors_max_loss_source(scrolls_home,
     # and the flagged source's own tally rides along, == doctor's entry for it
     assert attention["tiers"] == by_source["web"]["tiers"]
     assert attention["drift"] == by_source["web"]["drift"]
+    # roadmap H137: the recheck command names exactly doctor's max-loss source —
+    # so the act `maintain` points at re-verifies the source the audit flagged.
+    assert attention["command"] == f"scrolls verify --source {attention['source']}"
 
 
 def test_maintain_attention_is_null_when_no_source_carries_loss(scrolls_home, capsys):

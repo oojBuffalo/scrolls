@@ -1614,6 +1614,20 @@ def test_weakest_source_picks_the_most_drifted_and_rotted():
     assert flagged["reason"] == "2 drifted, 1 rotted"
 
 
+def test_weakest_source_names_the_recheck_command():
+    # roadmap H137: the flagged source carries the exact `verify --source`
+    # command to re-check it — the bridge from "which source is weakest" (H119)
+    # to the act (`verify --source`, H125), so an unattended worker reads the
+    # command without assembling it. Names exactly the flagged source.
+    by_source = {
+        "arxiv": _source_tally(full=2, verified=1, drifted=1),  # loss 1
+        "web": _source_tally(full=3, drifted=2, rotted=1),       # loss 3 — weakest
+    }
+    flagged = weakest_source(by_source)
+    assert flagged["command"] == "scrolls verify --source web"
+    assert flagged["command"] == f"scrolls verify --source {flagged['source']}"
+
+
 def test_weakest_source_tie_broken_by_most_reference_then_name():
     # Equal loss → the lowest-fidelity source (most reference-only) is weaker.
     by_tie_on_reference = {
@@ -1672,6 +1686,13 @@ def test_maintain_report_flags_the_weakest_source(home, monkeypatch, capsys):
     assert attention["source"] == "web"
     assert attention["drift"]["drifted"] == 1
     assert attention["reason"] == "1 drifted"
+    # H137: the report names the exact recheck command, not just the source.
+    assert attention["command"] == "scrolls verify --source web"
+    # a recheck, not a `doctor --fix` repair — it rides `attention`, never the
+    # `suggested` repair block (the slice's load-bearing placement decision).
+    assert all(
+        s["command"] != attention["command"] for s in report["suggested"]
+    )
     # it is exactly `weakest_source` over the report's own per-source breakdown
     assert attention == weakest_source(report["by_source"])
 

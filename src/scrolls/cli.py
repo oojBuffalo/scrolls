@@ -1187,9 +1187,11 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
                 "by_source": by_source,
                 # The single weakest source (roadmap H119): the one carrying the
                 # most actionable loss (drifted + rotted), distilled from `by_source`
-                # so an unattended log flags it without scanning every source.
-                # `null` when nothing stands out (a clean, single-source, or empty
-                # library). Live-pass only, like `by_source`.
+                # so an unattended log flags it without scanning every source. Also
+                # carries the exact `scrolls verify --source <S>` recheck command
+                # (roadmap H137) — the bridge to the act. `null` when nothing stands
+                # out (a clean, single-source, or empty library). Live-pass only,
+                # like `by_source`.
                 "attention": weakest_source(by_source),
                 "delta": delta,
                 "issues": report["issues"],

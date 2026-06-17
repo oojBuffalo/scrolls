@@ -250,9 +250,15 @@ def weakest_source(
     `drifted` + `rotted` items (the sources *confirmed* to have moved or gone — the
     set a follow-up `verify --drift`/`media` targets), tie-broken by the most
     `reference`-only items (lowest fidelity), then the source name (so the pick is
-    deterministic). Returns ``{source, tiers, drift, reason}`` — the flagged
-    source's own tally (so the per-source picture rides along) plus a one-line
-    reason naming the loss that earned the flag.
+    deterministic). Returns ``{source, tiers, drift, reason, command}`` — the
+    flagged source's own tally (so the per-source picture rides along), a one-line
+    reason naming the loss that earned the flag, and (roadmap H137) the **exact
+    recheck command** (``scrolls verify --source <source>``, H125) — the bridge
+    from naming the weakest source to the act, so an unattended worker reads the
+    command without assembling it. The command names a *recheck* (verify), not a
+    `doctor --fix` repair, so it rides `attention` beside the source it names,
+    never the `suggested` block (which carries the structural-repair commands,
+    H40); it is `null` exactly when `attention` is (the whole block is absent).
 
     Honest absence (`None`), the report's first-run/empty posture, on three counts:
 
@@ -281,6 +287,10 @@ def weakest_source(
         "tiers": tally["tiers"],
         "drift": tally["drift"],
         "reason": _attention_reason(tally),
+        # H137: the exact act to re-check this source — a recheck, not a repair,
+        # so it rides `attention`, never `suggested`. Source slugs are single
+        # tokens (no shell-quoting needed), matching the `suggested` command form.
+        "command": f"scrolls verify --source {source}",
     }
 
 
