@@ -27,6 +27,7 @@ import scrolls.cli as cli
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts_by_source,
     custody_headline,
     latest_events,
     record_events,
@@ -51,6 +52,7 @@ from scrolls.maintain import (
     load_snapshot,
     log_path,
     read_log,
+    report_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1193,6 +1195,127 @@ def test_maintain_history_does_not_carry_suggestions(home, monkeypatch, capsys):
     runs = json.loads(capsys.readouterr().out)
     assert runs and all("suggested" not in run for run in runs)
     assert all("suggested" not in run["snapshot"] for run in runs)
+
+
+# --- per-source custody breakdown in the report (roadmap H123) -------------
+
+
+def _by_source_report(by_source):
+    """A doctor report carrying just the per-source custody breakdown."""
+    return {"custody": {"by_source": by_source}}
+
+
+def test_report_by_source_threads_the_doctor_audits_breakdown():
+    # The pure layer is a faithful read of the per-source map the audit produces.
+    by_source = {
+        "arxiv": {"tiers": {"full": 1}, "drift": {"verified": 1}},
+        "web": {"tiers": {"full": 2}, "drift": {"verified": 2}},
+    }
+    assert report_by_source(_by_source_report(by_source)) == by_source
+
+
+def test_report_by_source_on_a_report_without_a_breakdown_is_the_empty_map():
+    # Forward-compat / empty library: an absent block reads as the honest empty
+    # map, never a KeyError (the snapshot's degrade-safely posture, this axis).
+    assert report_by_source({"custody": {}}) == {}
+    assert report_by_source({}) == {}
+
+
+def test_maintain_report_carries_the_per_source_custody_breakdown(
+    home, monkeypatch, capsys
+):
+    """The report names each source's own custody tally — the per-source picture
+    the audit (`run_doctor`) already produces (H104), surfaced so an unattended
+    log shows *which* source's custody to target without re-running doctor."""
+    items = _held_topic()  # 1 arxiv + 2 web, all full-fidelity
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    by_source = report["by_source"]
+    # sorted source keys, one tally each (every recheck clean → verified)
+    assert list(by_source) == ["arxiv", "web"]
+    assert by_source["arxiv"]["tiers"]["full"] == 1
+    assert by_source["arxiv"]["drift"]["verified"] == 1
+    assert by_source["web"]["tiers"]["full"] == 2
+    assert by_source["web"]["drift"]["verified"] == 2
+    # it is exactly the breakdown this pass's doctor audit produces (no new read)
+    assert by_source == run_doctor(home)["custody"]["by_source"]
+
+
+def test_maintain_per_source_breakdown_sums_to_the_whole_library_custody_block(
+    home, monkeypatch, capsys
+):
+    """The H104 sum-to-whole posture on the maintenance surface: summing the
+    per-source tiers/postures re-counts the whole library — every item lands in
+    exactly one source group — so `by_source` can never disagree with the
+    `custody` block it sits beside (the documented `verified ≡ unchanged`)."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    # drift one web item so a source carries a non-trivial posture mix
+    drifted = items[1]  # a web item
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
+    assert main(["maintain", "--all"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    by_source = report["by_source"]
+    # tiers: summing the per-source tiers equals the whole-library `custody.tiers`
+    summed_tiers: dict[str, int] = {}
+    for tally in by_source.values():
+        for tier, n in tally["tiers"].items():
+            summed_tiers[tier] = summed_tiers.get(tier, 0) + n
+    assert summed_tiers == report["custody"]["tiers"]
+    # postures sum to the whole-library drift block (verified ≡ unchanged)
+    summed_drift: dict[str, int] = {}
+    for tally in by_source.values():
+        for posture, n in tally["drift"].items():
+            summed_drift[posture] = summed_drift.get(posture, 0) + n
+    whole = report["custody"]["drift"]
+    assert summed_drift["verified"] == whole["unchanged"]
+    assert summed_drift["drifted"] == whole["drifted"]
+    assert summed_drift["unverified"] == whole["unverified"]
+    # the web source carries the drift; the map equals the canonical per-source
+    # tally over the held library (so it can never desync from custody_counts)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    held = list_items(home.db_path)
+    assert by_source == custody_counts_by_source(held, latest_events(home.db_path))
+
+
+def test_maintain_per_source_breakdown_on_an_uninitialized_library_is_empty(
+    home, capsys
+):
+    """No library yet → the honest empty map (no source stands out), the
+    first-run/empty honesty the rest of the report keeps."""
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["by_source"] == {}
+
+
+def test_maintain_history_does_not_carry_the_per_source_breakdown(
+    home, monkeypatch, capsys
+):
+    """`by_source` rides the live pass, not the recorded snapshot: it is derived
+    fresh from this pass's audit (like `suggested` H40 and `scope`/`since` H83),
+    so `--history` (which replays snapshots) carries none and the log stays bare."""
+    _build(_held_topic())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("by_source" not in run for run in runs)
+    assert all("by_source" not in run["snapshot"] for run in runs)
+    # and not stored in the log either (the snapshot/log carry only the scalars)
+    assert all("by_source" not in run for run in read_log(log_path(home)))
 
 
 # --- suggest_repairs ≡ what `doctor --fix` actually repairs (roadmap H106) ---

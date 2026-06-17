@@ -104,6 +104,7 @@ from scrolls.maintain import (
     load_snapshot,
     log_path,
     read_log,
+    report_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1163,6 +1164,13 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
                 # so the worker's log reads it without assembling the raw counts.
                 # Converges by construction with the `custody` block it sits beside.
                 "headline": snapshot_headline(current),
+                # Per-source custody breakdown (roadmap H123): the `{tiers, drift}`
+                # tally split per source the audit already produced, so the log
+                # names *which* source's custody to target. Live-pass only (like
+                # `suggested`/`scope`): derived fresh from this pass's audit, never
+                # recorded in the snapshot/log, so `--history`/`--trend` carry none.
+                # Sums to the `custody` block beside it by construction (H104).
+                "by_source": report_by_source(report),
                 "delta": delta,
                 "issues": report["issues"],
                 # Actionable guidance, never an action: the explicit on-request

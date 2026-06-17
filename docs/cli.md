@@ -848,6 +848,19 @@ against doctor's *real* `fix=True` behavior (the categories routed to `doctor
 --fix` are exactly the ones it transitions to a repaired status), so a suggestion
 can never silently drift from what the command actually closes.
 
+The report also carries a **`by_source`** member — the per-source custody
+breakdown the audit already produces (`doctor`'s `custody.by_source`, the same
+`{tiers, drift}` aggregate split per source) — so the unattended log names *which*
+source's custody is weakest (most reference-only, most drifted: the source to
+target a `verify --drift` / `scrolls media` / recapture at) without re-running
+`doctor`. Source keys are sorted; because each per-source group folds through the
+same `custody_counts`, the breakdown **sums to the `custody` block beside it** by
+construction (every item lands in exactly one source group), with the documented
+`verified ≡ unchanged` mapping. Like `suggested` (and the recheck `scope`/`since`)
+it rides the **live pass only** — derived fresh from this pass's audit, never
+recorded in the snapshot/log — so `--history`/`--trend` carry none. An empty or
+uninitialized library is the honest empty map (no source stands out).
+
 The sharp custody point the delta makes visible (the dogfood proof's, recurring):
 detecting source drift moves the *drift posture* (`unverified` → `drifted`)
 **without lowering the integrity `score`** — raw is sacred, drift is a recorded
@@ -857,7 +870,7 @@ enrichment/summaries are reported, never a failure.
 
 ```console
 $ scrolls maintain --all --limit 50      # second run; force a whole-library recheck — one source has drifted
-{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}}}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first

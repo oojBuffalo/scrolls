@@ -182,6 +182,33 @@ def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
     return suggestions
 
 
+def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, int]]]:
+    """The per-source custody breakdown from this pass's doctor audit (roadmap H123).
+
+    `doctor`'s `custody` block carries a `by_source` map — the whole-library
+    fidelity-tier / drift-posture aggregate split per source (`custody.custody_counts_by_source`,
+    roadmap H104) — so the audit names *which* source's custody is weakest (most
+    reference-only, most drifted: the source to target a `verify --drift`/`media`/
+    recapture at). The scheduled worker's own `maintain` report distils only the
+    *whole-library* `custody_snapshot` (which drops `by_source`), so an unattended
+    log could not show the per-source picture without re-running `doctor`. This
+    threads the breakdown the audit already produces into the report.
+
+    A pure read of the report `run_doctor` returns — **no new ledger read**, the
+    map is already computed in the audit. Surfaced **live-pass only** (like
+    `suggest_repairs` H40 and the recheck `scope`/`since` H83): it is derived fresh
+    from this pass's audit, never recorded in the snapshot/log, so `--history` /
+    `--trend` (which replay recorded snapshots) carry none. Because each per-source
+    group folds through the same `custody_counts`, the breakdown sums to the
+    whole-library `custody` block the report carries beside it by construction
+    (the H104 sum-to-whole posture, per source — every item lands in exactly one
+    source group). Honest absence: a report without the block (an empty library, or
+    an older schema) reads as the empty map, never a `KeyError` — the module's
+    degrade-safely posture on this axis.
+    """
+    return dict(report.get("custody", {}).get("by_source", {}))
+
+
 def _scalar_delta(before: int | None, after: int | None) -> dict[str, Any]:
     """before/after/change for one count; change is null on the first run."""
     change = None if before is None or after is None else after - before
