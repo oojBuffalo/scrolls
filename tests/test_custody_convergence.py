@@ -63,6 +63,17 @@ asserted to equal the canonical `(get_fidelity, drift_posture)` and the JSON
 `list` surface — so the compiled library reads the same per-item custody picture
 an agent does.
 
+The **model-facing `scrolls context` bundle** is folded in the same way (roadmap
+H94). At the `full` budget each excerpt carries a per-source `_drift <posture> ·
+last seen <checked_at>_` tag (H62/H90) — the bundle an agent actually drops into
+its window — claimed to read the same `drift`/`last_checked` the inspect surface
+(`show`) does. The per-item section parses that tag back off the excerpt
+(`_context_excerpt_tags`, the way `_bundle_postures` parses the briefing) and
+asserts the `(posture, as-of-when)` an agent reads in each excerpt equals what
+`scrolls show` reports for that item — and `never re-checked` ⇔ the
+`unverified`/`null` honest absence — so the model-facing bundle's per-source
+custody can never silently desync from the inspect surface.
+
 Those surfaces all carry only the *latest* posture; `scrolls history` (roadmap
 H66) reads the *full* per-item ledger back. The per-item section also pins the
 tie (roadmap H70): the posture the head of the ledger `history` returns implies
@@ -600,6 +611,34 @@ def _bundle_last_checked(text):
     return stamps
 
 
+def _context_excerpt_tags(text):
+    """Map item id → (drift posture, last_checked) from the `full` context excerpts.
+
+    Each `full`-tier `scrolls context` excerpt carries an id/source meta line
+    (`` `<id>` · <source>[ · <path>] ``) followed by the per-source drift tag
+    `` _drift `<posture>` · last seen <checked_at>_ `` — or `· never re-checked`
+    when the ledger holds no verdict (roadmap H62/H90). Pair each id parsed off a
+    meta line with the posture/timestamp on the drift tag that follows it (a
+    classification tag may sit between, and is skipped), so the model-facing
+    bundle's per-excerpt custody can be compared against the JSON `show` surface.
+    The timestamp is `None` for a never-re-checked excerpt — the honest-absence
+    counterpart of the `unverified` posture and `show`'s `null` `last_checked`.
+    """
+    tags = {}
+    current = None
+    for line in text.splitlines():
+        meta = re.match(r"^`([^`]+)` · ", line)
+        if meta:
+            current = meta.group(1)
+            continue
+        drift = re.match(
+            r"^_drift `(\w+)` · (?:last seen (\S+)|never re-checked)_$", line)
+        if drift and current is not None:
+            tags[current] = (drift.group(1), drift.group(2))
+            current = None
+    return tags
+
+
 def _library_markers(text):
     """Map item title → (fidelity, drift, last_checked) from a compiled page's rows.
 
@@ -970,6 +1009,57 @@ def test_every_surface_agrees_on_an_items_last_checked(scrolls_home, capsys):
     assert related_ts == {
         item_id: ts for item_id, ts in canonical.items() if item_id != "web:1"
     }
+
+
+def test_context_excerpt_tags_agree_with_the_inspect_surface(scrolls_home, capsys):
+    # roadmap H94: H44/H62/H90 put the classification + drift + `last_checked` tags
+    # on the `full`-tier `context` excerpts — the bundle an agent actually drops into
+    # its window — each *claimed* to read the same as the `show`/`list` surfaces. That
+    # parity was pinned only obliquely (`test_context_excerpt_drift_matches_the_ledger
+    # _primitives` ties the tag to the ledger primitive, not to the inspect surface).
+    # Fold the model-facing bundle into the per-item invariant as a surface in its own
+    # right: over the four-posture fixture the `_drift <posture> · last seen <ts>` tag
+    # an agent reads in each excerpt must equal the `drift`/`last_checked` `scrolls
+    # show` reports for that item — and `never re-checked` ⇔ the `unverified`/`null`
+    # honest absence — so the per-source custody in the model-facing bundle can never
+    # silently desync from the inspect surface.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)
+    capsys.readouterr()
+
+    # the canonical per-item (posture, timestamp) over each item's latest verdict
+    verdicts = latest_events(db)
+    canonical = {
+        item.id: (
+            drift_posture(verdicts.get(item.id)),
+            last_checked(verdicts.get(item.id)),
+        )
+        for item in list_items(db)
+    }
+    # sanity: the fixture spans the four postures, three checked + one never — so the
+    # tag exercises both the `last seen <ts>` and the `never re-checked` honest absence
+    assert {posture for posture, _ in canonical.values()} == {
+        "verified", "drifted", "rotted", "unverified"}
+    assert canonical["web:4"] == ("unverified", None)  # never re-checked → null
+
+    # the model-facing bundle at the default `full` budget — each excerpt's drift tag
+    assert main(["context", "topic"]) == 0
+    context_tags = _context_excerpt_tags(capsys.readouterr().out)
+    # every in-scope item rendered an excerpt with a parsed tag (none silently dropped)
+    assert set(context_tags) == set(canonical)
+
+    # the inspect surface — `show` carries `drift` + `last_checked` per item (H61/H84)
+    show_tags = {}
+    for item_id in canonical:
+        assert main(["show", item_id]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        show_tags[item_id] = (payload["drift"], payload["last_checked"])
+
+    # the excerpt an agent reads, the inspect surface, and the ledger primitives all
+    # agree on each item's (posture, as-of-when) — per-source custody can't desync
+    assert context_tags == canonical
+    assert show_tags == canonical
 
 
 def test_per_item_drift_totals_the_facets_count(scrolls_home, capsys):

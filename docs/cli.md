@@ -272,7 +272,13 @@ Markdown — so a desync on any surface fails in one obvious place. The
 compiled `library/` list-page rows (H89) is parsed back off a compiled page and
 asserted to equal the canonical `(get_fidelity, drift_posture)` and the `scrolls
 list` surface — so the compiled library a human browses reads the same per-item
-custody picture an agent does.
+custody picture an agent does. The **model-facing `scrolls context` bundle** is
+folded in the same way (roadmap H94): at the `full` budget each excerpt carries a
+per-source `_drift <posture> · last seen <checked_at>_` tag (H62/H90), parsed back
+off the excerpt and asserted to equal the `drift`/`last_checked` `scrolls show`
+reports for that item (with `never re-checked` ⇔ the `unverified`/`null` honest
+absence) — so the per-source custody in the bundle an agent drops into its window
+can never silently desync from the inspect surface.
 
 The module also pins the **portable-custody** round-trip (roadmap H73): since
 the verify ledger travels (in the `export bundle` and as the whole-library
