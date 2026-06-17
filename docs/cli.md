@@ -306,6 +306,19 @@ read-side drill, by the shared `items_in_posture`); `verify --stale-before
 skips reference-only items identically (no baseline hash to diff). So the verify
 selections are a tested, actionable face of the custody read surfaces.
 
+The **scheduled** member of that family is pinned the same way (roadmap H111). A
+default `scrolls maintain` pass stale-bounds its recheck to the held items not
+seen since the last run (H83) — the boundary is the last recorded snapshot's
+`recorded_at` (`maintain.last_run_boundary`), and the set is `items_checked_before`
+at it, the *same* selector `verify --stale-before <ISO>` (H79) uses explicitly. The
+invariant captures (via a recording recapture stub) the set each pass actually
+re-verifies and asserts the set a default maintain pass targets equals the set
+`verify --stale-before <last-run recorded_at>` would, that the never-checked
+`--unverified` bucket is subsumed by it (trivially stale at any boundary), and that
+`maintain --all` ignores the boundary and rechecks the whole hash-bearing set (the
+H83 escape hatch). So maintain's recurring recheck is the self-timestamping face of
+the verify-selection family, not a parallel-implementation coincidence.
+
 ## Library lifecycle
 
 ### `scrolls init`

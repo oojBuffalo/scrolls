@@ -113,6 +113,20 @@ documented: `verify --drift <posture>` re-captures exactly the rows `list
 `doctor custody.drift.unverified` bucket; and every batch selection skips
 reference-only items identically — so the recheck set can never desync from the
 read enumeration.
+
+That section closes with the **scheduled** face of the same selector (roadmap
+H111): a default `scrolls maintain` pass stale-bounds its recheck to the held
+items not seen since the last run (H83), the boundary being the last recorded
+snapshot's `recorded_at` (`maintain.last_run_boundary`) and the set
+`items_checked_before` at it — the *same* selector `verify --stale-before <ISO>`
+(H79) uses explicitly. So the load-bearing tie: the set a default maintain pass
+re-verifies is exactly the set `verify --stale-before <last-run recorded_at>`
+would, captured by a recording recapture stub (the set each pass actually
+touches) over one mixed-staleness fixture. It also pins that the never-checked
+`--unverified` bucket is subsumed by that stale set (trivially stale at any
+boundary) and that `maintain --all` ignores the boundary and rechecks the whole
+hash-bearing set — so the scheduled recheck is the recurring, self-timestamping
+member of the verify-selection family, not a parallel-implementation coincidence.
 """
 
 import json
@@ -127,15 +141,24 @@ from scrolls.custody import (
     custody_counts,
     custody_headline,
     drift_posture,
+    items_checked_before,
     last_checked,
     latest_events,
+    parse_since,
     recheck_coverage,
     record_events,
     tally_custody,
+    unverified_items,
 )
 from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
 from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items
+from scrolls.maintain import (
+    last_run_boundary,
+    load_snapshot,
+    save_snapshot,
+    snapshot_path,
+)
 from scrolls.paths import get_paths
 
 
@@ -1575,3 +1598,147 @@ def test_every_batch_selection_skips_reference_only_items(scrolls_home, monkeypa
         assert main(argv) == 0
         rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
         assert "web:ref" not in rechecked
+
+
+# --- maintain's scheduled recheck ≡ the explicit verify selection (roadmap H111)
+#
+# A default `scrolls maintain` pass stale-bounds its recheck to the held items not
+# seen since the last run (H83): the boundary is the last recorded snapshot's
+# `recorded_at` (`maintain.last_run_boundary`), and the set is `items_checked_before`
+# at that boundary. `scrolls verify --stale-before <ISO>` (H79) is the *explicit*
+# act-side selection over the *same* `items_checked_before` selector. The
+# load-bearing tie: the set a scheduled pass re-verifies is exactly the set the
+# explicit recheck would over the boundary maintain derives — so maintain's
+# recurring recheck is the self-timestamping face of the verify-selection family
+# (the section above), not a parallel-implementation coincidence. Captured by a
+# recording recapture stub (the set each pass actually touches), so a refactor that
+# desynced the scheduled boundary from the explicit one fails here.
+
+# The boundary the crafted "last run" records; the fixture below partitions the
+# ledger around it (two verdicts before it → stale, one at and one after → fresh).
+_MAINTAIN_BOUNDARY = "2026-06-12T00:00:00+00:00"
+
+
+def _seed_mixed_staleness(db):
+    """Five held scrolls partitioned by ledger staleness against `_MAINTAIN_BOUNDARY`.
+
+    `web:1` carries an *old* verdict (2026-06-10, before the boundary → stale);
+    `web:2` one exactly *at* the boundary and `web:3` one *after* it (both fresh,
+    since `items_checked_before` is exclusive — checked at/after the boundary is
+    not stale); `web:4` is never re-checked (trivially stale at any boundary);
+    `web:ref` is reference-only (no `content_hash` → unverifiable, excluded from
+    every recheck). So the boundary's stale set is exactly the hash-bearing
+    {web:1, web:4}, a genuine partition (not all, not none).
+    """
+    for index in (1, 2, 3, 4):
+        insert_item(db, _item(
+            f"web:{index}", f"Topic scroll {index}",
+            extracted_text=f"topic body {index}", raw_text=f"<raw>topic {index}</raw>",
+            content_hash=f"sha256:{index}", tags=("topic",),
+        ))
+    insert_item(db, _item(
+        "web:ref", "Topic reference", stage="detected", tags=("topic",)))  # no hash
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-10T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),  # before boundary → stale
+        CustodyEvent("web:2", "2026-06-12T00:00:00+00:00", "unchanged",
+                     "sha256:2", "sha256:2", None),  # at boundary → fresh (exclusive)
+        CustodyEvent("web:3", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:3", "sha256:3", None),  # after boundary → fresh
+        # web:4 never checked → trivially stale; web:ref has no hash → unverifiable
+    ])
+
+
+def _record_recheck(monkeypatch, argv, capsys):
+    """Run a verify/maintain pass with a recording recapture stub; return the set
+    of item ids it actually re-captured — the set that pass *targeted*.
+
+    The recapture seam (`cli.live_recapture`) is the one network edge both `verify`
+    and `maintain` route their recheck through, so recording the ids it is called
+    with observes the targeted set directly, offline. Drains stdout (the pass
+    prints a report we don't need here).
+    """
+    seen = []
+    _stub_recapture(monkeypatch, lambda i: seen.append(i.id) or i)
+    assert main(argv) == 0
+    capsys.readouterr()
+    return set(seen)
+
+
+def test_maintain_default_recheck_targets_the_verify_stale_before_set(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # roadmap H111: the set a default `scrolls maintain` pass re-verifies is exactly
+    # the set `verify --stale-before <last-run recorded_at>` selects, over the
+    # boundary `last_run_boundary` derives off the recorded snapshot. Both go through
+    # the one `items_checked_before` selector; pin the behavioral tie end-to-end.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_mixed_staleness(db_a)
+
+    # the canonical stale set the boundary partitions (the shared primitive both use)
+    hash_bearing = [item for item in list_items(db_a) if item.content_hash]
+    verdicts = latest_events(db_a)
+    boundary = parse_since(_MAINTAIN_BOUNDARY)
+    canonical = {
+        item.id for item in items_checked_before(hash_bearing, verdicts, boundary)
+    }
+    assert canonical == {"web:1", "web:4"}  # old verdict + never-checked; 2/3 fresh, ref no hash
+    # the never-checked `--unverified` bucket is subsumed by the stale set
+    # (a never-checked item is trivially stale at any boundary, H79)
+    unverified = {item.id for item in unverified_items(hash_bearing, verdicts)}
+    assert unverified == {"web:4"}
+    assert unverified.issubset(canonical)
+
+    # record a "last run" whose `recorded_at` *is* the boundary, then confirm
+    # maintain derives exactly that boundary off the recorded snapshot
+    save_snapshot(snapshot_path(get_paths()), {"recorded_at": _MAINTAIN_BOUNDARY})
+    assert last_run_boundary(load_snapshot(snapshot_path(get_paths()))) == boundary
+    capsys.readouterr()
+
+    # the set a default maintain pass actually re-verifies (captured via the stub)
+    maintained = _record_recheck(monkeypatch, ["maintain"], capsys)
+
+    # the same fixture in a fresh library B, the explicit `verify --stale-before`
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    _seed_mixed_staleness(get_paths().db_path)
+    capsys.readouterr()
+    verified = _record_recheck(
+        monkeypatch, ["verify", "--stale-before", _MAINTAIN_BOUNDARY], capsys
+    )
+
+    # the scheduled pass and the explicit recheck select the same stale set
+    assert maintained == canonical
+    assert verified == canonical
+    assert maintained == verified
+
+
+def test_maintain_all_recheck_ignores_the_boundary(scrolls_home, monkeypatch, capsys):
+    # roadmap H111: `maintain --all` is the H83 escape hatch — it ignores the
+    # recorded boundary and rechecks the whole hash-bearing set (the `verify --all`
+    # behavior), regardless of staleness. So the boundary bounds the *default* pass,
+    # never the explicit whole-library one.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_staleness(db)
+
+    hash_bearing = {item.id for item in list_items(db) if item.content_hash}
+    boundary = parse_since(_MAINTAIN_BOUNDARY)
+    stale = {
+        item.id
+        for item in items_checked_before(
+            list_items(db), latest_events(db), boundary
+        )
+        if item.content_hash
+    }
+    assert stale == {"web:1", "web:4"} and stale < hash_bearing  # boundary excludes the fresh
+
+    # record a last run so a *default* pass would stale-bound — `--all` must override it
+    save_snapshot(snapshot_path(get_paths()), {"recorded_at": _MAINTAIN_BOUNDARY})
+    capsys.readouterr()
+
+    rechecked = _record_recheck(monkeypatch, ["maintain", "--all"], capsys)
+    # the whole hash-bearing set, strictly more than the stale set the boundary picks
+    assert rechecked == hash_bearing == {"web:1", "web:2", "web:3", "web:4"}
+    assert stale < rechecked
