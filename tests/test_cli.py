@@ -120,6 +120,9 @@ def _custody_headline(score):
             "rotted": 0,
             "error": 0,
         },
+        # the snapshot's recheck-coverage fraction (H115): an empty/uninitialized
+        # library has no verifiable held items, so the honest zeroed coverage
+        "coverage": {"verified": 0, "total": 0},
         "enrichment_stale": 0,
         "summaries_stale": 0,
     }

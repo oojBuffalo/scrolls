@@ -65,11 +65,17 @@ from scrolls.render import write_scroll
 # --- the delta layer (pure) -----------------------------------------------
 
 
-def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0):
-    """A minimal doctor report shaped like `run_doctor`'s custody block."""
+def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
+                   coverage=None):
+    """A minimal doctor report shaped like `run_doctor`'s custody block.
+
+    `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
+    member (roadmap H113); defaults to the honest zero when not specified.
+    """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
         "drifted": 0, "rotted": 0, "error": 0,
+        "coverage": coverage or {"verified": 0, "total": 0},
     }
     full_drift.update(drift)
     return {
@@ -90,6 +96,7 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         drift={"checked": 2, "unverified": 2, "drifted": 1, "unchanged": 1},
         enrichment_stale=2,
         summaries_stale=1,
+        coverage={"verified": 2, "total": 4},
     )
     snap = custody_snapshot(report)
     assert snap == {
@@ -99,9 +106,18 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
             "checked": 2, "unverified": 2, "unchanged": 1,
             "drifted": 1, "rotted": 0, "error": 0,
         },
+        "coverage": {"verified": 2, "total": 4},
         "enrichment_stale": 2,
         "summaries_stale": 1,
     }
+
+
+def test_custody_snapshot_coverage_defaults_to_zero_on_a_pre_h113_drift_block():
+    # A doctor report whose drift block predates the H113 coverage member reads
+    # the honest zeroed coverage, never a KeyError — the degrade-safely posture.
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["drift"]["coverage"]
+    assert custody_snapshot(report)["coverage"] == {"verified": 0, "total": 0}
 
 
 # --- snapshot_headline (the one-line custody picture, roadmap H103) --------
@@ -197,6 +213,50 @@ def test_delta_tolerates_a_baseline_missing_an_axis():
     # 'partial' is new this run; the baseline had none → before 0, change +1
     assert delta["tiers"]["partial"] == {"before": 0, "after": 1, "change": 1}
     assert delta["tiers"]["full"] == {"before": 2, "after": 2, "change": 0}
+
+
+def test_delta_reports_per_axis_coverage_change():
+    """Coverage is a count mapping like tiers/drift: the delta diffs it per-key,
+    so a worker reads how much more of the library got covered since last run."""
+    previous = {
+        "recorded_at": "2026-06-16T09:00:00+00:00",
+        "score": 100,
+        "tiers": {"full": 4},
+        "drift": {"checked": 1},
+        "coverage": {"verified": 1, "total": 4},
+    }
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 4}, {"checked": 3},
+                       coverage={"verified": 3, "total": 4})
+    )
+    delta = compute_delta(previous, current)
+    # two more verifiable items came to carry a verdict; the denominator held
+    assert delta["coverage"]["verified"] == {"before": 1, "after": 3, "change": 2}
+    assert delta["coverage"]["total"] == {"before": 4, "after": 4, "change": 0}
+
+
+def test_delta_coverage_on_first_run_is_null():
+    # no baseline → every coverage before/change is null, never a fabricated zero
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 2}, {}, coverage={"verified": 0, "total": 2})
+    )
+    delta = compute_delta(None, current)
+    assert delta["coverage"]["verified"] == {"before": None, "after": 0, "change": None}
+    assert delta["coverage"]["total"] == {"before": None, "after": 2, "change": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_coverage():
+    """A pre-H115 baseline (no `coverage` axis) reads as zero for that axis, never
+    null — the run happened, coverage was simply not yet tracked (ADR 0082)."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `coverage` key
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 2}, {"checked": 2},
+                       coverage={"verified": 2, "total": 2})
+    )
+    delta = compute_delta(previous, current)
+    assert delta["coverage"]["verified"] == {"before": 0, "after": 2, "change": 2}
+    assert delta["coverage"]["total"] == {"before": 0, "after": 2, "change": 2}
 
 
 def test_snapshot_round_trips_and_missing_reads_as_none(tmp_path):
@@ -302,12 +362,13 @@ def test_read_log_skips_a_corrupt_line_without_losing_the_good_ones(tmp_path):
 # --- the derived trend (pure, roadmap H46) --------------------------------
 
 
-def _run(recorded_at, score, drifted=0, rotted=0):
+def _run(recorded_at, score, drifted=0, rotted=0, verified=0, total=0):
     return {
         "recorded_at": recorded_at,
         "snapshot": {
             "score": score,
             "drift": {"drifted": drifted, "rotted": rotted},
+            "coverage": {"verified": verified, "total": total},
         },
         "delta": {},
     }
@@ -319,6 +380,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         trend = compute_trend(window)
         assert trend["posture"] == "insufficient-history"
         assert trend["score"] is None and trend["drift_change"] is None
+        assert trend["coverage_change"] is None  # no direction from one point
         assert trend["runs"] == len(window)
 
 
@@ -368,6 +430,45 @@ def test_trend_spans_first_to_last_across_the_whole_window():
     # first→last, not adjacent diffs: 100 → 95
     assert trend["score"] == {"first": 100, "last": 95, "change": -5}
     assert trend["posture"] == "regressing"
+
+
+def test_trend_reports_coverage_movement_first_to_last():
+    """The monotone-coverage progress a bounded recheck drives (H55/H83) shows in
+    the trend: more verifiable items came to carry a verdict across the window."""
+    trend = compute_trend(
+        [_run("t1", 100, verified=1, total=4), _run("t3", 100, verified=4, total=4)]
+    )
+    # 1 → 4 verified, denominator steady: the library got more covered
+    assert trend["coverage_change"] == {"verified": 3, "total": 0}
+    # coverage rising does NOT change the integrity-first posture (no drift, no
+    # score move → holding); coverage is a separate reported axis.
+    assert trend["posture"] == "holding"
+
+
+def test_trend_coverage_total_grows_as_verifiable_items_are_added():
+    # new captures widen the verifiable denominator first→last (Δtotal > 0)
+    trend = compute_trend(
+        [_run("t1", 100, verified=2, total=2), _run("t2", 100, verified=2, total=5)]
+    )
+    assert trend["coverage_change"] == {"verified": 0, "total": 3}
+
+
+def test_trend_coverage_movement_is_independent_of_the_posture():
+    """Coverage falling (a re-verify is overdue) while integrity holds is still
+    `holding` — coverage is reported, never an integrity-posture trigger (H46)."""
+    trend = compute_trend(
+        [_run("t1", 100, verified=4, total=4), _run("t2", 100, verified=2, total=4)]
+    )
+    assert trend["coverage_change"] == {"verified": -2, "total": 0}
+    assert trend["posture"] == "holding"
+
+
+def test_trend_coverage_reads_zero_for_a_pre_h115_endpoint():
+    """A window endpoint recorded before H115 (no `coverage` axis) reads 0, so the
+    coverage movement is still computed, never a crash."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, verified=3, total=3)])
+    assert trend["coverage_change"] == {"verified": 3, "total": 3}
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -892,6 +993,63 @@ def test_coverage_excludes_reference_only_items_from_the_denominator(
     report = json.loads(capsys.readouterr().out)
     verifiable = len(held) - 1  # the reference-only item is excluded
     assert report["recheck"]["coverage"] == {"verified": verifiable, "total": verifiable}
+
+
+# --- recheck coverage in the snapshot / trend (roadmap H115) --------------
+
+
+def test_snapshot_and_log_record_recheck_coverage(home, monkeypatch, capsys):
+    """The recorded snapshot (and the appended log entry) carry the recheck
+    `coverage` fraction, so `--history`/`--trend` can replay it — not just the
+    point-in-time figure on one pass's report (H109). The recorded coverage is
+    the post-maintenance audit's, which converges with the live recheck report's
+    (H113), so the two figures the one pass prints agree."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--limit", "1"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # one item rechecked → 1 of 3 verifiable covered, recorded in the snapshot
+    assert report["custody"]["coverage"] == {"verified": 1, "total": len(items)}
+    snap = load_snapshot(snapshot_path(home))
+    assert snap["coverage"] == {"verified": 1, "total": len(items)}
+    logged = read_log(log_path(home))
+    assert logged[-1]["snapshot"]["coverage"] == {"verified": 1, "total": len(items)}
+    # the snapshot coverage (the audit's) converges with the live recheck's (H113)
+    assert report["recheck"]["coverage"] == report["custody"]["coverage"]
+
+
+def test_history_and_trend_show_coverage_advancing_across_runs(
+    home, monkeypatch, capsys
+):
+    """Two bounded passes verify the never-checked tail one item at a time; the
+    `--history` runs replay each pass's recorded coverage and `--trend` reports
+    the net coverage movement — 'is the library getting more covered?'."""
+    items = _held_topic()  # three held items, none verified
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--limit", "1"]) == 0  # covers 1 of 3
+    capsys.readouterr()
+    assert main(["maintain", "--limit", "1"]) == 0  # the stale (never-checked) tail
+    capsys.readouterr()
+
+    # --history: each recorded run carries its own coverage fraction
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert [r["snapshot"]["coverage"]["verified"] for r in runs] == [1, 2]
+    assert all(r["snapshot"]["coverage"]["total"] == len(items) for r in runs)
+
+    # --trend: net coverage movement first→last (1 → 2 verified, denominator held)
+    assert main(["maintain", "--history", "--trend"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["trend"]["coverage_change"] == {"verified": 1, "total": 0}
+    # coverage rising does not move the integrity-first posture (no drift here)
+    assert payload["trend"]["posture"] == "holding"
 
 
 def test_unbounded_recheck_checks_the_whole_set_regardless_of_prior_verdicts(

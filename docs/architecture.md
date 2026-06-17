@@ -399,9 +399,13 @@ each command moves items between stages or derives artifacts from them.
   the snapshot the last run recorded at `<root>/.maintenance/last-run.json`. The
   composition already ships; the module owns only the new piece — `custody_snapshot`
   distils a doctor report into the comparable scalars (`score`, `tiers`, drift
-  posture, `enrichment_stale`/`summaries_stale`), `compute_delta` diffs this run's
+  posture, recheck `coverage` `{verified, total}` from `custody.drift.coverage`,
+  `enrichment_stale`/`summaries_stale`), `compute_delta` diffs this run's
   snapshot against the last (`first_run` when there is no baseline; a baseline
-  missing an axis reads zero, the ADR 0082 forward-compat posture). Report-only and
+  missing an axis reads zero, the ADR 0082 forward-compat posture). Recording
+  `coverage` in the snapshot (roadmap H115) is what carries the coverage-first
+  recheck's monotone progress into the trend — `--history`/`--trend` replay each
+  pass's coverage, not just a single report's point-in-time figure. Report-only and
   idempotent (custody §2.4): it records drift events and regenerates views but never
   repairs rows, reclassifies, or re-summarizes — `doctor --fix` / `classify --stale`
   / `kb --stale` stay the explicit on-request mutations; the dot-prefixed snapshot
@@ -419,7 +423,11 @@ each command moves items between stages or derives artifacts from them.
   completeness `[]` never regresses) whose `compute_trend` distils the first→last
   net `score`/drift movement into one `posture` — `regressing`/`improving`/`holding`,
   integrity-first; <2 runs is `insufficient-history` (a single point has no
-  direction). The pass report and each `--history`/`--trend` run also carry a
+  direction). `compute_trend` also reports a `coverage_change` (`{verified, total}`
+  net deltas, roadmap H115) — "is the library getting more covered?" — as a
+  *separate axis it deliberately keeps out of `posture`: coverage measures how much
+  has been checked, not how faithfully we hold it, so the integrity-first posture
+  rule is unchanged. The pass report and each `--history`/`--trend` run also carry a
   one-line **`headline`** — `maintain.snapshot_headline` renders the shared
   `custody.custody_headline` from the recorded snapshot (mapping its `unchanged`
   count to the `verified` posture), so the worker's log reads "how custody
@@ -1125,7 +1133,7 @@ choice (ADRs 0004, 0005).
   `verify --drift`/`media`/recapture there; the per-source tallies sum to the
   whole-library `custody` block and equal `facets fidelity`/`drift --source <name>`
   by construction (pinned in `tests/test_custody_convergence.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H119, H123) — `scrolls maintain`
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H115, H119, H123) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
   `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
@@ -1140,7 +1148,10 @@ choice (ADRs 0004, 0005).
   (`maintain.snapshot_headline` over the shared `custody.custody_headline`, H103).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
   the module owns only the snapshot/delta layer plus the append-only run log
-  (`log.jsonl`, read back by `maintain --history [N]` — the custody trend).
+  (`log.jsonl`, read back by `maintain --history [N]` — the custody trend). The
+  snapshot records the recheck `coverage` (H115), so `--history`/`--trend` replay
+  it across runs and `compute_trend` reports a `coverage_change` (`{verified,
+  total}` net deltas) — a separate axis kept out of the integrity-first `posture`.
   Report-only and idempotent — records drift events and regenerates views, never
   repairs rows or re-enriches — so it is a safe cron-able pass
   (`tests/test_maintain.py`). Because it repairs nothing itself, `suggest_repairs`

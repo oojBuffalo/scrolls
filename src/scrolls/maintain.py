@@ -14,8 +14,12 @@ It is stored at `root/.maintenance/last-run.json`, dot-prefixed so it is never a
 compiled `library/` page and never created by `init`; losing or corrupting it
 just means "first run" (no baseline), so the maintenance pass degrades safely.
 The snapshot carries only the custody-relevant scalars the delta compares —
-score, fidelity tiers, drift posture, and the stale enrichment/summary counts —
-so the diff stays small and the artifact is human-readable.
+score, fidelity tiers, drift posture, recheck coverage, and the stale
+enrichment/summary counts — so the diff stays small and the artifact is
+human-readable. Recheck coverage (the `{verified, total}` fraction of the
+verifiable held set, roadmap H115) rides the snapshot so `maintain --history` /
+`--trend` show the monotone-coverage progress the bounded recheck (H55/H83)
+drives across runs, not just a point-in-time figure on one report.
 
 The delta is **cross-run** (vs the previous recorded snapshot), not within-run:
 the authoritative snapshot is the *post-maintenance* state, so the maintenance
@@ -88,6 +92,14 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
 
     Reads only the report's custody view, never the structural repair counts —
     maintain reports custody posture, and `doctor` already owns structural drift.
+
+    Includes the recheck `coverage` (`{verified, total}` over the verifiable
+    held set, roadmap H113/H115) the audit's drift block carries, so the snapshot
+    records *how much* of the library is covered — the monotone-coverage progress
+    a bounded recheck (H55/H83) drives, made visible across `--history`/`--trend`,
+    not just on a single pass's report (H109). Read defensively (the module's
+    degrade-safely posture): a report whose drift block predates H113 reads the
+    honest zeroed `{verified: 0, total: 0}`, never a `KeyError`.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -95,6 +107,7 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "score": custody["score"],
         "tiers": dict(custody["tiers"]),
         "drift": {axis: drift[axis] for axis in _DRIFT_AXES},
+        "coverage": dict(drift.get("coverage", {"verified": 0, "total": 0})),
         "enrichment_stale": custody["enrichment"]["stale"],
         "summaries_stale": custody["summaries"]["stale"],
     }
@@ -332,6 +345,11 @@ def compute_delta(
         "score": scalar("score"),
         "tiers": mapping("tiers"),
         "drift": mapping("drift"),
+        # recheck coverage `{verified, total}` (H115): a count mapping like
+        # `tiers`/`drift`, so it diffs per-key. A baseline lacking it (a pre-H115
+        # snapshot) reads as zero for each key, never null — the run happened, the
+        # coverage was simply not yet tracked (the missing-axis posture, ADR 0082).
+        "coverage": mapping("coverage"),
         "enrichment_stale": scalar("enrichment_stale"),
         "summaries_stale": scalar("summaries_stale"),
     }
@@ -395,20 +413,32 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Distil a window of maintenance runs into a custody *trajectory* (H46).
 
     Reads only the first and last run's recorded snapshot in the window — the
-    net `score` change and the net drift/rot movement across the span — plus a
-    one-word `posture` so an unattended worker reads the direction directly,
-    without diffing entries itself. The rule, integrity-first:
+    net `score` change, the net drift/rot movement, and the net recheck-coverage
+    movement across the span — plus a one-word `posture` so an unattended worker
+    reads the direction directly, without diffing entries itself. The posture
+    rule is **integrity-first** — score, then confirmed drift:
 
     - a *drop* in `score` is `regressing` (we hold less faithfully than before);
     - else *more* drifted/rotted scrolls is `regressing` (the sources moved);
     - else a *rise* in `score` or *fewer* drifted/rotted is `improving`;
     - else `holding`.
 
+    ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115) is a
+    *separate* axis the worker reads alongside the posture — "is the library
+    getting more covered?" (Δ``verified`` up as bounded passes verify the
+    never-checked tail; Δ``total`` up as new verifiable items are added). It is
+    **deliberately not folded into `posture`**: coverage measures *how much has
+    been checked*, not *how faithfully we hold what we have*, so rising coverage
+    is not "improving" custody integrity and a steady library that simply has not
+    been re-checked is not "regressing". Keeping `posture` integrity-only leaves
+    the H46 rule unchanged; coverage is reported, never a posture trigger.
+
     Honest absence (the H21/H29 posture): a window of fewer than two runs is not
     a trajectory — a single point has no direction — so it carries null deltas
-    and `posture` ``insufficient-history``. A `score` that is ``None`` on either
-    end (an uninitialized-library run) yields a null score `change`, never a
-    fabricated zero; the drift movement is still computed (absent counts read 0).
+    (including ``coverage_change``) and `posture` ``insufficient-history``. A
+    `score` that is ``None`` on either end (an uninitialized-library run) yields a
+    null score `change`, never a fabricated zero; the drift and coverage movement
+    are still computed (absent counts read 0, so a pre-H115 endpoint reads 0).
     """
     n = len(runs)
     if n < 2:
@@ -417,6 +447,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "since": None,
             "score": None,
             "drift_change": None,
+            "coverage_change": None,
             "posture": "insufficient-history",
         }
 
@@ -432,6 +463,14 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         return drift.get("drifted", 0) + drift.get("rotted", 0)
 
     drift_change = _drift_total(last_snap) - _drift_total(first_snap)
+
+    def _coverage(snap: dict[str, Any], axis: str) -> int:
+        return snap.get("coverage", {}).get(axis, 0)
+
+    coverage_change = {
+        "verified": _coverage(last_snap, "verified") - _coverage(first_snap, "verified"),
+        "total": _coverage(last_snap, "total") - _coverage(first_snap, "total"),
+    }
 
     if score_change is not None and score_change < 0:
         posture = "regressing"
@@ -449,6 +488,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "since": first.get("recorded_at"),
         "score": {"first": first_score, "last": last_score, "change": score_change},
         "drift_change": drift_change,
+        "coverage_change": coverage_change,
         "posture": posture,
     }
 

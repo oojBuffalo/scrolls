@@ -779,10 +779,15 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
 4. **delta** — the custody change since the last run, compared against a snapshot
    recorded at `<root>/.maintenance/last-run.json`. The snapshot carries only the
    custody scalars the delta compares (`score`, fidelity `tiers`, the `drift`
-   posture, and the `enrichment_stale`/`summaries_stale` counts from doctor's
-   `custody.enrichment`/`custody.summaries` blocks). On the first run there is no
+   posture, the recheck `coverage` `{verified, total}` from the audit's
+   `custody.drift.coverage`, and the `enrichment_stale`/`summaries_stale` counts
+   from doctor's `custody.enrichment`/`custody.summaries` blocks). Recording
+   `coverage` in the snapshot is what lets `--history`/`--trend` replay the
+   *coverage trajectory* the coverage-first recheck drives, not just a
+   point-in-time figure on one pass's report. On the first run there is no
    baseline (`delta.first_run: true`, every `before`/`change` null); a baseline
-   missing an axis (an older snapshot) reads that axis as zero, never null.
+   missing an axis (an older snapshot, e.g. one written before `coverage` was
+   tracked) reads that axis as zero, never null.
 
 The report also carries a one-line **`headline`** — the shared
 `custody.custody_headline` (`_Custody: N scroll(s) · fidelity <tier counts> ·
@@ -815,12 +820,20 @@ envelope (the opt-in-envelope pattern, like `search --stats`, so the bare array
 stays the default and the completeness contract's empty `[]` never regresses).
 The `trend` distils the window's *direction* so a worker reads it without
 diffing entries: the net `score` change first→last, the net drift movement
-(Δ`drifted`+Δ`rotted`), and a one-word `posture` — `regressing` if the score
+(Δ`drifted`+Δ`rotted`), the net recheck-coverage movement (`coverage_change`,
+`{verified, total}` net deltas — "is the library getting more covered?", Δ
+`verified` up as bounded passes verify the never-checked tail, Δ`total` up as new
+verifiable items are added), and a one-word `posture` — `regressing` if the score
 dropped *or* more scrolls drifted/rotted (integrity-first), `improving` if the
-score rose or drift cleared, else `holding`. A window of fewer than two runs is
-not a trajectory, so it carries null deltas and `posture: insufficient-history`
-(honest absence). `--trend` only shapes a `--history` read; passed alone it is a
-usage error (exit 2), never a silently-ignored flag that runs a full pass.
+score rose or drift cleared, else `holding`. **`coverage_change` is a separate
+reported axis, not a `posture` input**: coverage measures *how much has been
+checked*, not *how faithfully we hold what we have*, so rising coverage is not
+"improving" integrity and a library simply overdue for a re-check is not
+"regressing" — `posture` stays integrity-only. A window of fewer than two runs is
+not a trajectory, so it carries null deltas (`score`, `drift_change`, and
+`coverage_change` all null) and `posture: insufficient-history` (honest absence).
+`--trend` only shapes a `--history` read; passed alone it is a usage error (exit
+2), never a silently-ignored flag that runs a full pass.
 
 This is **report-only and idempotent** (custody-vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or
