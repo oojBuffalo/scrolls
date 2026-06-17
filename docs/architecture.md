@@ -120,10 +120,16 @@ each command moves items between stages or derives artifacts from them.
   --drift <posture>` (roadmap H80) re-captures exactly the hash-bearing rows
   `list --drift <posture>` enumerates, so a worker re-checks the suspect set
   (`drifted`/`error`/`rotted`) instead of `--all`, and a recheck moves the
-  posture it targeted. The verify command now carries four batch selections over
-  this one trio of `custody` selectors — `--unverified` (`unverified_items`),
-  `--stale-before` (`items_checked_before`), and `--drift` (`items_in_posture`),
-  plus `--all` — the actionable face of the custody read surfaces. Beyond filtering, the per-item drift posture *rides* the
+  posture it targeted. The verify command now carries five batch selections over
+  these `custody` selectors — `--unverified` (`unverified_items`),
+  `--stale-before` (`items_checked_before`), `--drift` (`items_in_posture`), and
+  `--source` (the item-intrinsic `source` filter — the one selection that reads
+  no ledger, the act-side of `doctor`/`maintain`'s per-source `by_source`
+  breakdown and the verify-axis sibling of `list --source`, roadmap H125), plus
+  `--all` — the actionable face of the custody read surfaces; `verify --source
+  <S>` re-captures exactly `list --source <S>`'s held hash-bearing rows and
+  clears that source's `unverified` count in `doctor`'s `custody.by_source[S]`.
+  Beyond filtering, the per-item drift posture *rides* the
   primary browse rows themselves (roadmap H58): `items.item_summary` (→ `scrolls
   list` + MCP `list_scrolls`) and `search.SearchHit`/`hit_payload` (→ `scrolls
   search` + MCP `search_scrolls`) each carry a `drift` field beside `fidelity`,

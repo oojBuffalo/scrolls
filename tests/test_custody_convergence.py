@@ -1607,10 +1607,99 @@ def test_every_batch_selection_skips_reference_only_items(scrolls_home, monkeypa
         ["verify", "--unverified"],
         ["verify", "--stale-before", "2099-01-01T00:00:00+00:00"],
         ["verify", "--drift", "unverified"],
+        ["verify", "--source", "web"],
     ):
         assert main(argv) == 0
         rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
         assert "web:ref" not in rechecked
+
+
+def _seed_per_source_custody(db):
+    """Held scrolls across two sources, all never re-checked.
+
+    `web` holds two hash-bearing scrolls (web:1, web:2) and one reference-only
+    pointer (web:ref, no hash → unverifiable); `arxiv` holds one hash-bearing
+    scroll (arxiv:1). All start `unverified` (no ledger verdicts), so a
+    per-source recheck of `web` can clear exactly that source's unverified
+    bucket while `arxiv` stays untouched — the per-source counterpart of how
+    `--unverified` clears the whole-library bucket.
+    """
+    for index in (1, 2):
+        insert_item(db, _item(
+            f"web:{index}", f"Web scroll {index}",
+            extracted_text=f"web body {index}", raw_text=f"<raw>web {index}</raw>",
+            content_hash=f"sha256:web{index}",
+        ))
+    insert_item(db, _item(
+        "web:ref", "Web reference pointer", stage="detected"))  # no hash
+    insert_item(db, _item(
+        "arxiv:1", "Arxiv scroll one", source="arxiv",
+        url="https://arxiv.org/abs/2401.00001",
+        extracted_text="arxiv body", raw_text="<raw>arxiv</raw>",
+        content_hash="sha256:arxiv1",
+    ))
+
+
+def test_verify_source_rechecks_exactly_what_list_source_enumerates(scrolls_home, monkeypatch, capsys):
+    # the act-side ≡ read-side drill on the *source* axis (the verify-axis sibling
+    # of `list --source`, the H125 counterpart of the H54 `--drift` parity above):
+    # for every held source, `verify --source S` re-captures exactly `list --source S`'s
+    # held, hash-bearing rows. The reference-only web row is in the listing but has
+    # no baseline hash, so it is never re-captured — the row-vs-recheck distinction.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_per_source_custody(db)
+    capsys.readouterr()
+
+    # the held hash-bearing rows per source (reference-only web:ref excluded)
+    expected = {"web": {"web:1", "web:2"}, "arxiv": {"arxiv:1"}}
+
+    listed = {}
+    for source in ("web", "arxiv"):
+        assert main(["list", "--source", source]) == 0
+        rows = json.loads(capsys.readouterr().out)
+        listed[source] = {r["id"] for r in rows if r["fidelity"] != "reference"}
+    assert listed == expected
+    # `list --source web` carries the reference-only row too — verify drops it
+    assert main(["list", "--source", "web"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {
+        "web:1", "web:2", "web:ref"}
+
+    _stub_recapture(monkeypatch, lambda i: i)  # every re-check reads `unchanged`
+    for source in ("web", "arxiv"):
+        assert main(["verify", "--source", source]) == 0
+        rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+        assert rechecked == listed[source] == expected[source]
+
+
+def test_verify_source_clears_that_sources_unverified_bucket(scrolls_home, monkeypatch, capsys):
+    # re-verifying source web clears exactly that source's `unverified` count in
+    # doctor's `custody.by_source[web]` (the per-source counterpart of how
+    # `--unverified` clears the whole-library bucket, and `--drift` its posture):
+    # web's two hash-bearing rows move to `verified`, the reference-only one stays
+    # `unverified` (honestly — no baseline), and `arxiv` is untouched.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_per_source_custody(db)
+    capsys.readouterr()
+
+    main(["doctor"])
+    before = json.loads(capsys.readouterr().out)["custody"]["by_source"]
+    assert before["web"]["drift"]["unverified"] == 3  # web:1, web:2, web:ref
+    assert before["arxiv"]["drift"]["unverified"] == 1
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    assert main(["verify", "--source", "web"]) == 0
+    capsys.readouterr()
+
+    main(["doctor"])
+    after = json.loads(capsys.readouterr().out)["custody"]["by_source"]
+    assert after["web"]["drift"]["verified"] == 2  # the two hash-bearing rows
+    assert after["web"]["drift"]["unverified"] == 1  # only the reference-only one
+    assert after["arxiv"]["drift"]["unverified"] == 1  # other source untouched
+    # the per-source coverage tracks it: web now 2-of-2 verifiable covered
+    assert after["web"]["coverage"] == {"verified": 2, "total": 2}
+    assert after["arxiv"]["coverage"] == {"verified": 0, "total": 1}
 
 
 # --- maintain's scheduled recheck ≡ the explicit verify selection (roadmap H111)

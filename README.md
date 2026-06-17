@@ -122,7 +122,7 @@ uv run scrolls search <query> --source arxiv --category paper  # scope the ranke
 uv run scrolls search <query> --tag rust --concept "full text search"  # membership facets: tag case-insensitive, concept by slug
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
-uv run scrolls verify [id | --all | --unverified | --stale-before ISO | --drift POSTURE] [--limit N]  # re-capture held items and record a drift/rot custody event; selections re-check the whole library, only the never-checked, only those stale since a boundary, or only those at a drift posture (H51, H79, H80); as JSON
+uv run scrolls verify [id | --all | --unverified | --stale-before ISO | --drift POSTURE | --source S] [--limit N]  # re-capture held items and record a drift/rot custody event; selections re-check the whole library, only the never-checked, only those stale since a boundary, only those at a drift posture, or only one source (H51, H79, H80, H125); as JSON
 uv run scrolls history <id> [--limit N] [--since ISO] [--status V]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; three filter axes applied verdict → window → cap: --status (unchanged/drifted/rotted/error), --since (time), --limit (count); [] when never verified (H66, H69, H71, H77)
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON

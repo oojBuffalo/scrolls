@@ -295,16 +295,20 @@ facets, so the windowed backup loses nothing the whole one keeps.
 
 Finally, the module pins the **verify-selection family** (roadmap H81) — the
 *act* side of the same custody picture the read surfaces enumerate. `scrolls
-verify` carries four batch selections over one shared trio of `custody`
-selectors: `--unverified` (`unverified_items`), `--stale-before`
-(`items_checked_before`), and `--drift` (`items_in_posture`), plus `--all`. The
+verify` carries five batch selections over the same `custody` selectors:
+`--unverified` (`unverified_items`), `--stale-before` (`items_checked_before`),
+`--drift` (`items_in_posture`), and `--source` (the item-intrinsic `source`
+filter, the one selection that reads no ledger — roadmap H125), plus `--all`. The
 invariant asserts they relate as documented: `verify --drift <posture>`
 re-captures exactly the rows `list --drift <posture>` enumerates (the act-side ≡
-read-side drill, by the shared `items_in_posture`); `verify --stale-before
-<future>` re-checks a *superset* of `--unverified` and clears the same
-`doctor custody.drift.unverified` bucket it subsumes; and every batch selection
-skips reference-only items identically (no baseline hash to diff). So the verify
-selections are a tested, actionable face of the custody read surfaces.
+read-side drill, by the shared `items_in_posture`); `verify --source <S>`
+re-captures exactly `list --source <S>`'s held, hash-bearing rows and clears that
+source's `unverified` count in `doctor`'s `custody.by_source[S]` (the per-source
+counterpart of how `--unverified` clears the whole-library bucket); `verify
+--stale-before <future>` re-checks a *superset* of `--unverified` and clears the
+same `doctor custody.drift.unverified` bucket it subsumes; and every batch
+selection skips reference-only items identically (no baseline hash to diff). So
+the verify selections are a tested, actionable face of the custody read surfaces.
 
 The **scheduled** member of that family is pinned the same way (roadmap H111). A
 default `scrolls maintain` pass stale-bounds its recheck to the held items not
@@ -473,8 +477,10 @@ repair). It holds the fidelity `tiers` distribution, per-item integrity
 The custody block also carries a `by_source` map (roadmap H104) — the same
 fidelity-tier / drift-posture aggregate split *per source*, so the audit names
 *which* source's custody is weakest (most reference-only, most drifted) and an
-operator knows where to target a [`verify --drift`](#scrolls-verify-id) /
-[`media`](#scrolls-media) / recapture instead of enumerating per source by hand.
+operator knows where to target a [`verify --source`](#scrolls-verify-id) (the
+act-side that re-verifies exactly that source, roadmap H125),
+[`verify --drift`](#scrolls-verify-id) / [`media`](#scrolls-media) / recapture
+instead of enumerating per source by hand.
 Each entry is the `{tiers, drift}` shape the whole-library block uses (posture
 words — `verified` ≡ the ledger's `unchanged`) **plus** a per-source `coverage`
 `{verified, total}` (roadmap H121) — the per-source counterpart of the drift
@@ -570,7 +576,7 @@ the explicit refresh that re-synthesizes exactly the concepts reported here — 
 summary-axis counterpart of `classify --stale`
 (`test_kb_stale_clears_the_doctor_stale_signal`).
 
-### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE] [--limit N]`
+### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE | --source S] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
 copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
@@ -581,11 +587,13 @@ overwrites the original capture, so proving a source changed can never lose
 what was held.
 
 Exactly one *selection* is required — a single item `id`/URL, `--all`,
-`--unverified`, `--stale-before`, or `--drift` — never more than one
+`--unverified`, `--stale-before`, `--drift`, or `--source` — never more than one
 (`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`,
 `test_verify_rejects_all_and_unverified_together`,
 `test_verify_rejects_all_and_stale_before_together`,
-`test_verify_rejects_all_and_drift_together`). `--all` re-checks every
+`test_verify_rejects_all_and_drift_together`,
+`test_verify_rejects_all_and_source_together`,
+`test_verify_rejects_source_and_drift_together`). `--all` re-checks every
 held item carrying a captured `content_hash` to diff against — a reference-only
 or still-`detected` item has no baseline and is skipped. `--unverified` narrows
 that to only the hash-bearing items the ledger has *no* verdict for — the same
@@ -631,8 +639,27 @@ closed vocabulary (argparse `choices` — a typo is exit 2, never a silent empty
 skips reference-only items with no baseline
 (`test_verify_drift_skips_reference_only_items`).
 
-`--limit N` paces a large `--all`/`--unverified`/`--stale-before`/`--drift` run
-(oldest saved first), like `scrolls fetch` — so a bounded pass makes monotone
+`--source <S>` is the **per-source** recheck — the act-side of `doctor`'s
+`custody.by_source` / `maintain`'s `attention` per-source breakdown (which name
+*which* source's custody is weakest, most drifted, least covered), and the
+verify-axis sibling of `scrolls list --source`. It re-checks only the
+hash-bearing items from one source, so a worker re-verifies exactly the weakest
+source without `--all` re-checking the whole library. The set it re-checks is
+exactly `list --source S`'s held, hash-bearing rows (the shared item-intrinsic
+`source` filter — orthogonal to the ledger-driven selections, no ledger read;
+`test_verify_source_rechecks_exactly_the_list_source_hash_bearing_rows`,
+`test_verify_source_rechecks_exactly_what_list_source_enumerates`), so
+re-verifying a source clears exactly that source's `unverified` count in
+`doctor`'s `custody.by_source[S]`
+(`test_verify_source_clears_that_sources_unverified_bucket`). Unlike `--drift`,
+`--source` is an **open** vocabulary (sources are open-ended), so a source
+nothing is held for is an honest empty no-op, never an error
+(`test_verify_source_unknown_source_is_an_empty_noop`); like the other batch
+modes it skips reference-only items with no baseline
+(`test_verify_source_skips_reference_only_items`).
+
+`--limit N` paces a large `--all`/`--unverified`/`--stale-before`/`--drift`/`--source`
+run (oldest saved first), like `scrolls fetch` — so a bounded pass makes monotone
 coverage progress. A single `id` must itself hold a content hash
 (`test_verify_item_without_content_hash_is_an_error`).
 
@@ -671,6 +698,10 @@ $ scrolls verify --stale-before 2026-06-15   # only items not re-checked since t
 
 $ scrolls verify --drift drifted      # re-check only the items flagged drifted — did the source settle?
 {"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]}
+[exit 0]
+
+$ scrolls verify --source arxiv      # re-check only the weakest source doctor/maintain flagged
+{"checked": 2, "unchanged": 2, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "arxiv:2401.00001", "status": "unchanged", "prior_hash": "sha256:7c4d…", "observed_hash": "sha256:7c4d…", "detail": null}, {"id": "arxiv:2402.00002", "status": "unchanged", "prior_hash": "sha256:b81e…", "observed_hash": "sha256:b81e…", "detail": null}]}
 [exit 0]
 ```
 

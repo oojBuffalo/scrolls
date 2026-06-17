@@ -873,11 +873,20 @@ def build_parser() -> argparse.ArgumentParser:
         "(e.g. --drift drifted to re-confirm a changed source; oldest saved first)",
     )
     verify_parser.add_argument(
+        "--source",
+        default=None,
+        metavar="S",
+        help="Verify only held items from one source (e.g. web, arxiv) — the "
+        "act-side of doctor/maintain's per-source custody breakdown, so a worker "
+        "re-checks the weakest source without --all (oldest saved first)",
+    )
+    verify_parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Attempt at most N re-captures this run "
-        "(--all/--unverified/--stale-before/--drift only), oldest saved first",
+        "(--all/--unverified/--stale-before/--drift/--source only), oldest saved "
+        "first",
     )
 
     return parser
@@ -1038,7 +1047,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         return _cmd_verify(
             args.id, args.verify_all, args.unverified, args.limit, args.stale_before,
-            args.drift,
+            args.drift, args.source,
         )
     return 2  # pragma: no cover - argparse enforces a valid command
 
@@ -1779,6 +1788,7 @@ def _cmd_verify(
     limit: int | None = None,
     stale_before: str | None = None,
     drift: str | None = None,
+    source: str | None = None,
 ) -> int:
     """Re-capture items and record drift/rot custody events (ADR 0098).
 
@@ -1791,23 +1801,26 @@ def _cmd_verify(
     bucket doctor/facets/status report, made actionable), `--stale-before
     <ISO>` (the held, hash-bearing items whose newest verdict predates the
     boundary, plus the never-checked — the staleness-bounded recheck, the
-    act-side sibling of `history --since` / `export events --since`), or
+    act-side sibling of `history --since` / `export events --since`),
     `--drift <posture>` (the held, hash-bearing items currently at a chosen
     drift posture — the set `list --drift` enumerates and `facets drift`
-    counts, so a worker re-checks the suspect set instead of `--all`). `error`
-    (could-not-check) drives a nonzero exit; `drifted`/`rotted` are successful
-    checks that found a custody event.
+    counts, so a worker re-checks the suspect set instead of `--all`), or
+    `--source <S>` (the held, hash-bearing items from one source — the
+    act-side of doctor/maintain's per-source custody breakdown, the verify-axis
+    sibling of `list --source`, so a worker re-checks the weakest source
+    without `--all`). `error` (could-not-check) drives a nonzero exit;
+    `drifted`/`rotted` are successful checks that found a custody event.
     """
     paths = get_paths()
     selections = (
         ref is not None, verify_all, unverified, stale_before is not None,
-        drift is not None,
+        drift is not None, source is not None,
     )
     if sum(selections) != 1:
         print(
             json.dumps(
                 {"error": "verify needs exactly one of an item id, --all, "
-                 "--unverified, --stale-before, or --drift"}
+                 "--unverified, --stale-before, --drift, or --source"}
             ),
             file=sys.stderr,
         )
@@ -1837,8 +1850,9 @@ def _cmd_verify(
         if limit is not None:
             print(
                 json.dumps(
-                    {"error": "--limit paces --all/--unverified/--stale-before/--drift "
-                     "runs; drop it when verifying one item"}
+                    {"error": "--limit paces "
+                     "--all/--unverified/--stale-before/--drift/--source runs; "
+                     "drop it when verifying one item"}
                 ),
                 file=sys.stderr,
             )
@@ -1864,6 +1878,14 @@ def _cmd_verify(
         hash_bearing = [item for item in all_items if item.content_hash]
         if verify_all:
             items = hash_bearing
+        elif source is not None:
+            # `--source` is orthogonal to the ledger-driven selections: a plain
+            # item-intrinsic filter (the verify-axis sibling of `list --source`),
+            # so the rows it re-captures are exactly `list --source S`'s held,
+            # hash-bearing rows. Sources are open-ended (no closed vocabulary),
+            # so a source nothing is held for is an honest empty no-op, never an
+            # error. Preserves the oldest-saved-first order for `--limit`.
+            items = [item for item in hash_bearing if item.source == source]
         else:
             # The ledger-driven selections all read the latest verdict per item.
             # `--unverified` takes the held − verdicts set doctor's

@@ -599,6 +599,154 @@ def test_verify_rejects_all_and_drift_together(paths, capsys):
     assert "error" in json.loads(capsys.readouterr().err)
 
 
+# --- per-source recheck (--source S, H125) --------------------------------
+#
+# The act-side of doctor/maintain's per-source custody breakdown: re-capture
+# only the held, hash-bearing items from one source, so a worker re-checks the
+# weakest source (named by doctor `custody.by_source` / maintain `attention`)
+# without `--all` re-checking the whole library. The verify-axis sibling of
+# `list --source`; an open vocabulary (sources are open-ended), so a source
+# nothing is held for is an honest empty no-op, never an error.
+
+
+def _arxiv_item(arxiv_id, content_hash="sha256:ax"):
+    url = f"https://arxiv.org/abs/{arxiv_id}"
+    return _item(
+        url,
+        content_hash=content_hash,
+        id=make_item_id("arxiv", arxiv_id, url),
+        source="arxiv",
+        source_id=arxiv_id,
+    )
+
+
+def test_verify_source_selects_only_that_sources_items(paths, monkeypatch, capsys):
+    web_a = _item("https://example.com/a", content_hash="sha256:a")
+    web_b = _item("https://example.com/b", content_hash="sha256:b")
+    ax = _arxiv_item("2401.00001")
+    for it in (web_a, web_b, ax):
+        insert_item(paths.db_path, it)
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    exit_code = main(["verify", "--source", "web"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert [r["id"] for r in out["results"]] == [web_a.id, web_b.id]
+
+
+def test_verify_source_rechecks_exactly_the_list_source_hash_bearing_rows(
+    paths, monkeypatch, capsys
+):
+    # the set --source rechecks equals `list --source S`'s held, hash-bearing
+    # rows — the verify-axis ≡ read-axis drill on the source filter
+    web = _item("https://example.com/a", content_hash="sha256:a")
+    ax = _arxiv_item("2401.00002")
+    # a reference-only web item is in `list --source web` but has no baseline
+    ref = _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected",
+    )
+    for it in (web, ax, ref):
+        insert_item(paths.db_path, it)
+
+    main(["list", "--source", "web"])
+    listed = json.loads(capsys.readouterr().out)
+    listed_ids = {row["id"] for row in listed}
+    # `list --source web` returns every web row (the source filter), including
+    # the reference-only one; the held hash-bearing subset is just `web`.
+    assert listed_ids == {web.id, ref.id}
+    listed_hash_bearing = {row["id"] for row in listed if row["fidelity"] != "reference"}
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", "--source", "web"])
+    rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+    assert rechecked == listed_hash_bearing == {web.id}
+
+
+def test_verify_source_skips_reference_only_items(paths, monkeypatch, capsys):
+    # a reference-only capture from the source has no baseline to diff, so it is
+    # skipped like every other batch mode even though its source matches
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected"))
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--source", "web"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 1  # only the hash-bearing web item
+
+
+def test_verify_source_composes_with_limit(paths, monkeypatch, capsys):
+    for n in range(3):
+        insert_item(paths.db_path, _item(
+            f"https://example.com/{n}", content_hash=f"sha256:{n}"))
+    insert_item(paths.db_path, _arxiv_item("2401.00003"))  # other source, excluded
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--source", "web", "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2  # oldest saved first, the third web item left
+
+
+def test_verify_source_unknown_source_is_an_empty_noop(paths, monkeypatch, capsys):
+    # sources are open-ended, so an unheld source is the honest empty no-op,
+    # never an error or a closed-vocabulary rejection — and no network touched
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+
+    def explode(_):
+        raise AssertionError("recapture must not run for an unheld source")
+
+    _stub_recapture(monkeypatch, explode)
+    exit_code = main(["verify", "--source", "reddit"])  # nothing held for reddit
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_source_on_empty_library(scrolls_home, capsys):
+    exit_code = main(["verify", "--source", "web"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_source_clears_that_sources_unverified_bucket(paths, monkeypatch, capsys):
+    # re-verifying source S clears exactly that source's unverified count in
+    # doctor's custody.by_source[S] — the per-source counterpart of how
+    # --unverified clears the whole-library bucket
+    web = _item("https://example.com/a", content_hash="sha256:a")
+    ax = _arxiv_item("2401.00004")
+    insert_item(paths.db_path, web)
+    insert_item(paths.db_path, ax)
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--source", "web"])
+    capsys.readouterr()
+
+    main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    by_source = report["custody"]["by_source"]
+    assert by_source["web"]["drift"].get("unverified", 0) == 0  # web now covered
+    assert by_source["arxiv"]["drift"]["unverified"] == 1  # arxiv untouched
+
+
+def test_verify_source_id_and_source_together_is_an_error(paths, capsys):
+    exit_code = main(["verify", "abc123", "--source", "web"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_rejects_all_and_source_together(paths, capsys):
+    exit_code = main(["verify", "--all", "--source", "web"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_rejects_source_and_drift_together(paths, capsys):
+    exit_code = main(["verify", "--source", "web", "--drift", "drifted"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 # --- scrolls history <id> — the per-item custody ledger timeline (H66) -----
 #
 # `verify` appends an append-only event per check; `show`/`list` carry only the
