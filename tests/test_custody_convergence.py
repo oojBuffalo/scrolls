@@ -127,6 +127,22 @@ touches) over one mixed-staleness fixture. It also pins that the never-checked
 boundary) and that `maintain --all` ignores the boundary and rechecks the whole
 hash-bearing set — so the scheduled recheck is the recurring, self-timestamping
 member of the verify-selection family, not a parallel-implementation coincidence.
+
+The **per-source scheduled** face of the per-source aggregate is pinned the same
+way (roadmap H127/H129). H123 threads `doctor`'s `custody.by_source` map (the
+whole-library fidelity/drift aggregate split per source, H104) into the `maintain`
+report, and H119 distils it to the single weakest-source `attention` flag — each
+*claimed* to agree with the standalone audit because the report member is a pure
+read of the same `run_doctor` map. This pins both ties as first-class entries
+beside the H104 per-source-tally invariant: over the multi-source seed a `maintain
+--no-recheck` pass's report `by_source` equals `doctor`'s `custody.by_source` for
+the same post-maintenance library, `custody_counts_by_source` over the held items,
+and (per source) `facets fidelity`/`drift --source <name>` (H127); and its
+`attention.source` equals the source maximizing `drifted + rotted` in that map,
+with `attention` honestly `null` exactly when no source carries actionable loss
+(H129). `--no-recheck` keeps the pass network-free and the ledger pristine, so the
+maintain audit and a fresh `doctor` read the identical state — the scheduled
+worker's per-source picture can never silently desync from the audit it reads.
 """
 
 import json
@@ -139,6 +155,7 @@ from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
     custody_counts,
+    custody_counts_by_source,
     custody_headline,
     drift_posture,
     items_checked_before,
@@ -422,6 +439,146 @@ def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, cap
     assert main(["maintain", "--no-recheck"]) == 0
     recheck = json.loads(capsys.readouterr().out)["recheck"]
     assert recheck["coverage"] == canonical
+
+
+def test_maintain_by_source_converges_with_doctor_by_source(scrolls_home, capsys):
+    # roadmap H127: H123 threads `doctor`'s `custody.by_source` map into the
+    # `maintain` report (the report member is a pure read of the audit's map) and
+    # *claims* the two agree, but that tie is pinned only obliquely in
+    # `test_maintain.py` (the maintain member == a *re-run* doctor's map). Pin it as
+    # a first-class entry here, the home for per-source convergence (beside the H104
+    # `test_doctor_by_source_converges_with_the_per_source_tally_and_facets`): over
+    # the multi-source fidelity/drift seed, a `maintain --no-recheck` pass's report
+    # `by_source` equals `doctor`'s `custody.by_source` for the *same* post-maintenance
+    # library **and** `custody_counts_by_source` over the held items **and** (per
+    # source) `facets fidelity`/`drift --source <name>` — so the scheduled worker's
+    # per-source picture, the standalone audit, the canonical tally, and the browse
+    # facets are one number, asserted in one place. `--no-recheck` keeps the pass
+    # network-free and the ledger pristine, so the maintain audit and a fresh `doctor`
+    # read the identical state. The per-source-maintenance sibling of how H101 pinned
+    # the `stats.custody` family and H111 the stale-recheck convergence.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # the maintain report's per-source breakdown — a faithful read of its own audit
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_by_source = json.loads(capsys.readouterr().out)["by_source"]
+    assert set(maintain_by_source) == {"web", "arxiv"}
+
+    # 1. == doctor's own `custody.by_source` over the same post-maintenance library
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert maintain_by_source == doctor_by_source
+
+    # 2. == the canonical `custody_counts_by_source` tally over the held items
+    items = list_items(db)
+    verdicts = latest_events(db)
+    assert maintain_by_source == custody_counts_by_source(items, verdicts)
+
+    # 3. per source, the tiers/drift == `facets fidelity`/`drift --source <name>`
+    #    (the browse aggregate scoped to that source)
+    for source in ("web", "arxiv"):
+        fidelity = _facet_map(
+            compute_facets(db, field="fidelity", source=source)["facets"]["fidelity"])
+        drift = _facet_map(
+            compute_facets(db, field="drift", source=source)["facets"]["drift"])
+        assert fidelity == _nonzero(maintain_by_source[source]["tiers"])
+        assert drift == _nonzero(maintain_by_source[source]["drift"])
+
+
+def _max_loss_source(by_source):
+    """The source `weakest_source` flags, computed straight off doctor's per-source
+    map: the most `drifted` + `rotted` loss, tie-broken by most `reference`-only then
+    name — the documented ranking key (roadmap H119), re-derived from doctor's map so
+    the convergence is to the *audit's* picture, not maintain's own.
+    """
+    def _loss(tally):
+        drift = tally["drift"]
+        return drift["drifted"] + drift["rotted"]
+
+    return min(
+        by_source,
+        key=lambda s: (-_loss(by_source[s]), -by_source[s]["tiers"]["reference"], s),
+    )
+
+
+def test_maintain_attention_converges_with_doctors_max_loss_source(scrolls_home, capsys):
+    # roadmap H129: H119 distils `maintain`'s `attention` from the per-source
+    # `by_source` map and *claims* it flags the source doctor's audit would call
+    # weakest; H127 pins `maintain by_source ≡ doctor by_source`, but the
+    # *distillation* (which source `weakest_source` picks) is pinned only in
+    # `test_maintain.py` against the report's own map. Pin it as a first-class entry
+    # here, beside H127: a `maintain --no-recheck` pass's `attention.source` equals
+    # the source maximizing `drifted + rotted` in `doctor`'s `custody.by_source`
+    # (with the documented `reference`-then-name tie-break) — so the scheduled
+    # worker's single-source flag can never disagree with the standalone audit's
+    # per-source map. The `attention`-axis sibling of H127 (`by_source`).
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full2 drifted); arxiv is clean,
+    # so `web` is the unambiguous max-loss source the flag must name.
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    attention = json.loads(capsys.readouterr().out)["attention"]
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # sanity: the seed makes `web` the unambiguous max-loss source (1 drifted vs 0)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["drifted"] == 0
+    assert by_source["arxiv"]["drift"]["rotted"] == 0
+
+    # the flag names exactly doctor's max-loss source (a literal pick, not a
+    # tautology — `weakest_source` ranking by *least* loss would name `arxiv`)
+    assert attention is not None
+    assert attention["source"] == _max_loss_source(by_source) == "web"
+    # and the flagged source's own tally rides along, == doctor's entry for it
+    assert attention["tiers"] == by_source["web"]["tiers"]
+    assert attention["drift"] == by_source["web"]["drift"]
+
+
+def test_maintain_attention_is_null_when_no_source_carries_loss(scrolls_home, capsys):
+    # the honest-null gate (roadmap H129/H119): with ≥2 sources but no `drifted`/
+    # `rotted` item anywhere, `attention` is `null` — exactly when doctor's
+    # per-source map carries zero actionable loss across every source. Reference-only
+    # captures and never-checked items are the normal posture, never a trigger on
+    # their own — so a clean multi-source library flags nothing, converging with the
+    # audit that would.
+    main(["init"])
+    db = get_paths().db_path
+    # web: one verified + one never-checked; arxiv: one never-checked — no drift/rot
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1"))
+    insert_item(db, _item("web:2", "Topic two", extracted_text="b2",
+                          raw_text="<raw>2</raw>", content_hash="sha256:2"))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="a",
+                          raw_text="<raw>a</raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+        # web:2, arxiv:1 left unverified
+    ])
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+    # converges with doctor: no source in the per-source map carries any loss
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss, not the count
+    assert all(
+        tally["drift"]["drifted"] + tally["drift"]["rotted"] == 0
+        for tally in by_source.values()
+    )
 
 
 def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):

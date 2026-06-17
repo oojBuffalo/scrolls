@@ -323,6 +323,20 @@ re-verifies and asserts the set a default maintain pass targets equals the set
 H83 escape hatch). So maintain's recurring recheck is the self-timestamping face of
 the verify-selection family, not a parallel-implementation coincidence.
 
+The **per-source** picture the scheduled worker reports is pinned to the audit the
+same way (roadmap H127/H129). `scrolls maintain` carries a live-pass `by_source`
+breakdown (H123) and distils it to a single weakest-source `attention` flag (H119);
+both are pure reads of the `doctor` audit the pass already runs, so the invariant
+pins their convergence directly: over the multi-source seed a `maintain --no-recheck`
+pass's `by_source` equals `doctor`'s `custody.by_source`, `custody_counts_by_source`
+over the held items, and `facets fidelity`/`drift --source <name>` per source (H127);
+and its `attention.source` equals the source maximizing `drifted + rotted` in that
+map, with `attention` honestly `null` exactly when no source carries actionable loss
+(H129). `--no-recheck` keeps the pass network-free and the ledger pristine, so the
+scheduled worker's per-source picture and a fresh standalone audit read identical
+state — the per-source-maintenance counterpart of the `stats.custody` family (H101)
+and stale-recheck (H111) ties above.
+
 ## Library lifecycle
 
 ### `scrolls init`
