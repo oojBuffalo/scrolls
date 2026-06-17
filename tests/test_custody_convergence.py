@@ -352,11 +352,17 @@ def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls
     by_source = run_doctor(get_paths())["custody"]["by_source"]
     assert set(by_source) == {"web", "arxiv"}
 
-    # 1. each per-source tally == custody_counts over that source's items, and ==
-    #    facets fidelity/drift scoped to that source (the browse aggregate).
+    # 1. each per-source tally's tiers/drift == custody_counts over that source's
+    #    items, and == facets fidelity/drift scoped to that source (the browse
+    #    aggregate); the per-source coverage == recheck_coverage over that source's
+    #    hash-bearing items (the coverage-axis counterpart, roadmap H121).
     for source in ("web", "arxiv"):
         members = [item for item in items if item.source == source]
-        assert by_source[source] == custody_counts(members, verdicts)
+        canonical = custody_counts(members, verdicts)
+        assert by_source[source]["tiers"] == canonical["tiers"]
+        assert by_source[source]["drift"] == canonical["drift"]
+        hash_bearing = [item for item in members if item.content_hash]
+        assert by_source[source]["coverage"] == recheck_coverage(hash_bearing, verdicts)
         fidelity = _facet_map(
             compute_facets(db, field="fidelity", source=source)["facets"]["fidelity"])
         drift = _facet_map(
@@ -380,6 +386,13 @@ def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls
     custody = run_doctor(get_paths())["custody"]
     assert summed_tiers == custody["tiers"]
     assert summed_drift == _posture_from_ledger_counts(custody["drift"])
+    # 3. the per-source coverage sums to the whole-library `drift.coverage` (H121,
+    #    the coverage-axis sibling of the tiers/drift sum-to-whole above).
+    summed_coverage = {"verified": 0, "total": 0}
+    for counts in by_source.values():
+        summed_coverage["verified"] += counts["coverage"]["verified"]
+        summed_coverage["total"] += counts["coverage"]["total"]
+    assert summed_coverage == custody["drift"]["coverage"]
 
 
 def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):

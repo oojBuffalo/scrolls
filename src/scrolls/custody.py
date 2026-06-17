@@ -697,25 +697,45 @@ def custody_counts(
 def custody_counts_by_source(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, dict[str, int]]]:
-    """Per-source fidelity-tier / drift-posture counts (roadmap H104).
+    """Per-source fidelity-tier / drift-posture counts + coverage (roadmap H104, H121).
 
     `custody_counts` grouped by `source`: a map from source name to that source's
-    own `{"tiers": …, "drift": …}` tally, source keys in sorted order. Used by
-    `doctor`'s ``custody.by_source`` block so the audit names *which* source's
-    custody is weakest (most reference-only, most drifted) — the source to target a
-    `verify --drift`/`media`/recapture at. Because each group folds through the same
-    `custody_counts`, the per-source tallies sum to `custody_counts(items, verdicts)`
+    own `{"tiers": …, "drift": …, "coverage": …}` tally, source keys in sorted
+    order. Used by `doctor`'s ``custody.by_source`` block (and the `maintain` report
+    that faithfully reads it, H123) so the audit names *which* source's custody is
+    weakest (most reference-only, most drifted) — the source to target a
+    `verify --drift`/`media`/recapture at.
+
+    Each entry carries the `{tiers, drift}` of `custody_counts` **plus** a per-source
+    `coverage` ``{verified, total}`` (roadmap H121) — the per-source counterpart of
+    the whole-library `drift.coverage` (H113): of that source's *verifiable*
+    (hash-bearing) held items, how many carry a ledger verdict. A reference-only
+    capture has no baseline hash to diff, so it is excluded from a source's
+    denominator (coverage can reach full, never stuck below 100% on the unverifiable),
+    and the same shared `recheck_coverage` primitive backs it as backs the
+    whole-library figure — so the per-source coverage names *which* source is least
+    *covered* (most never-checked), the coverage-axis counterpart of the drift the
+    tiers/drift maps already surface.
+
+    Because each group folds through the same `custody_counts` **and** the same
+    `recheck_coverage`, the per-source tallies sum to `custody_counts(items, verdicts)`
     (the whole-library `custody` block) by construction — every item lands in exactly
     one source group, so summing the groups re-counts the whole library (the H50
-    convergence posture, per source). An empty scope is the honest empty map.
+    convergence posture, per source) — and the per-source coverage sums to the
+    whole-library `recheck_coverage` over the hash-bearing held set. An empty scope is
+    the honest empty map.
     """
     groups: dict[str, list[ScrollItem]] = {}
     for item in items:
         groups.setdefault(item.source, []).append(item)
-    return {
-        source: custody_counts(members, verdicts)
-        for source, members in sorted(groups.items())
-    }
+    result: dict[str, dict[str, dict[str, int]]] = {}
+    for source, members in sorted(groups.items()):
+        counts = custody_counts(members, verdicts)
+        counts["coverage"] = recheck_coverage(
+            [m for m in members if m.content_hash], verdicts
+        )
+        result[source] = counts
+    return result
 
 
 def render_custody_headline(

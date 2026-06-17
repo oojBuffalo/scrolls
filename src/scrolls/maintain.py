@@ -215,9 +215,12 @@ def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, in
     group folds through the same `custody_counts`, the breakdown sums to the
     whole-library `custody` block the report carries beside it by construction
     (the H104 sum-to-whole posture, per source — every item lands in exactly one
-    source group). Honest absence: a report without the block (an empty library, or
-    an older schema) reads as the empty map, never a `KeyError` — the module's
-    degrade-safely posture on this axis.
+    source group). Each entry also carries the per-source ``coverage``
+    (``{verified, total}``, roadmap H121) the audit folds into `custody_counts_by_source`,
+    so the scheduled worker's per-source picture names which source is least
+    *covered* too, at parity with `doctor`. Honest absence: a report without the block
+    (an empty library, or an older schema) reads as the empty map, never a `KeyError`
+    — the module's degrade-safely posture on this axis.
     """
     return dict(report.get("custody", {}).get("by_source", {}))
 

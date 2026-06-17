@@ -389,7 +389,13 @@ def _check_custody_drift(
     `custody_counts_by_source`), so the audit names *which* source's custody is
     weakest. It reads off the *same* `latest` this block aggregates — no second
     ledger read — so the per-source tallies sum to this block's counts by
-    construction.
+    construction. Each per-source entry also carries its own ``coverage``
+    (``{verified, total}``, roadmap H121) — of that source's hash-bearing held items,
+    how many carry a verdict — the per-source counterpart of this block's whole-library
+    ``coverage``, so the audit names not just which source has the most drift but
+    which is least *covered* (most never-checked); the per-source coverage sums to
+    ``drift.coverage`` by construction (the same `recheck_coverage` over each source's
+    hash-bearing slice of the one held set).
     """
     drift = report["custody"]["drift"]
     held = {item.id for item in items}

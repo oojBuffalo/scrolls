@@ -550,6 +550,61 @@ def test_custody_counts_by_source_empty_is_the_empty_map():
     assert custody_counts_by_source([], {}) == {}
 
 
+# --- per-source recheck coverage in the breakdown (roadmap H121) ------------
+
+
+def test_custody_counts_by_source_carries_per_source_coverage():
+    # each source carries its own coverage {verified, total} over that source's
+    # verifiable (hash-bearing) held items — == recheck_coverage on them.
+    items = [
+        _src("web:a", "web", content_hash="h1"),  # hash-bearing, verified below
+        _src("web:b", "web", content_hash=None, extracted_text=None, stage="detected"),
+        _src("arxiv:1", "arxiv", content_hash="h2"),  # hash-bearing, never verified
+    ]
+    verdicts = {"web:a": CustodyEvent("web:a", "t", "unchanged", "h1", "h1")}
+    by_source = custody_counts_by_source(items, verdicts)
+    # web: one hash-bearing item with a verdict; the reference-only one excluded
+    assert by_source["web"]["coverage"] == {"verified": 1, "total": 1}
+    assert by_source["arxiv"]["coverage"] == {"verified": 0, "total": 1}
+    # and each equals recheck_coverage over that source's hash-bearing members
+    for source in ("web", "arxiv"):
+        members = [i for i in items if i.source == source and i.content_hash]
+        assert by_source[source]["coverage"] == recheck_coverage(members, verdicts)
+
+
+def test_custody_counts_by_source_coverage_sums_to_the_whole_recheck_coverage():
+    # the coverage-axis sum-to-whole (the H121 sibling of the tiers/drift one):
+    # summing the per-source coverage re-counts recheck_coverage over the whole
+    # hash-bearing held set, so by_source can never disagree with it.
+    items = [
+        _src("web:a", "web", content_hash="h1"),
+        _src("web:b", "web", content_hash="h2"),
+        _src("web:ref", "web", content_hash=None, extracted_text=None, stage="detected"),
+        _src("arxiv:1", "arxiv", content_hash="h3"),
+    ]
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "t", "unchanged", "h1", "h1"),
+        "arxiv:1": CustodyEvent("arxiv:1", "t", "drifted", "h3", "x"),
+    }
+    by_source = custody_counts_by_source(items, verdicts)
+    summed = {"verified": 0, "total": 0}
+    for counts in by_source.values():
+        summed["verified"] += counts["coverage"]["verified"]
+        summed["total"] += counts["coverage"]["total"]
+    hash_bearing = [i for i in items if i.content_hash]
+    assert summed == recheck_coverage(hash_bearing, verdicts)
+    assert summed == {"verified": 2, "total": 3}  # a + arxiv verified; b not; ref excluded
+
+
+def test_custody_counts_by_source_coverage_excludes_reference_only():
+    # a source holding only reference-only items has no verifiable items, so its
+    # coverage denominator is 0 (can reach full, never stuck below 100%).
+    items = [_src("web:ref", "web", content_hash=None, extracted_text=None,
+                  stage="detected")]
+    by_source = custody_counts_by_source(items, {})
+    assert by_source["web"]["coverage"] == {"verified": 0, "total": 0}
+
+
 # --- render_custody_headline (the shared one-line formatter, roadmap H103) ---
 
 

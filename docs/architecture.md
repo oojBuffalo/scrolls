@@ -1137,8 +1137,13 @@ choice (ADRs 0004, 0005).
   (most reference-only, most drifted) and an operator targets a
   `verify --drift`/`media`/recapture there; the per-source tallies sum to the
   whole-library `custody` block and equal `facets fidelity`/`drift --source <name>`
-  by construction (pinned in `tests/test_custody_convergence.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H115, H119, H123) — `scrolls maintain`
+  by construction (pinned in `tests/test_custody_convergence.py`). Each per-source
+  entry also carries its own `coverage` `{verified, total}` (`custody.recheck_coverage`
+  over that source's hash-bearing items, roadmap H121) — the per-source counterpart
+  of the drift block's whole-library coverage, so the audit names which source is
+  least *covered* (most never-checked) too; the per-source coverage sums to
+  `drift.coverage` by construction.
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H115, H119, H121, H123) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
   `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
@@ -1173,8 +1178,9 @@ choice (ADRs 0004, 0005).
   missing media routed to `scrolls media` — so the suggestion can never silently
   drift from what the command repairs. The report also surfaces the audit's
   per-source custody breakdown (`maintain.report_by_source` → `doctor`'s
-  `custody.by_source`, roadmap H123) so the log names which source's custody is
-  weakest, and distils it to a single **`attention`** member (`maintain.weakest_source`
+  `custody.by_source`, roadmap H123 — including the per-source `coverage` the audit
+  folds in, H121) so the log names which source's custody is weakest (or least
+  covered), and distils it to a single **`attention`** member (`maintain.weakest_source`
   — the source with the most actionable loss, most `drifted`+`rotted` tie-broken by
   most `reference`-only then name, with its tally and a one-line reason; `null` when
   nothing stands out — empty, single-source, or fully-clean, roadmap H119); like

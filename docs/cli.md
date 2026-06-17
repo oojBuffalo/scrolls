@@ -476,10 +476,18 @@ fidelity-tier / drift-posture aggregate split *per source*, so the audit names
 operator knows where to target a [`verify --drift`](#scrolls-verify-id) /
 [`media`](#scrolls-media) / recapture instead of enumerating per source by hand.
 Each entry is the `{tiers, drift}` shape the whole-library block uses (posture
-words — `verified` ≡ the ledger's `unchanged`), keyed by source name in sorted
-order; an empty library is the honest empty map. Built from the *same*
-`custody.custody_counts` grouped by source, so the per-source tallies sum to the
-whole-library `custody` block by construction (the convergence pinned in
+words — `verified` ≡ the ledger's `unchanged`) **plus** a per-source `coverage`
+`{verified, total}` (roadmap H121) — the per-source counterpart of the drift
+block's whole-library `coverage`: of that source's *verifiable* (hash-bearing)
+held items, how many carry a verdict. So the audit names not just which source
+has the most drift but which is least *covered* (most never-checked); a
+reference-only capture has no baseline hash, so it is excluded from a source's
+denominator (coverage can reach full, never stuck below 100% on the
+unverifiable). Entries are keyed by source name in sorted order; an empty library
+is the honest empty map. Built from the *same* `custody.custody_counts` /
+`custody.recheck_coverage` grouped by source, so the per-source tiers/drift
+tallies sum to the whole-library `custody` block and the per-source coverage sums
+to `drift.coverage` by construction (the convergence pinned in
 `tests/test_custody_convergence.py`,
 `test_doctor_by_source_converges_with_the_per_source_tally_and_facets`, where each
 per-source tally also equals `facets fidelity`/`drift --source <name>`).
@@ -874,10 +882,11 @@ can never silently drift from what the command actually closes.
 
 The report also carries a **`by_source`** member — the per-source custody
 breakdown the audit already produces (`doctor`'s `custody.by_source`, the same
-`{tiers, drift}` aggregate split per source) — so the unattended log names *which*
-source's custody is weakest (most reference-only, most drifted: the source to
-target a `verify --drift` / `scrolls media` / recapture at) without re-running
-`doctor`. Source keys are sorted; because each per-source group folds through the
+`{tiers, drift, coverage}` aggregate split per source, including the per-source
+`coverage` `{verified, total}` of roadmap H121) — so the unattended log names
+*which* source's custody is weakest (most reference-only, most drifted, or least
+*covered*: the source to target a `verify --drift` / `scrolls media` / recapture
+at) without re-running `doctor`. Source keys are sorted; because each per-source group folds through the
 same `custody_counts`, the breakdown **sums to the `custody` block beside it** by
 construction (every item lands in exactly one source group), with the documented
 `verified ≡ unchanged` mapping. Like `suggested` (and the recheck `scope`/`since`)
@@ -909,7 +918,7 @@ enrichment/summaries are reported, never a failure.
 
 ```console
 $ scrolls maintain --all --limit 50      # second run; force a whole-library recheck — one source has drifted
-{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}}}, "attention": {"source": "web", "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "reason": "1 drifted"}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}}}, "attention": {"source": "web", "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "reason": "1 drifted"}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first

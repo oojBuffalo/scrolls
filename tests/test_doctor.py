@@ -583,6 +583,65 @@ def test_custody_by_source_never_feeds_issues_or_the_exit_code(paths):
     assert report["issues"] == 0
 
 
+def test_custody_by_source_carries_per_source_coverage(paths):
+    # roadmap H121: each by_source entry carries its own coverage {verified, total}
+    # over that source's verifiable (hash-bearing) held items — so the audit names
+    # which source is least *covered* (most never-checked), not just most drifted.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/post", fetched=True,
+        extracted_text="body", content_hash="sha256:old"))
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    insert_item(paths.db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", source_id="1",
+        url="https://arxiv.org/abs/1", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper", content_hash="sha256:p", stage="fetched"))
+    record_events(paths.db_path, [
+        CustodyEvent(_web_item("https://example.com/post").id,
+                     "2026-06-15T00:00:00+00:00", "unchanged",
+                     "sha256:old", "sha256:old", None),
+    ])
+
+    by_source = run_doctor(paths)["custody"]["by_source"]
+    # web: one hash-bearing item verified, the reference-only one excluded → 1 of 1
+    assert by_source["web"]["coverage"] == {"verified": 1, "total": 1}
+    # arxiv: one hash-bearing item, never verified → 0 of 1
+    assert by_source["arxiv"]["coverage"] == {"verified": 0, "total": 1}
+
+
+def test_custody_by_source_coverage_sums_to_the_whole_drift_coverage(paths):
+    # the coverage-axis convergence (the H121 sibling of the tiers/drift
+    # sum-to-whole): summing the per-source coverage re-counts the whole-library
+    # drift.coverage, so by_source can never disagree with it.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/post", fetched=True,
+        extracted_text="body", content_hash="sha256:w"))
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    insert_item(paths.db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", source_id="1",
+        url="https://arxiv.org/abs/1", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper", content_hash="sha256:p", stage="fetched"))
+    record_events(paths.db_path, [
+        CustodyEvent(_web_item("https://example.com/post").id,
+                     "2026-06-15T00:00:00+00:00", "unchanged",
+                     "sha256:w", "sha256:w", None),
+    ])
+
+    custody = run_doctor(paths)["custody"]
+    summed = {"verified": 0, "total": 0}
+    for counts in custody["by_source"].values():
+        summed["verified"] += counts["coverage"]["verified"]
+        summed["total"] += counts["coverage"]["total"]
+    assert summed == custody["drift"]["coverage"]
+
+
+def test_custody_by_source_coverage_excludes_reference_only(paths):
+    # a source holding only reference-only items has no verifiable items, so its
+    # coverage denominator is 0 (can reach full, never stuck below 100%).
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    by_source = run_doctor(paths)["custody"]["by_source"]
+    assert by_source["web"]["coverage"] == {"verified": 0, "total": 0}
+
+
 def test_custody_flags_a_rendered_scroll_gone_from_disk(paths):
     rendered = _rendered(paths, _web_item("https://example.com/post", fetched=True))
     (paths.root / rendered.markdown_path).unlink()
@@ -667,11 +726,13 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
         "score": 100, "issues": 0,
         "tiers": {"full": 1, "partial": 0, "reference": 0},
         "by_source": {
-            # one held web item, full fidelity, never verified
+            # one held web item, full fidelity, never verified — one verifiable
+            # (hash-bearing) item, 0 of 1 covered (H121)
             "web": {
                 "tiers": {"full": 1, "partial": 0, "reference": 0},
                 "drift": {"verified": 0, "unverified": 1, "drifted": 0,
                           "rotted": 0, "error": 0},
+                "coverage": {"verified": 0, "total": 1},
             },
         },
         "findings": [],
