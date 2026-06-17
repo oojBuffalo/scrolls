@@ -440,6 +440,24 @@ repair). It holds the fidelity `tiers` distribution, per-item integrity
 `drifted`/`rotted` `events` themselves (ADR 0098;
 `test_drift_report_counts_each_verdict`).
 
+The custody block also carries a `by_source` map (roadmap H104) — the same
+fidelity-tier / drift-posture aggregate split *per source*, so the audit names
+*which* source's custody is weakest (most reference-only, most drifted) and an
+operator knows where to target a [`verify --drift`](#scrolls-verify-id) /
+[`media`](#scrolls-media) / recapture instead of enumerating per source by hand.
+Each entry is the `{tiers, drift}` shape the whole-library block uses (posture
+words — `verified` ≡ the ledger's `unchanged`), keyed by source name in sorted
+order; an empty library is the honest empty map. Built from the *same*
+`custody.custody_counts` grouped by source, so the per-source tallies sum to the
+whole-library `custody` block by construction (the convergence pinned in
+`tests/test_custody_convergence.py`,
+`test_doctor_by_source_converges_with_the_per_source_tally_and_facets`, where each
+per-source tally also equals `facets fidelity`/`drift --source <name>`).
+Report-only like the rest of the block — a weak per-source custody picture is a
+view, never an `issue` or the exit code
+(`test_custody_by_source_never_feeds_issues_or_the_exit_code` in
+`tests/test_doctor.py`).
+
 The drift block states *what it verified* (completeness contract G2): doctor
 is network-free, so its verdicts are read from the ledger, not confirmed live
 this run. `basis` names that source (`last_verify` — as-of-the-last-`scrolls

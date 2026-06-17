@@ -17,6 +17,7 @@ import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
     custody_counts,
+    custody_counts_by_source,
     custody_headline,
     event_export_dict,
     event_from_dict,
@@ -485,6 +486,68 @@ def test_custody_counts_delegates_to_tally_over_item_derived_pairs():
     # sanity: the fixture spans two tiers and two postures
     assert expected["tiers"]["full"] == 1 and expected["tiers"]["reference"] == 1
     assert expected["drift"]["drifted"] == 1 and expected["drift"]["unverified"] == 1
+
+
+# --- custody_counts_by_source (the per-source split, roadmap H104) ---
+
+
+def _src(item_id, source, **overrides):
+    return _item(item_id, source=source, url=f"https://example.com/{item_id}",
+                 **overrides)
+
+
+def test_custody_counts_by_source_groups_by_source_with_sorted_keys():
+    # one tally per source, the same custody_counts shape, source keys sorted.
+    items = [
+        _src("web:a", "web"),
+        _src("arxiv:1", "arxiv"),
+        _src("web:b", "web", content_hash=None, extracted_text=None, stage="detected"),
+    ]
+    by_source = custody_counts_by_source(items, {})
+    assert list(by_source) == ["arxiv", "web"]  # sorted
+    assert by_source["web"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert by_source["arxiv"]["tiers"] == {"full": 1, "partial": 0, "reference": 0}
+    # never verified → every item unverified within its source
+    assert by_source["web"]["drift"]["unverified"] == 2
+    assert by_source["arxiv"]["drift"]["unverified"] == 1
+
+
+def test_custody_counts_by_source_carries_the_per_source_posture():
+    items = [_src("web:a", "web"), _src("arxiv:1", "arxiv")]
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "t", "drifted", "h", "x"),
+        "arxiv:1": CustodyEvent("arxiv:1", "t", "unchanged", "h", "h"),
+    }
+    by_source = custody_counts_by_source(items, verdicts)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["verified"] == 1
+
+
+def test_custody_counts_by_source_sums_to_the_whole_library_tally():
+    # the load-bearing convergence: summing the per-source tallies re-counts the
+    # whole library, so by_source can never disagree with custody_counts (H50).
+    items = [
+        _src("web:full", "web", content_hash="h", raw_text="<r>b</r>"),
+        _src("web:ref", "web", content_hash=None, extracted_text=None, stage="detected"),
+        _src("arxiv:1", "arxiv", content_hash="h2", raw_text="<r>p</r>"),
+    ]
+    verdicts = {"web:full": CustodyEvent("web:full", "t", "drifted", "h", "x")}
+    whole = custody_counts(items, verdicts)
+    by_source = custody_counts_by_source(items, verdicts)
+
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"]
+    assert summed_drift == whole["drift"]
+
+
+def test_custody_counts_by_source_empty_is_the_empty_map():
+    assert custody_counts_by_source([], {}) == {}
 
 
 # --- render_custody_headline (the shared one-line formatter, roadmap H103) ---

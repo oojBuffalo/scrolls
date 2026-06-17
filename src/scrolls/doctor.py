@@ -21,6 +21,7 @@ from typing import Any, Iterable
 from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
 from scrolls.custody import (
     CUSTODY_STATUSES,
+    custody_counts_by_source,
     latest_events,
     recheck_coverage,
     unverified_items,
@@ -72,6 +73,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
             "score": None,
             "issues": 0,
             "tiers": {"full": 0, "partial": 0, "reference": 0},
+            "by_source": {},
             "findings": [],
             "drift": {
                 "basis": "last_verify",
@@ -381,6 +383,13 @@ def _check_custody_drift(
     ``verified`` ≡ ``checked`` by construction: every verdict-bearing held item is
     hash-bearing (verify never runs on a reference-only item), so the coverage
     numerator equals the block's own checked count.
+
+    The held-filtered ledger this builds also feeds ``custody.by_source`` (roadmap
+    H104): the whole-library tier/posture aggregate split per source (via the shared
+    `custody_counts_by_source`), so the audit names *which* source's custody is
+    weakest. It reads off the *same* `latest` this block aggregates — no second
+    ledger read — so the per-source tallies sum to this block's counts by
+    construction.
     """
     drift = report["custody"]["drift"]
     held = {item.id for item in items}
@@ -389,6 +398,10 @@ def _check_custody_drift(
         for item_id, event in latest_events(paths.db_path).items()
         if item_id in held
     }
+    # Per-source custody split over the same held-filtered ledger (H104): an
+    # optional map the whole-library `tiers`/`drift` aggregate by source, so the
+    # per-source tallies sum to this block by construction (one `custody_counts`).
+    report["custody"]["by_source"] = custody_counts_by_source(items, latest)
     drift["checked"] = len(latest)
     # `held − verdicts` via the one shared predicate `scrolls verify --unverified`
     # selects on, so the count doctor reports and the set a re-check clears can

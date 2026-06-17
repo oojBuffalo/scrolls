@@ -694,6 +694,30 @@ def custody_counts(
     )
 
 
+def custody_counts_by_source(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Per-source fidelity-tier / drift-posture counts (roadmap H104).
+
+    `custody_counts` grouped by `source`: a map from source name to that source's
+    own `{"tiers": …, "drift": …}` tally, source keys in sorted order. Used by
+    `doctor`'s ``custody.by_source`` block so the audit names *which* source's
+    custody is weakest (most reference-only, most drifted) — the source to target a
+    `verify --drift`/`media`/recapture at. Because each group folds through the same
+    `custody_counts`, the per-source tallies sum to `custody_counts(items, verdicts)`
+    (the whole-library `custody` block) by construction — every item lands in exactly
+    one source group, so summing the groups re-counts the whole library (the H50
+    convergence posture, per source). An empty scope is the honest empty map.
+    """
+    groups: dict[str, list[ScrollItem]] = {}
+    for item in items:
+        groups.setdefault(item.source, []).append(item)
+    return {
+        source: custody_counts(members, verdicts)
+        for source, members in sorted(groups.items())
+    }
+
+
 def render_custody_headline(
     n: int, tiers: dict[str, int], drift: dict[str, int]
 ) -> str:

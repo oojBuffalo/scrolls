@@ -299,6 +299,55 @@ def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):
     assert custody_headline(web_items, verdicts) in capsys.readouterr().out
 
 
+def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls_home, capsys):
+    # roadmap H104: doctor's `custody.by_source` splits the whole-library custody
+    # aggregate per source. Each per-source tally must equal `custody_counts` over
+    # that source's items *and* `facets fidelity`/`drift --source X`, and the
+    # per-source tallies must sum to the whole-library `custody` block — the
+    # per-source sibling of the whole-library convergence (this module's spine).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # 1. each per-source tally == custody_counts over that source's items, and ==
+    #    facets fidelity/drift scoped to that source (the browse aggregate).
+    for source in ("web", "arxiv"):
+        members = [item for item in items if item.source == source]
+        assert by_source[source] == custody_counts(members, verdicts)
+        fidelity = _facet_map(
+            compute_facets(db, field="fidelity", source=source)["facets"]["fidelity"])
+        drift = _facet_map(
+            compute_facets(db, field="drift", source=source)["facets"]["drift"])
+        assert fidelity == _nonzero(by_source[source]["tiers"])
+        assert drift == _nonzero(by_source[source]["drift"])
+
+    # 2. the per-source tallies sum to the whole-library `custody` block (H50, per
+    #    source): summing the groups re-counts the whole library.
+    whole = custody_counts(items, verdicts)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"]
+    assert summed_drift == whole["drift"]
+    # and the whole-library tally == doctor's own block (the module's spine tie)
+    custody = run_doctor(get_paths())["custody"]
+    assert summed_tiers == custody["tiers"]
+    assert summed_drift == _posture_from_ledger_counts(custody["drift"])
+
+
 def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):
     # roadmap H113: the recheck `coverage` figure (`{verified, total}` over the
     # verifiable held set) reads the same on the standalone audit (`doctor`) and

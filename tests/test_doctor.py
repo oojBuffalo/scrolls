@@ -491,6 +491,98 @@ def test_custody_report_counts_each_fidelity_tier(paths):
     assert tiers == {"full": 1, "partial": 1, "reference": 1}
 
 
+def test_custody_by_source_is_empty_for_an_empty_library(paths):
+    # no held items → no sources → the honest empty map (a stable shape, never None)
+    assert run_doctor(paths)["custody"]["by_source"] == {}
+
+
+def test_custody_by_source_groups_each_source(paths):
+    # the audit names which source's custody is weakest: a per-source split of
+    # the same fidelity/drift aggregate (roadmap H104), source keys sorted.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/full", fetched=True,
+        extracted_text="full body", content_hash="sha256:123"))
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference
+    insert_item(paths.db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", source_id="1",
+        url="https://arxiv.org/abs/1", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper body", content_hash="sha256:abc", stage="fetched"))
+
+    by_source = run_doctor(paths)["custody"]["by_source"]
+    assert list(by_source) == ["arxiv", "web"]  # sorted keys
+    assert by_source["arxiv"]["tiers"] == {"full": 1, "partial": 0, "reference": 0}
+    assert by_source["web"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    # never verified → both sources' items are unverified
+    assert by_source["arxiv"]["drift"]["unverified"] == 1
+    assert by_source["web"]["drift"]["unverified"] == 2
+
+
+def test_custody_by_source_carries_the_drift_posture_per_source(paths):
+    # a drifted web item and an unchanged arxiv one: each source reports its own
+    # posture, read from the same ledger the whole-library drift block aggregates.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/post", fetched=True,
+        extracted_text="body", content_hash="sha256:old"))
+    insert_item(paths.db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", source_id="1",
+        url="https://arxiv.org/abs/1", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper", content_hash="sha256:p", stage="fetched"))
+    web_id = _web_item("https://example.com/post").id
+    record_events(paths.db_path, [
+        CustodyEvent(web_id, "2026-06-15T00:00:00+00:00", "drifted",
+                     "sha256:old", "sha256:new", None),
+        CustodyEvent("arxiv:1", "2026-06-15T00:00:00+00:00", "unchanged",
+                     "sha256:p", "sha256:p", None),
+    ])
+
+    by_source = run_doctor(paths)["custody"]["by_source"]
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["verified"] == 1
+
+
+def test_custody_by_source_tallies_sum_to_the_whole_library_block(paths):
+    # the load-bearing convergence (H50, per source): summing the per-source
+    # tallies re-counts the whole library, so by_source can never disagree with
+    # the custody block it splits.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/full", fetched=True,
+        extracted_text="full body", content_hash="sha256:1"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/partial", extracted_text="partial", content_hash=None))
+    insert_item(paths.db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", source_id="1",
+        url="https://arxiv.org/abs/1", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper", content_hash="sha256:p", stage="fetched"))
+
+    custody = run_doctor(paths)["custody"]
+    by_source = custody["by_source"]
+    # tiers sum to the whole-library `tiers`
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+    assert summed_tiers == custody["tiers"]
+    # drift postures sum to the whole-library drift block (verified ≡ unchanged)
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    drift = custody["drift"]
+    assert summed_drift == {
+        "verified": drift["unchanged"], "unverified": drift["unverified"],
+        "drifted": drift["drifted"], "rotted": drift["rotted"], "error": drift["error"],
+    }
+
+
+def test_custody_by_source_never_feeds_issues_or_the_exit_code(paths):
+    # report-only like the rest of the custody block: a weak per-source custody
+    # picture is a view, never a structural issue.
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    report = run_doctor(paths)
+    assert report["custody"]["by_source"]["web"]["tiers"]["reference"] == 1
+    assert report["issues"] == 0
+
+
 def test_custody_flags_a_rendered_scroll_gone_from_disk(paths):
     rendered = _rendered(paths, _web_item("https://example.com/post", fetched=True))
     (paths.root / rendered.markdown_path).unlink()
@@ -573,7 +665,16 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
     from scrolls.classify import RULESET_FINGERPRINT
     assert custody == {
         "score": 100, "issues": 0,
-        "tiers": {"full": 1, "partial": 0, "reference": 0}, "findings": [],
+        "tiers": {"full": 1, "partial": 0, "reference": 0},
+        "by_source": {
+            # one held web item, full fidelity, never verified
+            "web": {
+                "tiers": {"full": 1, "partial": 0, "reference": 0},
+                "drift": {"verified": 0, "unverified": 1, "drifted": 0,
+                          "rotted": 0, "error": 0},
+            },
+        },
+        "findings": [],
         "drift": {
             "basis": "last_verify", "as_of": None,
             "checked": 0, "unverified": 1,

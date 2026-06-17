@@ -1105,7 +1105,13 @@ choice (ADRs 0004, 0005).
   hash-bearing held set, no recheck since doctor only reads; `verified` ≡ the
   block's `checked` by construction), the same figure `maintain` reports on its
   recheck (H109), so the audit shows "N of M verifiable items carry a verdict"
-  at parity with maintain (roadmap H113).
+  at parity with maintain (roadmap H113). A `custody.by_source` map splits the
+  whole-library fidelity/drift aggregate *per source* (`custody.custody_counts`
+  grouped by source, H104), so the audit names which source's custody is weakest
+  (most reference-only, most drifted) and an operator targets a
+  `verify --drift`/`media`/recapture there; the per-source tallies sum to the
+  whole-library `custody` block and equal `facets fidelity`/`drift --source <name>`
+  by construction (pinned in `tests/test_custody_convergence.py`).
 - **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
