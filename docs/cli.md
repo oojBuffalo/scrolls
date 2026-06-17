@@ -402,6 +402,24 @@ construction (every item lands in exactly one source group), so `status`,
 `test_status_by_source_converges_with_maintain_and_doctor`). An empty or
 uninitialized library is the honest empty `{}` map (no sources held).
 
+`attention` is the **single weakest source** worth acting on — the
+status-surface counterpart of the `maintain` report's `attention` flag (roadmap
+H119) — so a human reading `status` sees not just *how much* is held and drifted
+but *which source* most needs action. It is distilled (`maintain.weakest_source`)
+from the same `by_source` map above: the source with the most **actionable loss**
+(the most `drifted` + `rotted` items), tie-broken by the most `reference`-only,
+then the source name. The value is `{source, tiers, drift, reason, command}` — the
+flagged source's tally, a one-line `reason` (e.g. `"1 drifted"`), and the exact
+`scrolls verify --source <source>` recheck **`command`** (H137) — derived from the
+audit `status` already makes (no new ledger read), so it equals `maintain`'s
+`attention` and names `doctor`'s max-loss source by construction
+(`test_status_attention_names_the_weakest_source`,
+`test_status_attention_converges_with_maintain_and_doctor`). Honest **`null`** on
+the same three gates `maintain` uses — an empty library, a **single** source (no
+source stands out; the whole-library `custody` block already says everything), or
+a **fully-clean** library (no source carries any drifted/rotted loss)
+(`test_status_attention_is_null_when_nothing_stands_out`).
+
 | Key | Meaning |
 | --- | --- |
 | `initialized` / `schema_version` | `false`/`null` until `init` |
@@ -411,20 +429,25 @@ uninitialized library is the honest empty `{}` map (no sources held).
 | `custody` | the custody headline — `score`, `tiers`, `drift` posture, `enrichment_stale`, `summaries_stale` (converges with `doctor`) |
 | `headline` | the one-line `custody` block rendered (`_Custody: …_`), at parity with the `maintain` report's `headline` |
 | `by_source` | the per-source `{tiers, drift, coverage}` custody breakdown (sorted keys; sums to `custody`), the status-surface counterpart of `doctor`'s `custody.by_source` / `maintain`'s `by_source` |
+| `attention` | the single weakest source `{source, tiers, drift, reason, command}` (most drifted/rotted loss) or `null` when nothing stands out, the status-surface counterpart of `maintain`'s `attention` |
 
 ```console
 $ scrolls status        # before init
-{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._"}
+{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._", "by_source": {}, "attention": null}
 [exit 0]
 
 $ scrolls status        # after the imports and adds below
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 2}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 2}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null}
 [exit 0]
 ```
 
 *(x:1111 is already classified here — the Field Theory import's
 frontmatter join carries `category` over — which is why `unclassified`
-is 3 of 4)*
+is 3 of 4. `attention` is `null` because nothing has drifted yet — every
+item is still `unverified`; once a source carries `drifted`/`rotted` loss
+across a multi-source library it populates with that source and its `scrolls
+verify --source <S>` recheck command, exactly as the `maintain` report's
+`attention` does.)*
 
 ### `scrolls paths`
 

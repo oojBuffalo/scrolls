@@ -2724,6 +2724,10 @@ def _cmd_status() -> int:
     # honest zero block (`score: null`), not an error.
     report = run_doctor(paths)
     custody = custody_snapshot(report)
+    # The per-source custody breakdown the audit already produced (roadmap H133),
+    # read faithfully via the shared primitive — computed once so the displayed map
+    # and the `attention` flag distilled from it can never disagree.
+    by_source = report_by_source(report)
     print(
         json.dumps(
             {
@@ -2755,7 +2759,18 @@ def _cmd_status() -> int:
                 # `maintain`, `doctor`, and `facets fidelity`/`drift --source <name>`
                 # read one number. Honest absence: an empty/uninitialized library is
                 # the empty `{}` map (no sources held).
-                "by_source": report_by_source(report),
+                "by_source": by_source,
+                # The single weakest source (roadmap H139): the one carrying the most
+                # actionable loss (drifted + rotted), distilled from `by_source` via the
+                # shared `weakest_source` primitive `maintain`'s `attention` uses (H119)
+                # — so a human reading `status` sees not just *how much* is held and
+                # drifted but *which source* most needs action, plus the exact `scrolls
+                # verify --source <S>` recheck command (H137). Derived from the audit
+                # `status` already makes (no new ledger read), so it converges with
+                # `maintain`'s `attention` and `doctor`'s max-loss source by construction.
+                # Honest `null` on the same three gates `maintain` uses — empty /
+                # single-source / fully-clean (nothing stands out).
+                "attention": weakest_source(by_source),
             }
         )
     )

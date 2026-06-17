@@ -478,7 +478,14 @@ each command moves items between stages or derives artifacts from them.
   (no new audit/ledger read), so a reader sees which source's custody is weakest
   without running `maintain`/`doctor`; sorted keys, sums to the `custody` block, and
   converges with `maintain`/`doctor`/`facets` for the same scope by construction
-  (`tests/test_custody_convergence.py`, roadmap H133).
+  (`tests/test_custody_convergence.py`, roadmap H133). Distilled from that same map
+  it also carries the single weakest-source **`attention`** flag — `{source, tiers,
+  drift, reason, command}` (most drifted/rotted loss) with the `scrolls verify
+  --source <S>` recheck command (H137), or `null` when nothing stands out (empty /
+  single-source / fully-clean) — via the shared `maintain.weakest_source` primitive
+  `maintain`'s own `attention` uses, so the status-surface flag names `doctor`'s
+  max-loss source and equals `maintain`'s `attention` by construction (no new audit;
+  `tests/test_cli.py`, `tests/test_custody_convergence.py`, roadmap H139).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

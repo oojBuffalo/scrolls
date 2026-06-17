@@ -150,7 +150,13 @@ for its custody headline. This pins it beside the maintain tie — over the
 multi-source seed, `status`'s `by_source` equals `maintain --no-recheck`'s
 `by_source`, `doctor`'s `custody.by_source`, and `custody_counts_by_source` over
 the held items, and sums to `status`'s own `custody` block — so the three places a
-human/worker reads the per-source picture are one number.
+human/worker reads the per-source picture are one number. `status` also distils
+that map to the single weakest-source `attention` flag (roadmap H139) via the same
+`weakest_source` primitive `maintain`'s `attention` uses, so the `attention`-axis
+tie is pinned here too: over the loss seed `status`'s `attention` equals `maintain
+--no-recheck`'s, names `doctor`'s max-loss source, and is honestly `null` exactly
+when no source carries actionable loss — the status-surface counterpart of the
+H129 maintain↔doctor `attention` tie.
 """
 
 import json
@@ -184,6 +190,7 @@ from scrolls.maintain import (
     report_by_source,
     save_snapshot,
     snapshot_path,
+    weakest_source,
 )
 from scrolls.paths import get_paths
 
@@ -705,6 +712,82 @@ def test_status_by_source_converges_with_maintain_and_doctor(scrolls_home, capsy
             summed_drift[posture] += n
     assert summed_tiers == whole["tiers"] == status_payload["custody"]["tiers"]
     assert summed_drift == whole["drift"]
+
+
+def test_status_attention_converges_with_maintain_and_doctor(scrolls_home, capsys):
+    # roadmap H139: `scrolls status` now carries the single weakest-source
+    # `attention` flag — the status-surface counterpart of `maintain`'s `attention`
+    # (H119). It is distilled (`weakest_source`) from the same `run_doctor` per-source
+    # map `status` already reads for its `by_source` member, so it *claims* to name the
+    # same source the scheduled worker's report and the standalone audit would. Pin it
+    # as a first-class entry beside H129 (`maintain attention ≡ doctor's max-loss
+    # source`): over the multi-source loss seed, `status`'s `attention` equals
+    # `maintain --no-recheck`'s `attention`, and its `.source` equals doctor's max-loss
+    # source — so the single-flag the three surfaces show can never disagree. The
+    # `attention`-axis sibling of H133 (`by_source`) on the status surface.
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full2 drifted); arxiv is clean, so
+    # `web` is the unambiguous max-loss source the flag must name (the H129 seed).
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # status's weakest-source flag — distilled from the audit it already makes
+    assert main(["status"]) == 0
+    status_attention = json.loads(capsys.readouterr().out)["attention"]
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # sanity: the seed makes `web` the unambiguous max-loss source (1 drifted vs 0)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["drifted"] == 0
+
+    # 1. the flag names exactly doctor's max-loss source (a literal pick, not a
+    #    tautology — ranking by *least* loss would name `arxiv`)
+    assert status_attention is not None
+    assert status_attention["source"] == _max_loss_source(by_source) == "web"
+    # 2. == `weakest_source` over doctor's own per-source map (the primitive status threads)
+    assert status_attention == weakest_source(by_source)
+
+    # 3. == the `maintain --no-recheck` report's `attention` (the scheduled sibling,
+    #    H119) — `--no-recheck` keeps the ledger pristine so both read one state
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert status_attention == maintain_attention
+
+    # 4. the recheck command names exactly that source (H137) — the bridge to the act
+    assert status_attention["command"] == f"scrolls verify --source {status_attention['source']}"
+
+
+def test_status_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys):
+    # the honest-null gate on the status surface (H139/H119): with ≥2 sources but no
+    # `drifted`/`rotted` anywhere, `status`'s `attention` is `null` — exactly when
+    # `maintain`'s is and when doctor's per-source map carries zero actionable loss.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1"))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="a",
+                          raw_text="<raw>a</raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+        # arxiv:1 left unverified — no source carries loss
+    ])
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+    # converges with doctor (no source carries loss) and with maintain (both null)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss
+    assert weakest_source(by_source) is None
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
 
 
 def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):

@@ -19,7 +19,12 @@ from scrolls.custody import (
 from scrolls.db import SCHEMA_VERSION
 from scrolls.doctor import run_doctor
 from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
-from scrolls.maintain import custody_snapshot, report_by_source, snapshot_headline
+from scrolls.maintain import (
+    custody_snapshot,
+    report_by_source,
+    snapshot_headline,
+    weakest_source,
+)
 from scrolls.paths import get_paths
 from scrolls.items import (
     ScrollItem,
@@ -157,6 +162,8 @@ def test_status_before_init(scrolls_home, capsys):
         "headline": "_Custody: 0 scroll(s)._",
         # the per-source breakdown (H133): no sources held → the honest empty map
         "by_source": {},
+        # the weakest-source flag (H139): nothing held → nothing stands out
+        "attention": None,
     }
 
 
@@ -180,6 +187,8 @@ def test_status_after_init(scrolls_home, capsys):
         "headline": "_Custody: 0 scroll(s)._",
         # the per-source breakdown (H133): no sources held → the honest empty map
         "by_source": {},
+        # the weakest-source flag (H139): nothing held → nothing stands out
+        "attention": None,
     }
 
 
@@ -404,6 +413,138 @@ def test_status_by_source_breakdown_converges_with_doctor(scrolls_home, capsys):
         for tier, n in entry["tiers"].items():
             summed_tiers[tier] += n
     assert summed_tiers == payload["custody"]["tiers"]
+
+
+def _status_custody_seed(paths):
+    """A two-source library where `web` carries the only actionable loss.
+
+    `web`: one held-unchanged + one drifted (the loss). `arxiv`: one held,
+    never re-checked. So `web` is the unambiguous weakest source `attention`
+    must flag, `arxiv` carries none — the multi-source picture H139 needs.
+    """
+    from scrolls.db import init_db
+
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    held = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/held"),
+        source="web",
+        source_id=None,
+        url="https://example.com/held",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A fully held web capture.",
+        content_hash="sha256:webheld",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    moved = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/moved"),
+        source="web",
+        source_id=None,
+        url="https://example.com/moved",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A web capture whose source drifted.",
+        content_hash="sha256:webmoved",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    paper = ScrollItem(
+        id="arxiv:2401.00001",
+        source="arxiv",
+        source_id="2401.00001",
+        url="https://arxiv.org/abs/2401.00001",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="An arxiv paper held in full.",
+        content_hash="sha256:arxivpaper",
+        stage="rendered",
+        provenance={"adapter": "arxiv", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    for item in (held, moved, paper):
+        insert_item(paths.db_path, write_scroll(paths, item))
+    record_events(
+        paths.db_path,
+        [
+            CustodyEvent(
+                held.id, "2026-06-15T00:00:00+00:00", "unchanged",
+                "sha256:webheld", "sha256:webheld", None,
+            ),
+            CustodyEvent(
+                moved.id, "2026-06-15T00:00:00+00:00", "drifted",
+                "sha256:webmoved", "sha256:changed99", None,
+            ),
+        ],
+    )
+    return moved
+
+
+def test_status_attention_names_the_weakest_source(scrolls_home, capsys):
+    """`status` carries an `attention` flag (H139) — the single source with the most
+    actionable loss, distilled from the per-source breakdown via the same
+    `weakest_source` primitive `maintain`'s `attention` uses (H119), so a human
+    reading `status` sees *which* source most needs action, plus the recheck command
+    (H137). Derived from the audit `status` already makes — no new ledger read — so it
+    equals `maintain`'s `attention` for the same state."""
+    paths = get_paths()
+    _status_custody_seed(paths)  # `web` carries the only drift; `arxiv` is clean
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    attention = payload["attention"]
+
+    # the flag names the weakest source, carries its own tally + reason + command
+    assert attention is not None
+    assert attention["source"] == "web"
+    assert attention["drift"]["drifted"] == 1
+    assert attention["reason"] == "1 drifted"
+    # H137: the exact recheck command (a recheck, not a `doctor --fix` repair)
+    assert attention["command"] == "scrolls verify --source web"
+    # the flagged tally == the `by_source` entry beside it (status's two members agree)
+    assert attention["tiers"] == payload["by_source"]["web"]["tiers"]
+    assert attention["drift"] == payload["by_source"]["web"]["drift"]
+    # == the same `weakest_source` over `maintain`'s faithful read of the audit
+    assert attention == weakest_source(report_by_source(run_doctor(paths)))
+
+
+def test_status_attention_is_null_when_nothing_stands_out(scrolls_home, capsys):
+    """The honest-`null` gates (H139/H119): `attention` flags only a source that
+    *stands out* across sources, so a single-source library (even with drift — the
+    whole-library `custody` block already says everything) and a fully-clean
+    multi-source library both report `null`."""
+    from scrolls.db import init_db
+
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    # one source, with a drift — but nothing to discriminate across, so null
+    held = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/held"),
+        source="web",
+        source_id=None,
+        url="https://example.com/held",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A held web capture.",
+        content_hash="sha256:onlyweb",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    insert_item(paths.db_path, write_scroll(paths, held))
+    record_events(
+        paths.db_path,
+        [
+            CustodyEvent(
+                held.id, "2026-06-15T00:00:00+00:00", "drifted",
+                "sha256:onlyweb", "sha256:changed99", None,
+            )
+        ],
+    )
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # one source carrying drift → still null (no cross-source discrimination)
+    assert list(payload["by_source"]) == ["web"]
+    assert payload["by_source"]["web"]["drift"]["drifted"] == 1
+    assert payload["attention"] is None
 
 
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):
