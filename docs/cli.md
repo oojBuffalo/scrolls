@@ -737,6 +737,22 @@ explicit, on-request mutations. The recorded snapshot is dot-prefixed so it is
 never a compiled `library/` page and is never created by `scrolls init`; losing
 or corrupting it just means "first run" (the pass degrades safely, never aborts).
 
+Because maintain repairs nothing itself, the report carries a **`suggested`**
+block: for each repairable finding the audit surfaces, the explicit on-request
+command that closes it. Each entry is `{command, addresses}` — `addresses` names
+exactly the finding categories present that the command repairs. The structural
+fixes `doctor --fix` performs (duplicate items, missing scroll files, an
+out-of-sync FTS index) are grouped into one suggestion; missing media
+(`scrolls media`), stale classifications (`classify --stale`), and stale concept
+summaries (`kb --stale`) are each their own. Suggestions are **by finding, never
+by the aggregate `issues` count**: an orphan scroll bumps `issues` (and the exit
+code) but has no on-request repair — doctor never deletes a file it cannot prove
+it wrote (custody §2.4) — so it yields *no* suggestion rather than pointing at a
+`doctor --fix` that would not remove it. A clean pass is the honest empty
+`"suggested": []`. The block rides the live pass only, derived fresh from its
+audit; it is not recorded in the snapshot, so `--history`/`--trend` (which replay
+snapshots) never carry a stale suggestion.
+
 The sharp custody point the delta makes visible (the dogfood proof's, recurring):
 detecting source drift moves the *drift posture* (`unverified` → `drifted`)
 **without lowering the integrity `score`** — raw is sacred, drift is a recorded
@@ -746,7 +762,7 @@ enrichment/summaries are reported, never a failure.
 
 ```console
 $ scrolls maintain --limit 50            # second run; one source has drifted
-{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0}
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first
@@ -756,6 +772,10 @@ $ scrolls maintain --history 2           # the custody trajectory, oldest first
 $ scrolls maintain --history --trend     # the trajectory's direction in one word
 {"trend": {"runs": 2, "since": "2026-06-16T12:00:00+00:00", "score": {"first": 100, "last": 100, "change": 0}, "drift_change": 1, "posture": "regressing"}, "runs": [{"recorded_at": "2026-06-16T12:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 3, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": true, "since": null}}, {"recorded_at": "2026-06-16T13:00:00+00:00", "snapshot": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00"}}]}
 [exit 0]
+
+$ scrolls maintain --no-recheck          # a pass that found a deleted scroll and a stale category
+{"recorded_at": "2026-06-16T14:00:00+00:00", "recheck": {"skipped": true, "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 67, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 3, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 1, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T13:00:00+00:00", "score": {"before": 100, "after": 67, "change": -33}}, "issues": 1, "suggested": [{"command": "scrolls doctor --fix", "addresses": ["missing_scrolls"]}, {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}]}
+[exit 1]
 ```
 
 ## Getting items in

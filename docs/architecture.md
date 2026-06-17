@@ -1079,7 +1079,7 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36) — `scrolls maintain`
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40) — `scrolls maintain`
   is the scheduled custody-maintenance pass: recheck → regenerate → audit →
   custody delta vs the last run (snapshot at `<root>/.maintenance/last-run.json`).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
@@ -1087,8 +1087,13 @@ choice (ADRs 0004, 0005).
   (`log.jsonl`, read back by `maintain --history [N]` — the custody trend).
   Report-only and idempotent — records drift events and regenerates views, never
   repairs rows or re-enriches — so it is a safe cron-able pass
-  (`tests/test_maintain.py`). Like doctor, deliberately not exposed over MCP (a
-  mutating operator surface).
+  (`tests/test_maintain.py`). Because it repairs nothing itself, `suggest_repairs`
+  turns the audit's findings into a `suggested` block naming the explicit
+  on-request command that closes each (`doctor --fix` for the structural fixes,
+  grouped; `scrolls media` / `classify --stale` / `kb --stale` each their own) —
+  *by finding, never by the aggregate `issues` count*, so an orphan scroll (which
+  has no on-request repair) yields no suggestion despite a nonzero exit. Like
+  doctor, deliberately not exposed over MCP (a mutating operator surface).
 - **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
   files (scroll, captured media) and then its row, in that order, so an
   interrupted removal leaves a re-runnable item rather than orphan

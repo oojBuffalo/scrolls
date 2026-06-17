@@ -47,6 +47,24 @@ from scrolls.paths import LibraryPaths
 # `summaries_stale` are scalar; `tiers`/`drift` are count mappings.
 _DRIFT_AXES = ("checked", "unverified", "unchanged", "drifted", "rotted", "error")
 
+# Each repairable finding category maps to the one explicit, on-request command
+# that closes it — maintain *names* the command, never runs it (custody §2.4:
+# `doctor --fix` / `scrolls media` / `classify --stale` / `kb --stale` stay the
+# explicit mutations). Ordered so the `suggested` block is deterministic, and
+# grouped by command: the three structural categories `doctor --fix` repairs
+# (duplicate items, missing scroll files, an out-of-sync FTS index) share one
+# suggestion rather than three identical ones. `orphan_scrolls` has no entry:
+# doctor never deletes a file it cannot prove it wrote, so there is no on-request
+# repair to suggest — the orphan is surfaced (it still bumps `issues`/the exit
+# code), never acted on, so maintain points at a command only when one actually
+# closes the gap.
+_REPAIR_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("scrolls doctor --fix", ("duplicates", "missing_scrolls", "fts")),
+    ("scrolls media", ("missing_media",)),
+    ("scrolls classify --stale", ("enrichment_stale",)),
+    ("scrolls kb --stale", ("summaries_stale",)),
+)
+
 SNAPSHOT_RELPATH = Path(".maintenance") / "last-run.json"
 LOG_RELPATH = Path(".maintenance") / "log.jsonl"
 
@@ -79,6 +97,51 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "enrichment_stale": custody["enrichment"]["stale"],
         "summaries_stale": custody["summaries"]["stale"],
     }
+
+
+def _finding_present(report: dict[str, Any], category: str) -> bool:
+    """Whether a doctor report carries this repairable finding category.
+
+    Read directly from the *full* report `run_doctor` returns (not the distilled
+    snapshot, which drops the structural findings): a non-empty findings list, an
+    out-of-sync FTS index, or a non-zero stale enrichment/summary count.
+    """
+    if category == "fts":
+        # `in_sync` is None when the check was skipped/unsupported — only a
+        # definite False is the repairable "out of sync" finding `doctor --fix`
+        # rebuilds, not an absent or indeterminate one.
+        return report.get("fts", {}).get("in_sync") is False
+    if category == "enrichment_stale":
+        return report.get("custody", {}).get("enrichment", {}).get("stale", 0) > 0
+    if category == "summaries_stale":
+        return report.get("custody", {}).get("summaries", {}).get("stale", 0) > 0
+    return bool(report.get(category))  # duplicates / missing_scrolls / missing_media
+
+
+def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Name the explicit on-request command that closes each finding (roadmap H40).
+
+    maintain audits and reports but never repairs (custody §2.4); this turns the
+    audit's findings into *actionable guidance* — for each repairable category in
+    the report, the explicit command an operator or agent runs to close it. The
+    structural fixes `doctor --fix` performs are grouped into one suggestion;
+    missing media (`scrolls media`), stale classifications (`classify --stale`),
+    and stale summaries (`kb --stale`) are each their own.
+
+    Suggested **by category, never by the aggregate `issues` count**: an orphan
+    scroll bumps `issues` (and the exit code) but has no on-request repair, so it
+    yields no suggestion — maintain never points at a command that would not
+    actually close the gap. A clean report yields the honest empty list (G1).
+
+    Each entry is ``{command, addresses}`` where `addresses` lists exactly the
+    finding categories present that the command closes, in a fixed order.
+    """
+    suggestions = []
+    for command, categories in _REPAIR_COMMANDS:
+        addresses = [c for c in categories if _finding_present(report, c)]
+        if addresses:
+            suggestions.append({"command": command, "addresses": addresses})
+    return suggestions
 
 
 def _scalar_delta(before: int | None, after: int | None) -> dict[str, Any]:

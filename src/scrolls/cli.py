@@ -103,6 +103,7 @@ from scrolls.maintain import (
     read_log,
     save_snapshot,
     snapshot_path,
+    suggest_repairs,
 )
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
@@ -1118,6 +1119,11 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
                 "custody": current,
                 "delta": delta,
                 "issues": report["issues"],
+                # Actionable guidance, never an action: the explicit on-request
+                # command for each repairable finding (custody §2.4). Derived
+                # fresh from this pass's audit, so it is not recorded in the
+                # snapshot/log — `--history` replays snapshots, never suggestions.
+                "suggested": suggest_repairs(report),
             }
         )
     )

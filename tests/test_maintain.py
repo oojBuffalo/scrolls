@@ -25,7 +25,14 @@ import pytest
 import scrolls.cli as cli
 from scrolls.cli import main
 from scrolls.db import init_db
-from scrolls.items import ScrollItem, get_item, item_to_dict, list_items, make_item_id
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    item_to_dict,
+    list_items,
+    make_item_id,
+    update_item,
+)
 from scrolls.maintain import (
     append_log_entry,
     compute_delta,
@@ -36,6 +43,7 @@ from scrolls.maintain import (
     read_log,
     save_snapshot,
     snapshot_path,
+    suggest_repairs,
 )
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
@@ -278,6 +286,115 @@ def test_trend_spans_first_to_last_across_the_whole_window():
     assert trend["posture"] == "regressing"
 
 
+# --- the repair suggestions (pure mapping, roadmap H40) -------------------
+
+
+def _full_doctor_report(
+    *,
+    duplicates=0,
+    missing_scrolls=0,
+    missing_media=0,
+    orphan_scrolls=0,
+    fts_in_sync=True,
+    enrichment_stale=0,
+    summaries_stale=0,
+):
+    """A doctor report shaped like `run_doctor`'s — the full surface
+    `suggest_repairs` reads, not just the distilled custody scalars."""
+
+    def _found(n):
+        return [{"status": "found"} for _ in range(n)]
+
+    return {
+        "issues": duplicates + missing_scrolls + missing_media + orphan_scrolls
+        + (0 if fts_in_sync else 1),
+        "duplicates": _found(duplicates),
+        "missing_scrolls": _found(missing_scrolls),
+        "missing_media": _found(missing_media),
+        "orphan_scrolls": _found(orphan_scrolls),
+        "fts": {"in_sync": True if fts_in_sync else False, "status": "ok"},
+        "custody": {
+            "enrichment": {"stale": enrichment_stale},
+            "summaries": {"stale": summaries_stale},
+        },
+    }
+
+
+def test_suggest_repairs_on_a_clean_report_is_empty():
+    # G1 honest absence: nothing to fix → no suggestions, never a fabricated one.
+    assert suggest_repairs(_full_doctor_report()) == []
+
+
+def test_suggest_repairs_groups_the_three_structural_fixes_under_doctor_fix():
+    # duplicates / missing scrolls / out-of-sync FTS all close with one command —
+    # so they share a single `doctor --fix` suggestion, not three identical ones.
+    suggested = suggest_repairs(
+        _full_doctor_report(duplicates=2, missing_scrolls=1, fts_in_sync=False)
+    )
+    assert suggested == [
+        {
+            "command": "scrolls doctor --fix",
+            "addresses": ["duplicates", "missing_scrolls", "fts"],
+        }
+    ]
+
+
+def test_suggest_repairs_lists_only_the_structural_categories_present():
+    # `addresses` names exactly the findings present, not the whole repair set.
+    suggested = suggest_repairs(_full_doctor_report(missing_scrolls=1))
+    assert suggested == [
+        {"command": "scrolls doctor --fix", "addresses": ["missing_scrolls"]}
+    ]
+
+
+def test_suggest_repairs_routes_missing_media_to_the_media_command():
+    # missing media is doctor-detected but `scrolls media` (network) repairs it,
+    # never `doctor --fix` — so it is its own suggestion.
+    assert suggest_repairs(_full_doctor_report(missing_media=3)) == [
+        {"command": "scrolls media", "addresses": ["missing_media"]}
+    ]
+
+
+def test_suggest_repairs_routes_stale_enrichment_and_summaries():
+    suggested = suggest_repairs(
+        _full_doctor_report(enrichment_stale=2, summaries_stale=1)
+    )
+    assert suggested == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]},
+        {"command": "scrolls kb --stale", "addresses": ["summaries_stale"]},
+    ]
+
+
+def test_suggest_repairs_omits_orphan_scrolls_which_have_no_repair_command():
+    # The load-bearing decision: an orphan scroll bumps `issues` (nonzero exit)
+    # but doctor never deletes a file it cannot prove it wrote (custody §2.4), so
+    # there is no on-request command to suggest. maintain names a command only
+    # when one actually closes the gap — never `doctor --fix` for an orphan it
+    # would not remove.
+    report = _full_doctor_report(orphan_scrolls=1)
+    assert report["issues"] == 1
+    assert suggest_repairs(report) == []
+
+
+def test_suggest_repairs_is_ordered_command_first_then_the_custody_refreshes():
+    # A library with every kind of gap: a deterministic, fixed command order —
+    # structural repair, media, then the two enrichment refreshes.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            duplicates=1,
+            missing_media=1,
+            enrichment_stale=1,
+            summaries_stale=1,
+        )
+    )
+    assert [s["command"] for s in suggested] == [
+        "scrolls doctor --fix",
+        "scrolls media",
+        "scrolls classify --stale",
+        "scrolls kb --stale",
+    ]
+
+
 # --- the command (offline, dogfood-style) ---------------------------------
 
 TOPIC = "transformer"
@@ -495,6 +612,108 @@ def test_structural_drift_makes_maintain_exit_nonzero(home, monkeypatch, capsys)
     assert report["issues"] >= 1
     # custody score is still 100 — an orphan file is not a custody loss
     assert report["custody"]["score"] == 100
+
+
+# --- the repair suggestions, end to end (roadmap H40) ---------------------
+
+
+def test_maintain_suggests_no_repairs_on_a_clean_library(home, monkeypatch, capsys):
+    """A healthy pass names no command — the `suggested` block is the honest
+    empty list, never a fabricated suggestion (G1)."""
+    _build(_held_topic())
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["suggested"] == []
+
+
+def test_maintain_suggests_doctor_fix_for_a_missing_scroll_but_never_runs_it(
+    home, monkeypatch, capsys
+):
+    """A deleted scroll file is a structural issue `doctor --fix` rewrites. maintain
+    names that command (actionable guidance) but never runs it — the missing scroll
+    persists, the exit is nonzero, and the capture is untouched (custody §2.4)."""
+    items = _held_topic()
+    _build(items)
+    gone = get_item(home.db_path, items[0].id)  # persisted: carries markdown_path
+    (home.root / gone.markdown_path).unlink()
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["suggested"] == [
+        {"command": "scrolls doctor --fix", "addresses": ["missing_scrolls"]}
+    ]
+    # maintain suggested the repair; it did not perform it — the scroll is still gone
+    assert not (home.root / gone.markdown_path).exists()
+
+
+def test_maintain_suggests_nothing_for_an_orphan_despite_a_nonzero_exit(
+    home, monkeypatch, capsys
+):
+    """The honest-absence counterpart of the missing-scroll case: an orphan scroll
+    exits nonzero but has no on-request repair (doctor never deletes user files),
+    so maintain names no command rather than pointing at a `doctor --fix` that
+    would not remove it."""
+    _build(_held_topic())
+    (home.scrolls_dir / "orphan.md").write_text("# stray\n", encoding="utf-8")
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["issues"] >= 1
+    assert report["suggested"] == []
+
+
+def test_maintain_suggests_classify_stale_for_a_stale_classification(
+    home, monkeypatch, capsys
+):
+    """A category produced under a superseded ruleset is report-only drift (no
+    `issues`, exit 0), but maintain names the explicit refresh `classify --stale`
+    that re-derives it — the enrichment-axis suggestion, wired through the real
+    doctor custody block."""
+    items = _held_topic()
+    _build(items)
+    persisted = get_item(home.db_path, items[1].id)
+    stale = replace(
+        persisted,
+        provenance={
+            **persisted.provenance,
+            "classified_by": "rules-v1",
+            "classified_basis": "title-pattern",
+            "classified_ruleset": "deadbeef0000",  # a fingerprint the live ruleset superseded
+        },
+    )
+    update_item(home.db_path, stale)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0  # stale enrichment is reported, never a failure
+    report = json.loads(capsys.readouterr().out)
+    assert report["custody"]["enrichment_stale"] == 1
+    assert report["suggested"] == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
+    ]
+
+
+def test_maintain_history_does_not_carry_suggestions(home, monkeypatch, capsys):
+    """`suggested` rides the live pass, not the recorded snapshot: the structural
+    findings it routes are point-in-time, so `--history` (which replays snapshots)
+    never carries a stale suggestion."""
+    _build(_held_topic())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("suggested" not in run for run in runs)
+    assert all("suggested" not in run["snapshot"] for run in runs)
 
 
 def test_maintain_on_an_uninitialized_library_is_a_clean_no_op(home, capsys):
