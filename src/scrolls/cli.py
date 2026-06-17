@@ -20,6 +20,7 @@ from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
 from scrolls.bundle import (
     BundleError,
     build_bundle,
+    build_bundle_html,
     parse_bundle,
     parse_bundle_events,
 )
@@ -542,6 +543,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only scrolls carrying this concept (matched by slug)",
     )
+    export_bundle_parser.add_argument(
+        "--format",
+        choices=("markdown", "html"),
+        default="markdown",
+        help="markdown (default): the canonical, lossless, re-importable bundle. "
+        "html: a self-contained, browser-readable briefing (export-only — the "
+        "Markdown form is the re-import unit)",
+    )
 
     ingest_parser = subparsers.add_parser(
         "ingest", help="Register, fetch, and render a URL in one step (JSON output)"
@@ -935,6 +944,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.stage,
                 args.tag,
                 args.concept,
+                args.format,
             )
         return _cmd_export_opml()
     if args.command == "ingest":
@@ -1485,12 +1495,16 @@ def _cmd_export_bundle(
     stage: str | None,
     tag: str | None,
     concept: str | None,
+    fmt: str = "markdown",
 ) -> int:
     paths = get_paths()
+    # markdown (default) is the canonical, lossless, re-importable bundle; html
+    # is a browser-readable, export-only briefing (roadmap H39). Both tolerate a
+    # missing library (a valid empty document, no library created — like
+    # `scrolls context` before `init`).
+    builder = build_bundle_html if fmt == "html" else build_bundle
     try:
-        # build_bundle tolerates a missing library (a valid empty bundle, no
-        # library created — like `scrolls context` before `init`)
-        bundle = build_bundle(
+        bundle = builder(
             paths.db_path,
             query,
             source=source,
@@ -1502,8 +1516,9 @@ def _cmd_export_bundle(
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
-    # the bundle Markdown *is* the artifact (the `context`/scroll exception to the
-    # JSON-on-stdout rule) — `scrolls export bundle "<q>" > briefing.md`
+    # the bundle *is* the artifact (the `context`/scroll exception to the
+    # JSON-on-stdout rule) — `scrolls export bundle "<q>" > briefing.md`, or
+    # `… --format html > briefing.html`
     sys.stdout.write(bundle)
     return 0
 

@@ -317,7 +317,19 @@ each command moves items between stages or derives artifacts from them.
   embedded in a code fence wrapped in the ADR 0102 `@generated` sentinel. The
   briefing's provenance lines are *derived read views* (omitted on honest
   absence), outside the fence, so the round-trip stays a property of the JSONL
-  block alone. The bundle is *scoped* (a query + the `context`/`search`
+  block alone. `--format html` (roadmap H39, `build_bundle_html`) renders the
+  *same* scope and per-scroll custody picture as a **self-contained,
+  browser-readable briefing** (inline CSS, no scripts, nothing fetched from the
+  network; all dynamic content HTML-escaped, so a tag-bearing title/body can't
+  inject markup) — the human-facing **read** form. It is **export-only**: the
+  lossless custody + custody-events JSONL travels embedded (escaped) in
+  `<details>`/`<pre>` so the data is *present*, but the canonical lossless
+  round-trip stays a property of the Markdown form (`import bundle` consumes it),
+  and the briefing says so (no false round-trip claim — the custody-honest
+  split). Both forms share `_gather_scope` (one scope resolution) and the
+  `custody_headline`/`drift_posture`/`classification_phrase`/`_items_block`/
+  `_events_block` primitives, so the HTML can't desync from the Markdown. The
+  bundle is *scoped* (a query + the `context`/`search`
   facets) and *complete about that scope* (every match, not a top-N), so it is
   the "take it with me" half of the dogfood flow where `export items` is the
   whole-library backup. `import bundle` reuses the `import items` path

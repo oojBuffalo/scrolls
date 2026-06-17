@@ -96,6 +96,7 @@ uv run scrolls export items   # export items as a lossless JSONL stream (back up
 uv run scrolls export events  # export the verify ledger (custody events) as a lossless JSONL stream (back up custody, H72), to stdout
 uv run scrolls export events --since 2026-06-16  # incremental backup: only checks since a boundary; the union re-imports idempotently (H75)
 uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block + verify-ledger events, shareable & re-importable
+uv run scrolls export bundle "<query>" --format html > briefing.html  # the same bundle as a self-contained, browser-readable briefing (export-only; Markdown is the re-import unit, H39)
 uv run scrolls import bundle <path>  # restore scrolls AND their custody ledger from a bundle, losslessly (the "take it with me" half); events dedup on re-import (H67), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON

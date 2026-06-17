@@ -7,6 +7,7 @@ import pytest
 from scrolls.bundle import (
     BundleError,
     build_bundle,
+    build_bundle_html,
     parse_bundle,
     parse_bundle_events,
 )
@@ -14,7 +15,13 @@ from scrolls.classify import ENGINE as RULES_ENGINE
 from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.classify_llm import ENGINE as LLM_ENGINE
 from scrolls.cli import main
-from scrolls.custody import CustodyEvent, item_events, item_history, record_events
+from scrolls.custody import (
+    CustodyEvent,
+    custody_headline,
+    item_events,
+    item_history,
+    record_events,
+)
 from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, get_item, insert_item, item_to_dict
 from scrolls.kb import ConceptSummary, save_concept_summary
@@ -651,4 +658,193 @@ def test_import_bundle_reports_a_corrupt_block(scrolls_home, tmp_path, capsys):
     )
     capsys.readouterr()
     assert main(["import", "bundle", str(bad)]) == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+# --- HTML briefing (roadmap H39) -------------------------------------------
+
+
+def test_bundle_html_is_a_self_contained_document(scrolls_home):
+    # the human-facing read artifact: a single offline HTML file, no external CSS/JS
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search support.",
+    ))
+
+    html = build_bundle_html(db, "database engine")
+    assert html.startswith("<!DOCTYPE html>")
+    assert "<html" in html and "</html>" in html
+    # the title carries the query
+    assert "<title>Scrolls Custody Bundle: database engine</title>" in html
+    # self-contained: styling is inline, nothing fetched from the network
+    assert "<style>" in html
+    assert "<link" not in html  # no external stylesheet
+    assert "<script" not in html  # no scripts at all (and no XSS surface)
+    # the scroll and its custody facts render
+    assert "SQLite" in html
+    assert "wikipedia:en:SQLite" in html
+    assert "<code>full</code>" in html  # raw_text + hash + rendered → full tier
+    assert "captured 2026-06-12T00:00:00+00:00" in html
+
+
+def test_bundle_html_carries_drift_posture_and_classification(scrolls_home):
+    # the same two custody axes the Markdown briefing carries read in the HTML
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+        category="documentation", provenance=_rules_provenance(),
+    ))
+
+    html = build_bundle_html(db, "database engine")
+    # never re-checked → the honest unverified posture, stated explicitly
+    assert "<code>unverified</code>" in html
+    # how the category was derived, via the shared classification phrase
+    assert "classified <code>documentation</code> by <code>rules-v1</code>" in html
+    assert "confidence deterministic, current" in html
+
+
+def test_bundle_html_embeds_the_lossless_custody_block(scrolls_home):
+    # the custody rows + events travel in the HTML (in <details>/<pre>), so the
+    # data is present even though re-import consumes the Markdown form
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+
+    html = build_bundle_html(db, "database engine")
+    assert "<details" in html and "<pre>" in html
+    # the same self-describing fenced JSONL the Markdown bundle carries
+    assert "@generated scrolls" in html
+    assert "wikipedia:en:SQLite" in html  # the lossless row is present
+    # and it says HTML is export-only — Markdown is the canonical re-import unit
+    assert "Markdown" in html
+
+
+def test_bundle_html_escapes_dynamic_content(scrolls_home):
+    # custody/security: a tag-bearing title or body must never inject raw HTML
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:XSS", "<script>alert(1)</script>",
+        "A body with <b>markup</b> & an ampersand.",
+        raw_text="<script>alert(1)</script>",
+    ))
+
+    html = build_bundle_html(db, "ampersand")
+    # the raw payload is escaped wherever it appears (title, excerpt, custody block)
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&amp;" in html  # the ampersand is escaped, not left bare
+
+
+def test_bundle_html_scope_headline_matches_the_shared_primitive(scrolls_home):
+    # the HTML headline content equals the shared custody_headline (sans markdown _)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+
+    db_items = [get_item(db, "wikipedia:en:SQLite")]
+    expected = custody_headline(db_items, {}).strip("_")
+    html = build_bundle_html(db, "database engine")
+    assert expected in html
+
+
+def test_bundle_html_concept_summary(scrolls_home):
+    # a concept-scoped HTML bundle carries the synthesized summary, like Markdown
+    main(["init"])
+    db = get_paths().db_path
+    members = [
+        make_item("wikipedia:en:SQLite", "SQLite", "SQLite is a database.",
+                  concepts=("Databases",)),
+        make_item("wikipedia:en:Postgres", "Postgres", "Postgres is a database.",
+                  concepts=("Databases",)),
+    ]
+    for member in members:
+        insert_item(db, member)
+    save_concept_summary(db, ConceptSummary(
+        slug="databases", display="Databases",
+        summary="Databases store and query structured data.",
+        members_hash=members_hash(members), engine=SUMMARY_ENGINE,
+        model="claude-test", generated_at="2026-06-12T00:00:00+00:00",
+    ))
+
+    html = build_bundle_html(db, "database", concept="Databases")
+    assert "Databases store and query structured data." in html
+    assert "Summary by" in html
+
+
+def test_bundle_html_empty_scope_is_a_valid_document(scrolls_home):
+    # no matches still yields a valid HTML doc — never a crash on an empty scope
+    main(["init"])
+    db = get_paths().db_path
+    html = build_bundle_html(db, "nothingmatcheshere")
+    assert html.startswith("<!DOCTYPE html>")
+    assert "No matching scrolls." in html
+
+
+def test_build_bundle_html_blank_query_is_an_error(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError):
+        build_bundle_html(get_paths().db_path, '""')
+
+
+def test_export_bundle_format_html_emits_html(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+    assert main(["export", "bundle", "database", "--format", "html"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("<!DOCTYPE html>")
+    assert "wikipedia:en:SQLite" in out
+
+
+def test_export_bundle_defaults_to_markdown(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+    assert main(["export", "bundle", "database"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Scrolls Custody Bundle: database\n")
+    # the Markdown form stays importable (the canonical re-import unit)
+    assert [i.id for i in parse_bundle(out)] == ["wikipedia:en:SQLite"]
+
+
+def test_export_bundle_format_markdown_explicit(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+    ))
+    capsys.readouterr()
+    assert main(["export", "bundle", "database", "--format", "markdown"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Scrolls Custody Bundle: database\n")
+
+
+def test_export_bundle_html_before_init_is_a_valid_empty_document(scrolls_home, capsys):
+    # like the Markdown form, HTML export never creates a library
+    capsys.readouterr()
+    assert main(["export", "bundle", "anything", "--format", "html"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("<!DOCTYPE html>")
+    assert "No matching scrolls." in out
+    assert not scrolls_home.exists()
+
+
+def test_export_bundle_html_blank_query_is_an_error(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    assert main(["export", "bundle", '""', "--format", "html"]) == 1
     assert "error" in json.loads(capsys.readouterr().err)

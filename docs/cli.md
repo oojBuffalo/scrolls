@@ -1294,7 +1294,7 @@ $ scrolls export events --since 2026-06-16 >> ledger.jsonl   # append only check
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--format markdown|html]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -1352,6 +1352,24 @@ briefing.md`. A blank query is a JSON error on stderr; an empty scope still
 yields a valid, importable bundle saying `No matching scrolls.`
 (`test_empty_scope_yields_a_valid_importable_bundle`). Re-import with
 `scrolls import bundle`.
+
+`--format` (default `markdown`) chooses the output form (roadmap H39). `markdown`
+is the **canonical, lossless, re-importable** bundle described above — the form
+`scrolls import bundle` round-trips against. `html` renders the *same* scope and
+the *same* per-scroll custody picture (fidelity tier, drift posture,
+classification provenance, the scope custody headline, and a `--concept`
+bundle's summary) as a **self-contained, browser-readable briefing** — one
+offline HTML file with inline CSS, no scripts, and nothing fetched from the
+network; all dynamic content is HTML-escaped so a tag-bearing title or body can
+never inject markup (`test_bundle_html_escapes_dynamic_content`). The HTML is
+**export-only — not a re-import unit**: the lossless custody + custody-events
+JSONL travels embedded in `<details>`/`<pre>` so the data is *present* for a
+reader, but `import bundle` consumes the Markdown form, and the briefing says so
+(no false round-trip claim) — the custody-honest split. Like the Markdown form,
+the HTML prints raw on stdout (`scrolls export bundle "<q>" --format html >
+briefing.html`) and tolerates a missing library
+(`test_bundle_html_is_a_self_contained_document`,
+`test_export_bundle_format_html_emits_html`).
 
 ### `scrolls import bundle <path>`
 

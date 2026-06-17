@@ -7,6 +7,15 @@ topic — best matches, each with its custody **fidelity** tier (ADR 0100) and
 the lossless canonical rows. `scrolls import bundle <path>` reads that block
 back, reconstructing the index rows losslessly.
 
+Two output forms (`--format`, roadmap H39): the **Markdown** bundle
+(`build_bundle`) is the canonical, lossless, re-importable artifact this module's
+round-trip rests on; the **HTML** bundle (`build_bundle_html`) renders the same
+scope and per-scroll custody picture as a self-contained, browser-readable
+briefing — the human-facing **read** form, *export-only* (its embedded custody
+JSONL is present but `import bundle` consumes the Markdown form; no false
+round-trip claim). Both share `_gather_scope` and the custody/provenance
+primitives, so they cannot disagree.
+
 The bundle is the shareable complement to `export items` (ADR 0082): where
 that is the whole-library/faceted JSONL *backup* (machine-oriented, streamed
 to stdout), this is the *scoped, human-and-agent-readable briefing* — same
@@ -60,6 +69,7 @@ exactly as `import items` relies on.
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 
@@ -101,32 +111,54 @@ _REQUIRED = ("id", "source", "url", "saved_at")
 # minimal identity an event must carry to be restorable (roadmap H67).
 _EVENT_REQUIRED = ("item_id", "checked_at", "status")
 
+# Inline stylesheet for the HTML briefing (roadmap H39) — kept in the document so
+# the file is self-contained and offline (no external CSS/JS, nothing fetched
+# from the network). `color-scheme` follows the reader's light/dark preference.
+_HTML_STYLE = """\
+:root { color-scheme: light dark; }
+body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+       sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.15rem; margin-top: 2rem; padding-top: 1rem;
+     border-top: 1px solid rgba(127,127,127,.3); }
+code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px;
+       font-size: .9em; }
+.custody-headline { font-weight: 600; }
+.note { color: #6a6a6a; font-size: .85rem; }
+.custody-facts { list-style: none; padding-left: 0; }
+.custody-facts li { margin: .15rem 0; }
+.excerpt { border-left: 3px solid rgba(127,127,127,.4); margin: .5rem 0;
+           padding: .25rem 0 .25rem 1rem; }
+details.custody-data { margin-top: 2rem; }
+details.custody-data pre { overflow-x: auto; padding: 1rem; border-radius: 4px;
+                           background: rgba(127,127,127,.1); font-size: .8rem; }
+"""
+
 
 class BundleError(Exception):
     """A file is not a Scrolls custody bundle, or its custody block is corrupt."""
 
 
-def build_bundle(
+def _gather_scope(
     db_path: Path,
     query: str,
-    source: str | None = None,
-    category: str | None = None,
-    stage: str | None = None,
-    tag: str | None = None,
-    concept: str | None = None,
-) -> str:
-    """Render the self-contained custody bundle for a query (briefing + block).
+    source: str | None,
+    category: str | None,
+    stage: str | None,
+    tag: str | None,
+    concept: str | None,
+) -> tuple[list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent]]:
+    """Resolve the bundle scope once, for both the Markdown and HTML renderers.
 
-    Scope is the same query + facets every read surface uses (`search_items`),
-    so a bundle covers exactly what a `context`/`search` of the same scope
-    would — but with no cap: it carries every matching scroll (`count_matches`
-    is the limit), because a custody artifact must be complete about its scope,
-    not a top-N (the M2 completeness contract). Raises ValueError on a blank
-    query, like `scrolls context`. No matches still yields a valid bundle (an
-    empty custody block) so an agent never crashes on an empty scope.
+    Returns the in-scope items (every match, no cap — `count_matches` is the
+    limit, the M2 completeness contract), the latest custody verdict per item
+    (`latest_events`, one read for the whole scope, the drift-posture source),
+    and the in-scope verify ledger (`events_for_items`, the portable custody
+    events, roadmap H67). `count_matches` also validates the query, raising
+    ValueError on a blank one. The ledger reads are skipped when there is
+    nothing to brief (no items, incl. a missing library) so an empty/pre-init
+    bundle stays valid in either format.
     """
-    # the honest denominator past any cap (also validates the query, raising on
-    # blank) — used here as the limit so the bundle holds the *whole* scope
     matched = count_matches(
         db_path,
         query,
@@ -147,12 +179,40 @@ def build_bundle(
         concept=concept,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
+    verdicts = latest_events(db_path) if items else {}
+    events = events_for_items(db_path, [item.id for item in items]) if items else []
+    return items, verdicts, events
+
+
+def build_bundle(
+    db_path: Path,
+    query: str,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+) -> str:
+    """Render the self-contained custody bundle for a query (briefing + block).
+
+    Scope is the same query + facets every read surface uses (`search_items`),
+    so a bundle covers exactly what a `context`/`search` of the same scope
+    would — but with no cap: it carries every matching scroll (`count_matches`
+    is the limit), because a custody artifact must be complete about its scope,
+    not a top-N (the M2 completeness contract). Raises ValueError on a blank
+    query, like `scrolls context`. No matches still yields a valid bundle (an
+    empty custody block) so an agent never crashes on an empty scope.
+
+    This is the **canonical, lossless re-import unit**: the Markdown form
+    `scrolls import bundle` round-trips against. The browser-readable HTML form
+    (`build_bundle_html`, roadmap H39) is export-only.
+    """
     # one ledger read for the whole scope: the latest custody verdict per item,
     # so each briefing entry can name its drift posture (H42) from the same
     # `latest_events` doctor aggregates — no per-item query, no disagreement.
-    # Skipped when there is nothing to brief (no items, incl. a missing library,
-    # where the ledger does not exist) so an empty/pre-init bundle stays valid.
-    verdicts = latest_events(db_path) if items else {}
+    items, verdicts, events = _gather_scope(
+        db_path, query, source, category, stage, tag, concept
+    )
 
     title = f"# Scrolls Custody Bundle: {query}"
     scope = _scope_note(source, category, stage, tag, concept)
@@ -184,25 +244,211 @@ def build_bundle(
         for rank, item in enumerate(items, start=1):
             lines += _briefing_entry(rank, item, verdicts.get(item.id))
 
-    # the lossless custody block: the same JSONL `export items` writes, inside a
-    # code fence, inside the ADR 0102 sentinel so it is locatable and the body
-    # around it stays hand-annotatable across a re-export
-    jsonl = dump_items_export(items)
-    block = f"```jsonl\n{jsonl}```"
-    lines += [fence(block, _REGENERATED_BY).rstrip("\n")]
-
-    # the sibling custody-events block (roadmap H67): the in-scope items' verify
-    # ledger so their drift *history* travels, not just the exporter's last-seen
-    # posture frozen in the briefing prose. A second `@generated` region (the
-    # items block stays byte-identical to `export items`, so its round-trip is
-    # the same already-tested property); `import bundle` restores it deduped. An
-    # unverified scope has no events — an empty block, the same shape an empty
-    # items block takes — so the bundle's structure is stable.
-    events = events_for_items(db_path, [item.id for item in items]) if items else []
-    events_jsonl = dump_events_export(events)
-    events_block = f"```jsonl\n{events_jsonl}```"
-    lines += [fence(events_block, _EVENTS_REGENERATED_BY).rstrip("\n")]
+    # the lossless custody block + the sibling custody-events block — the same
+    # sentinel-fenced JSONL the HTML form embeds, so the two formats carry
+    # byte-identical custody data (the round-trip stays a Markdown property)
+    lines += [_items_block(items)]
+    lines += [_events_block(events)]
     return "\n".join(lines) + "\n"
+
+
+def _items_block(items: list[ScrollItem]) -> str:
+    """The lossless custody block: the same JSONL `export items` writes, inside a
+    code fence, inside the ADR 0102 sentinel so it is locatable and the body
+    around it stays hand-annotatable across a re-export."""
+    block = f"```jsonl\n{dump_items_export(items)}```"
+    return fence(block, _REGENERATED_BY).rstrip("\n")
+
+
+def _events_block(events: list[CustodyEvent]) -> str:
+    """The sibling custody-events block (roadmap H67): the in-scope items' verify
+    ledger so their drift *history* travels, not just the exporter's last-seen
+    posture frozen in the briefing prose. A second `@generated` region (the items
+    block stays byte-identical to `export items`, so its round-trip is the same
+    already-tested property); `import bundle` restores it deduped. An unverified
+    scope has no events — an empty block, the same shape an empty items block
+    takes — so the bundle's structure is stable."""
+    block = f"```jsonl\n{dump_events_export(events)}```"
+    return fence(block, _EVENTS_REGENERATED_BY).rstrip("\n")
+
+
+def build_bundle_html(
+    db_path: Path,
+    query: str,
+    source: str | None = None,
+    category: str | None = None,
+    stage: str | None = None,
+    tag: str | None = None,
+    concept: str | None = None,
+) -> str:
+    """Render the scoped custody bundle as a self-contained, offline HTML briefing.
+
+    The browser-readable, human-facing **read** counterpart of `build_bundle`
+    (roadmap H39): the same scope (every match, no cap — `_gather_scope`) and the
+    same per-scroll custody picture — fidelity tier, drift posture, classification
+    provenance, and (for a `--concept` bundle) the synthesized summary — rendered
+    into one self-contained HTML file (inline CSS, no scripts, nothing fetched
+    from the network). All dynamic content is HTML-escaped, so a tag-bearing
+    title or body can never inject markup.
+
+    **Export-only — not a re-import unit.** The canonical lossless round-trip
+    stays a property of the Markdown form (`build_bundle`/`import bundle`); the
+    HTML embeds the *same* sentinel-fenced custody + custody-events JSONL (the
+    shared `_items_block`/`_events_block`) in `<details>`/`<pre>` so the data is
+    *present* for a reader, but `import bundle` consumes the Markdown bundle. The
+    briefing says so, to make no false round-trip claim. Raises ValueError on a
+    blank query, like `build_bundle`.
+    """
+    items, verdicts, events = _gather_scope(
+        db_path, query, source, category, stage, tag, concept
+    )
+
+    scope = _scope_note(source, category, stage, tag, concept)
+    heading = f"Scrolls Custody Bundle: {query}"
+    title = heading + (f" ({scope})" if scope else "")
+
+    body = [f"<h1>{html.escape(title)}</h1>"]
+    # the scope custody headline, from the shared `custody_headline` primitive
+    # (sans the markdown `_` emphasis) — so the HTML headline content is identical
+    # to the Markdown briefing's and to `status`/`context`/`doctor` (H45/H47)
+    headline = custody_headline(items, verdicts).strip("_")
+    body.append(f'<p class="custody-headline">{html.escape(headline)}</p>')
+    body.append(
+        '<p class="note">Read-only briefing. The canonical lossless re-import '
+        "unit is the <strong>Markdown</strong> bundle (<code>scrolls export "
+        "bundle … --format markdown</code>); the custody rows below are embedded "
+        "for reference and re-imported via the Markdown form with <code>scrolls "
+        "import bundle</code>.</p>"
+    )
+    # a concept-scoped bundle is *about* that concept, so its synthesized summary
+    # and how it was derived belong in the briefing (H35), same as the Markdown
+    if concept is not None:
+        body += _concept_summary_html(db_path, concept)
+
+    if not items:
+        body.append("<p>No matching scrolls.</p>")
+    else:
+        body.append(
+            f"<p>{len(items)} scroll(s), the whole scope — self-contained.</p>"
+        )
+        for rank, item in enumerate(items, start=1):
+            body += _briefing_entry_html(rank, item, verdicts.get(item.id))
+
+    # the same sentinel-fenced custody blocks the Markdown form carries, embedded
+    # (escaped) so the lossless data travels in the HTML too — but it is not a
+    # re-import unit (the round-trip stays a Markdown property)
+    body.append(_custody_details_html("Custody block", _items_block(items), len(items)))
+    body.append(
+        _custody_details_html("Custody events", _events_block(events), len(events))
+    )
+    return _html_document(title, body)
+
+
+def _html_document(title: str, body: list[str]) -> str:
+    """Wrap the briefing body in a self-contained HTML5 document with inline CSS."""
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>{html.escape(title)}</title>\n"
+        f"<style>\n{_HTML_STYLE}</style>\n"
+        "</head>\n<body>\n<main>\n"
+        + "\n".join(body)
+        + "\n</main>\n</body>\n</html>\n"
+    )
+
+
+def _briefing_entry_html(
+    rank: int, item: ScrollItem, verdict: CustodyEvent | None
+) -> list[str]:
+    """The HTML twin of `_briefing_entry`: identity, custody facts, excerpt."""
+    out = [
+        '<section class="scroll">',
+        f"<h2>{rank}. {html.escape(item.title or item.id)} "
+        f"(<code>{html.escape(item.id)}</code>)</h2>",
+        '<ul class="custody-facts">',
+        f"<li>{html.escape(item.source)} · fidelity "
+        f"<code>{html.escape(get_fidelity(item))}</code> · stage "
+        f"<code>{html.escape(item.stage)}</code></li>",
+        f"<li>captured {html.escape(item.saved_at)}</li>",
+    ]
+    url = item.canonical_url or item.url
+    out.append(
+        f'<li><a href="{html.escape(url, quote=True)}">{html.escape(url)}</a></li>'
+    )
+    if item.content_hash:
+        out.append(f"<li>content-hash <code>{html.escape(item.content_hash)}</code></li>")
+    out.append(f"<li>{_drift_html(verdict)}</li>")
+    classification = _classification_html(item)
+    if classification:
+        out.append(f"<li>{classification}</li>")
+    out.append("</ul>")
+    excerpt = _excerpt(item)
+    if excerpt:
+        out.append(f'<blockquote class="excerpt">{html.escape(excerpt)}</blockquote>')
+    out.append("</section>")
+    return out
+
+
+def _drift_html(verdict: CustodyEvent | None) -> str:
+    """The per-scroll drift posture as HTML — the twin of `_drift_line` (H42).
+
+    Reads the same `custody.drift_posture` + `_POSTURE_GLOSS` the Markdown line
+    does, so the HTML posture word and `doctor`'s `custody.drift` cannot disagree;
+    ``unverified`` is stated explicitly, never silently "clean".
+    """
+    posture = drift_posture(verdict)
+    if verdict is None:
+        return "custody <code>unverified</code> — never re-checked against its source"
+    return (
+        f"custody <code>{html.escape(posture)}</code> "
+        f"({html.escape(_POSTURE_GLOSS[posture])}) as of {html.escape(verdict.checked_at)}"
+    )
+
+
+def _classification_html(item: ScrollItem) -> str | None:
+    """How the category was derived, as HTML — the twin of `_classification_line`.
+
+    Renders the *same* shared `classification_phrase` the Markdown briefing and
+    every structured surface use (H35/H44), with its backtick `code` spans turned
+    into `<code>` (`_inline_code`), so the method/confidence reads identically.
+    Returns None for an unclassified or user-set category — the same honest
+    absence (no method claimed for a category no engine produced).
+    """
+    view = classification_provenance(item)
+    if view is None:
+        return None
+    return (
+        f"classified <code>{html.escape(item.category)}</code> "
+        f"{_inline_code(classification_phrase(view))}"
+    )
+
+
+def _inline_code(text: str) -> str:
+    """Escape HTML and render markdown `code` spans as `<code>`.
+
+    Used only on the controlled `classification_phrase` — its backtick spans are
+    engine/basis/confidence tokens, never user content — so the HTML reads the
+    same method/confidence as every other surface without a markdown renderer.
+    """
+    return "".join(
+        f"<code>{html.escape(part)}</code>" if i % 2 else html.escape(part)
+        for i, part in enumerate(text.split("`"))
+    )
+
+
+def _custody_details_html(label: str, fenced_block: str, count: int) -> str:
+    """A collapsible `<details>` holding one sentinel-fenced custody block (escaped).
+
+    The lossless JSONL is *present* in the HTML (so a reader can extract it), but
+    the block is the Markdown form's content embedded verbatim and escaped — not a
+    re-import surface; `import bundle` consumes the Markdown bundle (H39).
+    """
+    return (
+        f'<details class="custody-data"><summary>{html.escape(label)} — '
+        f"{count} row(s)</summary>\n<pre>{html.escape(fenced_block)}</pre>\n</details>"
+    )
 
 
 def parse_bundle(text: str) -> list[ScrollItem]:
@@ -392,18 +638,10 @@ def _concept_summary_block(db_path: Path, concept: str) -> list[str]:
     round-trip through `import bundle` (the round-trip invariant H35 leaves
     untouched).
     """
-    slug = slugify(concept)
-    if not slug:
+    result = _concept_summary_view(db_path, concept)
+    if result is None:
         return []
-    stored: ConceptSummary | None = load_concept_summaries(db_path).get(slug)
-    if stored is None:
-        return []
-    rendered = [item for item in list_items(db_path) if item.markdown_path]
-    entry = group_concepts(rendered).get(slug)
-    live = members_hash(entry["items"]) if entry else ""
-    view = summary_provenance(stored, live)
-    if view is None:  # unreachable while `stored` is set, but keeps the contract local
-        return []
+    stored, view = result
     return [
         f"**Concept summary** — {stored.summary}",
         "",
@@ -411,6 +649,49 @@ def _concept_summary_block(db_path: Path, concept: str) -> list[str]:
         f"(members fingerprint `{view['members_hash'][:12]}`)._",
         "",
     ]
+
+
+def _concept_summary_html(db_path: Path, concept: str) -> list[str]:
+    """The HTML twin of `_concept_summary_block` — the concept's summary + provenance."""
+    result = _concept_summary_view(db_path, concept)
+    if result is None:
+        return []
+    stored, view = result
+    return [
+        '<section class="concept-summary">',
+        f"<p><strong>Concept summary</strong> — {html.escape(stored.summary)}</p>",
+        f'<p class="note">Summary by <code>{html.escape(view["by"])}</code>, '
+        f"{html.escape(view['freshness'])} (members fingerprint "
+        f"<code>{html.escape(view['members_hash'][:12])}</code>).</p>",
+        "</section>",
+    ]
+
+
+def _concept_summary_view(
+    db_path: Path, concept: str
+) -> tuple[ConceptSummary, dict] | None:
+    """The bundled concept's stored summary + its `summary_provenance` view, or None.
+
+    Shared by the Markdown (`_concept_summary_block`) and HTML
+    (`_concept_summary_html`) renderers so both report the same synthesis and
+    freshness. Freshness is computed against the concept's *whole* live membership
+    (not the bundle's query-filtered subset), because a summary is a synthesis of
+    the entire concept. Returns None for an unknown concept, no stored summary, or
+    an empty slug — the honest absence both renderers turn into [].
+    """
+    slug = slugify(concept)
+    if not slug:
+        return None
+    stored: ConceptSummary | None = load_concept_summaries(db_path).get(slug)
+    if stored is None:
+        return None
+    rendered = [item for item in list_items(db_path) if item.markdown_path]
+    entry = group_concepts(rendered).get(slug)
+    live = members_hash(entry["items"]) if entry else ""
+    view = summary_provenance(stored, live)
+    if view is None:  # unreachable while `stored` is set, but keeps the contract local
+        return None
+    return stored, view
 
 
 def _scope_note(
