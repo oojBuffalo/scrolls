@@ -362,13 +362,24 @@ def test_read_log_skips_a_corrupt_line_without_losing_the_good_ones(tmp_path):
 # --- the derived trend (pure, roadmap H46) --------------------------------
 
 
-def _run(recorded_at, score, drifted=0, rotted=0, verified=0, total=0):
+def _run(
+    recorded_at,
+    score,
+    drifted=0,
+    rotted=0,
+    verified=0,
+    total=0,
+    enrichment_stale=0,
+    summaries_stale=0,
+):
     return {
         "recorded_at": recorded_at,
         "snapshot": {
             "score": score,
             "drift": {"drifted": drifted, "rotted": rotted},
             "coverage": {"verified": verified, "total": total},
+            "enrichment_stale": enrichment_stale,
+            "summaries_stale": summaries_stale,
         },
         "delta": {},
     }
@@ -381,6 +392,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["posture"] == "insufficient-history"
         assert trend["score"] is None and trend["drift_change"] is None
         assert trend["coverage_change"] is None  # no direction from one point
+        assert trend["stale_change"] is None  # nor an enrichment/summary debt direction
         assert trend["runs"] == len(window)
 
 
@@ -469,6 +481,57 @@ def test_trend_coverage_reads_zero_for_a_pre_h115_endpoint():
     pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
     trend = compute_trend([pre, _run("t2", 100, verified=3, total=3)])
     assert trend["coverage_change"] == {"verified": 3, "total": 3}
+
+
+def test_trend_reports_enrichment_and_summary_staleness_movement():
+    """The re-derivability debt trajectory (H131): the net first→last movement in
+    the stale-classification / stale-summary counts, so a worker reading `--trend`
+    sees whether a `classify --stale` / `kb --stale` refresh is becoming overdue."""
+    trend = compute_trend(
+        [
+            _run("t1", 100, enrichment_stale=1, summaries_stale=0),
+            _run("t3", 100, enrichment_stale=3, summaries_stale=2),
+        ]
+    )
+    # 1 → 3 stale classifications, 0 → 2 stale summaries across the span
+    assert trend["stale_change"] == {"enrichment": 2, "summaries": 2}
+
+
+def test_trend_staleness_movement_is_independent_of_the_posture():
+    """Rising enrichment/summary staleness is a re-derivability signal, not an
+    integrity loss — the category/summary is still *held*. A steady score with no
+    drift is still `holding` even as the stale debt grows (the H115 coverage rule,
+    on the staleness axis): `stale_change` is reported, never a `posture` trigger."""
+    trend = compute_trend(
+        [
+            _run("t1", 100, enrichment_stale=0, summaries_stale=0),
+            _run("t2", 100, enrichment_stale=5, summaries_stale=4),
+        ]
+    )
+    assert trend["stale_change"] == {"enrichment": 5, "summaries": 4}
+    assert trend["posture"] == "holding"
+
+
+def test_trend_staleness_can_clear_across_the_window():
+    """A refresh (`classify --stale` / `kb --stale`) between runs clears the debt:
+    a negative `stale_change` is the honest 'getting less stale' direction."""
+    trend = compute_trend(
+        [
+            _run("t1", 100, enrichment_stale=3, summaries_stale=2),
+            _run("t2", 100, enrichment_stale=0, summaries_stale=0),
+        ]
+    )
+    assert trend["stale_change"] == {"enrichment": -3, "summaries": -2}
+    assert trend["posture"] == "holding"
+
+
+def test_trend_staleness_reads_zero_for_a_pre_tracking_endpoint():
+    """A window endpoint recorded before the snapshot tracked the stale scalars (an
+    older schema) reads 0 for the missing axis, so the movement is still computed,
+    never a crash (the missing-axis-zero posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, enrichment_stale=2, summaries_stale=1)])
+    assert trend["stale_change"] == {"enrichment": 2, "summaries": 1}
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -1050,6 +1113,53 @@ def test_history_and_trend_show_coverage_advancing_across_runs(
     assert payload["trend"]["coverage_change"] == {"verified": 1, "total": 0}
     # coverage rising does not move the integrity-first posture (no drift here)
     assert payload["trend"]["posture"] == "holding"
+
+
+def test_trend_reports_enrichment_staleness_accumulating_across_runs(home, capsys):
+    """End-to-end (H131): an item classified under a superseded ruleset appears
+    between two offline passes, so the recorded snapshots carry `enrichment_stale`
+    0 → 1; `--trend` reports the net `stale_change` (the re-derivability debt is
+    accumulating) while the integrity-first `posture` stays `holding` — a held
+    category under an old ruleset is debt to refresh, not a custody regression."""
+    from scrolls.classify import ENGINE
+
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    # pass 1 (offline): a clean library, no stale enrichment yet
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["custody"]["enrichment_stale"] == 0
+
+    # one item's category was produced under a now-superseded ruleset
+    target = list_items(home.db_path)[0]
+    stale = replace(
+        target,
+        provenance={
+            **(target.provenance or {}),
+            "classified_by": ENGINE,
+            "classified_basis": "title-pattern",
+            "classified_ruleset": "superseded-fingerprint",
+        },
+    )
+    assert update_item(home.db_path, stale)
+
+    # pass 2 (offline): the audit now counts one stale classification
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["custody"]["enrichment_stale"] == 1
+
+    # --history replays each pass's recorded staleness scalar
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert [r["snapshot"]["enrichment_stale"] for r in runs] == [0, 1]
+
+    # --trend: net first→last movement — debt accumulating, posture unchanged
+    assert main(["maintain", "--history", "--trend"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["trend"]["stale_change"] == {"enrichment": 1, "summaries": 0}
+    assert payload["trend"]["posture"] == "holding"  # not an integrity regression
 
 
 def test_unbounded_recheck_checks_the_whole_set_regardless_of_prior_verdicts(

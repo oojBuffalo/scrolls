@@ -430,10 +430,14 @@ each command moves items between stages or derives artifacts from them.
   net `score`/drift movement into one `posture` — `regressing`/`improving`/`holding`,
   integrity-first; <2 runs is `insufficient-history` (a single point has no
   direction). `compute_trend` also reports a `coverage_change` (`{verified, total}`
-  net deltas, roadmap H115) — "is the library getting more covered?" — as a
-  *separate axis it deliberately keeps out of `posture`: coverage measures how much
-  has been checked, not how faithfully we hold it, so the integrity-first posture
-  rule is unchanged. The pass report and each `--history`/`--trend` run also carry a
+  net deltas, roadmap H115) — "is the library getting more covered?" — and a
+  `stale_change` (`{enrichment, summaries}` net deltas, roadmap H131) — "is a
+  `classify --stale` / `kb --stale` refresh becoming overdue?" — as *separate axes
+  it deliberately keeps out of `posture`*: coverage measures how much has been
+  checked and staleness how much enrichment is re-derivable, neither how faithfully
+  we hold what we have (a held category under a superseded ruleset is still held),
+  so the integrity-first posture rule is unchanged. The pass report and each
+  `--history`/`--trend` run also carry a
   one-line **`headline`** — `maintain.snapshot_headline` renders the shared
   `custody.custody_headline` from the recorded snapshot (mapping its `unchanged`
   count to the `verified` posture), so the worker's log reads "how custody
@@ -1165,9 +1169,11 @@ choice (ADRs 0004, 0005).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
   the module owns only the snapshot/delta layer plus the append-only run log
   (`log.jsonl`, read back by `maintain --history [N]` — the custody trend). The
-  snapshot records the recheck `coverage` (H115), so `--history`/`--trend` replay
-  it across runs and `compute_trend` reports a `coverage_change` (`{verified,
-  total}` net deltas) — a separate axis kept out of the integrity-first `posture`.
+  snapshot records the recheck `coverage` (H115) and the stale enrichment/summary
+  counts (H25/H29), so `--history`/`--trend` replay them across runs and
+  `compute_trend` reports a `coverage_change` (`{verified, total}`) and a
+  `stale_change` (`{enrichment, summaries}`, H131) net delta — separate axes kept
+  out of the integrity-first `posture`.
   Report-only and idempotent — records drift events and regenerates views, never
   repairs rows or re-enriches — so it is a safe cron-able pass
   (`tests/test_maintain.py`). Because it repairs nothing itself, `suggest_repairs`

@@ -426,22 +426,34 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     - else a *rise* in `score` or *fewer* drifted/rotted is `improving`;
     - else `holding`.
 
-    ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115) is a
-    *separate* axis the worker reads alongside the posture — "is the library
-    getting more covered?" (Δ``verified`` up as bounded passes verify the
-    never-checked tail; Δ``total`` up as new verifiable items are added). It is
-    **deliberately not folded into `posture`**: coverage measures *how much has
-    been checked*, not *how faithfully we hold what we have*, so rising coverage
-    is not "improving" custody integrity and a steady library that simply has not
-    been re-checked is not "regressing". Keeping `posture` integrity-only leaves
-    the H46 rule unchanged; coverage is reported, never a posture trigger.
+    ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115) and
+    ``stale_change`` (``{enrichment, summaries}`` net deltas, roadmap H131) are
+    *separate* axes the worker reads alongside the posture:
+
+    - ``coverage_change`` — "is the library getting more covered?" (Δ``verified``
+      up as bounded passes verify the never-checked tail; Δ``total`` up as new
+      verifiable items are added).
+    - ``stale_change`` — "is re-derivable enrichment debt accumulating?" (Δ the
+      stale-classification count, H25, and Δ the stale-summary count, H29 — a
+      rising figure means a ``classify --stale`` / ``kb --stale`` refresh is due).
+
+    Both are **deliberately kept out of `posture`** (the H115 precedent, on the
+    staleness axis too): coverage measures *how much has been checked* and
+    staleness *how much enrichment is re-derivable*, neither *how faithfully we
+    hold what we have*. A held category produced under a superseded ruleset is
+    still held — rising staleness means a refresh is due, not that custody
+    regressed — so rising coverage is not "improving" integrity, a steady-but-
+    overdue library is not "regressing", and growing stale debt does not move the
+    posture. Keeping `posture` integrity-only leaves the H46 rule unchanged;
+    coverage and staleness are reported, never posture triggers.
 
     Honest absence (the H21/H29 posture): a window of fewer than two runs is not
     a trajectory — a single point has no direction — so it carries null deltas
-    (including ``coverage_change``) and `posture` ``insufficient-history``. A
-    `score` that is ``None`` on either end (an uninitialized-library run) yields a
-    null score `change`, never a fabricated zero; the drift and coverage movement
-    are still computed (absent counts read 0, so a pre-H115 endpoint reads 0).
+    (including ``coverage_change``/``stale_change``) and `posture`
+    ``insufficient-history``. A `score` that is ``None`` on either end (an
+    uninitialized-library run) yields a null score `change`, never a fabricated
+    zero; the drift, coverage, and staleness movement are still computed (absent
+    counts read 0, so a pre-H115/pre-staleness-tracking endpoint reads 0).
     """
     n = len(runs)
     if n < 2:
@@ -451,6 +463,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "score": None,
             "drift_change": None,
             "coverage_change": None,
+            "stale_change": None,
             "posture": "insufficient-history",
         }
 
@@ -475,6 +488,16 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "total": _coverage(last_snap, "total") - _coverage(first_snap, "total"),
     }
 
+    def _stale(snap: dict[str, Any], key: str) -> int:
+        return snap.get(key, 0)
+
+    stale_change = {
+        "enrichment": _stale(last_snap, "enrichment_stale")
+        - _stale(first_snap, "enrichment_stale"),
+        "summaries": _stale(last_snap, "summaries_stale")
+        - _stale(first_snap, "summaries_stale"),
+    }
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -492,6 +515,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "score": {"first": first_score, "last": last_score, "change": score_change},
         "drift_change": drift_change,
         "coverage_change": coverage_change,
+        "stale_change": stale_change,
         "posture": posture,
     }
 
