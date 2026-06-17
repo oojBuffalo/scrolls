@@ -453,7 +453,12 @@ each command moves items between stages or derives artifacts from them.
   distillation `maintain` records, so `status`, `doctor`, and a maintenance
   snapshot can never disagree (network-free; `score` is honestly `null` before
   `init`, `100` for an empty initialized library — the "empty is healthy"
-  posture; `tests/test_cli.py`, roadmap H38).
+  posture; `tests/test_cli.py`, roadmap H38). Beside the structured block it
+  also carries the rendered one-line `headline` string
+  (`maintain.snapshot_headline` over that snapshot — the shared
+  `custody.custody_headline` every scope custody surface emits), so a reader
+  gets "how custody stands" in one line without assembling the counts, at parity
+  with the `maintain` report's `headline` (roadmap H117).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

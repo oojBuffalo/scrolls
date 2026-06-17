@@ -361,6 +361,16 @@ never disagree with `doctor` or a maintenance snapshot
 initialized library is trivially fully custodied (`100`), the "empty is
 healthy" posture `doctor` reports.
 
+`headline` is the one-line custody string rendered from the same snapshot —
+`_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._`,
+the shared `custody.custody_headline` every scope custody surface emits (the
+`maintain` report, the bundle briefing, the `context` bundle, the compiled
+`library/` pages). It is rendered from the `custody` block it sits beside
+(`maintain.snapshot_headline`), so the rendered line and the structured block
+converge by construction and equal `custody_headline` over the held library
+(`test_status_carries_rendered_headline_converging_with_the_block`). An empty
+or uninitialized library renders the honest `_Custody: 0 scroll(s)._`.
+
 | Key | Meaning |
 | --- | --- |
 | `initialized` / `schema_version` | `false`/`null` until `init` |
@@ -368,14 +378,15 @@ healthy" posture `doctor` reports.
 | `items` | `total`, `by_stage` (always all three stages), `by_source` (present sources only), `unclassified` |
 | `subscriptions` | followed feeds (`scrolls follow`) |
 | `custody` | the custody headline — `score`, `tiers`, `drift` posture, `enrichment_stale`, `summaries_stale` (converges with `doctor`) |
+| `headline` | the one-line `custody` block rendered (`_Custody: …_`), at parity with the `maintain` report's `headline` |
 
 ```console
 $ scrolls status        # before init
-{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}}
+{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._"}
 [exit 0]
 
 $ scrolls status        # after the imports and adds below
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._"}
 [exit 0]
 ```
 

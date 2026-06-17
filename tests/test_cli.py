@@ -9,13 +9,25 @@ import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
 from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.cli import main
-from scrolls.custody import CustodyEvent, record_events
+from scrolls.custody import (
+    CustodyEvent,
+    custody_headline,
+    latest_events,
+    record_events,
+)
 from scrolls.db import SCHEMA_VERSION
 from scrolls.doctor import run_doctor
 from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
-from scrolls.maintain import custody_snapshot
+from scrolls.maintain import custody_snapshot, snapshot_headline
 from scrolls.paths import get_paths
-from scrolls.items import ScrollItem, get_item, insert_item, make_item_id, update_item
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    insert_item,
+    list_items,
+    make_item_id,
+    update_item,
+)
 from scrolls.render import write_scroll
 
 
@@ -140,6 +152,8 @@ def test_status_before_init(scrolls_home, capsys):
         "subscriptions": 0,
         # no store yet → the custody score is honestly null, not a fabricated 100
         "custody": _custody_headline(None),
+        # the rendered one-liner (H117): no held scrolls → the honest empty form
+        "headline": "_Custody: 0 scroll(s)._",
     }
 
 
@@ -159,6 +173,8 @@ def test_status_after_init(scrolls_home, capsys):
         # an empty-but-initialized library is trivially fully custodied (100),
         # the same "empty is healthy" doctor reports
         "custody": _custody_headline(100),
+        # the rendered one-liner (H117): an empty library still holds no scrolls
+        "headline": "_Custody: 0 scroll(s)._",
     }
 
 
@@ -228,6 +244,66 @@ def test_status_custody_headline_converges_with_doctor(scrolls_home, capsys):
     assert custody["tiers"] == {"full": 2, "partial": 0, "reference": 1}
     assert custody["drift"]["drifted"] == 1
     assert custody["drift"]["unverified"] == 2  # the two never-rechecked scrolls
+
+
+def test_status_carries_rendered_headline_converging_with_the_block(
+    scrolls_home, capsys
+):
+    """`status` carries the one-line `headline` string (H117) beside its custody
+    block, rendered from the same snapshot — so the rendered line, the structured
+    block, and the shared `custody_headline` over the held library all agree."""
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+    full = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/held"),
+        source="web",
+        source_id=None,
+        url="https://example.com/held",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A fully held capture we can re-derive.",
+        content_hash="sha256:held1234",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    reference = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/pointer"),
+        source="web",
+        source_id=None,
+        url="https://example.com/pointer",
+        saved_at="2026-06-14T00:00:00+00:00",
+        stage="detected",
+        provenance={"adapter": "web"},
+    )
+    for item in (full, reference):
+        insert_item(paths.db_path, write_scroll(paths, item))
+    record_events(
+        paths.db_path,
+        [
+            CustodyEvent(
+                full.id, "2026-06-15T00:00:00+00:00", "unchanged",
+                "sha256:held1234", "sha256:held1234", None,
+            )
+        ],
+    )
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    # the rendered headline is the snapshot block it sits beside, rendered
+    assert payload["headline"] == snapshot_headline(payload["custody"])
+    # …and the shared formatter over the held library + the live ledger agrees
+    assert payload["headline"] == custody_headline(
+        list_items(paths.db_path), latest_events(paths.db_path)
+    )
+    # the concrete, non-trivial line this fidelity/drift mix produces
+    assert payload["headline"] == (
+        "_Custody: 2 scroll(s) · fidelity full 1, reference 1 "
+        "· drift verified 1, unverified 1._"
+    )
 
 
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):

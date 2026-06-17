@@ -2708,6 +2708,15 @@ def _cmd_status() -> int:
                 "items": items,
                 "subscriptions": subscriptions,
                 "custody": custody,
+                # The one-line custody picture (roadmap H117): the shared
+                # `custody_headline` rendered from the snapshot above, so a reader
+                # gets "how custody stands" without assembling the tiers/drift
+                # counts — at full parity with the `maintain` report, which carries
+                # both the structured block and the rendered line. Rendered from the
+                # same snapshot it sits beside, so the two converge by construction;
+                # before `init` the all-zero snapshot renders `_Custody: 0 scroll(s)._`
+                # (never a fabricated count).
+                "headline": snapshot_headline(custody),
             }
         )
     )
