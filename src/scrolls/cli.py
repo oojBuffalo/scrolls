@@ -41,6 +41,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     parse_since,
+    recheck_coverage,
     recheck_order,
     record_events,
     tally_custody,
@@ -1127,6 +1128,10 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
         recheck_report = {
             "skipped": True, "scope": None, "since": None, "checked": 0,
             "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
+            # Coverage is a read of the current ledger, not the live edge, so it
+            # rides --no-recheck too (roadmap H109): "N of M verifiable items
+            # carry a verdict" without re-capturing anything.
+            "coverage": _maintain_coverage(paths),
         }
 
     # 2. REGENERATE views from canonical rows (views are regenerable).
@@ -1213,7 +1218,8 @@ def _recheck_held_items(
     filter and the order share the one `latest_events` read.
     """
     counts = {"skipped": False, "scope": "all", "since": None,
-              "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
+              "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
+              "coverage": {"verified": 0, "total": 0}}
     if not paths.db_path.exists():
         return counts
     init_db(paths.db_path)  # ensure the ledger table exists before recording
@@ -1235,7 +1241,30 @@ def _recheck_held_items(
         events.append(event)
         counts[event.status] += 1
     record_events(paths.db_path, events)
+    # Coverage post-recheck (roadmap H109): of the verifiable (hash-bearing) held
+    # set, how many now carry a verdict — folding this pass's events into the one
+    # `verdicts` read already taken (no second ledger read). So a single report
+    # shows the H55 coverage-first progress, and `verified` agrees with the
+    # post-maintenance doctor audit's `custody.drift.checked`.
+    counts["coverage"] = recheck_coverage(
+        hash_bearing, verdicts, {event.item_id for event in events}
+    )
     return counts
+
+
+def _maintain_coverage(paths: LibraryPaths) -> dict:
+    """Recheck coverage from a standalone ledger read (the --no-recheck path).
+
+    The recheck path folds its events into its own `latest_events` read; with
+    `--no-recheck` there is no recheck, so this reads the ledger once to report
+    the same `{verified, total}` coverage of the verifiable held set (H109). A
+    missing store is the honest empty `{verified: 0, total: 0}` — nothing held,
+    nothing to verify.
+    """
+    if not paths.db_path.exists():
+        return {"verified": 0, "total": 0}
+    hash_bearing = [item for item in list_items(paths.db_path) if item.content_hash]
+    return recheck_coverage(hash_bearing, latest_events(paths.db_path))
 
 
 def _cmd_mcp() -> int:

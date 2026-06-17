@@ -30,6 +30,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     parse_since,
+    recheck_coverage,
     recheck_order,
     record_events,
     tally_custody,
@@ -683,6 +684,56 @@ def test_recheck_order_breaks_a_same_timestamp_tie_by_input_order():
         "web:b": CustodyEvent("web:b", same, "unchanged", "h", "h"),
     }
     assert [i.id for i in recheck_order([a, b], verdicts)] == ["web:a", "web:b"]
+
+
+# --- recheck_coverage (the maintain coverage figure, roadmap H109) ----------
+
+
+def test_recheck_coverage_counts_the_verified_of_the_hash_bearing_set():
+    # of the verifiable held items, how many carry a verdict — the pre-recheck
+    # state when no items were checked this pass (empty checked_ids)
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {
+        "web:0": CustodyEvent("web:0", "2026-06-12T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:2": CustodyEvent("web:2", "2026-06-11T00:00:00+00:00", "drifted", "h", "x"),
+    }
+    assert recheck_coverage(items, verdicts) == {"verified": 2, "total": 4}
+
+
+def test_recheck_coverage_folds_this_passs_checked_ids_post_recheck():
+    # an item checked this pass counts as verified-after even with no prior
+    # verdict — coverage is the post-recheck state (verdicts ∪ checked_ids)
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {
+        "web:0": CustodyEvent("web:0", "2026-06-12T00:00:00+00:00", "unchanged", "h", "h"),
+    }
+    # this pass re-checked web:1 and web:3 (never-checked-first, H55)
+    coverage = recheck_coverage(items, verdicts, {"web:1", "web:3"})
+    assert coverage == {"verified": 3, "total": 4}  # web:0 (prior) + web:1 + web:3
+
+
+def test_recheck_coverage_total_is_the_hash_bearing_count_the_caller_passes():
+    # `total` is just len(items); the caller passes its hash-bearing (verifiable)
+    # set, so a reference-only item it filtered out is already absent from total
+    items = [_item("web:a"), _item("web:b")]  # both hash-bearing
+    assert recheck_coverage(items, {})["total"] == 2
+
+
+def test_recheck_coverage_empty_set_is_an_honest_zero():
+    # nothing verifiable → 0 of 0, never a fabricated 100%
+    assert recheck_coverage([], {}) == {"verified": 0, "total": 0}
+
+
+def test_recheck_coverage_verified_never_exceeds_total():
+    # an item checked this pass that *also* had a prior verdict is counted once —
+    # verified is a set membership, not a double count
+    items = [_item("web:a"), _item("web:b")]
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-12T00:00:00+00:00", "unchanged", "h", "h"),
+    }
+    # web:a re-checked this pass (already had a verdict) → still 1 of 2 verified
+    coverage = recheck_coverage(items, verdicts, {"web:a"})
+    assert coverage == {"verified": 1, "total": 2}
 
 
 def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):

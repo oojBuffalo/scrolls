@@ -654,6 +654,118 @@ def test_a_bounded_pass_advances_custody_coverage_each_run(home, monkeypatch, ca
     assert coverage[-1] == 0
 
 
+# --- recheck coverage in the report (roadmap H109) ------------------------
+
+
+def test_recheck_report_carries_coverage_over_the_verifiable_set(
+    home, monkeypatch, capsys
+):
+    """The recheck report's `coverage` member reports `{verified, total}` over the
+    held, hash-bearing items — after one whole pass every item carries a verdict."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # every held item here is hash-bearing, and the first pass rechecks them all
+    assert report["recheck"]["coverage"] == {"verified": len(items), "total": len(items)}
+
+
+def test_coverage_is_post_recheck_and_advances_within_a_bounded_pass(
+    home, monkeypatch, capsys
+):
+    """The coverage in a pass's report reflects that pass's work (post-recheck):
+    each bounded run's `verified` climbs by what it just covered, visible directly
+    in the report rather than only in the *next* run's unverified count."""
+    items = _held_topic()  # three held, none verified
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    verified = []
+    for _ in range(len(items)):
+        assert main(["maintain", "--limit", "1"]) == 0
+        report = json.loads(capsys.readouterr().out)
+        cov = report["recheck"]["coverage"]
+        assert cov["total"] == len(items)
+        verified.append(cov["verified"])
+    # 1 → 2 → 3 across three bounded passes (monotone, reaches full coverage)
+    assert verified == [n + 1 for n in range(len(items))]
+
+
+def test_coverage_converges_with_the_doctor_audit(home, monkeypatch, capsys):
+    """Coverage and the post-maintenance audit can never disagree: `verified`
+    equals the drift block's `checked`, and `total − verified` equals its
+    `unverified` (every held item here is hash-bearing) — both from one
+    `unverified_items` predicate."""
+    items = _held_topic()
+    _build(items)
+    # pre-verify one item so the first pass leaves a real verified/unverified mix
+    # under a bound that stops short of the whole set
+    head = list_items(home.db_path)[0]
+    record_events(
+        home.db_path,
+        [CustodyEvent(head.id, "2026-06-10T00:00:00+00:00", "unchanged",
+                      head.content_hash, head.content_hash)],
+    )
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--limit", "1"]) == 0  # checks one never-checked item
+    report = json.loads(capsys.readouterr().out)
+
+    cov = report["recheck"]["coverage"]
+    drift = report["custody"]["drift"]
+    assert cov["verified"] == drift["checked"]
+    assert cov["total"] - cov["verified"] == drift["unverified"]
+
+
+def test_no_recheck_still_reports_coverage(home, monkeypatch, capsys):
+    """`--no-recheck` runs no live edge but still reads and reports coverage —
+    a read, not a re-capture (H109). With nothing verified it is 0 of M."""
+    items = _held_topic()
+    _build(items)
+    # verify one item up front, so the read shows a partial coverage, not zero
+    head = list_items(home.db_path)[0]
+    record_events(
+        home.db_path,
+        [CustodyEvent(head.id, "2026-06-10T00:00:00+00:00", "unchanged",
+                      head.content_hash, head.content_hash)],
+    )
+    capsys.readouterr()
+
+    # no live_recapture monkeypatch: --no-recheck must not touch the seam
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["skipped"] is True
+    assert report["recheck"]["coverage"] == {"verified": 1, "total": len(items)}
+    # and it agrees with the audit it did not mutate
+    drift = report["custody"]["drift"]
+    cov = report["recheck"]["coverage"]
+    assert cov["verified"] == drift["checked"]
+
+
+def test_coverage_excludes_reference_only_items_from_the_denominator(
+    home, monkeypatch, capsys
+):
+    """A reference-only item (no content hash) is unverifiable, so it is neither
+    verified nor counted in `total` — coverage measures progress over what can
+    actually be covered and so can reach full coverage."""
+    held = _held_topic()
+    # turn one held item into a reference-only capture (no baseline hash)
+    held[0] = replace(held[0], content_hash=None, raw_text=None, extracted_text=None)
+    _build(held)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    verifiable = len(held) - 1  # the reference-only item is excluded
+    assert report["recheck"]["coverage"] == {"verified": verifiable, "total": verifiable}
+
+
 def test_unbounded_recheck_checks_the_whole_set_regardless_of_prior_verdicts(
     home, monkeypatch, capsys
 ):

@@ -603,6 +603,50 @@ def recheck_order(
     return never_checked + verified
 
 
+def recheck_coverage(
+    items: list[ScrollItem],
+    verdicts: dict[str, CustodyEvent],
+    checked_ids: Iterable[str] = (),
+) -> dict[str, int]:
+    """Recheck coverage over the verifiable held set — ``{verified, total}`` (H109).
+
+    `scrolls maintain`'s recheck advances custody *coverage*: a bounded pass
+    re-checks the never-checked items first (`recheck_order`, H55), so over
+    successive passes every verifiable item comes to carry a verdict. This makes
+    that progress visible in one report — of the held items that *can* be
+    verified, how many now do — so a worker reads "N of M covered" directly
+    instead of diffing the `unverified` count across runs.
+
+    ``total`` is how many held items carry a baseline ``content_hash`` (the
+    caller passes its hash-bearing set as `items`): a reference-only capture has
+    no hash to diff a re-fetch against, so it is *unverifiable* and excluded from
+    the denominator — coverage measures progress over what can actually be
+    covered, and so can reach ``total`` (full coverage). ``verified`` is how many
+    of those now carry a ledger verdict.
+
+    **Post-recheck by construction.** An item is verified-after if it had a
+    verdict *before* this pass (its id is in `verdicts`) **or** was re-checked
+    *in* it (its id is in `checked_ids`). Folding this pass's `checked_ids` into
+    the pre-read `verdicts` avoids a second ledger read — the recheck reads
+    `latest_events` once — and keeps the figure consistent with the
+    post-maintenance `doctor` audit, which runs after the recheck: ``verified``
+    equals the drift block's ``checked``, and ``total − verified`` equals its
+    ``unverified`` when every held item is hash-bearing. Both derive from the
+    same `unverified_items` predicate (``held − verdicts``) doctor's
+    ``custody.drift.unverified`` reports on, so coverage and the audit converge by
+    construction. With no recheck (``--no-recheck``) `checked_ids` is empty and
+    the figure is the current ledger coverage — a read, not the live edge.
+    """
+    checked = set(checked_ids)
+    remaining = [
+        item
+        for item in unverified_items(items, verdicts)
+        if item.id not in checked
+    ]
+    total = len(items)
+    return {"verified": total - len(remaining), "total": total}
+
+
 def tally_custody(
     pairs: Iterable[tuple[str, str]]
 ) -> dict[str, dict[str, int]]:

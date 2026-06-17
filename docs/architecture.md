@@ -387,7 +387,14 @@ each command moves items between stages or derives artifacts from them.
   ordered **coverage-first** by `custody.recheck_order` — never-checked items first,
   then already-verified oldest-verdict-first, so a `--limit`-bounded pass advances
   custody coverage instead of re-checking the same head (roadmap H55) — with
-  `--no-recheck` for a fully offline pass → **regenerate** views (deterministic
+  `--no-recheck` for a fully offline pass. The recheck report carries a
+  `coverage` member (`custody.recheck_coverage` — `{verified, total}` over the
+  held, hash-bearing verifiable set, post-recheck: an item is verified-after if it
+  had a verdict before this pass *or* was checked in it), so the coverage-first
+  ordering's monotone progress is visible in one report; it rides `--no-recheck`
+  too (a read, not the live edge) and converges with the audit — `verified` equals
+  doctor's `custody.drift.checked`, `total − verified` its `unverified` when every
+  held item is hash-bearing (roadmap H109) → **regenerate** views (deterministic
   `compile_kb`) → read-only **audit** (`run_doctor`) → a **custody delta** against
   the snapshot the last run recorded at `<root>/.maintenance/last-run.json`. The
   composition already ships; the module owns only the new piece — `custody_snapshot`
@@ -1086,13 +1093,16 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83) — `scrolls maintain`
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H109) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
   `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
   been seen since the last sweep; `--all` rechecks everything, H83), ordered
-  coverage-first (never-checked items first via `custody.recheck_order`, H55) →
-  regenerate → audit → custody delta vs the last run (snapshot at
+  coverage-first (never-checked items first via `custody.recheck_order`, H55),
+  reporting recheck **coverage** (`custody.recheck_coverage` — `{verified, total}`
+  over the verifiable held set, post-recheck, converging with the audit's
+  `custody.drift.checked`/`unverified`, H109) → regenerate → audit → custody delta
+  vs the last run (snapshot at
   `<root>/.maintenance/last-run.json`, which doubles as the staleness boundary).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
   the module owns only the snapshot/delta layer plus the append-only run log

@@ -705,7 +705,18 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
    offline pass; `--limit`/`--no-recheck`/`--history` are mutually exclusive
    (`--limit` bounds a recheck `--no-recheck` would skip), and `--all` conflicts
    with `--no-recheck` / `--history` (a recheck-scope flag can't skip the recheck
-   or shape a read-only history).
+   or shape a read-only history). The recheck report also carries a
+   `coverage` member — `{verified, total}` over the held, hash-bearing
+   (verifiable) items: `total` is how many *can* carry a verdict (a reference-only
+   capture has no baseline hash to diff, so it is excluded — coverage can reach
+   full), `verified` how many now do *after* this pass. So a single report answers
+   "N of M verifiable items carry a verdict" and the coverage-first ordering's
+   monotone progress is visible directly, without diffing the `unverified` count
+   across runs. It is a read (`custody.recheck_coverage`), so it rides
+   `--no-recheck` too, and converges with the audit by construction:
+   `coverage.verified` equals doctor's `custody.drift.checked`, and
+   `total − verified` its `custody.drift.unverified` when every held item is
+   hash-bearing (both from the one `unverified_items` predicate).
 2. **regenerate** — `scrolls kb` (the deterministic compile), rebuilding the
    `library/` views from the canonical rows. Never an LLM re-synthesis: refreshing
    concept summaries stays the explicit `scrolls kb --stale`.
@@ -775,8 +786,8 @@ structural `issues` remain (run `doctor --fix` / `scrolls media`); drift and sta
 enrichment/summaries are reported, never a failure.
 
 ```console
-$ scrolls maintain --limit 50            # second run; one source has drifted
-{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
+$ scrolls maintain --all --limit 50      # second run; force a whole-library recheck — one source has drifted
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first
