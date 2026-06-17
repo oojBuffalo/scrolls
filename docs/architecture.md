@@ -1159,7 +1159,18 @@ choice (ADRs 0004, 0005).
   over that source's hash-bearing items, roadmap H121) — the per-source counterpart
   of the drift block's whole-library coverage, so the audit names which source is
   least *covered* (most never-checked) too; the per-source coverage sums to
-  `drift.coverage` by construction.
+  `drift.coverage` by construction. The re-derivability axis is split per source
+  too: `custody.enrichment` carries a `by_source` map (roadmap H135) — a flat
+  `{source: stale_count}` of the offending sources only, naming which source has
+  the most stale-ruleset categories to refresh with `classify --stale`; it sums to
+  the whole-library `enrichment.stale` by construction (every stale classification
+  has one source). It lives under `enrichment` rather than folded into
+  `custody.by_source` so the shared `custody_counts_by_source` (and the `maintain`
+  report that reads it) stay byte-identical and the verify-ledger module stays free
+  of classification coupling. The **summary** axis has no per-source split: a
+  concept summary spans sources, so a stale one cannot be attributed to one source
+  and summed to the whole — summary debt stays whole-library (`kb --stale` acts on
+  concepts, not sources).
 - **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H115, H119, H121, H123) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via

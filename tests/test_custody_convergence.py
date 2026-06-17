@@ -421,6 +421,65 @@ def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls
     assert summed_coverage == custody["drift"]["coverage"]
 
 
+def test_enrichment_by_source_converges_with_the_per_source_stale_classifications(
+    scrolls_home, capsys
+):
+    # roadmap H135: doctor's `custody.enrichment.by_source` splits the stale-ruleset
+    # count per source — the re-derivability counterpart of H121's per-source
+    # coverage. Each per-source stale count must equal an independent re-derivation
+    # via `is_stale_classification` grouped by source, the per-source values must
+    # sum to the whole-library `enrichment.stale`, and a clean source must be
+    # omitted (the offenders-only map) — the enrichment-axis sibling of the
+    # tiers/drift/coverage per-source convergence above.
+    from scrolls.classify import RULESET_FINGERPRINT, is_stale_classification
+
+    main(["init"])
+    db = get_paths().db_path
+
+    def _classified(item_id, source, *, ruleset, **overrides):
+        overrides.setdefault("url", f"https://example.com/{item_id}")
+        return _item(
+            item_id, "Topic classified", source=source, category="tutorial",
+            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                        "classified_ruleset": ruleset},
+            **overrides,
+        )
+
+    # two stale web items + one stale arxiv item, and one *current* arxiv item
+    # (so arxiv carries both a stale and a clean classification — the per-source
+    # count must reflect only the stale one) and one current web item.
+    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
+    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
+                                url="https://arxiv.org/abs/s1"))
+    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
+                                url="https://arxiv.org/abs/cur"))
+    # a clean source: only a current classification, so it must be *omitted*
+    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
+                                url="https://reddit.com/r/cur"))
+    capsys.readouterr()
+
+    items = list_items(db)
+    enrichment = run_doctor(get_paths())["custody"]["enrichment"]
+
+    # 1. each per-source count == the independent per-source re-derivation via the
+    #    `classify --stale` selector (`is_stale_classification`), grouped by source.
+    expected: dict[str, int] = {}
+    for item in items:
+        if is_stale_classification(item):
+            expected[item.source] = expected.get(item.source, 0) + 1
+    expected = {source: expected[source] for source in sorted(expected)}
+    assert enrichment["by_source"] == expected == {"arxiv": 1, "web": 2}
+    # the clean source (only a current classification) is omitted, not a 0 entry
+    assert "reddit" not in enrichment["by_source"]
+
+    # 2. the per-source counts sum to the whole-library `stale` by construction
+    #    (every stale item has exactly one source — the H104/H121 sum-to-whole
+    #    posture, on the enrichment axis).
+    assert sum(enrichment["by_source"].values()) == enrichment["stale"] == 3
+
+
 def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):
     # roadmap H113: the recheck `coverage` figure (`{verified, total}` over the
     # verifiable held set) reads the same on the standalone audit (`doctor`) and

@@ -95,6 +95,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
                 "stale": 0,
                 "unfingerprinted": 0,
                 "items": [],
+                "by_source": {},
             },
             "summaries": {
                 "basis": "members_hash",
@@ -453,6 +454,18 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
     - ``unfingerprinted`` — rules-classified before H20, so no fingerprint was
       recorded: we cannot tell whether a re-classify would differ. Like the
       drift block's ``unverified``, this is *unknown*, not silently current.
+    - ``by_source`` — the stale count split per source (roadmap H135): a flat
+      ``{source: stale_count}`` map of the *offending* sources only (a source
+      with no stale debt is omitted, the ``items``-list posture), source keys in
+      sorted order. The re-derivability counterpart of the per-source coverage
+      `custody.by_source` carries (H121), so the audit names *which* source has
+      the most categories to refresh with `classify --stale`. Every stale item
+      has exactly one source, so the values sum to ``stale`` by construction (the
+      H104/H121 sum-to-whole posture on the enrichment axis). Kept under this
+      block rather than folded into `custody.by_source` so the shared
+      `custody_counts_by_source` — and the `maintain` report that faithfully
+      reads it (H123/H127) — stay byte-identical, and `custody.py` (the verify-
+      ledger module) stays free of classification coupling.
 
     Like drift, this is a *report*, never repairable ``issues`` and never the
     exit code: a stale fingerprint means the ruleset changed, not that the
@@ -467,6 +480,7 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
     # pool (the H25/H27 convergence). `unknown` is doctor's `unfingerprinted`.
     bucket = {"current": "current", "stale": "stale", "unknown": "unfingerprinted"}
     stale = []
+    stale_by_source: dict[str, int] = {}
     for item in items:
         freshness = classification_freshness(item.provenance)
         if freshness is None:  # not a rules classification — a different axis
@@ -477,7 +491,13 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
             stale.append(
                 {"id": item.id, "ruleset": item.provenance["classified_ruleset"]}
             )
+            stale_by_source[item.source] = stale_by_source.get(item.source, 0) + 1
     enrichment["items"] = sorted(stale, key=lambda entry: entry["id"])
+    # Per-source stale-classification debt (roadmap H135, see the `by_source`
+    # docstring bullet): offending sources only, sorted; sums to `stale`.
+    enrichment["by_source"] = {
+        source: stale_by_source[source] for source in sorted(stale_by_source)
+    }
 
 
 def _check_summary_provenance(
@@ -511,6 +531,17 @@ def _check_summary_provenance(
     synthesis of the members it was written from). Doctor never auto-regenerates —
     a refreshed summary is produced on request (`scrolls kb --stale`, roadmap
     H31), never as a silent overwrite (custody §2.4).
+
+    Unlike the classification axis (`_check_enrichment_provenance`), this block
+    carries **no** per-source breakdown (the H135 decision): a summary is keyed by
+    *concept* slug, and a concept's member items span sources, so a stale summary
+    cannot be attributed to one source and summed to the whole without double-
+    counting — which would break the sum-to-whole convergence the per-source
+    custody breakdown rests on. The enrichment axis decomposes cleanly (a stale
+    classification is per-item, with one source, and `classify --stale` is the
+    per-item refresh it points at); the summary axis genuinely does not (`kb
+    --stale` operates on concepts, not sources), so summary debt stays whole-
+    library.
     """
     summaries = report["custody"]["summaries"]
     # Same denominator the generator uses: rendered members only (an unrendered

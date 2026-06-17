@@ -581,6 +581,24 @@ marker each browse surface carries (roadmap H21) — both derive from the one
 `unfingerprinted` here equal the freshness an agent reads on the items themselves
 (`test_per_item_confidence_marker_converges_with_the_doctor_aggregate`).
 
+The `enrichment` block also carries a `by_source` map (roadmap H135) — the stale
+count split per source, the re-derivability counterpart of the per-source
+*coverage* `custody.by_source` carries (H121) — so the audit names *which* source
+has the most categories to refresh with `classify --stale`. A flat
+`{source: stale_count}` map of the **offending sources only** (a source with no
+stale debt is omitted, the `items`-list posture), source keys sorted; every stale
+item has exactly one source, so the per-source counts sum to `stale` by
+construction (the H104/H121 sum-to-whole posture, on the enrichment axis —
+`test_enrichment_by_source_sums_to_the_whole_enrichment_stale`,
+`test_enrichment_by_source_converges_with_the_per_source_stale_classifications`).
+It lives under `enrichment` (not folded into `custody.by_source`) so the shared
+`custody_counts_by_source` — and the `maintain` report that faithfully reads it
+(H123/H127) — stay byte-identical, and the verify-ledger module stays free of
+classification coupling. The **summary axis has no per-source counterpart**: a
+concept summary spans sources, so a stale one cannot be attributed to one source
+and summed to the whole (it would double-count), so summary debt stays
+whole-library — and `kb --stale` acts on concepts, not sources.
+
 The custody block also carries a `summaries` sub-block — the same re-derivability
 posture on the *LLM concept-summary* axis (cap 8, roadmap H29). Each stored
 concept summary records the `members_hash` fingerprint of the scrolls it was

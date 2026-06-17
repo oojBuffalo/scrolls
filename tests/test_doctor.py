@@ -749,7 +749,7 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             # measure for ruleset staleness — an honest, all-zero block
             "basis": "ruleset_fingerprint", "current_ruleset": RULESET_FINGERPRINT,
             "classified": 0, "current": 0, "stale": 0, "unfingerprinted": 0,
-            "items": [],
+            "items": [], "by_source": {},
         },
         "summaries": {
             # one item, so no ≥2-member concept is eligible for a summary —
@@ -1011,6 +1011,97 @@ def test_enrichment_ignores_non_rules_classifications(paths):
     enrichment = run_doctor(paths)["custody"]["enrichment"]
     assert enrichment["classified"] == 0
     assert enrichment["unfingerprinted"] == 0
+
+
+# --- per-source enrichment staleness (cap 8 + cap 1, roadmap H135) ---
+#
+# H104/H121 split the *custody* picture per source (`custody.by_source` →
+# tiers/drift/coverage). H135 adds the re-derivability counterpart on the
+# classification axis: a `by_source` sub-map under `custody.enrichment` naming
+# how much stale-ruleset debt each source carries, so an operator can target a
+# `classify --stale` at the source with the most. (The summary axis stays
+# whole-library: a concept summary spans sources, so it does not decompose into
+# a per-source count that sums to the whole — see the `summaries` docstring.)
+
+
+def _classified_arxiv(source_id, *, ruleset):
+    """A rules-classified arxiv item carrying a given ruleset fingerprint."""
+    return ScrollItem(
+        id=f"arxiv:{source_id}", source="arxiv", source_id=source_id,
+        url=f"https://arxiv.org/abs/{source_id}",
+        saved_at="2026-06-12T08:00:00+00:00",
+        category="tutorial", stage="fetched",
+        extracted_text="paper", content_hash=f"sha256:{source_id}",
+        provenance={"adapter": "arxiv", "fetched_at": "2026-06-12T08:00:00+00:00",
+                    "classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": ruleset})
+
+
+def test_enrichment_by_source_is_empty_when_no_stale_classifications(paths):
+    from scrolls.classify import RULESET_FINGERPRINT
+    # one current classification — no stale debt → the honest empty map
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/a", ruleset=RULESET_FINGERPRINT))
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["stale"] == 0
+    assert enrichment["by_source"] == {}
+
+
+def test_enrichment_by_source_is_empty_for_an_empty_library(paths):
+    # no held items → nothing classified → the honest empty map (stable, never None)
+    assert run_doctor(paths)["custody"]["enrichment"]["by_source"] == {}
+
+
+def test_enrichment_by_source_groups_stale_classifications_per_source(paths):
+    # two stale web items + one stale arxiv item, classified under a superseded
+    # ruleset: the breakdown names which source carries the most stale debt.
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old1", ruleset="deadbeef0000"))
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old2", ruleset="deadbeef0000"))
+    insert_item(paths.db_path, _classified_arxiv("1", ruleset="deadbeef0000"))
+
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["stale"] == 3
+    # sorted keys, the stale count per source
+    assert enrichment["by_source"] == {"arxiv": 1, "web": 2}
+    assert list(enrichment["by_source"]) == ["arxiv", "web"]
+
+
+def test_enrichment_by_source_sums_to_the_whole_enrichment_stale(paths):
+    # the load-bearing convergence (H104/H121 posture, on the enrichment axis):
+    # every stale item lands in exactly one source group, so summing the groups
+    # re-counts the whole-library `stale`.
+    from scrolls.classify import RULESET_FINGERPRINT
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    insert_item(paths.db_path, _classified_item(  # current — not stale
+        "https://example.com/cur", ruleset=RULESET_FINGERPRINT))
+    insert_item(paths.db_path, _classified_arxiv("1", ruleset="cafe00000000"))
+
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert sum(enrichment["by_source"].values()) == enrichment["stale"] == 2
+
+
+def test_enrichment_by_source_omits_a_source_with_no_stale_classifications(paths):
+    from scrolls.classify import RULESET_FINGERPRINT
+    # arxiv is current (not stale); only web carries stale debt → arxiv omitted
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    insert_item(paths.db_path, _classified_arxiv("1", ruleset=RULESET_FINGERPRINT))
+
+    enrichment = run_doctor(paths)["custody"]["enrichment"]
+    assert enrichment["by_source"] == {"web": 1}  # arxiv (clean) omitted
+
+
+def test_enrichment_by_source_never_feeds_issues_or_the_exit_code(paths):
+    # report-only like the rest of the custody block: a stale-debt source is a
+    # view, never a structural issue.
+    insert_item(paths.db_path, _classified_item(
+        "https://example.com/old", ruleset="deadbeef0000"))
+    report = run_doctor(paths)
+    assert report["custody"]["enrichment"]["by_source"] == {"web": 1}
+    assert report["issues"] == 0
 
 
 def test_per_item_confidence_marker_converges_with_the_doctor_aggregate(paths):
