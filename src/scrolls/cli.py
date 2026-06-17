@@ -41,6 +41,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     parse_since,
+    recheck_order,
     record_events,
     tally_custody,
     unverified_items,
@@ -1160,13 +1161,21 @@ def _recheck_held_items(paths: LibraryPaths, limit: int | None, now: str) -> dic
     seam, diff the hash, append a custody event), distilled to the counts
     `maintain` reports. Reads the module-level `live_recapture` so tests can
     script the network edge offline, exactly as `_cmd_verify` does.
+
+    Coverage-first ordering (roadmap H55): the held set is ordered by
+    `recheck_order` — never-checked items first, then already-verified
+    oldest-verdict-first — so a ``--limit``-bounded pass spends its budget on new
+    custody coverage instead of re-checking the same list head every run. An
+    unbounded pass checks the same set with the same counts (the ordering only
+    moves which items a bounded pass reaches first).
     """
     counts = {"skipped": False, "checked": 0,
               "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
     if not paths.db_path.exists():
         return counts
     init_db(paths.db_path)  # ensure the ledger table exists before recording
-    items = [item for item in list_items(paths.db_path) if item.content_hash]
+    hash_bearing = [item for item in list_items(paths.db_path) if item.content_hash]
+    items = recheck_order(hash_bearing, latest_events(paths.db_path))
     events = []
     for item in items:
         if limit is not None and counts["checked"] >= limit:

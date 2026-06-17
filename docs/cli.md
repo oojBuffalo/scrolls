@@ -689,9 +689,15 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
 
 1. **recheck** — a bounded `scrolls verify --all`: re-capture every held item with
    a baseline hash, append drift/rot events to the ledger, never touch the
-   captures. `--limit N` paces it (oldest saved first); `--no-recheck` skips the
-   live edge entirely for a fully offline pass (the two are mutually exclusive —
-   `--limit` bounds a recheck `--no-recheck` would skip).
+   captures. The held set is ordered **coverage-first** — never-checked items
+   first, then already-verified ones oldest-verdict-first — so a `--limit N`
+   pass spends its budget on *new* custody coverage instead of re-verifying the
+   same list head every run; successive bounded passes cycle the whole library
+   (monotone coverage progress). `--limit N` paces it; an *unbounded* pass checks
+   the same set with the same counts (the ordering only changes which items a
+   bounded pass reaches first). `--no-recheck` skips the live edge entirely for a
+   fully offline pass (the two are mutually exclusive — `--limit` bounds a recheck
+   `--no-recheck` would skip).
 2. **regenerate** — `scrolls kb` (the deterministic compile), rebuilding the
    `library/` views from the canonical rows. Never an LLM re-synthesis: refreshing
    concept summaries stays the explicit `scrolls kb --stale`.

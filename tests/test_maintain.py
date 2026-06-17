@@ -24,6 +24,7 @@ import pytest
 
 import scrolls.cli as cli
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, latest_events, record_events
 from scrolls.db import init_db
 from scrolls.items import (
     ScrollItem,
@@ -566,6 +567,79 @@ def test_limit_bounds_the_recheck(home, monkeypatch, capsys):
     assert main(["maintain", "--limit", "1"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["recheck"]["checked"] == 1
+
+
+def test_bounded_recheck_checks_the_never_checked_before_the_already_verified(
+    home, monkeypatch, capsys
+):
+    """A `--limit`-bounded pass spends its budget on never-checked items, not on
+    re-verifying the already-verified head (roadmap H55 coverage-first order)."""
+    items = _held_topic()
+    _build(items)
+    # pre-seed an OLD verdict on the item that sorts *first* in list order, so the
+    # old (list-order) recheck would re-verify it; coverage-first must skip it.
+    ordered = list_items(home.db_path)
+    head = ordered[0]
+    record_events(
+        home.db_path,
+        [CustodyEvent(head.id, "2026-06-01T00:00:00+00:00", "unchanged",
+                      head.content_hash, head.content_hash)],
+    )
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--limit", "1"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["checked"] == 1
+
+    verdicts = latest_events(home.db_path)
+    # the already-verified head was NOT rechecked — its OLD verdict stands
+    assert verdicts[head.id].checked_at == "2026-06-01T00:00:00+00:00"
+    # and a never-checked item now carries a verdict (coverage advanced)
+    never_checked = [i for i in ordered if i.id != head.id]
+    assert sum(i.id in verdicts for i in never_checked) == 1
+
+
+def test_a_bounded_pass_advances_custody_coverage_each_run(home, monkeypatch, capsys):
+    """Successive `--limit 1` passes monotonically shrink the unverified set —
+    every run checks something new until the whole library is covered."""
+    items = _held_topic()  # three held items, none verified yet
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    coverage = []
+    for _ in range(len(items)):
+        assert main(["maintain", "--limit", "1"]) == 0
+        report = json.loads(capsys.readouterr().out)
+        coverage.append(report["custody"]["drift"]["unverified"])
+    # 3 → 2 → 1 → 0 across three bounded passes (strictly decreasing, reaches 0)
+    assert coverage == [len(items) - 1 - n for n in range(len(items))]
+    assert coverage[-1] == 0
+
+
+def test_unbounded_recheck_checks_the_whole_set_regardless_of_prior_verdicts(
+    home, monkeypatch, capsys
+):
+    """The coverage-first ordering only reorders: an *unbounded* pass still checks
+    every held item, so the counts are unchanged even with a pre-existing verdict."""
+    items = _held_topic()
+    _build(items)
+    head = list_items(home.db_path)[0]
+    record_events(
+        home.db_path,
+        [CustodyEvent(head.id, "2026-06-01T00:00:00+00:00", "unchanged",
+                      head.content_hash, head.content_hash)],
+    )
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0  # no --limit
+    report = json.loads(capsys.readouterr().out)
+    # every held item rechecked (the already-verified head included), all unchanged
+    assert report["recheck"]["checked"] == len(items)
+    assert report["recheck"]["unchanged"] == len(items)
+    assert report["custody"]["drift"]["unverified"] == 0
 
 
 def test_no_recheck_and_limit_together_is_an_error(home, capsys):

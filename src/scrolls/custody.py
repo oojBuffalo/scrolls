@@ -567,6 +567,42 @@ def items_checked_before(
     ]
 
 
+def recheck_order(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> list[ScrollItem]:
+    """Order held items for a coverage-first bounded recheck (roadmap H55).
+
+    `scrolls maintain`'s recheck is bounded by ``--limit``; left in list order it
+    re-verifies the same already-checked head every pass and a ``--limit``-bounded
+    run can never reach the never-checked tail — so a scheduled worker spins
+    without ever improving custody *coverage*. This ordering fixes that:
+
+    - the **never-checked** items first — exactly the `unverified_items` set
+      (``held − verdicts``), in input order (oldest-saved-first when the caller
+      passes `list_items`), so a bounded pass spends its budget on *new* coverage
+      until every held item carries a verdict;
+    - then the **already-verified** items oldest-verdict-first (ascending
+      `checked_at`), so once coverage is complete the pass revisits the *stalest*
+      item next. A just-rechecked item gets a fresh `checked_at`, falling to the
+      back of the queue, so successive bounded passes cycle the whole library
+      rather than re-checking one head — monotone coverage progress.
+
+    The sort is **stable**: verdicts sharing a `checked_at` keep input
+    (oldest-saved-first) order, so the ordering is deterministic, never a
+    same-second accident — mirroring the `latest_events` same-second tie note.
+    `verdicts` is the `latest_events` ledger read keyed by item id, the same read
+    every selector here uses. An **empty ledger** leaves the input order
+    untouched (every item is never-checked, so the verified tail is empty) — a
+    fresh library's first maintenance pass behaves exactly as before this
+    ordering existed. Reorders only; the returned list is a permutation of the
+    input, so an *unbounded* recheck checks the same set with the same counts.
+    """
+    never_checked = unverified_items(items, verdicts)
+    verified = [item for item in items if item.id in verdicts]
+    verified.sort(key=lambda item: verdicts[item.id].checked_at)
+    return never_checked + verified
+
+
 def tally_custody(
     pairs: Iterable[tuple[str, str]]
 ) -> dict[str, dict[str, int]]:

@@ -30,6 +30,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     parse_since,
+    recheck_order,
     record_events,
     tally_custody,
     unverified_items,
@@ -598,6 +599,90 @@ def test_items_checked_before_preserves_input_order():
     assert [i.id for i in items_checked_before(items, {}, boundary)] == [
         "web:0", "web:1", "web:2", "web:3"
     ]
+
+
+# --- recheck_order (the maintain coverage-first ordering, roadmap H55) -------
+
+
+def test_recheck_order_puts_the_never_checked_first():
+    # never-checked items lead (so a bounded maintain pass spends its budget on
+    # new coverage), then the already-verified ones
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-10T00:00:00+00:00", "unchanged", "h", "h"),
+        # web:b, web:c never checked
+    }
+    assert [i.id for i in recheck_order([a, b, c], verdicts)] == ["web:b", "web:c", "web:a"]
+
+
+def test_recheck_order_sorts_the_verified_oldest_verdict_first():
+    # among already-verified items, the stalest verdict is rechecked first, so a
+    # bounded pass keeps coverage moving across the whole library over time
+    a, b, c = _item("web:a"), _item("web:b"), _item("web:c")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:b": CustodyEvent("web:b", "2026-06-10T00:00:00+00:00", "drifted", "h", "x"),
+        "web:c": CustodyEvent("web:c", "2026-06-12T00:00:00+00:00", "unchanged", "h", "h"),
+    }
+    assert [i.id for i in recheck_order([a, b, c], verdicts)] == ["web:b", "web:c", "web:a"]
+
+
+def test_recheck_order_never_checked_lead_then_oldest_verified():
+    # the full ordering: unverified set (in input/oldest-saved order) then the
+    # verified set oldest-verdict-first
+    a, b, c, d = _item("web:a"), _item("web:b"), _item("web:c"), _item("web:d")
+    verdicts = {
+        "web:a": CustodyEvent("web:a", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:c": CustodyEvent("web:c", "2026-06-10T00:00:00+00:00", "drifted", "h", "x"),
+        # web:b, web:d never checked → lead in input order
+    }
+    assert [i.id for i in recheck_order([a, b, c, d], verdicts)] == [
+        "web:b", "web:d", "web:c", "web:a"
+    ]
+
+
+def test_recheck_order_leads_with_unverified_items():
+    # the head of the order is exactly the `unverified_items` set, in its order —
+    # the relationship the slice is built on (never-checked goes first)
+    items = [_item(f"web:{n}") for n in range(4)]
+    verdicts = {
+        "web:1": CustodyEvent("web:1", "2026-06-12T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:3": CustodyEvent("web:3", "2026-06-11T00:00:00+00:00", "unchanged", "h", "h"),
+    }
+    ordered = recheck_order(items, verdicts)
+    never = unverified_items(items, verdicts)
+    assert ordered[: len(never)] == never
+
+
+def test_recheck_order_empty_ledger_is_input_order_unchanged():
+    # a fresh library (no verdicts) → everything is unverified → no reordering, so
+    # the first maintain pass behaves exactly as before
+    items = [_item(f"web:{n}") for n in range(4)]
+    assert recheck_order(items, {}) == items
+
+
+def test_recheck_order_is_a_permutation_of_the_input():
+    # ordering never drops or duplicates an item — an unbounded pass checks the
+    # same set, only the order differs
+    items = [_item(f"web:{n}") for n in range(5)]
+    verdicts = {
+        "web:0": CustodyEvent("web:0", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h"),
+        "web:2": CustodyEvent("web:2", "2026-06-10T00:00:00+00:00", "drifted", "h", "x"),
+    }
+    ordered = recheck_order(items, verdicts)
+    assert sorted(i.id for i in ordered) == sorted(i.id for i in items)
+
+
+def test_recheck_order_breaks_a_same_timestamp_tie_by_input_order():
+    # two verdicts at the same instant keep input (oldest-saved-first) order — a
+    # stable sort, so the ordering stays deterministic
+    a, b = _item("web:a"), _item("web:b")
+    same = "2026-06-10T00:00:00+00:00"
+    verdicts = {
+        "web:a": CustodyEvent("web:a", same, "unchanged", "h", "h"),
+        "web:b": CustodyEvent("web:b", same, "unchanged", "h", "h"),
+    }
+    assert [i.id for i in recheck_order([a, b], verdicts)] == ["web:a", "web:b"]
 
 
 def test_ledger_reads_tolerate_a_pre_v7_library(tmp_path):
