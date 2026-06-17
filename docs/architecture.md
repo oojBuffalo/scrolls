@@ -379,11 +379,15 @@ each command moves items between stages or derives artifacts from them.
   custody output, in [`docs/dogfood.md`](dogfood.md) and proven offline against
   fixtures in `tests/test_dogfood.py` (MVP M5).
 - `scrolls maintain` (`src/scrolls/maintain.py`) is the dogfood flow's *recurring*
-  sibling — one scheduled custody-maintenance pass: bounded **recheck**
-  (`verify --all`, `--limit`/`--no-recheck`, ordered **coverage-first** by
-  `custody.recheck_order` — never-checked items first, then already-verified
-  oldest-verdict-first, so a `--limit`-bounded pass advances custody coverage
-  instead of re-checking the same head; roadmap H55) → **regenerate** views (deterministic
+  sibling — one scheduled custody-maintenance pass: **recheck** the **stale set by
+  default** (`custody.items_checked_before`, bounded by the last run's `recorded_at`
+  via `maintain.last_run_boundary` — only the items not seen since the last sweep, so
+  a scheduled pass does the *new* work, not the whole library; `--all` ignores the
+  boundary and rechecks everything, a first run with no baseline does too; roadmap H83),
+  ordered **coverage-first** by `custody.recheck_order` — never-checked items first,
+  then already-verified oldest-verdict-first, so a `--limit`-bounded pass advances
+  custody coverage instead of re-checking the same head (roadmap H55) — with
+  `--no-recheck` for a fully offline pass → **regenerate** views (deterministic
   `compile_kb`) → read-only **audit** (`run_doctor`) → a **custody delta** against
   the snapshot the last run recorded at `<root>/.maintenance/last-run.json`. The
   composition already ships; the module owns only the new piece — `custody_snapshot`
@@ -1082,10 +1086,14 @@ choice (ADRs 0004, 0005).
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
   (`tests/test_doctor.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55) — `scrolls maintain`
-  is the scheduled custody-maintenance pass: coverage-first recheck (never-checked
-  items first via `custody.recheck_order`, H55) → regenerate → audit →
-  custody delta vs the last run (snapshot at `<root>/.maintenance/last-run.json`).
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83) — `scrolls maintain`
+  is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
+  (`custody.items_checked_before` windowed by the last run's `recorded_at` via
+  `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
+  been seen since the last sweep; `--all` rechecks everything, H83), ordered
+  coverage-first (never-checked items first via `custody.recheck_order`, H55) →
+  regenerate → audit → custody delta vs the last run (snapshot at
+  `<root>/.maintenance/last-run.json`, which doubles as the staleness boundary).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
   the module owns only the snapshot/delta layer plus the append-only run log
   (`log.jsonl`, read back by `maintain --history [N]` — the custody trend).

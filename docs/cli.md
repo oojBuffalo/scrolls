@@ -681,23 +681,31 @@ $ scrolls history web:af2e70e87b6d --status drifted   # only the times the sourc
 [exit 0]
 ```
 
-### `scrolls maintain [--limit N | --no-recheck | --history [N]] [--trend]`
+### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend]`
 
 One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling
 (`docs/dogfood.md`), composed entirely from surfaces that already ship
 (`tests/test_maintain.py`). It runs four steps in order and prints one report:
 
-1. **recheck** — a bounded `scrolls verify --all`: re-capture every held item with
-   a baseline hash, append drift/rot events to the ledger, never touch the
-   captures. The held set is ordered **coverage-first** — never-checked items
-   first, then already-verified ones oldest-verdict-first — so a `--limit N`
-   pass spends its budget on *new* custody coverage instead of re-verifying the
-   same list head every run; successive bounded passes cycle the whole library
-   (monotone coverage progress). `--limit N` paces it; an *unbounded* pass checks
-   the same set with the same counts (the ordering only changes which items a
-   bounded pass reaches first). `--no-recheck` skips the live edge entirely for a
-   fully offline pass (the two are mutually exclusive — `--limit` bounds a recheck
-   `--no-recheck` would skip).
+1. **recheck** — `scrolls verify` over the **stale set** by default: only the held,
+   hash-bearing items not seen since the last recorded run — the boundary is that
+   run's `recorded_at` (`<root>/.maintenance/last-run.json`), so a scheduled pass
+   re-verifies the *new* work, not the whole library every run. It appends
+   drift/rot events to the ledger and never touches the captures. The stale set is
+   ordered **coverage-first** — never-checked items first, then already-verified
+   ones oldest-verdict-first (`custody.recheck_order`) — so a `--limit N` pass
+   spends its budget on *new* custody coverage instead of re-verifying the same
+   head every run; successive bounded passes cycle the whole library (monotone
+   coverage progress). `--all` ignores the staleness boundary and rechecks **every**
+   held item (the pre-stale-bounding behavior), composing with `--limit` (so
+   `--all --limit N` is a bounded whole-library recheck); a **first run** (no
+   baseline) has no boundary, so it too rechecks everything. The recheck report's
+   `scope` (`stale` / `all`) and `since` (the boundary, or null) disclose which
+   window the pass used. `--no-recheck` skips the live edge entirely for a fully
+   offline pass; `--limit`/`--no-recheck`/`--history` are mutually exclusive
+   (`--limit` bounds a recheck `--no-recheck` would skip), and `--all` conflicts
+   with `--no-recheck` / `--history` (a recheck-scope flag can't skip the recheck
+   or shape a read-only history).
 2. **regenerate** — `scrolls kb` (the deterministic compile), rebuilding the
    `library/` views from the canonical rows. Never an LLM re-synthesis: refreshing
    concept summaries stays the explicit `scrolls kb --stale`.

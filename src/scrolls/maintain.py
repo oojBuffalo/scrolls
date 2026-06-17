@@ -41,6 +41,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scrolls.custody import parse_since
 from scrolls.paths import LibraryPaths
 
 # The axes a snapshot carries from a doctor report. `score`/`enrichment_stale`/
@@ -219,6 +220,39 @@ def save_snapshot(path: Path, snapshot: dict[str, Any]) -> None:
     """Record this run's snapshot, creating `.maintenance/` if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+
+
+def last_run_boundary(previous: dict[str, Any] | None) -> str | None:
+    """The staleness boundary the default recheck windows by — the last run's
+    `recorded_at`, normalized — or ``None`` to recheck everything (roadmap H83).
+
+    A scheduled `scrolls maintain` pass should re-verify only what has *not been
+    seen since the last sweep*, not the whole library every run. That window's
+    boundary is exactly the timestamp the previous run recorded: an item whose
+    newest ledger verdict predates it is stale (`custody.items_checked_before`),
+    one checked at/after it is fresh. This reads that boundary off the last
+    recorded snapshot (`load_snapshot`), normalized through the shared
+    `custody.parse_since` (so it is the same ``+00:00`` shape a stored
+    `checked_at` carries — the compare is apples-to-apples).
+
+    ``None`` means *no boundary* → recheck every held item (the coverage-first
+    H55 order): on the **first run** there is no baseline, and a missing, blank,
+    or corrupt `recorded_at` degrades to the same "recheck all" — the module's
+    degrade-safely posture (a lost snapshot already means "first run"; a lost
+    *timestamp* means "re-verify everything", never an aborted pass). The
+    never-checked-is-trivially-stale property makes the first-run full recheck a
+    natural special case of the windowed one (a far-past/absent boundary selects
+    everything), so the two paths agree.
+    """
+    if previous is None:
+        return None
+    recorded_at = previous.get("recorded_at")
+    if not recorded_at:
+        return None
+    try:
+        return parse_since(recorded_at)
+    except ValueError:
+        return None
 
 
 def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:

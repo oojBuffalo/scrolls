@@ -99,6 +99,7 @@ from scrolls.maintain import (
     compute_delta,
     compute_trend,
     custody_snapshot,
+    last_run_boundary,
     load_snapshot,
     log_path,
     read_log,
@@ -661,8 +662,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help="Bound the drift recheck to N held items this run (oldest saved "
-        "first); default rechecks every held item with a captured hash",
+        help="Bound the drift recheck to N held items this run (coverage-first: "
+        "never-checked, then stalest); paces both the default stale recheck and "
+        "--all",
+    )
+    maintain_parser.add_argument(
+        "--all",
+        dest="recheck_all",
+        action="store_true",
+        help="Recheck every held item with a captured hash, not just the stale "
+        "set since the last run — the whole-library recheck (composes with "
+        "--limit; conflicts with --no-recheck / --history)",
     )
     maintain_group.add_argument(
         "--no-recheck",
@@ -968,6 +978,18 @@ def main(argv: list[str] | None = None) -> int:
             args.stats,
         )
     if args.command == "maintain":
+        # `--all` forces a whole-library recheck; it composes with `--limit` (so
+        # it lives outside the mutually-exclusive group) but conflicts with the
+        # non-recheck modes — rejected here rather than silently ignored (the
+        # `--trend requires --history` precedent).
+        if args.recheck_all and (not args.recheck or args.history is not None):
+            other = "--no-recheck" if not args.recheck else "--history"
+            print(
+                json.dumps({"error": f"--all rechecks every held item; it conflicts "
+                            f"with {other}"}),
+                file=sys.stderr,
+            )
+            return 2
         if args.history is not None:
             return _cmd_maintain_history(args.history, args.trend)
         if args.trend:
@@ -975,7 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps({"error": "--trend requires --history"}), file=sys.stderr
             )
             return 2
-        return _cmd_maintain(args.recheck, args.limit)
+        return _cmd_maintain(args.recheck, args.recheck_all, args.limit)
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -1063,8 +1085,8 @@ def _cmd_doctor(fix: bool) -> int:
     return 1 if payload["issues"] > payload["fixed"] else 0
 
 
-def _cmd_maintain(recheck: bool, limit: int | None) -> int:
-    """One scheduled custody-maintenance pass (roadmap H22/H23/H34).
+def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
+    """One scheduled custody-maintenance pass (roadmap H22/H23/H34/H83).
 
     The dogfood flow's recurring sibling, composed entirely from surfaces that
     already ship: *recheck* the live edge (`verify`, bounded by `--limit`, behind
@@ -1072,6 +1094,14 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
     (`compile_kb` — the deterministic compile, never an LLM re-synthesis), then
     *audit* once with `run_doctor` to read the post-maintenance custody picture,
     and report the **custody delta** against the snapshot the last run recorded.
+
+    The recheck is **stale-bounded by default** (roadmap H83): it re-verifies
+    only the held items not seen since the last recorded run — the boundary is
+    that run's `recorded_at` (`last_run_boundary`), so a scheduled pass does the
+    *new* work, not the whole library. `--all` ignores the boundary and rechecks
+    everything (the old behavior); a first run (no baseline) has no boundary and
+    so also rechecks everything. The same `previous` snapshot is both the
+    staleness boundary and the delta baseline, loaded once.
 
     Report-only and idempotent (custody-vision §2.4): it records drift events and
     regenerates `library/` views, but never repairs index rows, reclassifies, or
@@ -1083,13 +1113,19 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
     paths = get_paths()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    # Load the last run's snapshot once: it is both this run's delta baseline AND
+    # (via its recorded_at) the staleness boundary the default recheck windows by.
+    path = snapshot_path(paths)
+    previous = load_snapshot(path)
+    boundary = None if recheck_all else last_run_boundary(previous)
+
     # 1. RECHECK — the one live edge, bounded; records drift events, never
     #    touching the captures (ADR 0098). Skipped entirely with --no-recheck.
     if recheck:
-        recheck_report = _recheck_held_items(paths, limit, now)
+        recheck_report = _recheck_held_items(paths, limit, now, boundary)
     else:
         recheck_report = {
-            "skipped": True, "checked": 0,
+            "skipped": True, "scope": None, "since": None, "checked": 0,
             "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
         }
 
@@ -1102,8 +1138,6 @@ def _cmd_maintain(recheck: bool, limit: int | None) -> int:
 
     # 4. DELTA vs the last recorded snapshot, then 5. record this run's: refresh
     #    the single baseline AND append the run to the append-only trend log.
-    path = snapshot_path(paths)
-    previous = load_snapshot(path)
     delta = compute_delta(previous, current)
     save_snapshot(path, {**current, "recorded_at": now})
     append_log_entry(
@@ -1154,7 +1188,9 @@ def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
     return 0
 
 
-def _recheck_held_items(paths: LibraryPaths, limit: int | None, now: str) -> dict:
+def _recheck_held_items(
+    paths: LibraryPaths, limit: int | None, now: str, boundary: str | None
+) -> dict:
     """Bounded re-capture of held items carrying a baseline hash; record events.
 
     The same core `verify --all` runs (re-capture through the `live_recapture`
@@ -1162,20 +1198,34 @@ def _recheck_held_items(paths: LibraryPaths, limit: int | None, now: str) -> dic
     `maintain` reports. Reads the module-level `live_recapture` so tests can
     script the network edge offline, exactly as `_cmd_verify` does.
 
-    Coverage-first ordering (roadmap H55): the held set is ordered by
+    Stale-bounded by default (roadmap H83): when `boundary` is given (the last
+    run's `recorded_at`), the recheck targets only the *stale* set —
+    `items_checked_before`, the held items whose newest verdict predates the
+    boundary plus the never-checked — so a scheduled pass re-verifies the new
+    work, not the whole library. A `None` boundary rechecks every held item
+    (`--all`, or a first run with no baseline). The reported `scope`/`since`
+    disclose which window the pass used.
+
+    Coverage-first ordering (roadmap H55): the targeted set is then ordered by
     `recheck_order` — never-checked items first, then already-verified
     oldest-verdict-first — so a ``--limit``-bounded pass spends its budget on new
-    custody coverage instead of re-checking the same list head every run. An
-    unbounded pass checks the same set with the same counts (the ordering only
-    moves which items a bounded pass reaches first).
+    custody coverage instead of re-checking the same head every run. The stale
+    filter and the order share the one `latest_events` read.
     """
-    counts = {"skipped": False, "checked": 0,
-              "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
+    counts = {"skipped": False, "scope": "all", "since": None,
+              "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
     if not paths.db_path.exists():
         return counts
     init_db(paths.db_path)  # ensure the ledger table exists before recording
     hash_bearing = [item for item in list_items(paths.db_path) if item.content_hash]
-    items = recheck_order(hash_bearing, latest_events(paths.db_path))
+    verdicts = latest_events(paths.db_path)
+    if boundary is not None:
+        counts["scope"] = "stale"
+        counts["since"] = boundary
+        candidates = items_checked_before(hash_bearing, verdicts, boundary)
+    else:
+        candidates = hash_bearing
+    items = recheck_order(candidates, verdicts)
     events = []
     for item in items:
         if limit is not None and counts["checked"] >= limit:

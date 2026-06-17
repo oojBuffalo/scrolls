@@ -144,7 +144,8 @@ uv run scrolls context <query> --source arxiv  # scope the bundle (same --source
 uv run scrolls agent install  # write agent instruction files, as JSON
 uv run scrolls doctor         # check index/file-tree integrity, as JSON
 uv run scrolls doctor --fix   # repair what is safe offline: merge dupes, rewrite scrolls, rebuild FTS
-uv run scrolls maintain       # one scheduled custody pass: recheck → regenerate views → audit → custody delta since last run (+ suggested repair commands), as JSON
+uv run scrolls maintain       # one scheduled custody pass: recheck the stale set (not seen since last run) → regenerate views → audit → custody delta (+ suggested repair commands), as JSON
+uv run scrolls maintain --all # recheck every held item, not just the stale set (the whole-library recheck; composes with --limit)
 uv run scrolls maintain --no-recheck  # the offline pass: regenerate + audit + delta, no live re-capture
 uv run scrolls maintain --history     # the custody trend: last N recorded runs (score/drift trajectory), as JSON
 uv run scrolls maintain --history --trend  # + a one-word posture (improving/holding/regressing) over the window

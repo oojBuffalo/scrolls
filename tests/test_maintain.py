@@ -39,6 +39,7 @@ from scrolls.maintain import (
     compute_delta,
     compute_trend,
     custody_snapshot,
+    last_run_boundary,
     load_snapshot,
     log_path,
     read_log,
@@ -161,6 +162,37 @@ def test_corrupt_snapshot_degrades_to_first_run(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text("{ not json", encoding="utf-8")
     assert load_snapshot(path) is None
+
+
+# --- the staleness boundary (pure, roadmap H83) ---------------------------
+
+
+def test_last_run_boundary_reads_and_normalizes_the_recorded_at():
+    """The default recheck's staleness window is the last run's recorded_at,
+    normalized to the stored `+00:00` shape so the ledger compare is exact."""
+    assert (
+        last_run_boundary({"score": 100, "recorded_at": "2026-06-15T09:00:00+00:00"})
+        == "2026-06-15T09:00:00+00:00"
+    )
+    # a Z-suffixed timestamp normalizes to the same stored shape (parse_since)
+    assert (
+        last_run_boundary({"recorded_at": "2026-06-15T09:00:00Z"})
+        == "2026-06-15T09:00:00+00:00"
+    )
+
+
+def test_last_run_boundary_is_none_without_a_baseline():
+    """A first run (no prior snapshot) has no boundary → recheck everything."""
+    assert last_run_boundary(None) is None
+
+
+def test_last_run_boundary_degrades_to_none_on_a_missing_or_corrupt_timestamp():
+    """A baseline with no/blank/unparseable recorded_at degrades to "recheck all"
+    — the snapshot's degrade-safely posture on the boundary axis, never a crash
+    or a silently-wrong lexicographic window."""
+    assert last_run_boundary({"score": 100}) is None  # no recorded_at key
+    assert last_run_boundary({"recorded_at": ""}) is None  # blank
+    assert last_run_boundary({"recorded_at": "not-a-timestamp"}) is None  # garbage
 
 
 # --- the run log (pure, append-only) --------------------------------------
@@ -511,7 +543,11 @@ def test_second_run_shows_drift_in_the_delta_without_lowering_the_score(
     home, monkeypatch, capsys
 ):
     """Run once clean, then again after a source drifts: the delta records the
-    drift posture moving (unverified → drifted) while the score holds at 100."""
+    drift posture moving (unverified → drifted) while the score holds at 100.
+
+    The second pass uses `--all` to force a whole-library recheck: the default
+    stale-bounded recheck (H83) would skip every item just seen in the first
+    run, so detecting a fresh drift means re-verifying everything explicitly."""
     items = _held_topic()
     _build(items)
     capsys.readouterr()
@@ -523,7 +559,7 @@ def test_second_run_shows_drift_in_the_delta_without_lowering_the_score(
     before = get_item(home.db_path, drifted.id)
 
     monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
-    assert main(["maintain"]) == 0
+    assert main(["maintain", "--all"]) == 0
     second = json.loads(capsys.readouterr().out)
 
     assert second["recheck"]["drifted"] == 1
@@ -634,12 +670,144 @@ def test_unbounded_recheck_checks_the_whole_set_regardless_of_prior_verdicts(
     capsys.readouterr()
 
     monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
-    assert main(["maintain"]) == 0  # no --limit
+    assert main(["maintain", "--all"]) == 0  # no --limit
     report = json.loads(capsys.readouterr().out)
     # every held item rechecked (the already-verified head included), all unchanged
     assert report["recheck"]["checked"] == len(items)
     assert report["recheck"]["unchanged"] == len(items)
     assert report["custody"]["drift"]["unverified"] == 0
+
+
+# --- the stale-bounded recheck (roadmap H83) ------------------------------
+
+
+def test_recheck_targets_only_the_stale_set_within_a_boundary(home, monkeypatch):
+    """With a boundary, `_recheck_held_items` re-verifies only the items not seen
+    since it — an older verdict (stale) or no verdict (never checked) — and
+    leaves a fresh, post-boundary verdict untouched."""
+    _build(_held_topic())
+    old, recent, never = list_items(home.db_path)
+    record_events(home.db_path, [
+        CustodyEvent(old.id, "2026-06-01T00:00:00+00:00", "unchanged",
+                     old.content_hash, old.content_hash),
+        CustodyEvent(recent.id, "2026-06-10T00:00:00+00:00", "unchanged",
+                     recent.content_hash, recent.content_hash),
+    ])  # `never` has no verdict at all
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    report = cli._recheck_held_items(
+        home, limit=None, now="2026-06-17T00:00:00+00:00",
+        boundary="2026-06-05T00:00:00+00:00",
+    )
+    assert report["scope"] == "stale"
+    assert report["since"] == "2026-06-05T00:00:00+00:00"
+    assert report["checked"] == 2  # `old` (pre-boundary) + `never`, not `recent`
+
+    verdicts = latest_events(home.db_path)
+    assert verdicts[recent.id].checked_at == "2026-06-10T00:00:00+00:00"  # untouched
+    assert verdicts[old.id].checked_at == "2026-06-17T00:00:00+00:00"  # re-verified
+    assert verdicts[never.id].checked_at == "2026-06-17T00:00:00+00:00"  # re-verified
+
+
+def test_recheck_with_no_boundary_rechecks_everything(home, monkeypatch):
+    """boundary=None is the `--all` / first-run path — every held item rechecked,
+    scope `all`, since null, even past a fresh prior verdict (no behavior change
+    from before H83)."""
+    items = _held_topic()
+    _build(items)
+    head = list_items(home.db_path)[0]
+    record_events(home.db_path, [
+        CustodyEvent(head.id, "2026-06-10T00:00:00+00:00", "unchanged",
+                     head.content_hash, head.content_hash),
+    ])
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    report = cli._recheck_held_items(
+        home, limit=None, now="2026-06-17T00:00:00+00:00", boundary=None,
+    )
+    assert report["scope"] == "all"
+    assert report["since"] is None
+    assert report["checked"] == len(items)
+
+
+def test_first_run_rechecks_everything_then_the_default_skips_the_just_seen(
+    home, monkeypatch, capsys
+):
+    """The headline H83 behavior end to end: the first pass (no baseline) rechecks
+    every held item; a second default pass right after is stale-bounded to the
+    first run's recorded_at, so nothing is stale and no item is re-verified — the
+    pass does the *new* work (none here), not the whole library again."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["recheck"]["scope"] == "all"  # first run: no baseline
+    assert first["recheck"]["since"] is None
+    assert first["recheck"]["checked"] == len(items)
+
+    assert main(["maintain"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["recheck"]["scope"] == "stale"
+    assert second["recheck"]["since"] == first["recorded_at"]
+    assert second["recheck"]["checked"] == 0  # everything was just seen
+    # views still regenerated, audit still run — only the live recheck is bounded
+    assert second["compiled"]["items"] == len(items)
+    assert second["custody"]["score"] == 100
+
+
+def test_all_flag_rechecks_everything_again_after_a_clean_default_pass(
+    home, monkeypatch, capsys
+):
+    """`--all` recovers the pre-H83 whole-library recheck: after a default pass
+    leaves nothing stale, `--all` re-verifies every held item regardless."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--all"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["scope"] == "all"
+    assert report["recheck"]["since"] is None
+    assert report["recheck"]["checked"] == len(items)
+
+
+def test_all_composes_with_limit(home, monkeypatch, capsys):
+    """`--all --limit N` is the old `--limit N`: a bounded whole-library recheck,
+    coverage-first — so it reaches items the stale default would skip."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--all", "--limit", "2"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["scope"] == "all"
+    assert report["recheck"]["checked"] == 2
+
+
+def test_all_conflicts_with_no_recheck(home, capsys):
+    """`--all` runs a recheck `--no-recheck` would skip — a usage error (exit 2),
+    not a silently-ignored flag (the `--trend requires --history` precedent)."""
+    assert main(["maintain", "--all", "--no-recheck"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"].lower()
+    assert "all" in error and "no-recheck" in error
+
+
+def test_all_conflicts_with_history(home, capsys):
+    """`--all` runs a pass; `--history` is read-only — mutually exclusive."""
+    assert main(["maintain", "--all", "--history"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"].lower()
+    assert "all" in error and "history" in error
 
 
 def test_no_recheck_and_limit_together_is_an_error(home, capsys):
@@ -906,7 +1074,9 @@ def test_history_is_mutually_exclusive_with_the_pass_flags(home, capsys):
 def test_history_trend_wraps_the_runs_in_a_trend_envelope(home, monkeypatch, capsys):
     """`--history --trend` reads the trajectory direction across the window: a
     drift the second run records makes the posture `regressing` while the bare
-    `--history` array stays the default shape."""
+    `--history` array stays the default shape. The second pass uses `--all` to
+    force the recheck (the default stale-bounded pass would skip the just-seen
+    items, H83)."""
     items = _held_topic()
     _build(items)
     capsys.readouterr()
@@ -915,7 +1085,7 @@ def test_history_trend_wraps_the_runs_in_a_trend_envelope(home, monkeypatch, cap
     assert main(["maintain"]) == 0
     capsys.readouterr()
     monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(items[0].id))
-    assert main(["maintain"]) == 0
+    assert main(["maintain", "--all"]) == 0
     capsys.readouterr()
 
     assert main(["maintain", "--history", "--trend"]) == 0
