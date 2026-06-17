@@ -109,6 +109,7 @@ from scrolls.maintain import (
     snapshot_headline,
     snapshot_path,
     suggest_repairs,
+    weakest_source,
 )
 from scrolls.media import capture_media, has_pending_media
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
@@ -1152,6 +1153,11 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
         {"recorded_at": now, "snapshot": current, "delta": delta},
     )
 
+    # Per-source custody breakdown (roadmap H123): the `{tiers, drift}` tally split
+    # per source the audit already produced, used both to report the full map and
+    # (roadmap H119) to distil the single weakest source worth flagging.
+    by_source = report_by_source(report)
+
     print(
         json.dumps(
             {
@@ -1164,13 +1170,18 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
                 # so the worker's log reads it without assembling the raw counts.
                 # Converges by construction with the `custody` block it sits beside.
                 "headline": snapshot_headline(current),
-                # Per-source custody breakdown (roadmap H123): the `{tiers, drift}`
-                # tally split per source the audit already produced, so the log
-                # names *which* source's custody to target. Live-pass only (like
-                # `suggested`/`scope`): derived fresh from this pass's audit, never
-                # recorded in the snapshot/log, so `--history`/`--trend` carry none.
-                # Sums to the `custody` block beside it by construction (H104).
-                "by_source": report_by_source(report),
+                # The per-source map names *which* source's custody to target.
+                # Live-pass only (like `suggested`/`scope`): derived fresh from this
+                # pass's audit, never recorded in the snapshot/log, so
+                # `--history`/`--trend` carry none. Sums to the `custody` block
+                # beside it by construction (H104).
+                "by_source": by_source,
+                # The single weakest source (roadmap H119): the one carrying the
+                # most actionable loss (drifted + rotted), distilled from `by_source`
+                # so an unattended log flags it without scanning every source.
+                # `null` when nothing stands out (a clean, single-source, or empty
+                # library). Live-pass only, like `by_source`.
+                "attention": weakest_source(by_source),
                 "delta": delta,
                 "issues": report["issues"],
                 # Actionable guidance, never an action: the explicit on-request

@@ -431,7 +431,13 @@ each command moves items between stages or derives artifacts from them.
   log names *which* source's custody is weakest without re-running `doctor`. Like
   `suggested` it rides the live pass only (never recorded in the snapshot/log, so
   `--history`/`--trend` carry none) and sums to the whole-library `custody` block
-  by construction (roadmap H123).
+  by construction (roadmap H123). Distilled from that map, the report also carries
+  an **`attention`** member (`maintain.weakest_source`) — the single source with
+  the most actionable loss (most `drifted` + `rotted`, tie-broken by most
+  `reference`-only then name), `{source, tiers, drift, reason}`, so the log flags
+  the one to act on without scanning every source; honest `null` when nothing
+  stands out (empty, single-source, or fully-clean — reference-only is a
+  tie-breaker, never a trigger), live-pass only like `by_source` (roadmap H119).
 - `scrolls status` carries a one-line **custody headline** under its item
   counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
   the stale enrichment/summary counts — "how custody stands" without parsing a
@@ -1119,7 +1125,7 @@ choice (ADRs 0004, 0005).
   `verify --drift`/`media`/recapture there; the per-source tallies sum to the
   whole-library `custody` block and equal `facets fidelity`/`drift --source <name>`
   by construction (pinned in `tests/test_custody_convergence.py`).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H123) — `scrolls maintain`
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H119, H123) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
   `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
@@ -1152,9 +1158,13 @@ choice (ADRs 0004, 0005).
   drift from what the command repairs. The report also surfaces the audit's
   per-source custody breakdown (`maintain.report_by_source` → `doctor`'s
   `custody.by_source`, roadmap H123) so the log names which source's custody is
-  weakest; like `suggested` it is a live-pass-only member (absent from the
-  snapshot/log, so `--history`/`--trend` carry none). Like doctor, deliberately not
-  exposed over MCP (a mutating operator surface).
+  weakest, and distils it to a single **`attention`** member (`maintain.weakest_source`
+  — the source with the most actionable loss, most `drifted`+`rotted` tie-broken by
+  most `reference`-only then name, with its tally and a one-line reason; `null` when
+  nothing stands out — empty, single-source, or fully-clean, roadmap H119); like
+  `suggested` both are live-pass-only members (absent from the snapshot/log, so
+  `--history`/`--trend` carry none). Like doctor, deliberately not exposed over MCP
+  (a mutating operator surface).
 - **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
   files (scroll, captured media) and then its row, in that order, so an
   interrupted removal leaves a re-runnable item rather than orphan

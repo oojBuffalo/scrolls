@@ -209,6 +209,78 @@ def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, in
     return dict(report.get("custody", {}).get("by_source", {}))
 
 
+# The actionable-loss postures: the items confirmed to have moved or gone since
+# capture (a follow-up `verify --drift drifted`/`media` targets exactly these).
+# `unverified` (never checked) and `error` (a transient re-check failure) are not
+# *confirmed* loss, so they do not flag a source — `drifted`/`rotted` do.
+_LOSS_POSTURES = ("drifted", "rotted")
+
+
+def _source_loss(tally: dict[str, dict[str, int]]) -> int:
+    """How many of a source's held items are confirmed drifted or rotted."""
+    drift = tally.get("drift", {})
+    return sum(drift.get(posture, 0) for posture in _LOSS_POSTURES)
+
+
+def weakest_source(
+    by_source: dict[str, dict[str, dict[str, int]]]
+) -> dict[str, Any] | None:
+    """The single source carrying the most actionable custody loss (roadmap H119).
+
+    H123 threads `doctor`'s *whole* per-source breakdown (`custody.by_source`,
+    H104) into the `maintain` report; this distils that map to the **one** source
+    worth flagging, so an unattended log reads "source `x` is weakest — N drifted"
+    without scanning every source. Weakest = the most **actionable loss**: the most
+    `drifted` + `rotted` items (the sources *confirmed* to have moved or gone — the
+    set a follow-up `verify --drift`/`media` targets), tie-broken by the most
+    `reference`-only items (lowest fidelity), then the source name (so the pick is
+    deterministic). Returns ``{source, tiers, drift, reason}`` — the flagged
+    source's own tally (so the per-source picture rides along) plus a one-line
+    reason naming the loss that earned the flag.
+
+    Honest absence (`None`), the report's first-run/empty posture, on three counts:
+
+    - an **empty** map — no library / no sources, nothing to flag;
+    - a **single** source — no source *stands out*; the whole-library `custody`
+      block already says everything `attention` could, which only adds value by
+      discriminating *across* sources, so a one-source library is null even when it
+      carries drift;
+    - a **fully-clean** library — no source carries any `drifted`/`rotted` loss, so
+      there is nothing actionable to flag (reference-only is the normal capture
+      posture, a tie-breaker, never a trigger on its own).
+
+    Pure over the `by_source` map — **no new ledger read**; surfaced live-pass only
+    (like `report_by_source`/`suggest_repairs`), so `--history`/`--trend` carry none.
+    """
+    if len(by_source) < 2:
+        return None
+    source, tally = min(
+        by_source.items(),
+        key=lambda kv: (-_source_loss(kv[1]), -kv[1].get("tiers", {}).get("reference", 0), kv[0]),
+    )
+    if _source_loss(tally) == 0:
+        return None
+    return {
+        "source": source,
+        "tiers": tally["tiers"],
+        "drift": tally["drift"],
+        "reason": _attention_reason(tally),
+    }
+
+
+def _attention_reason(tally: dict[str, dict[str, int]]) -> str:
+    """A one-line reason naming the actionable loss that flagged a source.
+
+    Lists only the non-zero loss postures (`drifted`/`rotted`) in canonical order —
+    e.g. ``"2 drifted, 1 rotted"`` — never empty (a source is flagged only when its
+    loss is non-zero), so the log line is always self-describing.
+    """
+    drift = tally.get("drift", {})
+    return ", ".join(
+        f"{drift[posture]} {posture}" for posture in _LOSS_POSTURES if drift.get(posture)
+    )
+
+
 def _scalar_delta(before: int | None, after: int | None) -> dict[str, Any]:
     """before/after/change for one count; change is null on the first run."""
     change = None if before is None or after is None else after - before

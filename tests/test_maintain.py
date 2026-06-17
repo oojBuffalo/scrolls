@@ -57,6 +57,7 @@ from scrolls.maintain import (
     snapshot_headline,
     snapshot_path,
     suggest_repairs,
+    weakest_source,
 )
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
@@ -1316,6 +1317,130 @@ def test_maintain_history_does_not_carry_the_per_source_breakdown(
     assert all("by_source" not in run["snapshot"] for run in runs)
     # and not stored in the log either (the snapshot/log carry only the scalars)
     assert all("by_source" not in run for run in read_log(log_path(home)))
+
+
+# --- the single weakest source: `attention` (roadmap H119) ------------------
+
+
+def _source_tally(*, full=0, partial=0, reference=0,
+                  verified=0, unverified=0, drifted=0, rotted=0, error=0):
+    """One source's `{tiers, drift}` tally, shaped like `custody_counts`."""
+    return {
+        "tiers": {"full": full, "partial": partial, "reference": reference},
+        "drift": {"verified": verified, "unverified": unverified,
+                  "drifted": drifted, "rotted": rotted, "error": error},
+    }
+
+
+def test_weakest_source_picks_the_most_drifted_and_rotted():
+    # The flagged source is the one with the most actionable loss (drifted +
+    # rotted), and it carries its own tally plus a one-line reason naming the loss.
+    by_source = {
+        "arxiv": _source_tally(full=2, verified=1, drifted=1),  # loss 1
+        "web": _source_tally(full=3, drifted=2, rotted=1),       # loss 3 — weakest
+    }
+    flagged = weakest_source(by_source)
+    assert flagged["source"] == "web"
+    assert flagged["tiers"] == by_source["web"]["tiers"]
+    assert flagged["drift"] == by_source["web"]["drift"]
+    assert flagged["reason"] == "2 drifted, 1 rotted"
+
+
+def test_weakest_source_tie_broken_by_most_reference_then_name():
+    # Equal loss → the lowest-fidelity source (most reference-only) is weaker.
+    by_tie_on_reference = {
+        "a": _source_tally(full=1, reference=1, drifted=1),  # loss 1, ref 1
+        "b": _source_tally(reference=3, drifted=1),          # loss 1, ref 3 — weaker
+    }
+    assert weakest_source(by_tie_on_reference)["source"] == "b"
+    # Equal loss *and* equal reference → deterministic by source name (ascending).
+    by_tie_on_name = {
+        "zzz": _source_tally(reference=1, drifted=1),
+        "aaa": _source_tally(reference=1, drifted=1),
+    }
+    assert weakest_source(by_tie_on_name)["source"] == "aaa"
+
+
+def test_weakest_source_on_a_clean_multi_source_library_is_none():
+    # Honest absence: ≥2 sources but no source carries any drifted/rotted loss —
+    # nothing actionable to flag (reference-only is the normal capture posture, a
+    # tie-breaker, never a trigger), so `attention` is null.
+    clean = {
+        "arxiv": _source_tally(full=2, verified=2),
+        "web": _source_tally(full=1, reference=2, verified=1, unverified=2),
+    }
+    assert weakest_source(clean) is None
+
+
+def test_weakest_source_on_a_single_source_is_none():
+    # A single source does not *stand out* — the whole-library `custody` block
+    # already says everything `attention` could, so even with drift it is null.
+    assert weakest_source({"web": _source_tally(full=1, drifted=3)}) is None
+
+
+def test_weakest_source_on_an_empty_map_is_none():
+    # No library / no sources → nothing to flag.
+    assert weakest_source({}) is None
+
+
+def test_maintain_report_flags_the_weakest_source(home, monkeypatch, capsys):
+    """A live pass names the single source carrying the most actionable loss —
+    the one to target a follow-up `verify --drift drifted` / `media` at."""
+    items = _held_topic()  # 1 arxiv + 2 web, all full-fidelity
+    _build(items)
+    capsys.readouterr()
+    # first clean pass: every recheck unchanged → no source stands out
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+    # drift one web item: web now carries the only actionable loss
+    drifted = items[1]  # a web item
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
+    assert main(["maintain", "--all"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    attention = report["attention"]
+    assert attention["source"] == "web"
+    assert attention["drift"]["drifted"] == 1
+    assert attention["reason"] == "1 drifted"
+    # it is exactly `weakest_source` over the report's own per-source breakdown
+    assert attention == weakest_source(report["by_source"])
+
+
+def test_maintain_attention_is_null_on_a_clean_or_empty_library(
+    home, monkeypatch, capsys
+):
+    """No drift anywhere (or no library) → honest `attention: null`, the
+    first-run/empty honesty the rest of the report keeps."""
+    # uninitialized library: no sources to compare
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+    # initialized, all recheck-clean: ≥2 sources but no actionable loss
+    _build(_held_topic())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+
+def test_maintain_history_does_not_carry_attention(home, monkeypatch, capsys):
+    """`attention` rides the live pass only (like `by_source`/`suggested`): it is
+    derived fresh from this pass's audit, never recorded, so `--history` carries
+    none and the stored log stays bare."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(items[1].id))
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("attention" not in run for run in runs)
+    assert all("attention" not in run["snapshot"] for run in runs)
+    assert all("attention" not in run for run in read_log(log_path(home)))
 
 
 # --- suggest_repairs ≡ what `doctor --fix` actually repairs (roadmap H106) ---
