@@ -1135,8 +1135,15 @@ choice (ADRs 0004, 0005).
   on-request command that closes each (`doctor --fix` for the structural fixes,
   grouped; `scrolls media` / `classify --stale` / `kb --stale` each their own) —
   *by finding, never by the aggregate `issues` count*, so an orphan scroll (which
-  has no on-request repair) yields no suggestion despite a nonzero exit. Like
-  doctor, deliberately not exposed over MCP (a mutating operator surface).
+  has no on-request repair) yields no suggestion despite a nonzero exit. The
+  hand-maintained category→command table is pinned against doctor's *real*
+  `fix=True` behavior (roadmap H106, `tests/test_maintain.py`): over a library
+  seeded with every structural finding, the categories `suggest_repairs` routes to
+  `scrolls doctor --fix` are exactly the ones `run_doctor(fix=True)` transitions to
+  a repaired status (`merged`/`rewritten`/`rebuilt`), with the orphan in neither and
+  missing media routed to `scrolls media` — so the suggestion can never silently
+  drift from what the command repairs. Like doctor, deliberately not exposed over
+  MCP (a mutating operator surface).
 - **Removal** (`remove.py`, ADR 0027) — `scrolls rm` deletes an item's
   files (scroll, captured media) and then its row, in that order, so an
   interrupted removal leaves a re-runnable item rather than orphan

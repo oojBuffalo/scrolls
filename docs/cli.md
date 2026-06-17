@@ -830,7 +830,10 @@ it wrote (custody §2.4) — so it yields *no* suggestion rather than pointing a
 `doctor --fix` that would not remove it. A clean pass is the honest empty
 `"suggested": []`. The block rides the live pass only, derived fresh from its
 audit; it is not recorded in the snapshot, so `--history`/`--trend` (which replay
-snapshots) never carry a stale suggestion.
+snapshots) never carry a stale suggestion. The category→command mapping is pinned
+against doctor's *real* `fix=True` behavior (the categories routed to `doctor
+--fix` are exactly the ones it transitions to a repaired status), so a suggestion
+can never silently drift from what the command actually closes.
 
 The sharp custody point the delta makes visible (the dogfood proof's, recurring):
 detecting source drift moves the *drift posture* (`unverified` → `drifted`)

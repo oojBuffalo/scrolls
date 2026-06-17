@@ -18,6 +18,7 @@ detecting source drift moves the *drift posture* without lowering the integrity
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -31,9 +32,11 @@ from scrolls.custody import (
     record_events,
 )
 from scrolls.db import init_db
+from scrolls.doctor import run_doctor
 from scrolls.items import (
     ScrollItem,
     get_item,
+    insert_item,
     item_to_dict,
     list_items,
     make_item_id,
@@ -1190,6 +1193,162 @@ def test_maintain_history_does_not_carry_suggestions(home, monkeypatch, capsys):
     runs = json.loads(capsys.readouterr().out)
     assert runs and all("suggested" not in run for run in runs)
     assert all("suggested" not in run["snapshot"] for run in runs)
+
+
+# --- suggest_repairs ≡ what `doctor --fix` actually repairs (roadmap H106) ---
+#
+# H40 maps each repairable finding category to its on-request command in the
+# hand-maintained `_REPAIR_COMMANDS` table; if `doctor`'s `fix=True` path ever
+# gains or loses a repairable category, that table could silently drift from
+# doctor's real capability — `maintain` would suggest a command that no longer
+# closes the gap (the very honesty H40's orphan-omission protects). These pin the
+# mapping against doctor's *real* `fix=True` behavior, not just the table.
+
+# The statuses `doctor`'s `fix=True` path stamps when it actually repairs a
+# finding: a duplicate group merged, a missing scroll rewritten from the index,
+# the FTS index rebuilt. Missing media and orphan scrolls stay `found` — doctor
+# reports them but never repairs them.
+_REPAIRED_STATUSES = {"merged", "rewritten", "rebuilt"}
+
+
+def _web(url, *, rendered=False, **fields) -> ScrollItem:
+    """A url-hash-identity web item (the kind ADR 0023 duplicates affect)."""
+    base = dict(
+        id=make_item_id("web", None, url),
+        source="web",
+        source_id=None,
+        url=url,
+        saved_at="2026-06-12T08:00:00+00:00",
+    )
+    if rendered:
+        base.update(
+            title="A Post",
+            extracted_text="body text",
+            content_hash="sha256:" + url[-8:],
+            raw_text=f"<raw capture of {url}>",
+            stage="rendered",
+            provenance={"adapter": "web", "fetched_at": "2026-06-12T08:00:05+00:00"},
+        )
+    base.update(fields)
+    return ScrollItem(**base)
+
+
+def _seed_all_structural_drift(paths) -> None:
+    """Seed one library carrying every structural finding `doctor` distinguishes:
+    a mergeable duplicate pair, a missing scroll file, an out-of-sync FTS index,
+    an orphan scroll file, and a missing captured-media file. Read back via
+    `run_doctor` — the point is the drift, not the items."""
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+
+    # duplicates: junk + clean URL normalize to one canonical id; the junk item
+    # carries the content (rendered, with a scroll file) so the merge completes.
+    junk = "https://example.com/dup?utm_source=news"
+    clean = "https://example.com/dup"
+    insert_item(paths.db_path, write_scroll(paths, _web(junk, rendered=True)))
+    insert_item(paths.db_path, _web(clean))
+
+    # missing_scrolls: a rendered item whose scroll file is then deleted.
+    missing = write_scroll(paths, _web("https://example.com/missing", rendered=True))
+    insert_item(paths.db_path, missing)
+    (paths.root / missing.markdown_path).unlink()
+
+    # missing_media: a captured ref whose file never landed on disk.
+    insert_item(
+        paths.db_path,
+        _web(
+            "https://example.com/with-media",
+            rendered=True,
+            media=(
+                {"type": "photo", "url": "https://example.com/p.jpg",
+                 "path": "media/web/p-1.jpg"},
+            ),
+        ),
+    )
+
+    # orphan_scrolls: a stray scroll file with no backing item.
+    stray = paths.scrolls_dir / "web" / "stray.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("# leftover\n", encoding="utf-8")
+
+    # fts: a phantom index row with no backing item (corrupt last, after inserts).
+    conn = sqlite3.connect(paths.db_path)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO items_fts(rowid, title, summary, extracted_text) "
+                "VALUES (999, 'ghost', '', '')"
+            )
+    finally:
+        conn.close()
+
+
+def _categories_doctor_fix_repaired(report: dict) -> set[str]:
+    """The finding categories `run_doctor(fix=True)` actually transitioned to a
+    repaired status. Generic over the list categories so a future change that
+    starts repairing media/orphans (or stops repairing a structural one) shows up
+    here, not just in the mapping table."""
+    repaired = {
+        category
+        for category in ("duplicates", "missing_scrolls", "missing_media", "orphan_scrolls")
+        if any(entry["status"] in _REPAIRED_STATUSES for entry in report[category])
+    }
+    if report["fts"]["status"] == "rebuilt":
+        repaired.add("fts")
+    return repaired
+
+
+def test_maintain_doctor_fix_suggestion_matches_what_doctor_fix_repairs(home):
+    """The set `suggest_repairs` routes to `scrolls doctor --fix` is *exactly* the
+    set `run_doctor(fix=True)` actually repairs — so maintain never suggests a
+    command that would not close the gap, and never fails to name one that would.
+    Pinned against doctor's real fix path, not the `_REPAIR_COMMANDS` table."""
+    _seed_all_structural_drift(home)
+
+    # report mode: every structural finding present, nothing mutated.
+    before = run_doctor(home)
+    by_command = {s["command"]: s["addresses"] for s in suggest_repairs(before)}
+    assert "scrolls doctor --fix" in by_command
+
+    # the real fix path, on the same library.
+    after = run_doctor(home, fix=True)
+    repaired = _categories_doctor_fix_repaired(after)
+
+    assert repaired == {"duplicates", "missing_scrolls", "fts"}
+    assert set(by_command["scrolls doctor --fix"]) == repaired
+
+
+def test_maintain_never_suggests_a_command_for_the_orphan_doctor_cannot_fix(home):
+    """An orphan scroll bumps `issues`/the exit code but `fix=True` leaves it
+    `found` (doctor never deletes a file it cannot prove it wrote, custody §2.4) —
+    so it is in neither set: not repaired, and no `suggested` command names it. The
+    H40 honest-absence point, pinned against doctor's real behavior."""
+    _seed_all_structural_drift(home)
+
+    after = run_doctor(home, fix=True)
+    assert "orphan_scrolls" not in _categories_doctor_fix_repaired(after)
+    assert after["orphan_scrolls"], "the seed must carry an orphan to make this non-vacuous"
+    assert all(entry["status"] == "found" for entry in after["orphan_scrolls"])
+
+    by_command = {s["command"]: s["addresses"] for s in suggest_repairs(run_doctor(home))}
+    assert all("orphan_scrolls" not in addresses for addresses in by_command.values())
+
+
+def test_maintain_routes_missing_media_to_scrolls_media_which_doctor_fix_leaves(home):
+    """The sibling: missing media is doctor-reports-never-fixes — `fix=True` leaves
+    it `found`, and `suggest_repairs` routes it to `scrolls media`, never the
+    grouped `doctor --fix` suggestion."""
+    _seed_all_structural_drift(home)
+
+    after = run_doctor(home, fix=True)
+    assert "missing_media" not in _categories_doctor_fix_repaired(after)
+    assert after["missing_media"] and all(
+        entry["status"] == "found" for entry in after["missing_media"]
+    )
+
+    by_command = {s["command"]: s["addresses"] for s in suggest_repairs(run_doctor(home))}
+    assert by_command["scrolls media"] == ["missing_media"]
+    assert "missing_media" not in by_command.get("scrolls doctor --fix", [])
 
 
 def test_maintain_on_an_uninitialized_library_is_a_clean_no_op(home, capsys):
