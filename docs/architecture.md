@@ -468,7 +468,14 @@ each command moves items between stages or derives artifacts from them.
   (`maintain.snapshot_headline` over that snapshot — the shared
   `custody.custody_headline` every scope custody surface emits), so a reader
   gets "how custody stands" in one line without assembling the counts, at parity
-  with the `maintain` report's `headline` (roadmap H117).
+  with the `maintain` report's `headline` (roadmap H117). It also carries the
+  per-source custody breakdown `by_source` — the `{tiers, drift, coverage}` tally
+  split per source (`doctor`'s `custody.by_source`, H104) — a faithful read
+  (`maintain.report_by_source`) of the *same* `run_doctor` map it already computed
+  (no new audit/ledger read), so a reader sees which source's custody is weakest
+  without running `maintain`/`doctor`; sorted keys, sums to the `custody` block, and
+  converges with `maintain`/`doctor`/`facets` for the same scope by construction
+  (`tests/test_custody_convergence.py`, roadmap H133).
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

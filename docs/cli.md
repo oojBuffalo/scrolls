@@ -389,6 +389,19 @@ converge by construction and equal `custody_headline` over the held library
 (`test_status_carries_rendered_headline_converging_with_the_block`). An empty
 or uninitialized library renders the honest `_Custody: 0 scroll(s)._`.
 
+`by_source` is the **per-source custody breakdown** — the `{tiers, drift,
+coverage}` tally split per source (`doctor`'s `custody.by_source`, roadmap H104) —
+so a reader sees *which* source's custody is weakest (most reference-only, most
+drifted, least covered) without running `maintain`/`doctor`. It is a faithful read
+(`maintain.report_by_source`) of the **same** `run_doctor` map `status` already
+computes for the custody headline above — no new audit, no new ledger read. Source
+keys are sorted; the per-source tallies sum to the `custody` block beside them by
+construction (every item lands in exactly one source group), so `status`,
+`maintain`, `doctor`, and `facets fidelity`/`drift --source <name>` read one number
+(`test_status_by_source_breakdown_converges_with_doctor`,
+`test_status_by_source_converges_with_maintain_and_doctor`). An empty or
+uninitialized library is the honest empty `{}` map (no sources held).
+
 | Key | Meaning |
 | --- | --- |
 | `initialized` / `schema_version` | `false`/`null` until `init` |
@@ -397,6 +410,7 @@ or uninitialized library renders the honest `_Custody: 0 scroll(s)._`.
 | `subscriptions` | followed feeds (`scrolls follow`) |
 | `custody` | the custody headline — `score`, `tiers`, `drift` posture, `enrichment_stale`, `summaries_stale` (converges with `doctor`) |
 | `headline` | the one-line `custody` block rendered (`_Custody: …_`), at parity with the `maintain` report's `headline` |
+| `by_source` | the per-source `{tiers, drift, coverage}` custody breakdown (sorted keys; sums to `custody`), the status-surface counterpart of `doctor`'s `custody.by_source` / `maintain`'s `by_source` |
 
 ```console
 $ scrolls status        # before init
@@ -404,7 +418,7 @@ $ scrolls status        # before init
 [exit 0]
 
 $ scrolls status        # after the imports and adds below
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._"}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 2}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}}
 [exit 0]
 ```
 

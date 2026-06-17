@@ -11,6 +11,7 @@ from scrolls.classify import RULESET_FINGERPRINT
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts_by_source,
     custody_headline,
     latest_events,
     record_events,
@@ -18,7 +19,7 @@ from scrolls.custody import (
 from scrolls.db import SCHEMA_VERSION
 from scrolls.doctor import run_doctor
 from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
-from scrolls.maintain import custody_snapshot, snapshot_headline
+from scrolls.maintain import custody_snapshot, report_by_source, snapshot_headline
 from scrolls.paths import get_paths
 from scrolls.items import (
     ScrollItem,
@@ -154,6 +155,8 @@ def test_status_before_init(scrolls_home, capsys):
         "custody": _custody_headline(None),
         # the rendered one-liner (H117): no held scrolls → the honest empty form
         "headline": "_Custody: 0 scroll(s)._",
+        # the per-source breakdown (H133): no sources held → the honest empty map
+        "by_source": {},
     }
 
 
@@ -175,6 +178,8 @@ def test_status_after_init(scrolls_home, capsys):
         "custody": _custody_headline(100),
         # the rendered one-liner (H117): an empty library still holds no scrolls
         "headline": "_Custody: 0 scroll(s)._",
+        # the per-source breakdown (H133): no sources held → the honest empty map
+        "by_source": {},
     }
 
 
@@ -304,6 +309,101 @@ def test_status_carries_rendered_headline_converging_with_the_block(
         "_Custody: 2 scroll(s) · fidelity full 1, reference 1 "
         "· drift verified 1, unverified 1._"
     )
+
+
+def test_status_by_source_breakdown_converges_with_doctor(scrolls_home, capsys):
+    """`status` carries the per-source custody breakdown (H133) — the per-source
+    split of the `custody` block beside it — read faithfully from the same
+    `run_doctor` audit `status` already makes, so it equals `doctor`'s own
+    `custody.by_source`, `custody_counts_by_source` over the held items, and sums
+    to the whole-library `custody` block."""
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+    # a two-source mix: a held + drifted `web` pair, plus one `arxiv` paper.
+    held = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/held"),
+        source="web",
+        source_id=None,
+        url="https://example.com/held",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A fully held web capture.",
+        content_hash="sha256:webheld",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    moved = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/moved"),
+        source="web",
+        source_id=None,
+        url="https://example.com/moved",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A web capture whose source drifted.",
+        content_hash="sha256:webmoved",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    paper = ScrollItem(
+        id="arxiv:2401.00001",
+        source="arxiv",
+        source_id="2401.00001",
+        url="https://arxiv.org/abs/2401.00001",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="An arxiv paper held in full.",
+        content_hash="sha256:arxivpaper",
+        stage="rendered",
+        provenance={"adapter": "arxiv", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    for item in (held, moved, paper):
+        insert_item(paths.db_path, write_scroll(paths, item))
+    record_events(
+        paths.db_path,
+        [
+            CustodyEvent(
+                held.id, "2026-06-15T00:00:00+00:00", "unchanged",
+                "sha256:webheld", "sha256:webheld", None,
+            ),
+            CustodyEvent(
+                moved.id, "2026-06-15T00:00:00+00:00", "drifted",
+                "sha256:webmoved", "sha256:changed99", None,
+            ),
+        ],
+    )
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    by_source = payload["by_source"]
+
+    # both sources present, keys sorted (arxiv before web)
+    assert list(by_source) == ["arxiv", "web"]
+
+    report = run_doctor(paths)
+    # 1. == a faithful read of the audit `status` already makes (no new audit)
+    assert by_source == report_by_source(report)
+    # 2. == doctor's own `custody.by_source` over the same library
+    assert by_source == report["custody"]["by_source"]
+    # 3. == the canonical per-source tally over the held items
+    assert by_source == custody_counts_by_source(
+        list_items(paths.db_path), latest_events(paths.db_path)
+    )
+
+    # 4. the concrete, non-trivial per-source picture this seed produces
+    assert by_source["web"]["tiers"] == {"full": 2, "partial": 0, "reference": 0}
+    assert by_source["web"]["drift"]["verified"] == 1
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["tiers"] == {"full": 1, "partial": 0, "reference": 0}
+    assert by_source["arxiv"]["drift"]["unverified"] == 1
+
+    # 5. the per-source tallies sum to the `custody` block beside them (H104
+    #    sum-to-whole, per source — so `status`'s two members can never disagree)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    for entry in by_source.values():
+        for tier, n in entry["tiers"].items():
+            summed_tiers[tier] += n
+    assert summed_tiers == payload["custody"]["tiers"]
 
 
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):

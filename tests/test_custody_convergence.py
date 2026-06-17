@@ -143,6 +143,14 @@ with `attention` honestly `null` exactly when no source carries actionable loss
 (H129). `--no-recheck` keeps the pass network-free and the ledger pristine, so the
 maintain audit and a fresh `doctor` read the identical state — the scheduled
 worker's per-source picture can never silently desync from the audit it reads.
+
+The **`status` surface** carries the same per-source breakdown (roadmap H133): a
+faithful read (`report_by_source`) of the `run_doctor` map `status` already makes
+for its custody headline. This pins it beside the maintain tie — over the
+multi-source seed, `status`'s `by_source` equals `maintain --no-recheck`'s
+`by_source`, `doctor`'s `custody.by_source`, and `custody_counts_by_source` over
+the held items, and sums to `status`'s own `custody` block — so the three places a
+human/worker reads the per-source picture are one number.
 """
 
 import json
@@ -173,6 +181,7 @@ from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items
 from scrolls.maintain import (
     last_run_boundary,
     load_snapshot,
+    report_by_source,
     save_snapshot,
     snapshot_path,
 )
@@ -579,6 +588,61 @@ def test_maintain_attention_is_null_when_no_source_carries_loss(scrolls_home, ca
         tally["drift"]["drifted"] + tally["drift"]["rotted"] == 0
         for tally in by_source.values()
     )
+
+
+def test_status_by_source_converges_with_maintain_and_doctor(scrolls_home, capsys):
+    # roadmap H133: `scrolls status` now carries the per-source custody breakdown
+    # (`by_source`) — the status-surface counterpart of the `maintain` report member
+    # (H123). It is a faithful read of the same `run_doctor` map (`report_by_source`),
+    # so it *claims* to agree with the standalone audit and the scheduled worker's
+    # report. Pin it as a first-class entry beside H127's `maintain by_source ≡
+    # doctor by_source`: over the multi-source fidelity/drift seed, `status`'s
+    # `by_source` equals `maintain --no-recheck`'s `by_source`, `doctor`'s
+    # `custody.by_source`, and `custody_counts_by_source` over the held items — so the
+    # three surfaces a human/worker reads the per-source picture from are one number.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # status's per-source breakdown — a faithful read of the audit it already makes
+    assert main(["status"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    status_by_source = status_payload["by_source"]
+    assert set(status_by_source) == {"web", "arxiv"}
+
+    # 1. == doctor's own `custody.by_source` over the same library
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert status_by_source == doctor_by_source
+    # and == report_by_source over that report (the primitive status threads)
+    assert status_by_source == report_by_source(run_doctor(get_paths()))
+
+    # 2. == the `maintain --no-recheck` report's `by_source` (the scheduled sibling,
+    #    H123) — `--no-recheck` keeps the ledger pristine so both read one state
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_by_source = json.loads(capsys.readouterr().out)["by_source"]
+    assert status_by_source == maintain_by_source
+
+    # 3. == the canonical `custody_counts_by_source` tally over the held items
+    items = list_items(db)
+    verdicts = latest_events(db)
+    assert status_by_source == custody_counts_by_source(items, verdicts)
+
+    # 4. the per-source tallies sum to status's own `custody` block beside them
+    #    (H104 sum-to-whole, per source — status's two members can never disagree)
+    whole = custody_counts(items, verdicts)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in status_by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"] == status_payload["custody"]["tiers"]
+    assert summed_drift == whole["drift"]
 
 
 def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):

@@ -2720,7 +2720,8 @@ def _cmd_status() -> int:
     # maintenance snapshot (the H21/H25 convergence-by-construction posture).
     # `run_doctor` guards a missing store itself, so before `init` this is the
     # honest zero block (`score: null`), not an error.
-    custody = custody_snapshot(run_doctor(paths))
+    report = run_doctor(paths)
+    custody = custody_snapshot(report)
     print(
         json.dumps(
             {
@@ -2739,6 +2740,20 @@ def _cmd_status() -> int:
                 # before `init` the all-zero snapshot renders `_Custody: 0 scroll(s)._`
                 # (never a fabricated count).
                 "headline": snapshot_headline(custody),
+                # The per-source custody breakdown (roadmap H133): the
+                # `{tiers, drift, coverage}` tally split per source the same
+                # `run_doctor` call already produced (`report["custody"]["by_source"]`,
+                # H104) — so a reader of `status` sees *which* source's custody is
+                # weakest without running `maintain`/`doctor`. A faithful read via the
+                # shared `report_by_source` primitive `maintain` carries (H123): **no
+                # new audit, no new ledger read**, the map is already computed in the
+                # report above. Source keys sorted; the per-source tallies sum to the
+                # `custody` block beside it by construction (every item lands in exactly
+                # one source group, the H104 sum-to-whole posture), so `status`,
+                # `maintain`, `doctor`, and `facets fidelity`/`drift --source <name>`
+                # read one number. Honest absence: an empty/uninitialized library is
+                # the empty `{}` map (no sources held).
+                "by_source": report_by_source(report),
             }
         )
     )
