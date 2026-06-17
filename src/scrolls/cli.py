@@ -105,6 +105,7 @@ from scrolls.maintain import (
     log_path,
     read_log,
     save_snapshot,
+    snapshot_headline,
     snapshot_path,
     suggest_repairs,
 )
@@ -1157,6 +1158,11 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
                 "recheck": recheck_report,
                 "compiled": dataclasses.asdict(compiled),
                 "custody": current,
+                # The one-line custody picture (roadmap H103): the shared
+                # `custody_headline` rendered from the snapshot this run records,
+                # so the worker's log reads it without assembling the raw counts.
+                # Converges by construction with the `custody` block it sits beside.
+                "headline": snapshot_headline(current),
                 "delta": delta,
                 "issues": report["issues"],
                 # Actionable guidance, never an action: the explicit on-request
@@ -1186,6 +1192,11 @@ def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
     stays the default and the completeness contract's empty `[]` never regresses.
     """
     runs = read_log(log_path(get_paths()), limit)
+    # Each shown run carries the same one-line custody headline (roadmap H103),
+    # rendered fresh from its recorded snapshot at read time — so a pre-H103 log
+    # entry renders one too (forward-compatible), and `compute_trend` (which reads
+    # only `recorded_at`/`snapshot`) is unaffected.
+    runs = [{**run, "headline": snapshot_headline(run.get("snapshot", {}))} for run in runs]
     if trend:
         print(json.dumps({"trend": compute_trend(runs), "runs": runs}))
     else:

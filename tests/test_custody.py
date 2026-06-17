@@ -17,6 +17,7 @@ import scrolls.custody as custody
 from scrolls.custody import (
     CustodyEvent,
     custody_counts,
+    custody_headline,
     event_export_dict,
     event_from_dict,
     event_payload,
@@ -33,6 +34,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    render_custody_headline,
     tally_custody,
     unverified_items,
     verify_item,
@@ -483,6 +485,43 @@ def test_custody_counts_delegates_to_tally_over_item_derived_pairs():
     # sanity: the fixture spans two tiers and two postures
     assert expected["tiers"]["full"] == 1 and expected["tiers"]["reference"] == 1
     assert expected["drift"]["drifted"] == 1 and expected["drift"]["unverified"] == 1
+
+
+# --- render_custody_headline (the shared one-line formatter, roadmap H103) ---
+
+
+def test_render_custody_headline_from_counts_shows_only_non_zero_sections():
+    # the counts-based formatter both custody_headline (item-sourced) and
+    # maintain.snapshot_headline (snapshot-sourced) delegate to: non-zero
+    # tiers/postures only, canonical order, each section summing to N.
+    line = render_custody_headline(
+        4,
+        {"full": 2, "partial": 1, "reference": 1},
+        {"verified": 1, "unverified": 2, "drifted": 1, "rotted": 0, "error": 0},
+    )
+    assert line == (
+        "_Custody: 4 scroll(s) · fidelity full 2, partial 1, reference 1 "
+        "· drift verified 1, unverified 2, drifted 1._"
+    )
+
+
+def test_render_custody_headline_empty_scope_is_zero_scrolls():
+    assert render_custody_headline(0, {}, {}) == "_Custody: 0 scroll(s)._"
+
+
+def test_render_custody_headline_is_the_renderer_custody_headline_delegates_to():
+    # custody_headline(items, verdicts) must equal render_custody_headline over the
+    # counts it derives — one formatter, so the item-sourced and snapshot-sourced
+    # headlines can never drift apart.
+    full = _item("web:full", content_hash="h", extracted_text="b", raw_text="<r>b</r>")
+    ref = _item("web:ref", content_hash=None, extracted_text=None, raw_text=None,
+                stage="detected")
+    items = [full, ref]
+    verdicts = {"web:full": CustodyEvent("web:full", "t", "drifted", "h", "x")}
+    counts = custody_counts(items, verdicts)
+    assert custody_headline(items, verdicts) == render_custody_headline(
+        len(items), counts["tiers"], counts["drift"]
+    )
 
 
 # --- unverified_items predicate (held − verdicts) ------------------------

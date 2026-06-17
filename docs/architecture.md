@@ -419,7 +419,12 @@ each command moves items between stages or derives artifacts from them.
   completeness `[]` never regresses) whose `compute_trend` distils the first→last
   net `score`/drift movement into one `posture` — `regressing`/`improving`/`holding`,
   integrity-first; <2 runs is `insufficient-history` (a single point has no
-  direction).
+  direction). The pass report and each `--history`/`--trend` run also carry a
+  one-line **`headline`** — `maintain.snapshot_headline` renders the shared
+  `custody.custody_headline` from the recorded snapshot (mapping its `unchanged`
+  count to the `verified` posture), so the worker's log reads "how custody
+  stands" in one line, byte-identical to the bundle/context/compiled-page
+  headlines and converging with the `custody` block it sits beside (roadmap H103).
 - `scrolls status` carries a one-line **custody headline** under its item
   counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
   the stale enrichment/summary counts — "how custody stands" without parsing a
@@ -1101,7 +1106,7 @@ choice (ADRs 0004, 0005).
   block's `checked` by construction), the same figure `maintain` reports on its
   recheck (H109), so the audit shows "N of M verifiable items carry a verdict"
   at parity with maintain (roadmap H113).
-- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H109) — `scrolls maintain`
+- **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
   `maintain.last_run_boundary`, so a scheduled pass re-verifies only what has not
@@ -1112,6 +1117,8 @@ choice (ADRs 0004, 0005).
   `custody.drift.checked`/`unverified`, H109) → regenerate → audit → custody delta
   vs the last run (snapshot at
   `<root>/.maintenance/last-run.json`, which doubles as the staleness boundary).
+  The report and each history run carry a one-line `headline`
+  (`maintain.snapshot_headline` over the shared `custody.custody_headline`, H103).
   Built entirely from the surfaces above (`verify`, `compile_kb`, `run_doctor`);
   the module owns only the snapshot/delta layer plus the append-only run log
   (`log.jsonl`, read back by `maintain --history [N]` — the custody trend).

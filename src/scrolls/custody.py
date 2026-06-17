@@ -694,6 +694,39 @@ def custody_counts(
     )
 
 
+def render_custody_headline(
+    n: int, tiers: dict[str, int], drift: dict[str, int]
+) -> str:
+    """Render the one-line custody headline from precomputed posture counts.
+
+    ``_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._``
+    — the shared *formatter* behind every scope custody headline. `custody_headline`
+    derives the counts from items + the ledger; `maintain.snapshot_headline`
+    (roadmap H103) maps a recorded doctor snapshot's drift axes into postures; both
+    feed this one renderer, so a Markdown surface and the maintenance JSON report
+    emit a byte-identical line. `tiers` is keyed by `FIDELITY_TIERS`, `drift` by
+    `DRIFT_POSTURES` (`verified`, …); only the *non-zero* entries are shown in
+    canonical order (each section still sums to `n` — every scroll has exactly one
+    tier and one posture). An empty scope (`n == 0`) is the honest
+    ``_Custody: 0 scroll(s)._`` with no sections. Absent counts read as zero, so a
+    partial mapping never crashes the renderer.
+    """
+    parts = [f"{n} scroll(s)"]
+    fidelity = ", ".join(
+        f"{tier} {tiers.get(tier, 0)}" for tier in FIDELITY_TIERS if tiers.get(tier)
+    )
+    if fidelity:
+        parts.append(f"fidelity {fidelity}")
+    drift_str = ", ".join(
+        f"{posture} {drift.get(posture, 0)}"
+        for posture in DRIFT_POSTURES
+        if drift.get(posture)
+    )
+    if drift_str:
+        parts.append(f"drift {drift_str}")
+    return "_Custody: " + " · ".join(parts) + "._"
+
+
 def custody_headline(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> str:
@@ -701,26 +734,12 @@ def custody_headline(
 
     ``_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._``
     — the shared renderer behind every scope custody headline (the bundle
-    briefing H45, the `scrolls context` bundle H47), so the surfaces emit a
+    briefing H45, the `scrolls context` bundle H47, the compiled `library/` pages
+    H95/H96, the `scrolls maintain` report H103), so the surfaces emit a
     byte-identical line over the same `custody_counts` tally and can never
     disagree. Shows only the *non-zero* tiers/postures in canonical order (each
     section still sums to N — every scroll has exactly one tier and one posture);
     an empty scope is the honest ``_Custody: 0 scroll(s)._`` with no sections.
     """
     counts = custody_counts(items, verdicts)
-    parts = [f"{len(items)} scroll(s)"]
-    fidelity = ", ".join(
-        f"{tier} {counts['tiers'][tier]}"
-        for tier in FIDELITY_TIERS
-        if counts["tiers"][tier]
-    )
-    if fidelity:
-        parts.append(f"fidelity {fidelity}")
-    drift = ", ".join(
-        f"{posture} {counts['drift'][posture]}"
-        for posture in DRIFT_POSTURES
-        if counts["drift"][posture]
-    )
-    if drift:
-        parts.append(f"drift {drift}")
-    return "_Custody: " + " · ".join(parts) + "._"
+    return render_custody_headline(len(items), counts["tiers"], counts["drift"])

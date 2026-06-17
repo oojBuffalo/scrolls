@@ -41,7 +41,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import parse_since
+from scrolls.custody import parse_since, render_custody_headline
 from scrolls.paths import LibraryPaths
 
 # The axes a snapshot carries from a doctor report. `score`/`enrichment_stale`/
@@ -98,6 +98,43 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "enrichment_stale": custody["enrichment"]["stale"],
         "summaries_stale": custody["summaries"]["stale"],
     }
+
+
+# The custody snapshot's `drift` carries doctor's vocabulary
+# (`checked`/`unchanged`/…); the shared headline renderer wants drift *postures*
+# (`verified`/…). The one documented mapping is `verified ≡ unchanged`; the rest
+# carry over by name. `checked` is the verdict *total*, not a posture, so it is
+# not rendered (it is `unchanged + drifted + rotted + error`).
+_SNAPSHOT_POSTURE_AXES = ("unverified", "drifted", "rotted", "error")
+
+
+def snapshot_headline(snapshot: dict[str, Any]) -> str:
+    """The one-line ``_Custody: …_`` headline for a recorded custody snapshot (H103).
+
+    Every scope custody surface carries the shared `custody.custody_headline` —
+    `status` (H38), the bundle briefing (H45), the `context` bundle (H47), the
+    compiled `library/` pages (H95/H96) — *except* the scheduled worker's own
+    primary report. `scrolls maintain` records the custody snapshot (score /
+    fidelity tiers / drift posture counts) but rendered no one-line headline; this
+    renders it, so the unattended worker's JSON log reads the same one-line custody
+    picture the Markdown surfaces emit, without parsing the raw counts.
+
+    Rendered from the **snapshot** the run records (not items + a fresh ledger
+    read), so it converges by construction with the `custody` block it sits beside
+    *and* the live pass and the `--history`/`--trend` reads share one renderer —
+    a recorded snapshot has only the counts, not the items. The snapshot's `drift`
+    uses doctor's vocabulary, mapped into postures by the documented
+    ``verified ≡ unchanged`` rule (the rest by name; `checked` is not a posture and
+    is not shown). `n` (the held total) is the tier sum — every scroll contributes
+    exactly one fidelity tier — so it equals `custody_headline`'s `len(items)`. A
+    snapshot missing an axis (an older schema, or no library — `score: None`,
+    all-zero tiers) reads zero, the honest ``_Custody: 0 scroll(s)._``.
+    """
+    tiers = snapshot.get("tiers", {})
+    drift = snapshot.get("drift", {})
+    postures = {"verified": drift.get("unchanged", 0)}
+    postures.update((axis, drift.get(axis, 0)) for axis in _SNAPSHOT_POSTURE_AXES)
+    return render_custody_headline(sum(tiers.values()), tiers, postures)
 
 
 def _finding_present(report: dict[str, Any], category: str) -> bool:

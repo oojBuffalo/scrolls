@@ -24,7 +24,12 @@ import pytest
 
 import scrolls.cli as cli
 from scrolls.cli import main
-from scrolls.custody import CustodyEvent, latest_events, record_events
+from scrolls.custody import (
+    CustodyEvent,
+    custody_headline,
+    latest_events,
+    record_events,
+)
 from scrolls.db import init_db
 from scrolls.items import (
     ScrollItem,
@@ -44,6 +49,7 @@ from scrolls.maintain import (
     log_path,
     read_log,
     save_snapshot,
+    snapshot_headline,
     snapshot_path,
     suggest_repairs,
 )
@@ -90,6 +96,45 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         "enrichment_stale": 2,
         "summaries_stale": 1,
     }
+
+
+# --- snapshot_headline (the one-line custody picture, roadmap H103) --------
+
+
+def test_snapshot_headline_renders_the_one_line_picture_mapping_unchanged_to_verified():
+    # the snapshot's drift uses doctor's vocabulary (checked/unchanged/…); the
+    # headline shows postures (verified/…) via the documented `verified ≡
+    # unchanged` mapping, and `checked` (the verdict total) is not a posture.
+    snapshot = custody_snapshot(
+        _doctor_report(
+            score=90,
+            tiers={"full": 2, "partial": 1, "reference": 1},
+            drift={"checked": 3, "unverified": 1, "unchanged": 2, "drifted": 1},
+        )
+    )
+    assert snapshot_headline(snapshot) == (
+        "_Custody: 4 scroll(s) · fidelity full 2, partial 1, reference 1 "
+        "· drift verified 2, unverified 1, drifted 1._"
+    )
+
+
+def test_snapshot_headline_on_an_empty_or_uninitialized_snapshot_is_zero_scrolls():
+    # an empty library's snapshot (doctor's all-zero tiers, score None) is the
+    # honest `0 scroll(s)`, never a fabricated count.
+    empty = custody_snapshot(
+        _doctor_report(score=None, tiers={"full": 0, "partial": 0, "reference": 0},
+                       drift={})
+    )
+    assert snapshot_headline(empty) == "_Custody: 0 scroll(s)._"
+    # a totally absent snapshot (no axes at all) degrades to the same, never a crash
+    assert snapshot_headline({}) == "_Custody: 0 scroll(s)._"
+
+
+def test_snapshot_headline_tolerates_a_snapshot_missing_an_axis():
+    # an older snapshot schema (drift without `error`, a tier absent) reads the
+    # missing axes as zero — the module's forward-compatible posture (ADR 0082).
+    line = snapshot_headline({"tiers": {"full": 2}, "drift": {"unchanged": 2}})
+    assert line == "_Custody: 2 scroll(s) · fidelity full 2 · drift verified 2._"
 
 
 def test_delta_on_first_run_has_null_befores_and_changes():
@@ -537,6 +582,83 @@ def test_first_maintain_run_audits_rechecks_regenerates_and_records(
     assert snap is not None and snap["score"] == 100
     assert snap["recorded_at"] == report["recorded_at"]
     assert not (home.library_dir / ".maintenance").exists()
+
+
+def test_maintain_report_carries_the_one_line_custody_headline(home, monkeypatch, capsys):
+    """The maintain report renders the shared one-line custody headline (H103),
+    equal to `snapshot_headline` over the snapshot it records AND to
+    `custody_headline` over the post-maintenance library — convergence by
+    construction with the `custody` block it sits beside."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # three full-fidelity items, all rechecked clean → verified
+    assert report["headline"] == (
+        "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 3._"
+    )
+    # rendered from the recorded snapshot (no second ledger read)
+    assert report["headline"] == snapshot_headline(report["custody"])
+    # and equal to the shared headline over the post-maintenance held library —
+    # so the maintain line can never disagree with the bundle/context/status family
+    held = list_items(home.db_path)
+    assert report["headline"] == custody_headline(held, latest_events(home.db_path))
+
+
+def test_maintain_headline_on_an_uninitialized_library_is_zero_scrolls(home, capsys):
+    """No library yet → the honest `_Custody: 0 scroll(s)._`, never a fabricated
+    count (the first-run/empty honesty the rest of the report keeps)."""
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["headline"] == "_Custody: 0 scroll(s)._"
+
+
+def test_maintain_history_runs_carry_the_custody_headline(home, monkeypatch, capsys):
+    """Each `--history` run renders the same one-line headline from its recorded
+    snapshot — derived at read time, so the stored log stays the bare
+    `{recorded_at, snapshot, delta}` (a pre-H103 entry would render one too)."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    assert main(["maintain", "--all"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert len(printed) == 2
+    for run in printed:
+        assert run["headline"] == snapshot_headline(run["snapshot"])
+    # the headline is a read-time render, not stored in the log
+    assert all("headline" not in run for run in read_log(log_path(home)))
+
+
+def test_maintain_trend_runs_carry_the_custody_headline(home, monkeypatch, capsys):
+    """The headline rides the `--trend` envelope's `runs` too, without disturbing
+    the `{trend, runs}` shape or the trend computation (which reads only the
+    snapshot/recorded_at)."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    assert main(["maintain", "--all"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"trend", "runs"}
+    for run in payload["runs"]:
+        assert run["headline"] == snapshot_headline(run["snapshot"])
 
 
 def test_second_run_shows_drift_in_the_delta_without_lowering_the_score(
