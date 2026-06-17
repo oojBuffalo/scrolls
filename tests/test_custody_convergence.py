@@ -118,6 +118,7 @@ from scrolls.custody import (
     drift_posture,
     last_checked,
     latest_events,
+    recheck_coverage,
     record_events,
     tally_custody,
 )
@@ -296,6 +297,35 @@ def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):
     # the context bundle scoped to source=web carries the same scoped headline
     assert main(["context", "topic", "--source", "web"]) == 0
     assert custody_headline(web_items, verdicts) in capsys.readouterr().out
+
+
+def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):
+    # roadmap H113: the recheck `coverage` figure (`{verified, total}` over the
+    # verifiable held set) reads the same on the standalone audit (`doctor`) and
+    # the maintenance surface (`maintain`), both delegating to the one shared
+    # `custody.recheck_coverage` primitive — so the audit reports coverage as a
+    # fraction at parity with maintain (H109), and `verified` ≡ the block's own
+    # `checked` count by construction.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)
+    capsys.readouterr()
+
+    # the canonical figure: of the hash-bearing held items, how many carry a verdict
+    hash_bearing = [item for item in list_items(db) if item.content_hash]
+    canonical = recheck_coverage(hash_bearing, latest_events(db))
+    assert canonical == {"verified": 2, "total": 2}  # full1+full2 verified, both hash-bearing
+
+    # doctor — the coverage member on the drift block, with `verified` ≡ `checked`
+    drift = run_doctor(get_paths())["custody"]["drift"]
+    assert drift["coverage"] == canonical
+    assert drift["coverage"]["verified"] == drift["checked"]
+
+    # maintain --no-recheck — the same figure on the recheck report (a pure read,
+    # no live edge), so the scheduled worker and the standalone audit agree
+    assert main(["maintain", "--no-recheck"]) == 0
+    recheck = json.loads(capsys.readouterr().out)["recheck"]
+    assert recheck["coverage"] == canonical
 
 
 def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):

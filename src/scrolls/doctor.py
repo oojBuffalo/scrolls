@@ -19,7 +19,12 @@ from dataclasses import replace
 from typing import Any, Iterable
 
 from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
-from scrolls.custody import CUSTODY_STATUSES, latest_events, unverified_items
+from scrolls.custody import (
+    CUSTODY_STATUSES,
+    latest_events,
+    recheck_coverage,
+    unverified_items,
+)
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import eligible_concepts, members_hash, summary_freshness
 from scrolls.items import (
@@ -77,6 +82,7 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
                 "drifted": 0,
                 "rotted": 0,
                 "error": 0,
+                "coverage": {"verified": 0, "total": 0},
                 "events": [],
             },
             "enrichment": {
@@ -363,6 +369,18 @@ def _check_custody_drift(
     on (``None`` when nothing is verified). ``unverified`` counts held items the
     ledger has *no* verdict for — never re-checked, so unknown, **not** clean:
     "absent from the drift counts" must never be read as "confirmed unchanged".
+
+    ``coverage`` (``{verified, total}``, roadmap H113) reports the verdict
+    coverage as a *fraction* the raw counts leave implicit: of the held items
+    that *can* carry a verdict (``total`` — the hash-bearing set; a reference-only
+    capture has no baseline hash to diff, so it is unverifiable and excluded), how
+    many now do (``verified``). The same `custody.recheck_coverage`
+    `scrolls maintain` reports on its recheck (H109), here with no `checked_ids`
+    (doctor never rechecks — a pure read of the current ledger), so the audit
+    shows "N of M verifiable items carry a verdict" at parity with maintain.
+    ``verified`` ≡ ``checked`` by construction: every verdict-bearing held item is
+    hash-bearing (verify never runs on a reference-only item), so the coverage
+    numerator equals the block's own checked count.
     """
     drift = report["custody"]["drift"]
     held = {item.id for item in items}
@@ -376,6 +394,11 @@ def _check_custody_drift(
     # selects on, so the count doctor reports and the set a re-check clears can
     # never disagree (convergence by construction).
     drift["unverified"] = len(unverified_items(items, latest))
+    # Coverage over the verifiable (hash-bearing) held set — the same primitive
+    # maintain reports on (H109), with no `checked_ids` since doctor only reads.
+    drift["coverage"] = recheck_coverage(
+        [item for item in items if item.content_hash], latest
+    )
     drift["as_of"] = max((e.checked_at for e in latest.values()), default=None)
     for status in CUSTODY_STATUSES:
         drift[status] = sum(1 for e in latest.values() if e.status == status)

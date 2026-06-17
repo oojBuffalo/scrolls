@@ -578,7 +578,9 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             "basis": "last_verify", "as_of": None,
             "checked": 0, "unverified": 1,
             "unchanged": 0, "drifted": 0, "rotted": 0,
-            "error": 0, "events": [],
+            "error": 0,
+            "coverage": {"verified": 0, "total": 1},
+            "events": [],
         },
         "enrichment": {
             # the seeded item carries no engine classification, so nothing to
@@ -617,6 +619,8 @@ def test_drift_report_is_empty_without_any_verification(paths):
         "checked": 0, "unverified": 1,
         "unchanged": 0, "drifted": 0, "rotted": 0,
         "error": 0, "events": [],
+        # one hash-bearing held item, never verified → 0 of 1 covered (H113)
+        "coverage": {"verified": 0, "total": 1},
     }
 
 
@@ -715,6 +719,54 @@ def test_doctor_survives_a_library_without_the_ledger_table(paths):
     # no ledger at all, so the held item is unverified, not silently clean
     assert drift["unverified"] == 1
     assert drift["basis"] == "last_verify"
+    # no ledger ⇒ 0 of the 1 verifiable held item carries a verdict (H113)
+    assert drift["coverage"] == {"verified": 0, "total": 1}
+
+
+# --- recheck coverage on the drift block (cap 1, roadmap H113) ---
+
+
+def test_drift_report_carries_recheck_coverage(paths):
+    # of the verifiable (hash-bearing) held items, how many carry a verdict —
+    # the coverage fraction the standalone audit now reports at parity with
+    # `scrolls maintain`'s recheck block (H109)
+    a = insert_and_id(paths, "https://example.com/a")
+    b = insert_and_id(paths, "https://example.com/b")
+    insert_and_id(paths, "https://example.com/c")  # held, never verified
+    _record(paths, a, "unchanged")
+    _record(paths, b, "drifted", observed="sha256:new")
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["coverage"] == {"verified": 2, "total": 3}
+
+
+def test_drift_coverage_verified_equals_the_checked_count(paths):
+    # `coverage.verified` ≡ `drift.checked` by construction: every verdict-bearing
+    # held item is hash-bearing (verify never runs on a reference-only item, which
+    # has no baseline hash to diff), so the coverage numerator equals the block's
+    # own `checked` count — the within-block convergence H113 pins.
+    a = insert_and_id(paths, "https://example.com/a")
+    insert_and_id(paths, "https://example.com/b")  # never verified
+    _record(paths, a, "unchanged")
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    assert drift["coverage"]["verified"] == drift["checked"] == 1
+
+
+def test_drift_coverage_denominator_excludes_reference_only(paths):
+    # a reference-only capture has no baseline hash to diff a re-fetch against, so
+    # it is unverifiable and excluded from the coverage denominator — coverage
+    # measures progress over what *can* be covered, and so can reach full (100%)
+    # even while the honest `unverified` count still names the unverifiable item.
+    a = insert_and_id(paths, "https://example.com/a")  # hash-bearing
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    _record(paths, a, "unchanged")
+
+    drift = run_doctor(paths)["custody"]["drift"]
+    # the one verifiable item is verified → full coverage; the reference-only
+    # item is not in the denominator (and stays in the `unverified` count)
+    assert drift["coverage"] == {"verified": 1, "total": 1}
+    assert drift["unverified"] == 1  # the reference-only item, never verifiable
 
 
 def test_drift_does_not_affect_issues_or_exit_code(paths, capsys):

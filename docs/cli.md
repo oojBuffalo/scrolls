@@ -451,6 +451,23 @@ reader holding only the report can therefore tell "confirmed unchanged at the
 last verify" from "never checked", and never read an unverified item as a
 healthy one.
 
+The drift block also reports verdict `coverage` as a *fraction* its raw counts
+leave implicit (roadmap H113): `{verified, total}` over the held items that
+*can* carry a verdict — `total` is the hash-bearing set (a reference-only
+capture has no baseline hash to diff a re-fetch against, so it is unverifiable
+and excluded from the denominator; coverage measures progress over what can
+actually be covered and so can reach full), `verified` how many of those now do.
+It is the same `custody.recheck_coverage` figure
+[`scrolls maintain`](#scrolls-maintain) reports on its recheck (roadmap H109),
+here with no recheck (doctor only reads the ledger) — so `scrolls doctor` shows
+"N of M verifiable items carry a verdict" at parity with maintain.
+`coverage.verified` equals the block's own `checked` count by construction
+(every verdict-bearing held item is hash-bearing, since `verify` never runs on a
+reference-only item), pinned in `tests/test_doctor.py`
+(`test_drift_coverage_verified_equals_the_checked_count`) and across the two
+surfaces in `tests/test_custody_convergence.py`
+(`test_recheck_coverage_converges_across_doctor_and_maintain`).
+
 The custody block also carries an `enrichment` sub-block — the re-derivability
 counterpart of drift, over the rules engine's classifications (cap 8). Each
 rules-classified item records the ruleset fingerprint that produced its

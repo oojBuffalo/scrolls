@@ -1092,7 +1092,15 @@ choice (ADRs 0004, 0005).
   rebuilds FTS — and exits 0 only when the library ends fully
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
-  (`tests/test_doctor.py`).
+  (`tests/test_doctor.py`). Beyond the repairable checks, the report-only
+  `custody` block carries the fidelity/integrity audit, the `drift` aggregate
+  (latest verdict per held item), and the enrichment/summary re-derivability
+  blocks. The drift block also reports verdict `coverage` as a fraction
+  (`custody.recheck_coverage` — `{verified, total}` over the verifiable
+  hash-bearing held set, no recheck since doctor only reads; `verified` ≡ the
+  block's `checked` by construction), the same figure `maintain` reports on its
+  recheck (H109), so the audit shows "N of M verifiable items carry a verdict"
+  at parity with maintain (roadmap H113).
 - **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H109) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
