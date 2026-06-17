@@ -32,6 +32,18 @@ headline to equal `custody_counts` over the whole rendered library *and*
 reads the same as the agent aggregates — the scope-level counterpart of H91's
 per-item compiled-page tie, completing the compiled-surface custody theme.
 
+The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
+browse-surface envelope carries a `stats.custody` member built by folding the
+shared `custody.tally_custody` over its matched scope — the `search`/`list`/
+`related --stats` envelopes (H98/H99), the always-on `scrolls works` stats block
+(H100), and the `scrolls graph` stats block (H52). Each is asserted to equal
+`tally_custody` over *its own* returned per-item `fidelity`/`drift` fields (the
+H56/H58/H64 per-item axes), so the envelope aggregate can never desync from the
+per-item fields it sums — the `related` case pins the anchor is excluded, the
+`works` case its reported representations, the `graph --all` case node ≡ item
+scope — and, for the stored-facet scopes (`list`/`search`), to equal `facets
+fidelity`/`drift` for the same filters.
+
 This module also pins the **per-item** counterpart of that scope-level invariant
 (roadmap H59). After H56/H58/H61/H64 the per-item `drift` posture rides every
 browse/landing/inspect surface — `list` rows, `search` hits, `related` hits,
@@ -107,6 +119,7 @@ from scrolls.custody import (
     last_checked,
     latest_events,
     record_events,
+    tally_custody,
 )
 from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
@@ -322,6 +335,110 @@ def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):
     # and it equals the canonical tally over the web-scoped held items
     web_items = [item for item in list_items(db) if item.source == "web"]
     assert web_stats["custody"] == custody_counts(web_items, latest_events(db))
+
+
+# --- the stats.custody family invariant (roadmap H101) -----------------------
+
+
+def _tally_rows(rows):
+    """Fold a browse call's own per-item rows into the shared custody tally.
+
+    Each row — a `list`/`search`/`related` result, a `graph` node, a `works`
+    representation — carries the per-item `fidelity` + `drift` fields
+    (H56/H58/H64); `tally_custody` over those pairs is exactly what the *same*
+    call's `stats.custody` member claims to be. Comparing the two pins that the
+    envelope aggregate can never desync from the per-item fields it sums
+    (roadmap H101).
+    """
+    return tally_custody((row["fidelity"], row["drift"]) for row in rows)
+
+
+def test_stats_custody_family_agrees_with_its_own_per_item_fields(scrolls_home, capsys):
+    # roadmap H101: every browse-surface `stats.custody` member (the `search`/
+    # `list`/`related --stats` envelopes H98/H99 and the `graph` stats block H52)
+    # is built by folding the *same* `custody.tally_custody` over its matched
+    # scope. The per-surface convergence is pinned scattered (e.g. the list↔facets
+    # test above); pin here, once, that each equals the tally over *its own*
+    # returned per-item fidelity/drift — so the envelope aggregate and the per-item
+    # axis (H56/H58) can never desync — and, for the stored-facet scopes
+    # (list/search), equals `facets`. No truncation in this fixture, so returned ==
+    # matched and the tally over the returned rows is the whole matched scope.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_linked_drift_postures(db)  # four items, all four postures, all match "topic"
+    capsys.readouterr()
+
+    facet_fidelity = _facet_map(compute_facets(db, field="fidelity")["facets"]["fidelity"])
+    facet_drift = _facet_map(compute_facets(db, field="drift")["facets"]["drift"])
+    # sanity: the fixture exercises all four drift postures (a non-trivial drift mix)
+    assert facet_drift == {"verified": 1, "drifted": 1, "rotted": 1, "unverified": 1}
+
+    # list --stats: the envelope custody == the tally over its own rows == facets
+    assert main(["list", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stats"]["custody"] == _tally_rows(payload["results"])
+    assert _nonzero(payload["stats"]["custody"]["tiers"]) == facet_fidelity
+    assert _nonzero(payload["stats"]["custody"]["drift"]) == facet_drift
+
+    # search --stats: the same tie, over the query-matched hits
+    assert main(["search", "topic", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stats"]["custody"] == _tally_rows(payload["results"])
+    assert _nonzero(payload["stats"]["custody"]["tiers"]) == facet_fidelity
+    assert _nonzero(payload["stats"]["custody"]["drift"]) == facet_drift
+
+    # related <anchor> --stats: the neighbourhood tally == the tally over its hits.
+    # No facets analogue (the scope is the anchor's related set, excluding it), so
+    # the tie is to the call's own per-hit fields — the anchor must not appear.
+    assert main(["related", "web:1", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "web:1" not in {row["id"] for row in payload["results"]}
+    assert payload["stats"]["custody"] == _tally_rows(payload["results"])
+
+    # graph --all: the stats block custody == the tally over its nodes. `--all` so
+    # every item is a node, matching the whole stats.items scope the tally covers (H52).
+    assert main(["graph", "--all"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stats"]["custody"] == _tally_rows(payload["nodes"])
+
+
+def test_works_stats_custody_agrees_with_its_representations(scrolls_home, capsys):
+    # roadmap H101: the works-surface member of the stats.custody family (H100).
+    # `works` has no `--stats` flag (its `stats` block is always on) and no facets
+    # analogue (the scope is the reported works' representations), so pin the tie to
+    # its own per-rep fidelity/drift. Needs a DOI-sharing seed — the ring above
+    # links by URL and forms no work — with a mixed fidelity (the ring is all-full):
+    # a full preprint + a bare-reference published record.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item(
+        "arxiv:1706.03762", "Attention Is All You Need", source="arxiv",
+        source_id="1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="<raw>preprint body</raw>", content_hash="sha256:a",
+    ))
+    insert_item(db, _item(
+        "crossref:10.5555/3295222", "Attention Is All You Need", source="crossref",
+        source_id="10.5555/3295222", url="https://doi.org/10.5555/3295222",
+        stage="rendered",  # no raw_text/hash → a bare reference
+    ))
+    record_events(db, [
+        CustodyEvent("arxiv:1706.03762", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:a", "sha256:x", None),
+        # crossref left unverified
+    ])
+    capsys.readouterr()
+
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    reps = [rep for work in payload["works"] for rep in work["representations"]]
+    # the envelope tally == the tally over the reported reps' own fidelity/drift
+    assert payload["stats"]["custody"] == _tally_rows(reps)
+    # the concrete mix the seed produces: one full+drifted preprint, one
+    # reference+unverified published record
+    assert payload["stats"]["custody"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert payload["stats"]["custody"]["drift"] == {
+        "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
 
 
 # --- the per-item invariant (roadmap H59) ------------------------------------

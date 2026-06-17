@@ -226,7 +226,13 @@ covers the anchor's related *neighbourhood* (the full scored set, excluding the
 anchor). `scrolls works` carries the same member in its always-on `stats` block
 (roadmap H100) — there `tally_custody` folds the reported works' representations,
 so the tally describes the multi-representation works in scope. In every case the
-counts cover the matched scope, not just the returned page. The **compiled
+counts cover the matched scope, not just the returned page. That whole family is
+pinned once (roadmap H101): each `stats.custody` member is asserted to equal the
+tally over *its own* returned per-item `fidelity`/`drift` fields — so the envelope
+aggregate can never desync from the per-item axes (H56/H58) it sums — with the
+`related` anchor excluded, the `works` reps folded, and `graph --all` node ≡ item
+scope (`test_stats_custody_family_agrees_with_its_own_per_item_fields`,
+`test_works_stats_custody_agrees_with_its_representations`). The **compiled
 human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
