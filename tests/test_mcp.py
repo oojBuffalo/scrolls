@@ -913,6 +913,24 @@ def test_github_issue_thread_is_reachable_through_mcp(scrolls_home):
     ]
 
 
+# The zeroed works stats.custody shape (no reported representations, H100).
+_ZERO_WORKS_CUSTODY = {
+    "tiers": {"full": 0, "partial": 0, "reference": 0},
+    "drift": {p: 0 for p in
+              ("verified", "unverified", "drifted", "rotted", "error")},
+}
+
+
+def _works_core_stats(stats):
+    """The works `items`/`works` pair, dropping the H100 `custody` member.
+
+    The works stats block now carries a `custody` tally over the reported works'
+    representations (roadmap H100); these structural-shape tests pin the counts,
+    so they drop `custody` and let the dedicated H100 test own its value.
+    """
+    return {key: value for key, value in stats.items() if key != "custody"}
+
+
 def test_get_works_clusters_by_shared_doi(scrolls_home):
     from scrolls.cli import main
     from scrolls.items import ScrollItem, insert_item
@@ -933,7 +951,7 @@ def test_get_works_clusters_by_shared_doi(scrolls_home):
     ))
 
     payload = mcp_server.get_works()
-    assert payload["stats"] == {"items": 2, "works": 1}
+    assert _works_core_stats(payload["stats"]) == {"items": 2, "works": 1}
     # the floor travels with the result, same scope echo the CLI emits (G2)
     assert payload["scope"] == {"min_representations": 2}
     work = payload["works"][0]
@@ -989,8 +1007,50 @@ def test_get_works_empty_library(scrolls_home):
     assert mcp_server.get_works() == {
         "scope": {"min_representations": 2},
         "works": [],
-        "stats": {"items": 0, "works": 0},
+        "stats": {"items": 0, "works": 0, "custody": _ZERO_WORKS_CUSTODY},
     }
+
+
+def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
+    # H100: the MCP works twin carries the same stats.custody member the CLI
+    # does — both route through `works.to_payload`, so the tally is identical.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", source_id="1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="the preprint body", content_hash="sha256:a",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        stage="rendered",
+    ))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+    custody = mcp_server.get_works()["stats"]["custody"]
+    # one full+drifted preprint, one reference+unverified published record
+    assert custody["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert custody["drift"] == {
+        "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
+    # the tally equals what the twin's own representation entries carry
+    reps = [r for w in mcp_server.get_works()["works"][0:] for r in w["representations"]]
+    expected = {"tiers": {"full": 0, "partial": 0, "reference": 0},
+                "drift": {p: 0 for p in
+                          ("verified", "unverified", "drifted", "rotted", "error")}}
+    for rep in reps:
+        expected["tiers"][rep["fidelity"]] += 1
+        expected["drift"][rep["drift"]] += 1
+    assert custody == expected
 
 
 def test_get_works_item_lens_reports_one_items_work(scrolls_home):
@@ -1019,7 +1079,8 @@ def test_get_works_item_lens_reports_one_items_work(scrolls_home):
     ))
 
     payload = mcp_server.get_works(item="arxiv:1706.03762")
-    assert payload["stats"] == {"items": 3, "works": 1}  # items = whole library
+    # items = whole library; works/custody count only the reported work's reps
+    assert _works_core_stats(payload["stats"]) == {"items": 3, "works": 1}
     assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
     # the per-item lens echoes the resolved anchor, not the floor it ignores
     assert payload["scope"] == {"ref": "arxiv:1706.03762"}

@@ -353,7 +353,11 @@ each command moves items between stages or derives artifacts from them.
   `related` the scope is the anchor's related neighbourhood, excluding the anchor),
   so a reader paging results sees the custody of everything that matched, not just
   the returned page, and for a filter-only `list` scope it equals `facets
-  fidelity`/`drift`. And `scrolls facets fidelity`/`drift` (H48) are the browse
+  fidelity`/`drift`. `scrolls works` carries the same member in its always-on
+  `stats` block (roadmap H100), folding the reported works' representations through
+  `tally_custody` — the works-surface entry in the family, so the custody of the
+  multi-representation works in scope reads without a second `facets` call. And
+  `scrolls facets fidelity`/`drift` (H48) are the browse
   aggregates of the two axes — all reading `custody.custody_counts` (the
   shape-and-count core `custody.tally_custody`, which `custody_counts` and the
   search `--stats` hit-sourced tally both fold through), so the cross-surface
@@ -876,8 +880,11 @@ choice (ADRs 0004, 0005).
   `drift` posture and `last_checked` timestamp added in `to_payload` from the
   passed-in `latest_events` (the H56 graph-node split, roadmap H64/H87), so a
   reader of a multi-representation work sees which form is held in full, which
-  have drifted, *and as of when* — and
-  `works_over(items)` mirrors `graph_over(items)` so the KB works page
+  have drifted, *and as of when*. The `stats` block also carries a `custody`
+  member (roadmap H100) — `tally_custody` folded over the reported works'
+  representations — the works-surface entry in the `stats.custody` family, so
+  the scope custody of the multi-representation works reads without a second
+  `facets` call. `works_over(items)` mirrors `graph_over(items)` so the KB works page
   (`library/works.md`, ADR 0070) reuses it over rendered items
   (`tests/test_works.py`). `scrolls works <ref>` is the per-item lens
   (ADR 0072) — `works_for_item(items, id)` filters `works_over` to the

@@ -55,6 +55,32 @@ def make_item(item_id, **overrides):
     return ScrollItem(**base)
 
 
+def _core_stats(stats):
+    """The `items`/`works` pair, dropping the H100 `custody` member.
+
+    The `works` stats block now also carries a `custody` tally over the reported
+    works' representations (roadmap H100, the parity with the browse
+    `search`/`list`/`related --stats` envelopes and `graph` stats); these
+    structural-shape tests pin the counts, so they drop `custody` and let the
+    dedicated H100 tests below own its value.
+    """
+    return {key: value for key, value in stats.items() if key != "custody"}
+
+
+# The zeroed custody shape an empty scope tallies to — every tier/posture
+# present in the canonical order with a zero count (a stable shape to filter).
+ZERO_CUSTODY = {
+    "tiers": {"full": 0, "partial": 0, "reference": 0},
+    "drift": {
+        "verified": 0,
+        "unverified": 0,
+        "drifted": 0,
+        "rotted": 0,
+        "error": 0,
+    },
+}
+
+
 def test_preprint_and_published_doi_cluster_into_one_work(db):
     # The arXiv preprint links to its published DOI; the Crossref item *is*
     # that DOI. They are one work, bound by the DOI.
@@ -411,7 +437,7 @@ def test_cli_works_reports_clusters(db, capsys):
 
     assert main(["works"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["stats"] == {"items": 2, "works": 1}
+    assert _core_stats(payload["stats"]) == {"items": 2, "works": 1}
     work = payload["works"][0]
     assert work["doi"] == "10.5555/3295222"
     assert work["url"] == "https://doi.org/10.5555/3295222"
@@ -508,7 +534,7 @@ def test_cli_works_min_flag(db, capsys):
     assert main(["works", "--min", "1"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
-    assert payload["stats"] == {"items": 1, "works": 1}
+    assert _core_stats(payload["stats"]) == {"items": 1, "works": 1}
 
 
 def test_cli_works_empty_library(scrolls_home, capsys):
@@ -516,8 +542,129 @@ def test_cli_works_empty_library(scrolls_home, capsys):
     assert json.loads(capsys.readouterr().out) == {
         "scope": {"min_representations": 2},
         "works": [],
-        "stats": {"items": 0, "works": 0},
+        "stats": {"items": 0, "works": 0, "custody": ZERO_CUSTODY},
     }
+
+
+# --- the stats.custody tally (roadmap H100) -------------------------------
+
+
+def test_stats_custody_tallies_the_reported_works_representations():
+    # H100: the works stats block carries a `custody` member — the shared
+    # `tally_custody` over the reported works' representations, the same
+    # `(fidelity, drift)` pairs each rep entry exposes (the works-surface member
+    # of the stats.custody family, beside browse --stats and graph stats).
+    from scrolls.custody import CustodyEvent
+    from scrolls.works import works_over
+
+    items = [
+        # a full-fidelity preprint, drifted at its last verify
+        make_item("arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+                  links=("https://doi.org/10.1000/x",),
+                  raw_text="body", content_hash="sha256:a", stage="rendered"),
+        # its published record, a bare reference, never re-checked
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x",
+                  stage="rendered"),
+    ]
+    works = works_over(items)
+    verdicts = {
+        "arxiv:1706.03762": CustodyEvent(
+            item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+            status="drifted", prior_hash="sha256:a", observed_hash="sha256:b"),
+    }
+    custody = to_payload(works, len(items), scope={"min_representations": 2},
+                         verdicts=verdicts)["stats"]["custody"]
+    # one full+drifted preprint, one reference+unverified published record
+    assert custody["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert custody["drift"] == {
+        "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
+
+
+def test_stats_custody_totals_equal_the_reported_representation_entries():
+    # the tally sums to the number of representation entries rendered, so a
+    # reader can trust it describes exactly the works the payload shows
+    from scrolls.works import works_over
+
+    items = [
+        make_item("arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+                  links=("https://doi.org/10.1000/x",)),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+        make_item("arxiv:2001.0", url="https://arxiv.org/abs/2001.0",
+                  links=("https://doi.org/10.1000/y",)),
+        make_item("crossref:10.1000/y", url="https://doi.org/10.1000/y"),
+    ]
+    works = works_over(items)
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    rep_entries = sum(len(w["representations"]) for w in payload["works"])
+    custody = payload["stats"]["custody"]
+    assert rep_entries == 4
+    assert sum(custody["tiers"].values()) == rep_entries
+    assert sum(custody["drift"].values()) == rep_entries
+
+
+def test_stats_custody_counts_a_two_work_item_per_representation_entry():
+    # an item that represents two works is rendered as a representation in both;
+    # the tally is over representation entries, so it is counted in both — its
+    # totals stay equal to the rendered entries (no silent dedup)
+    from scrolls.works import works_over
+
+    # `shared` names two DOIs, so it is a representation of two works
+    items = [
+        make_item("arxiv:shared", url="https://arxiv.org/abs/shared",
+                  links=("https://doi.org/10.1000/x", "https://doi.org/10.1000/y")),
+        make_item("crossref:10.1000/x", url="https://doi.org/10.1000/x"),
+        make_item("crossref:10.1000/y", url="https://doi.org/10.1000/y"),
+    ]
+    works = works_over(items)
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    rep_entries = sum(len(w["representations"]) for w in payload["works"])
+    custody = payload["stats"]["custody"]
+    # two works of two reps each = four representation entries (shared in both)
+    assert rep_entries == 4
+    assert sum(custody["tiers"].values()) == rep_entries
+    # all four reps are bare references, never re-checked
+    assert custody["tiers"]["reference"] == 4
+    assert custody["drift"]["unverified"] == 4
+
+
+def test_stats_custody_is_zeroed_when_no_work_is_reported():
+    # nothing clears the floor → no representations → the honest zeroed shape,
+    # not an absent key (a stable shape a renderer can filter)
+    from scrolls.works import works_over
+
+    items = [make_item("arxiv:solo", url="https://arxiv.org/abs/solo",
+                       links=("https://doi.org/10.1000/x",))]
+    works = works_over(items)  # one-rep work, below the default floor of 2
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    assert payload["works"] == []
+    assert payload["stats"]["custody"] == ZERO_CUSTODY
+
+
+def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
+    # end to end through the CLI: the stats.custody tally equals the fidelity/
+    # drift each rendered representation entry carries (parity by construction)
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item(
+        "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.1000/x",),
+        raw_text="the preprint body", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, make_item(
+        "crossref:10.1000/x", url="https://doi.org/10.1000/x", stage="rendered"))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    reps = [r for w in payload["works"] for r in w["representations"]]
+    expected = {"tiers": {"full": 0, "partial": 0, "reference": 0},
+                "drift": {p: 0 for p in
+                          ("verified", "unverified", "drifted", "rotted", "error")}}
+    for rep in reps:
+        expected["tiers"][rep["fidelity"]] += 1
+        expected["drift"][rep["drift"]] += 1
+    assert payload["stats"]["custody"] == expected
 
 
 # --- the scope echo: completeness contract G2 -----------------------------
@@ -528,7 +675,7 @@ def test_to_payload_echoes_the_applied_scope():
     # pruning None the way scope_envelope does (search/list/related)
     payload = to_payload([], 3, scope={"min_representations": 2, "ref": None})
     assert payload["scope"] == {"min_representations": 2}
-    assert payload["stats"] == {"items": 3, "works": 0}
+    assert payload["stats"] == {"items": 3, "works": 0, "custody": ZERO_CUSTODY}
     assert payload["works"] == []
 
 
@@ -642,7 +789,8 @@ def test_cli_works_with_ref_reports_only_that_items_work(db, capsys):
     assert main(["works", "arxiv:1706.03762"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert [w["doi"] for w in payload["works"]] == ["10.5555/3295222"]
-    assert payload["stats"] == {"items": 4, "works": 1}  # items = whole library
+    # items = whole library; works/custody count only the reported work's reps
+    assert _core_stats(payload["stats"]) == {"items": 4, "works": 1}
 
 
 def test_cli_works_with_url_ref_resolves_the_item(db, capsys):

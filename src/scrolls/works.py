@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import CustodyEvent, drift_posture, last_checked
+from scrolls.custody import CustodyEvent, drift_posture, last_checked, tally_custody
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -332,6 +332,19 @@ def to_payload(
     the floor is reported), so the floor *is* the truncation story: a work
     missing from the payload was below the reported floor, not absent from the
     library, and `stats` already counts what cleared it.
+
+    `stats.custody` is the works-surface member of the `stats.custody` family
+    (roadmap H100, beside the browse `search`/`list`/`related --stats` envelopes
+    H98/H99 and the `graph` stats block H52): the shared `custody.tally_custody`
+    fidelity-tier and drift-posture count maps over the **reported works'
+    representations** — the same `(fidelity, drift)` pairs each representation
+    entry above already exposes — so a reader of the works lens sees "of the
+    multi-representation works in scope, how much is held in full and how much
+    drifted" without a second `facets` call. It is scoped to the *representation
+    entries* (not the library `stats.items`, the works count denominator), so its
+    totals equal the rendered representation entries by construction; an item that
+    represents two works contributes to both, exactly as it is rendered twice. No
+    new ledger read — the same `verdicts` the per-rep `drift` already folds.
     """
     verdicts = verdicts or {}
     return {
@@ -357,7 +370,15 @@ def to_payload(
             }
             for work in works
         ],
-        "stats": {"items": item_count, "works": len(works)},
+        "stats": {
+            "items": item_count,
+            "works": len(works),
+            "custody": tally_custody(
+                (rep.fidelity, drift_posture(verdicts.get(rep.id)))
+                for work in works
+                for rep in work.representations
+            ),
+        },
     }
 
 

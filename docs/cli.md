@@ -223,8 +223,11 @@ all three browse surfaces — `search`, `list`, and `related` — through the sa
 fidelity`/`drift` for the same filters
 (`test_list_stats_custody_member_converges_with_facets`), and on `related` it
 covers the anchor's related *neighbourhood* (the full scored set, excluding the
-anchor). In every case the counts cover the matched scope, not just the returned
-page. The **compiled human-readable**
+anchor). `scrolls works` carries the same member in its always-on `stats` block
+(roadmap H100) — there `tally_custody` folds the reported works' representations,
+so the tally describes the multi-representation works in scope. In every case the
+counts cover the matched scope, not just the returned page. The **compiled
+human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
 line (H95) and in the landing `index.md` header (H96), and the invariant parses
@@ -2292,7 +2295,18 @@ that item's `list` row by construction, `unverified`/`null` when never re-checke
 id; works sort by representation count then DOI. `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
-library total. A `scope` companion echoes the floor it clustered above
+library total. `stats.custody` is the works-surface member of the
+`stats.custody` family (roadmap H100, beside the browse
+`search`/`list`/`related --stats` envelopes and the `graph` stats block) — the
+shared `custody.tally_custody` fidelity-tier and drift-posture count maps over
+the **reported works' representations** (the same `(fidelity, drift)` each
+representation entry above carries), so a reader sees "of the
+multi-representation works in scope, how much is held in full and how much
+drifted" without a second `facets` call. It is scoped to the representation
+*entries* (not `stats.items`), so its totals equal the rendered representations
+by construction — an item that represents two works contributes to both, as it
+is rendered twice (`test_stats_custody_totals_equal_the_reported_representation_entries`).
+A `scope` companion echoes the floor it clustered above
 (`{"min_representations": N}`) so a reader holding only the payload can tell
 "these are every multi-representation work" from "every work of 3+
 representations" — the completeness contract's G2 honesty, and since `works`
@@ -2315,11 +2329,11 @@ item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 
@@ -2601,7 +2615,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)) |
-| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)) |
+| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); `stats.custody` tallies the reported reps (H100) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
