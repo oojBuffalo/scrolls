@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import replace
 from urllib.parse import urlparse
 
@@ -417,3 +418,36 @@ def is_stale_classification(item: ScrollItem) -> bool:
       must never reach them.
     """
     return classification_freshness(item.provenance) == "stale"
+
+
+def stale_classifications(
+    items: Iterable[ScrollItem], source: str | None = None
+) -> list[ScrollItem]:
+    """The rules-classified items a re-classify would no longer reproduce.
+
+    The selection behind both `scrolls classify --stale` (whole-library) and its
+    per-source narrowing `classify --stale --source <S>` (roadmap H154): the
+    `is_stale_classification` set, optionally intersected with one source — the
+    enrichment-axis counterpart of `verify --source <S>` (the per-source *drift*
+    recheck). One home for the predicate, so the pool a refresh acts on can never
+    disagree with the count `doctor` reports:
+
+    - whole-library (``source=None``) is exactly the set `doctor`'s
+      ``custody.enrichment.stale`` flags and `--stale` alone refreshes;
+    - per-source (``source=S``) is exactly that set filtered to one source, so
+      ``len(stale_classifications(items, source=S))`` equals `doctor`'s
+      ``custody.enrichment.by_source[S]`` by construction (both filter the same
+      stale set by source), and refreshing them restamps each to the live
+      ruleset — clearing that source's entry from the offenders-only map (the
+      H27 report↔refresh convergence, per source).
+
+    Sources are open-ended (no closed vocabulary), so a source nothing stale is
+    held for is the honest empty selection — a network-free no-op, never an
+    error. Pure: it selects, leaving the caller to zero the category and re-run
+    the engine, so a test can re-derive the per-source count independently.
+    """
+    return [
+        item
+        for item in items
+        if is_stale_classification(item) and (source is None or item.source == source)
+    ]

@@ -9,6 +9,7 @@ from scrolls.classify import (
     classification_freshness,
     classify_item,
     is_stale_classification,
+    stale_classifications,
 )
 from scrolls.items import ScrollItem, classification_view
 
@@ -610,6 +611,91 @@ def test_user_set_category_carrying_no_stamp_is_not_stale():
     item = make_item(category="tool", provenance={"adapter": "web"})
     assert is_stale_classification(item) is False
     assert is_stale_classification(make_item(category="tool", provenance=None)) is False
+
+
+# --- `stale_classifications`: the (optionally per-source) refresh pool (H154) --
+#
+# The one selector behind `scrolls classify --stale` (whole-library) and its
+# per-source narrowing `classify --stale --source <S>`. Whole-library it is
+# exactly `is_stale_classification` filtered nowhere; per-source it intersects
+# with one source, so its count equals doctor's `custody.enrichment.by_source[S]`
+# by construction. A pure selector, so it can re-derive that count independently.
+
+
+def _stale(item_id, source, *, ruleset="deadbeef0000"):
+    return make_item(
+        id=item_id, source=source, category="reference",
+        provenance={"classified_by": "rules-v1", "classified_ruleset": ruleset},
+    )
+
+
+def test_stale_classifications_whole_library_is_exactly_the_stale_set():
+    items = [
+        _stale("web:1", "web"),
+        _stale("web:2", "web", ruleset=RULESET_FINGERPRINT),  # current — excluded
+        _stale("arxiv:1", "arxiv"),
+        make_item(id="web:plain", category="tool", provenance={"adapter": "web"}),
+    ]
+    selected = stale_classifications(items)
+    assert [item.id for item in selected] == ["web:1", "arxiv:1"]
+    # exactly the `is_stale_classification` set, order preserved
+    assert selected == [item for item in items if is_stale_classification(item)]
+
+
+def test_stale_classifications_per_source_intersects_one_source():
+    items = [
+        _stale("web:1", "web"),
+        _stale("web:2", "web"),
+        _stale("arxiv:1", "arxiv"),
+    ]
+    assert [item.id for item in stale_classifications(items, source="web")] == [
+        "web:1", "web:2"
+    ]
+    assert [item.id for item in stale_classifications(items, source="arxiv")] == [
+        "arxiv:1"
+    ]
+
+
+def test_stale_classifications_per_source_count_matches_a_grouped_re_derivation():
+    # the H154 convergence at the pure layer: the per-source count equals an
+    # independent re-derivation via `is_stale_classification` grouped by source
+    # (the predicate doctor's `enrichment.by_source` is built from).
+    items = [
+        _stale("web:1", "web"),
+        _stale("web:2", "web"),
+        _stale("web:cur", "web", ruleset=RULESET_FINGERPRINT),  # current
+        _stale("arxiv:1", "arxiv"),
+    ]
+    by_source: dict[str, int] = {}
+    for item in items:
+        if is_stale_classification(item):
+            by_source[item.source] = by_source.get(item.source, 0) + 1
+    for source, count in by_source.items():
+        assert len(stale_classifications(items, source=source)) == count
+    assert by_source == {"web": 2, "arxiv": 1}
+
+
+def test_stale_classifications_unknown_source_is_an_empty_no_op():
+    # sources are open-ended: one nothing stale is held for selects nothing,
+    # never an error (the honest no-op `--source` gives the CLI)
+    items = [_stale("web:1", "web"), _stale("arxiv:1", "arxiv")]
+    assert stale_classifications(items, source="reddit") == []
+
+
+def test_stale_classifications_excludes_current_unfingerprinted_llm_and_override():
+    # each non-stale shape stays out, whether or not a source is named
+    items = [
+        _stale("web:cur", "web", ruleset=RULESET_FINGERPRINT),  # current
+        make_item(id="web:unf", source="web", category="reference",
+                  provenance={"classified_by": "rules-v1"}),  # unfingerprinted
+        make_item(id="web:llm", source="web", category="reference",
+                  provenance={"classified_by": "llm-v1",
+                              "classified_ruleset": "deadbeef0000"}),  # llm axis
+        make_item(id="web:override", source="web", category="tool",
+                  provenance={"adapter": "web"}),  # hand-set, no engine stamp
+    ]
+    assert stale_classifications(items) == []
+    assert stale_classifications(items, source="web") == []
 
 
 # --- the freshness primitive: one home behind doctor + the H21 marker ---------

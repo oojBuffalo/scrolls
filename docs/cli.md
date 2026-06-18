@@ -641,7 +641,10 @@ marker each browse surface carries (roadmap H21) — both derive from the one
 The `enrichment` block also carries a `by_source` map (roadmap H135) — the stale
 count split per source, the re-derivability counterpart of the per-source
 *coverage* `custody.by_source` carries (H121) — so the audit names *which* source
-has the most categories to refresh with `classify --stale`. A flat
+has the most categories to refresh, then act on just that one with
+[`classify --stale --source <S>`](#scrolls-classify-id) (roadmap H154, the
+enrichment-axis counterpart of `verify --source`): the count it refreshes equals
+`by_source[<S>]` and the refresh clears that source's entry from this map. A flat
 `{source: stale_count}` map of the **offending sources only** (a source with no
 stale debt is omitted, the `items`-list posture), source keys sorted; every stale
 item has exactly one source, so the per-source counts sum to `stale` by
@@ -2034,6 +2037,28 @@ rejects `--engine llm`, `--batch`, and a single id
 (`test_classify_stale_rejects_the_llm_engine`,
 `test_classify_stale_rejects_batch`, `test_classify_stale_rejects_an_item_id`).
 
+`--stale --source <S>` narrows that refresh to one source's stale
+classifications — exactly the slice doctor reports in
+`custody.enrichment.by_source[<S>]` (roadmap H135), the enrichment-axis
+counterpart of [`verify --source <S>`](#scrolls-verify-id) (the per-source
+*drift* recheck). When `doctor`/`maintain` name `web` as carrying the most
+stale-classification debt, `classify --stale --source web` refreshes just
+those without touching another source's. The count it refreshes equals
+doctor's per-source number by construction (both filter the one stale
+predicate by source), and the refresh clears that source's entry from the
+offenders-only map — the per-source `record → report → refresh` convergence
+(`test_classify_stale_source_count_matches_doctor_by_source`, and the pure-
+layer/doctor tie in
+`test_classify_stale_source_refreshes_exactly_the_doctor_per_source_count`).
+A source with no stale debt is the honest empty no-op (network-free, no
+targets), never an error (`test_classify_stale_source_with_no_stale_is_a_clean_noop`).
+`--source` is a *narrowing* of `--stale`, not a standalone selection like
+`verify --source` — it needs `--stale` (without it, there is no stale set to
+narrow: `test_classify_source_without_stale_is_an_error`). The summary axis has
+no per-source counterpart — a concept summary spans sources, so `kb --stale`
+stays whole-library (roadmap H135) — so this completes the per-source *refresh*
+on the one enrichment axis that decomposes.
+
 `--engine llm` (engine `llm-v1`, ADR 0015) classifies with a model via the
 Anthropic API instead (network; needs `ANTHROPIC_API_KEY`; default model
 `claude-opus-4-8`, overridable via `SCROLLS_LLM_MODEL`). It uses the full
@@ -2094,6 +2119,10 @@ $ scrolls classify --batch     # the rules engine has nothing to batch
 [exit 1]
 
 $ scrolls classify --stale     # refresh whatever doctor flagged stale
+{"classified": 1, "unmatched": 0, "failed": 0, "results": [{"id": "web:3f1a", "status": "classified", "category": "tutorial"}]}
+[exit 0]
+
+$ scrolls classify --stale --source web   # only the source doctor flagged weakest
 {"classified": 1, "unmatched": 0, "failed": 0, "results": [{"id": "web:3f1a", "status": "classified", "category": "tutorial"}]}
 [exit 0]
 ```

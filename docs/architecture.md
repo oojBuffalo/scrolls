@@ -211,7 +211,16 @@ each command moves items between stages or derives artifacts from them.
   equals the count the refresh touches, and it converges), refreshing
   `category` + `classified_ruleset` to the live ruleset — regeneration on
   request, never doctor's silent overwrite, closing the loop H20 (record) →
-  H25 (report) → H27 (refresh). User overrides stay out of that pool: a
+  H25 (report) → H27 (refresh). `classify --stale --source <S>` narrows that
+  refresh to one source's stale set — exactly doctor's
+  `custody.enrichment.by_source[S]` (roadmap H154, the enrichment-axis
+  counterpart of `verify --source <S>`): the shared `stale_classifications`
+  selector filters the one predicate by source, so the count it refreshes
+  equals doctor's per-source number and the refresh clears that source's entry
+  from the offenders-only map. It is a *narrowing* of `--stale` (it needs
+  `--stale`), and the summary axis has no per-source counterpart (a concept
+  summary spans sources), so it completes the per-source refresh on the one
+  enrichment axis that decomposes. User overrides stay out of that pool: a
   hand-set category drops the engine stamp (`overrides.apply_overrides`), so
   it is never counted stale and never refreshed — user overrides always win.
   The classification axis now also carries a per-item confidence/recency marker

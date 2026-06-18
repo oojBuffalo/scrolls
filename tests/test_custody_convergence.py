@@ -625,6 +625,57 @@ def test_enrichment_by_source_converges_with_the_per_source_stale_classification
     )
 
 
+def test_classify_stale_source_refreshes_exactly_the_doctor_per_source_count(
+    scrolls_home, capsys
+):
+    # roadmap H154: `classify --stale --source <S>` refreshes exactly the stale
+    # classifications of one source — the slice doctor reports in
+    # `custody.enrichment.by_source[S]`. The per-source act↔report convergence
+    # (the enrichment-axis sibling of H125's per-source verify): the count it
+    # refreshes equals doctor's per-source number and the pure `stale_classifications`
+    # selector, and refreshing clears that source's entry from the offenders-only map.
+    from scrolls.classify import RULESET_FINGERPRINT, stale_classifications
+
+    main(["init"])
+    db = get_paths().db_path
+
+    def _stale(item_id, source, *, ruleset="deadbeef0000"):
+        # source defaults the live ruleset still matches (wikipedia → reference,
+        # arxiv → paper), so a refresh restamps `current` rather than dropping to
+        # `unmatched` — the refresh actually clears the stale signal.
+        return _item(
+            item_id, "Topic classified", source=source, stage="rendered",
+            url=f"https://example.com/{item_id}", category=None,
+            provenance={"classified_by": "rules-v1", "classified_basis": "curated-source",
+                        "classified_ruleset": ruleset},
+        )
+
+    insert_item(db, _stale("wikipedia:SQLite", "wikipedia"))
+    insert_item(db, _stale("wikipedia:Redis", "wikipedia"))
+    insert_item(db, _stale("arxiv:s1", "arxiv", ruleset="cafe00000000"))
+    # a *current* arxiv classification: arxiv carries both a stale and a clean
+    # one, so the per-source count must reflect only the stale member.
+    insert_item(db, _stale("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT))
+    capsys.readouterr()
+
+    by_source = run_doctor(get_paths())["custody"]["enrichment"]["by_source"]
+    assert by_source == {"arxiv": 1, "wikipedia": 2}
+
+    # 1. the pure selector re-derives each per-source count (the predicate doctor
+    #    builds its map from), so the act-side pool == the report-side count.
+    items = list_items(db)
+    for source, count in by_source.items():
+        assert len(stale_classifications(items, source=source)) == count
+
+    # 2. the CLI refreshes exactly that many for the chosen source ...
+    assert main(["classify", "--stale", "--source", "wikipedia"]) == 0
+    assert json.loads(capsys.readouterr().out)["classified"] == by_source["wikipedia"]
+
+    # 3. ... and that source drops from the offenders-only map, the other intact.
+    after = run_doctor(get_paths())["custody"]["enrichment"]["by_source"]
+    assert after == {"arxiv": 1}
+
+
 def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):
     # roadmap H113: the recheck `coverage` figure (`{verified, total}` over the
     # verifiable held set) reads the same on the standalone audit (`doctor`) and

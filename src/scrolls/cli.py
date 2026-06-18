@@ -24,7 +24,7 @@ from scrolls.bundle import (
     parse_bundle,
     parse_bundle_events,
 )
-from scrolls.classify import classify_item, is_stale_classification
+from scrolls.classify import classify_item, stale_classifications
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
     CUSTODY_STATUSES,
@@ -191,6 +191,14 @@ def build_parser() -> argparse.ArgumentParser:
         "ruleset (the ids `scrolls doctor` reports in custody.enrichment.stale), "
         "refreshing their category and ruleset fingerprint to the live ruleset; "
         "rules engine only, never with --batch or a single id",
+    )
+    classify_parser.add_argument(
+        "--source",
+        default=None,
+        help="Narrow --stale to one source's stale classifications, e.g. web, "
+        "arxiv (the ids `scrolls doctor` reports in "
+        "custody.enrichment.by_source[<source>]) — the enrichment-axis "
+        "counterpart of `verify --source`; requires --stale",
     )
 
     context_parser = subparsers.add_parser(
@@ -901,7 +909,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "agent":
         return _cmd_agent_install()
     if args.command == "classify":
-        return _cmd_classify(args.id, args.engine, args.batch, args.stale)
+        return _cmd_classify(args.id, args.engine, args.batch, args.stale, args.source)
     if args.command == "context":
         return _cmd_context(
             args.query,
@@ -1950,6 +1958,7 @@ def _cmd_classify(
     engine: str | None = None,
     batch: bool = False,
     stale: bool = False,
+    source: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
@@ -1960,6 +1969,19 @@ def _cmd_classify(
     # the --engine flag beats config.toml's [classify] default_engine
     explicit_engine = engine
     engine = engine or config.default_engine
+
+    # `--source` is a *narrowing* of `--stale` (the per-source refresh, H154), not
+    # a standalone selection like `verify --source`: the unattended worker reads
+    # "source web carries 2 stale categories" off doctor and refreshes just those.
+    # `--source` alone has no stale set to narrow, so it is a loud usage error.
+    if source is not None and not stale:
+        print(
+            json.dumps(
+                {"error": "classify --source narrows the --stale refresh; pass --stale"}
+            ),
+            file=sys.stderr,
+        )
+        return 1
 
     if stale:
         # --stale refreshes the *rules* ruleset fingerprint, so it is rules-only
@@ -2028,16 +2050,18 @@ def _cmd_classify(
         # below never overwrite an existing category (user overrides win).
         items = [dataclasses.replace(item, category=None)]
     elif stale:
-        # exactly doctor's custody.enrichment.stale set (one shared predicate);
-        # zero the category so a re-classify recomputes it under the live
-        # ruleset. An item the live ruleset no longer matches falls to
-        # "unmatched" and its stored category is left untouched (non-destructive
-        # — we surface that it no longer re-derives, we don't wipe it).
+        # exactly doctor's custody.enrichment.stale set (one shared selector),
+        # narrowed to `--source` when given (the per-source slice doctor reports
+        # in custody.enrichment.by_source[<source>], H154); zero the category so a
+        # re-classify recomputes it under the live ruleset. An item the live
+        # ruleset no longer matches falls to "unmatched" and its stored category
+        # is left untouched (non-destructive — we surface that it no longer
+        # re-derives, we don't wipe it). A source with no stale debt is the honest
+        # empty no-op (network-free, no targets).
         everything = list_items(paths.db_path) if paths.db_path.exists() else []
         items = [
             dataclasses.replace(item, category=None)
-            for item in everything
-            if is_stale_classification(item)
+            for item in stale_classifications(everything, source=source)
         ]
     else:
         everything = list_items(paths.db_path) if paths.db_path.exists() else []

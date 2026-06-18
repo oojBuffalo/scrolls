@@ -2116,6 +2116,119 @@ def test_classify_stale_empty_is_a_clean_noop(scrolls_home, capsys):
     }
 
 
+# --- classify --stale --source <S>: the per-source enrichment refresh (H154) ---
+#
+# `--source` narrows `--stale` to exactly one source's stale-classified items
+# (the slice doctor reports in custody.enrichment.by_source[<source>]) — the
+# enrichment-axis counterpart of `verify --source <S>`. Refreshing one source
+# restamps just its items and clears that source's entry from the per-source map.
+
+
+def _insert_stale(item_id, source, *, ruleset="deadbeef0000"):
+    """Insert a held item rules-classified under a superseded ruleset.
+
+    Source defaults that the live ruleset still matches (wikipedia → reference,
+    arxiv → paper, youtube → media), so a `--stale` refresh restamps it
+    `current` rather than dropping it to `unmatched`.
+    """
+    matched = {"wikipedia": "reference", "arxiv": "paper", "youtube": "media"}
+    insert_item(
+        get_paths().db_path,
+        ScrollItem(
+            id=item_id,
+            source=source,
+            source_id=item_id.split(":", 1)[1],
+            url=f"https://example.com/{item_id}",
+            saved_at="2026-06-14T00:00:00+00:00",
+            title="A held scroll",
+            category=matched[source],
+            stage="rendered",
+            provenance={
+                "adapter": source,
+                "classified_by": "rules-v1",
+                "classified_basis": "curated-source",
+                "classified_ruleset": ruleset,
+            },
+        ),
+    )
+
+
+def test_classify_stale_source_refreshes_only_that_source(scrolls_home, capsys):
+    main(["init"])
+    _insert_stale("wikipedia:SQLite", "wikipedia")
+    _insert_stale("wikipedia:Redis", "wikipedia")
+    _insert_stale("arxiv:2401.00001", "arxiv")
+    capsys.readouterr()
+
+    exit_code = main(["classify", "--stale", "--source", "wikipedia"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["classified"] == 2
+    assert {r["id"] for r in payload["results"]} == {
+        "wikipedia:SQLite", "wikipedia:Redis"
+    }
+    # the two wikipedia items are restamped to the live ruleset ...
+    for item_id in ("wikipedia:SQLite", "wikipedia:Redis"):
+        stored = get_item(get_paths().db_path, item_id)
+        assert stored.provenance["classified_ruleset"] == RULESET_FINGERPRINT
+    # ... and arxiv's stale item is left untouched (a different source)
+    arxiv = get_item(get_paths().db_path, "arxiv:2401.00001")
+    assert arxiv.provenance["classified_ruleset"] == "deadbeef0000"
+
+
+def test_classify_stale_source_count_matches_doctor_by_source(scrolls_home, capsys):
+    # the H154 convergence: the count `--stale --source S` refreshes equals
+    # doctor's `custody.enrichment.by_source[S]`, and the refresh clears S's entry.
+    main(["init"])
+    _insert_stale("wikipedia:SQLite", "wikipedia")
+    _insert_stale("wikipedia:Redis", "wikipedia")
+    _insert_stale("arxiv:2401.00001", "arxiv")
+    capsys.readouterr()
+
+    main(["doctor"])
+    by_source = json.loads(capsys.readouterr().out)["custody"]["enrichment"]["by_source"]
+    assert by_source == {"arxiv": 1, "wikipedia": 2}
+
+    main(["classify", "--stale", "--source", "wikipedia"])
+    refreshed = json.loads(capsys.readouterr().out)["classified"]
+    assert refreshed == by_source["wikipedia"]  # exactly the per-source count
+
+    # wikipedia drops out of the offenders-only map; arxiv's debt is untouched
+    main(["doctor"])
+    after = json.loads(capsys.readouterr().out)["custody"]["enrichment"]["by_source"]
+    assert after == {"arxiv": 1}
+
+
+def test_classify_stale_source_with_no_stale_is_a_clean_noop(scrolls_home, capsys):
+    main(["init"])
+    _insert_stale("wikipedia:SQLite", "wikipedia")
+    capsys.readouterr()
+
+    # a source nothing stale is held for selects nothing — exit 0, no error
+    exit_code = main(["classify", "--stale", "--source", "reddit"])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "classified": 0, "unmatched": 0, "failed": 0, "results": []
+    }
+    # the wikipedia debt is left for a `--source wikipedia` run
+    main(["doctor"])
+    by_source = json.loads(capsys.readouterr().out)["custody"]["enrichment"]["by_source"]
+    assert by_source == {"wikipedia": 1}
+
+
+def test_classify_source_without_stale_is_an_error(scrolls_home, capsys):
+    # `--source` is a narrowing of `--stale`, not a standalone selection
+    exit_code = main(["classify", "--source", "web"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_classify_stale_source_rejects_the_llm_engine(scrolls_home, capsys):
+    exit_code = main(["classify", "--stale", "--source", "web", "--engine", "llm"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     """Replace the Anthropic completer with a canned classification."""
