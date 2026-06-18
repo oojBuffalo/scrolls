@@ -249,10 +249,16 @@ _Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
   `test_kb_index_carries_a_library_wide_custody_headline`).
 - When the page's members span **more than one source**, a **`_By source:_`
   breakdown** follows the headline (roadmap H152) — one bullet per source naming
-  that source's fidelity tiers and drift postures (`` - `<source>` — N scroll(s)
-  · fidelity … · drift … ``) — so a reader browsing a multi-source group page
-  (a `ml` category over `arxiv` + `web`, a tag across sources) sees *which* source
-  on it is weakest. It is the same shared `custody.render_custody_by_source` the
+  that source's fidelity tiers, drift postures, and recheck coverage
+  (`` - `<source>` — N scroll(s) · fidelity … · drift … · coverage V/T ``) — so a
+  reader browsing a multi-source group page (a `ml` category over `arxiv` + `web`,
+  a tag across sources) sees *which* source on it is weakest and *least checked*.
+  The `coverage V/T` section (roadmap H158) is the readable counterpart of the
+  JSON `by_source[S].coverage`: of that source's verifiable (hash-bearing) held
+  items, how many carry a ledger verdict; it is always shown (even `coverage 0/0`
+  for an all-reference source) so the section is positionally stable, while the
+  whole-scope `_Custody:_` headline stays coverage-free. It is the same shared
+  `custody.render_custody_by_source` the
   landing `index.md` (H145), the `export bundle` briefing (H141), and the `scrolls
   context` bundle (H149) render, so the per-source line is byte-identical across
   surfaces; its bullets sum to this page's headline by construction and equal
@@ -351,8 +357,8 @@ _Custody: 2 scroll(s) · fidelity reference 2 · drift unverified 2._
 
 _By source:_
 
-- `arxiv` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
-- `crossref` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
+- `arxiv` — 1 scroll(s) · fidelity reference 1 · drift unverified 1 · coverage 0/0
+- `crossref` — 1 scroll(s) · fidelity reference 1 · drift unverified 1 · coverage 0/0
 
 - **Attention Is All You Need** — 2 representations ([doi.org/10.5555/3295222](https://doi.org/10.5555/3295222))
   - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv · reference · unverified · never checked
@@ -409,9 +415,10 @@ index heads — the same items its count line counts — so its `N` never disagr
 with the page it summarises, and it equals `status`/`doctor`'s custody aggregate
 when every held item is rendered. When the library spans **more than one
 source**, a `_By source:_` breakdown follows the headline (roadmap H145) — one
-bullet per source naming that source's fidelity tiers and drift postures, the
-compiled-surface counterpart of the `export bundle` briefing (H141) and JSON
-`status` (H133), through the same shared `custody.render_custody_by_source`. Its
+bullet per source naming that source's fidelity tiers, drift postures, and
+recheck coverage (`· coverage V/T`, roadmap H158), the compiled-surface
+counterpart of the `export bundle` briefing (H141) and JSON `status` (H133),
+through the same shared `custody.render_custody_by_source`. Its
 per-source bullets sum to the headline by construction (every scroll lands in one
 source group) and equal `doctor`'s `custody.by_source` over the rendered scope; a
 single-source library omits the split (the whole-library headline already says
@@ -444,8 +451,8 @@ _Custody: 2 scroll(s) · fidelity full 1, reference 1 · drift unverified 2._
 
 _By source:_
 
-- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1
-- `wikipedia` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
+- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1 · coverage 0/1
+- `wikipedia` — 1 scroll(s) · fidelity reference 1 · drift unverified 1 · coverage 0/0
 
 ## Sources
 

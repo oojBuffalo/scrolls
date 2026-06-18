@@ -406,12 +406,15 @@ def test_bundle_carries_a_per_source_custody_breakdown(scrolls_home):
     _seed_multi_source(db)
     bundle = build_bundle(db, "database")
     assert "_By source:_" in bundle
+    # each bullet carries the source's recheck coverage too (roadmap H158):
+    # arxiv 0 of 1 hash-bearing checked; web 2 of 2.
     assert (
-        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in bundle
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1"
+        " · coverage 0/1" in bundle
     )
     assert (
         "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
-        in bundle
+        " · coverage 2/2" in bundle
     )
 
 
@@ -494,11 +497,11 @@ def test_bundle_html_carries_a_per_source_custody_breakdown(scrolls_home):
     assert '<ul class="custody-by-source">' in doc
     assert (
         "<code>web</code> — 2 scroll(s) · fidelity full 2 · "
-        "drift verified 1, drifted 1" in doc
+        "drift verified 1, drifted 1 · coverage 2/2" in doc
     )
     assert (
         "<code>arxiv</code> — 1 scroll(s) · fidelity full 1 · drift unverified 1"
-        in doc
+        " · coverage 0/1" in doc
     )
 
 

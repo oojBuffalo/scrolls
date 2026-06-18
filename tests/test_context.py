@@ -685,12 +685,14 @@ def test_context_carries_a_per_source_custody_breakdown(scrolls_home, capsys):
 
     out = run_context(capsys, "database")
     assert "_By source:_" in out
+    # the per-source recheck coverage rides each bullet too (roadmap H158)
     assert (
-        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in out
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1"
+        " · coverage 0/1" in out
     )
     assert (
         "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
-        in out
+        " · coverage 2/2" in out
     )
 
 
@@ -794,10 +796,13 @@ def test_context_per_source_breakdown_mcp_parity(scrolls_home):
 
     bundle = get_context_bundle("database")
     assert "_By source:_" in bundle
-    assert "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in bundle
+    assert (
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1"
+        " · coverage 0/1" in bundle
+    )
     assert (
         "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
-        in bundle
+        " · coverage 2/2" in bundle
     )
 
 

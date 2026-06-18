@@ -50,7 +50,10 @@ multi-source seed every readable surface — the briefing **and its HTML form**,
 **byte-identical** per-source bullets, all equal to `render_custody_by_source` over
 both `doctor`'s `custody.by_source` and `custody_counts_by_source`, and each
 surface's bullets sum to its own scope headline — the readable-line analogue of the
-JSON `by_source` convergence below. The **JSON**
+JSON `by_source` convergence below. Each readable bullet now also trails a
+``coverage V/T`` section (roadmap H158); its *value* is pinned to the JSON
+`by_source[S].coverage` (`doctor`'s map and the shared tally's) once, the
+readable-coverage counterpart of the per-source coverage tie (H121). The **JSON**
 `by_source` map (the structured ``{source: {tiers, drift, coverage}}`` the
 readable lines render from) rides `scrolls status` (H133) and the `scrolls graph`
 stats block (`stats.custody.by_source`, H150); both are asserted to equal
@@ -1487,6 +1490,20 @@ def _parse_by_source_bullet(bullet):
     return source, n, tiers, drift
 
 
+def _parse_by_source_coverage(bullet):
+    """Parse the trailing ``coverage V/T`` section of a per-source bullet.
+
+    Returns ``{verified, total}`` — the per-source recheck coverage a `_By source:_`
+    bullet now trails (roadmap H158), the readable counterpart of the JSON
+    `by_source[S].coverage`. Returns ``None`` when a bullet carries no coverage
+    section (so a future coverage-free surface reads as honest absence, not zero).
+    """
+    m = re.search(r"· coverage (\d+)/(\d+)", bullet)
+    if not m:
+        return None
+    return {"verified": int(m.group(1)), "total": int(m.group(2))}
+
+
 def _sum_by_source_bullets(bullets):
     """Sum a surface's per-source bullets into a `{count, tiers, drift}` whole.
 
@@ -1851,6 +1868,54 @@ def test_readable_per_source_breakdown_is_byte_identical_across_surfaces(
         assert summed["drift"] == headline["drift"], f"{name} bullets ≠ headline drift"
         # and that scope total == doctor's whole-library custody (the module spine)
         assert summed == canonical_total
+
+
+def test_readable_per_source_coverage_converges_with_the_json_by_source(
+    scrolls_home, capsys
+):
+    # roadmap H158: H151 pins the readable `_By source:_` bullets byte-identical
+    # across surfaces (coverage section included by construction); this pins the
+    # load-bearing *value* — the readable `coverage V/T` section on each bullet
+    # equals the JSON `by_source[S].coverage` (`doctor`'s map and the shared tally's)
+    # for that source. The readable-coverage counterpart of the JSON per-source
+    # coverage tie (H121), so the readable surfaces an agent skims and the audit can
+    # never disagree on how much of a source is checked.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_unified_per_source_fixture(db)  # web (3) + arxiv (2), all rendered, all `ml`
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    canonical = custody_counts_by_source(items, verdicts)
+    assert set(by_source) == {"web", "arxiv"}
+
+    bullets = [
+        line for line in render_custody_by_source(by_source) if line.startswith("- `")
+    ]
+    seen = {}
+    for bullet in bullets:
+        source, *_ = _parse_by_source_bullet(bullet)
+        cov = _parse_by_source_coverage(bullet)
+        assert cov is not None, f"{source} bullet carries no coverage section"
+        # the readable section == doctor's JSON per-source coverage == the tally's
+        assert cov == by_source[source]["coverage"]
+        assert cov == canonical[source]["coverage"]
+        seen[source] = cov
+    # the seed: web has 2 hash-bearing held items both verdicted; arxiv one
+    # hash-bearing verdicted (its partial-fidelity item is hash-less → excluded)
+    assert seen == {
+        "web": {"verified": 2, "total": 2},
+        "arxiv": {"verified": 1, "total": 1},
+    }
+    # and the per-source coverage sums to the whole-library recheck coverage (H121)
+    hash_bearing = [item for item in items if item.content_hash]
+    summed = {"verified": 0, "total": 0}
+    for cov in seen.values():
+        summed["verified"] += cov["verified"]
+        summed["total"] += cov["total"]
+    assert summed == recheck_coverage(hash_bearing, verdicts)
 
 
 def _seed_marker_fixture(db):

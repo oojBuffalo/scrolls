@@ -372,14 +372,20 @@ each command moves items between stages or derives artifacts from them.
   headlines converge for a scope by construction — one custody tally, many
   surfaces. For a *multi-source* bundle a **per-source breakdown**
   (`custody.render_custody_by_source` over `custody_counts_by_source`, roadmap
-  H141) follows the headline (`_By source:_`, one line per source), so a recipient
-  sees *which* source's custody is weakest within the shared scope; it folds the
-  same per-source tally `doctor`'s `custody.by_source` reports, so it sums to the
-  scope headline by construction and is itself a derived read view outside the
-  `@generated` fence (round-trip untouched). Both bundle forms render it from the
+  H141) follows the headline (`_By source:_`, one line per source naming its
+  fidelity, drift, and recheck `coverage V/T`), so a recipient sees *which*
+  source's custody is weakest — and least checked — within the shared scope; it
+  folds the same per-source tally `doctor`'s `custody.by_source` reports, so it
+  sums to the scope headline by construction and is itself a derived read view
+  outside the `@generated` fence (round-trip untouched). The per-source
+  `coverage V/T` section (roadmap H158) reads the same `coverage` already in the
+  `custody_counts_by_source` map the renderer receives (no new ledger read);
+  threaded through the shared `custody.custody_sections` (`coverage=None` on the
+  scope-headline path keeps the whole-scope `_Custody:_` line coverage-free), it
+  rides every readable surface at once. Both bundle forms render it from the
   one structured `custody.custody_source_breakdown` (shared with the HTML
   `_by_source_html`), the same shared-primitive posture that keeps the scope
-  headline byte-identical across surfaces. The `scrolls graph` payload carries the same tally as a JSON
+  headline — coverage section included — byte-identical across surfaces. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
   JSON) over its whole `stats.items` scope (roadmap H52), and splits it per source
   in a `stats.custody.by_source` map (`custody.custody_counts_by_source` over the
@@ -1083,10 +1089,10 @@ choice (ADRs 0004, 0005).
   line converges with `status`/`doctor` when every held item is rendered. When
   the rendered library spans **more than one source**, the index follows that
   headline with a **`_By source:_` breakdown** (roadmap H145) — one bullet per
-  source naming its fidelity tiers and drift postures, through the same shared
-  `custody.render_custody_by_source` the `export bundle` briefing (H141) uses, so
-  the compiled landing page, the shareable briefing, and JSON `status` (H133)
-  read byte-identical per-source lines; its bullets sum to the index headline by
+  source naming its fidelity tiers, drift postures, and recheck `coverage V/T`
+  (H158), through the same shared `custody.render_custody_by_source` the `export
+  bundle` briefing (H141) uses, so the compiled landing page, the shareable
+  briefing, and JSON `status` (H133) read byte-identical per-source lines; its bullets sum to the index headline by
   construction and equal `doctor`'s `custody.by_source` over the rendered scope, a
   single-source library omitting the split (the helper's no-op). Each **group list
   page** that spans more than one source carries the *same* `_By source:_`
@@ -1200,8 +1206,9 @@ choice (ADRs 0004, 0005).
   headline, gated to `full` like `## Excerpts` (the H10 depth honesty). From the
   `connected` tier up a *multi-source* bundle also follows its scope `_Custody:_`
   headline with a **`_By source:_` breakdown** (roadmap H149) — one bullet per
-  source naming that source's fidelity tiers and drift postures, through the same
-  shared `custody.render_custody_by_source` over `custody_counts_by_source` the
+  source naming that source's fidelity tiers, drift postures, and recheck
+  `coverage V/T` (H158), through the same shared
+  `custody.render_custody_by_source` over `custody_counts_by_source` the
   `export bundle` briefing (H141) and the compiled `library/index.md` (H145) use,
   so the per-source line reads byte-identical across surfaces, sums to the scope
   headline by construction, and equals `doctor`'s `custody.by_source` for the same

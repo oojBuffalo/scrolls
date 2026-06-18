@@ -776,8 +776,12 @@ def custody_counts_by_source(
     return result
 
 
-def custody_sections(tiers: dict[str, int], drift: dict[str, int]) -> list[str]:
-    """The ` · `-joined ``fidelity …``/``drift …`` sections of a custody line.
+def custody_sections(
+    tiers: dict[str, int],
+    drift: dict[str, int],
+    coverage: dict[str, int] | None = None,
+) -> list[str]:
+    """The ` · `-joined ``fidelity …``/``drift …``/``coverage …`` sections of a custody line.
 
     The shared core behind both the scope headline (`render_custody_headline`) and
     the per-source breakdown (`render_custody_by_source`, roadmap H141): the
@@ -786,6 +790,17 @@ def custody_sections(tiers: dict[str, int], drift: dict[str, int]) -> list[str]:
     surfaces fold the same counts through this one helper, so a per-source line's
     sections read byte-identical to the scope headline's. Absent counts read as
     zero, so a partial mapping never crashes the renderer.
+
+    `coverage` is the per-source recheck `coverage` ``{verified, total}`` the
+    breakdown carries (roadmap H121/H158); when given, a trailing ``coverage V/T``
+    section names how much of that source's verifiable held set is checked — the
+    readable counterpart of the JSON `by_source[S].coverage`. Unlike the
+    fidelity/drift sections (non-zero only), coverage is *always shown* when
+    provided — even ``coverage 0/0`` for an all-reference source — so the section
+    stays positionally stable across sources. The **scope headline passes no
+    coverage** (`coverage is None` → no section), keeping the whole-scope
+    `_Custody:_` line a posture summary, not a per-source triage signal (the
+    H113/H103 boundary that kept coverage off `status`'s headline).
     """
     parts = []
     fidelity = ", ".join(
@@ -800,6 +815,8 @@ def custody_sections(tiers: dict[str, int], drift: dict[str, int]) -> list[str]:
     )
     if drift_str:
         parts.append(f"drift {drift_str}")
+    if coverage is not None:
+        parts.append(f"coverage {coverage.get('verified', 0)}/{coverage.get('total', 0)}")
     return parts
 
 
@@ -831,21 +848,27 @@ def custody_source_breakdown(
 
     Maps a `custody_counts_by_source` map to an ordered list of
     ``(source, n, sections)`` — ``n`` the source's scroll count, ``sections`` its
-    non-zero ``fidelity …``/``drift …`` strings (canonical order, the *same*
-    `custody_sections` the scope headline shows). Sources keep the sorted order
-    `custody_counts_by_source` returns. Returns ``[]`` when fewer than two sources
-    are present: a single-source scope's split says nothing the scope headline
-    doesn't, and an empty scope has none — the honest no-op a caller omits. The
-    structured layer shared by the Markdown (`render_custody_by_source`) and HTML
-    per-source renderers, so a surface's per-source line and the JSON `by_source`
-    can never disagree.
+    non-zero ``fidelity …``/``drift …`` strings **plus** a trailing
+    ``coverage V/T`` (canonical order, the *same* `custody_sections` the scope
+    headline folds, here with the source's per-source `coverage`, roadmap H158).
+    Sources keep the sorted order `custody_counts_by_source` returns. Returns ``[]``
+    when fewer than two sources are present: a single-source scope's split says
+    nothing the scope headline doesn't, and an empty scope has none — the honest
+    no-op a caller omits. The structured layer shared by the Markdown
+    (`render_custody_by_source`) and HTML per-source renderers, so a surface's
+    per-source line and the JSON `by_source` can never disagree — including the
+    coverage section, which reads the same `coverage` already in the map (no new
+    derivation/ledger read). An entry without a `coverage` member (a
+    `tally_custody_by_source` browse-stats entry, which carries none) degrades to
+    no coverage section.
     """
     if len(by_source) < 2:
         return []
     breakdown: list[tuple[str, int, list[str]]] = []
     for source, counts in by_source.items():
         tiers, drift = counts["tiers"], counts["drift"]
-        breakdown.append((source, sum(tiers.values()), custody_sections(tiers, drift)))
+        sections = custody_sections(tiers, drift, counts.get("coverage"))
+        breakdown.append((source, sum(tiers.values()), sections))
     return breakdown
 
 
@@ -855,15 +878,19 @@ def render_custody_by_source(
     """Markdown per-source custody breakdown lines under a scope headline (roadmap H141).
 
     A ``_By source:_`` lead-in then one bullet per source —
-    ``- `<source>` — N scroll(s) · fidelity … · drift …`` — the per-source
-    counterpart of `render_custody_headline`, the same non-zero `custody_sections`
-    per source. Returns ``[]`` for fewer than two sources (the
-    `custody_source_breakdown` no-op), so a single-source/empty briefing omits the
-    split entirely (the whole-scope headline already says everything). Shared by the
-    `export bundle` briefing (H141) and the `scrolls context` bundle (H149), so the
-    per-source line reads identically across surfaces and — because it folds the
-    same `custody_counts_by_source` — sums to the scope headline and equals
-    `doctor`'s `custody.by_source` for the same scope by construction.
+    ``- `<source>` — N scroll(s) · fidelity … · drift … · coverage V/T`` — the
+    per-source counterpart of `render_custody_headline`, the same non-zero
+    `custody_sections` per source plus the per-source recheck `coverage`
+    (``V/T``, roadmap H158 — always shown so the section is positionally stable;
+    the scope headline itself stays coverage-free). Returns ``[]`` for fewer than
+    two sources (the `custody_source_breakdown` no-op), so a single-source/empty
+    briefing omits the split entirely (the whole-scope headline already says
+    everything). Shared by the `export bundle` briefing (H141), the `scrolls
+    context` bundle (H149), and the compiled `library/` index + group pages
+    (H145/H152), so the per-source line — coverage included — reads identically
+    across surfaces and, because it folds the same `custody_counts_by_source`,
+    sums to the scope headline and equals `doctor`'s `custody.by_source` for the
+    same scope by construction.
     """
     breakdown = custody_source_breakdown(by_source)
     if not breakdown:

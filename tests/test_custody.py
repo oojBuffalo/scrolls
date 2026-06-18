@@ -19,6 +19,8 @@ from scrolls.custody import (
     custody_counts,
     custody_counts_by_source,
     custody_headline,
+    custody_sections,
+    custody_source_breakdown,
     event_export_dict,
     event_from_dict,
     event_payload,
@@ -35,6 +37,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    render_custody_by_source,
     render_custody_headline,
     tally_custody,
     tally_custody_by_source,
@@ -720,6 +723,101 @@ def test_render_custody_headline_is_the_renderer_custody_headline_delegates_to()
     counts = custody_counts(items, verdicts)
     assert custody_headline(items, verdicts) == render_custody_headline(
         len(items), counts["tiers"], counts["drift"]
+    )
+
+
+# --- per-source coverage in the readable breakdown (roadmap H158) --------
+
+
+def test_custody_sections_appends_coverage_when_provided():
+    # the per-source path passes the source's coverage {verified, total}; the
+    # section reads `coverage V/T` and rides last, after fidelity and drift.
+    sections = custody_sections(
+        {"full": 1, "partial": 0, "reference": 1},
+        {"verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0},
+        {"verified": 1, "total": 2},
+    )
+    assert sections == [
+        "fidelity full 1, reference 1",
+        "drift unverified 1, drifted 1",
+        "coverage 1/2",
+    ]
+
+
+def test_custody_sections_omits_coverage_when_not_provided():
+    # the scope-headline path passes no coverage (coverage stays a per-source
+    # triage signal, never on the whole-scope `_Custody:_` line).
+    sections = custody_sections(
+        {"full": 1, "partial": 0, "reference": 0},
+        {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+    )
+    assert sections == ["fidelity full 1", "drift verified 1"]
+    assert not any("coverage" in s for s in sections)
+
+
+def test_custody_sections_coverage_is_always_shown_even_when_zero():
+    # always-show keeps the section positionally stable: a source with no
+    # verifiable items renders `coverage 0/0`, not an omitted section.
+    sections = custody_sections(
+        {"full": 0, "partial": 0, "reference": 1},
+        {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0},
+        {"verified": 0, "total": 0},
+    )
+    assert sections[-1] == "coverage 0/0"
+
+
+def test_render_custody_by_source_carries_per_source_coverage():
+    # each readable per-source bullet ends with `· coverage V/T` over that
+    # source's own hash-bearing held items — the readable counterpart of the
+    # JSON by_source coverage (H121).
+    items = [
+        _src("web:a", "web", content_hash="h1"),  # verified below
+        _src("web:b", "web", content_hash="h2"),  # hash-bearing, never checked
+        _src("arxiv:1", "arxiv", content_hash="h3"),  # hash-bearing, never checked
+    ]
+    verdicts = {"web:a": CustodyEvent("web:a", "t", "unchanged", "h1", "h1")}
+    by_source = custody_counts_by_source(items, verdicts)
+    lines = render_custody_by_source(by_source)
+    # web: 1 of 2 hash-bearing verified; arxiv: 0 of 1.
+    assert "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, " \
+        "unverified 1 · coverage 1/2" in lines
+    assert "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1 " \
+        "· coverage 0/1" in lines
+    # the coverage shown == the JSON by_source coverage for that source.
+    for source in ("web", "arxiv"):
+        cov = by_source[source]["coverage"]
+        assert any(f"coverage {cov['verified']}/{cov['total']}" in ln for ln in lines)
+
+
+def test_render_custody_by_source_coverage_shows_zero_over_zero_for_reference_only():
+    # a reference-only source has no verifiable items; always-show renders
+    # `coverage 0/0` so the section is positionally stable across sources.
+    items = [
+        _src("web:ref", "web", content_hash=None, extracted_text=None,
+             stage="detected"),
+        _src("arxiv:1", "arxiv", content_hash="h"),
+    ]
+    lines = render_custody_by_source(custody_counts_by_source(items, {}))
+    assert any("`web`" in ln and ln.endswith("coverage 0/0") for ln in lines)
+
+
+def test_custody_source_breakdown_sections_end_with_coverage():
+    # the structured layer both the Markdown and HTML renderers fold carries the
+    # coverage section, so the two readable forms can never disagree on it.
+    items = [_src("web:a", "web", content_hash="h"),
+             _src("arxiv:1", "arxiv", content_hash="h2")]
+    breakdown = custody_source_breakdown(custody_counts_by_source(items, {}))
+    for _source, _n, sections in breakdown:
+        assert sections[-1].startswith("coverage ")
+
+
+def test_render_custody_headline_stays_coverage_free():
+    # regression for the H158 boundary: the whole-scope headline never grows a
+    # coverage section (it is a posture summary, not a per-source triage signal).
+    items = [_src("web:a", "web", content_hash="h")]
+    assert "coverage" not in custody_headline(items, {})
+    assert "coverage" not in render_custody_headline(
+        1, {"full": 1}, {"unverified": 1}
     )
 
 

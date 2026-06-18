@@ -365,6 +365,12 @@ headline. So the per-source line reads the same number whichever readable surfac
 agent reaches; it is the readable-line analogue of the JSON `by_source` convergence
 (`status` H133, the `graph` `stats.custody.by_source` H150), pinned once in
 `tests/test_custody_convergence.py` like the per-item and scope-headline ties above.
+Each readable bullet also trails a `coverage V/T` section (roadmap H158); a sibling
+tie pins its *value* — the readable coverage on each bullet equals the JSON
+`by_source[S].coverage` (`doctor`'s map and the shared tally's) for that source — the
+readable-coverage counterpart of the per-source coverage axis (H121), so the surfaces
+an agent reads and the audit can never disagree on how much of a source is checked
+(`test_readable_per_source_coverage_converges_with_the_json_by_source`).
 
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
@@ -1664,9 +1670,10 @@ bundle, so a reader gauges "how custody stands" without scanning every entry
 aggregate for the same scope by construction, the bundle-level counterpart of
 `status`'s custody headline — `test_scope_custody_headline_totals_equal_the_entries_and_doctor`).
 For a **multi-source** scope a per-source **breakdown** follows under the headline
-(`_By source:_`, one bullet per source with that source's fidelity/drift counts,
-roadmap H141), so a recipient of a shared briefing sees *which* source's custody
-is weakest within the scope without re-deriving it. It is built from the same
+(`_By source:_`, one bullet per source with that source's fidelity/drift counts
+and recheck `coverage V/T`, roadmap H141/H158), so a recipient of a shared briefing
+sees *which* source's custody is weakest — and least checked — within the scope
+without re-deriving it. It is built from the same
 `custody_counts_by_source` `doctor`'s `custody.by_source` reports, so it sums to
 the scope headline by construction and equals that map for the in-bundle items
 (`test_bundle_per_source_breakdown_converges_with_doctor_by_source`); a
@@ -2826,9 +2833,12 @@ aggregate (`test_context_custody_headline_converges_with_doctor`). Gated to
 tier stays a bare catalog (`test_context_custody_headline_gated_off_index`).
 
 A *multi-source* bundle follows that headline with a **`_By source:_`
-breakdown** — one bullet per source naming that source's fidelity tiers and
-drift postures — so an agent gauges *which source in the bundle is weakest*
-without re-deriving it (roadmap H149,
+breakdown** — one bullet per source naming that source's fidelity tiers, drift
+postures, and recheck coverage (`· coverage V/T`, roadmap H158 — of that
+source's verifiable held items, how many carry a verdict; always shown, even
+`coverage 0/0`, so the section is positionally stable) — so an agent gauges
+*which source in the bundle is weakest and least checked* without re-deriving it
+(roadmap H149,
 `test_context_carries_a_per_source_custody_breakdown`). It is the same shared
 `custody.render_custody_by_source` the `export bundle` briefing (H141) and the
 compiled `library/index.md` (H145) render, so the per-source line reads
@@ -2927,8 +2937,8 @@ _Custody: 3 scroll(s) · fidelity full 3 · drift verified 1, unverified 1, drif
 
 _By source:_
 
-- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1
-- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1
+- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1 · coverage 0/1
+- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1 · coverage 2/2
 
 ## Best Matches
 

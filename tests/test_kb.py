@@ -684,9 +684,10 @@ def test_kb_index_carries_a_per_source_custody_breakdown(scrolls_home, capsys):
     assert expected == [
         "_By source:_",
         "",
-        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1",
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1"
+        " · coverage 0/1",
         "- `web` — 2 scroll(s) · fidelity full 1, reference 1"
-        " · drift unverified 1, drifted 1",
+        " · drift unverified 1, drifted 1 · coverage 1/1",
         "",
     ]
     # the breakdown sits under the headline, before ## Sources
@@ -801,9 +802,10 @@ def test_kb_multi_source_group_page_carries_a_per_source_breakdown(scrolls_home,
     assert expected == [
         "_By source:_",
         "",
-        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift drifted 1",
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift drifted 1"
+        " · coverage 1/1",
         "- `web` — 2 scroll(s) · fidelity full 1, reference 1"
-        " · drift verified 1, unverified 1",
+        " · drift verified 1, unverified 1 · coverage 1/1",
         "",
     ]
     # the breakdown sits directly under the page headline, before the first bullet
