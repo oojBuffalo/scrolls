@@ -510,6 +510,23 @@ a **fully-clean** library (no source carries any drifted/rotted loss)
 | `by_source` | the per-source `{tiers, drift, coverage}` custody breakdown (sorted keys; sums to `custody`), the status-surface counterpart of `doctor`'s `custody.by_source` / `maintain`'s `by_source` |
 | `attention` | the single weakest source `{source, tiers, drift, coverage, reason, command}` (most drifted/rotted loss; `coverage` = how much of it is checked, H153) or `null` when nothing stands out, the status-surface counterpart of `maintain`'s `attention` |
 
+`--source <S>` scopes the whole status read to one source's held items (roadmap
+H166) — the status-surface counterpart of `doctor --source` (H162) and the
+read-side sibling of the per-source act commands (`verify --source` H125, `classify
+--stale --source` H154). Every block is then the one-source view: the `items` counts
+(narrowed through `library_counts(source=)`), the `custody` headline, the rendered
+`headline`, and `by_source` (which collapses to the present-and-singleton `{S: …}`).
+The whole payload stays internally consistent — the counts and the custody block
+agree on scope — and the scoped `custody.tiers`/`drift`/`coverage` equals the
+whole-library `by_source[S]` slice and a `doctor --source S` audit's custody block
+by construction (`test_status_source_scope_converges_with_the_whole_library_by_source`).
+`attention` is `null` under `--source` — the `weakest_source` flag only discriminates
+*across* sources, and a single-source scope has nothing to stand out against (the
+documented single-source gate). An unknown source holds nothing, so it is the honest
+empty headline (`_Custody: 0 scroll(s)._`, `score: 100` over an initialized library),
+never an error (`test_status_source_scopes_the_whole_payload_to_one_source`,
+`test_status_source_unknown_is_the_honest_empty_headline`).
+
 ```console
 $ scrolls status        # before init
 {"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._", "by_source": {}, "attention": null}

@@ -243,3 +243,27 @@ def test_library_counts_summarizes_items(db_path):
         "by_source": {"web": 1, "youtube": 1},
         "unclassified": 1,
     }
+
+
+def test_library_counts_scopes_to_one_source(db_path):
+    # roadmap H166: `source` narrows every count to one source's items, so
+    # `scrolls status --source <S>` reports a genuinely one-source payload.
+    insert_item(db_path, make_item())  # youtube, detected, unclassified
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", stage="fetched",
+                                   category="tool"))
+    insert_item(db_path, make_item(id="web:b", source="web", source_id=None,
+                                   url="https://b.example", stage="rendered"))
+    assert library_counts(db_path, source="web") == {
+        "total": 2,
+        "by_stage": {"detected": 0, "fetched": 1, "rendered": 1},
+        "by_source": {"web": 2},  # both web items, singleton key (youtube excluded)
+        "unclassified": 1,  # only web:b carries no category (web:a is "tool")
+    }
+    # an unknown source holds nothing → the honest empty counts, never a crash
+    assert library_counts(db_path, source="ghost") == {
+        "total": 0,
+        "by_stage": {"detected": 0, "fetched": 0, "rendered": 0},
+        "by_source": {},
+        "unclassified": 0,
+    }

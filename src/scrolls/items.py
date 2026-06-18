@@ -386,7 +386,7 @@ def count_by_source(db_path: Path) -> dict[str, int]:
     return dict(rows)
 
 
-def library_counts(db_path: Path) -> dict[str, Any]:
+def library_counts(db_path: Path, source: str | None = None) -> dict[str, Any]:
     """Item counts for `scrolls status`: total, by stage, by source, unclassified.
 
     `by_stage` always carries all three stages (zero-filled) so agents
@@ -394,21 +394,37 @@ def library_counts(db_path: Path) -> dict[str, Any]:
     await `md` — without key-existence checks; `by_source` lists only
     sources present. `unclassified` is the pool a batch `classify`
     would pick up (`category IS NULL`, any stage).
+
+    `source` scopes every count to one source's items (roadmap H166), so
+    `scrolls status --source <S>` reports a payload that is genuinely
+    one-source — the counts agree on scope with the source-scoped custody
+    block beside them. `by_source` then carries the present-and-singleton
+    ``{S: N}`` (or the empty `{}` for an unknown source that holds nothing).
     """
+    where = "" if source is None else " WHERE source = ?"
+    params: tuple[str, ...] = () if source is None else (source,)
     conn = sqlite3.connect(db_path)
     try:
         by_stage = {"detected": 0, "fetched": 0, "rendered": 0}
         by_stage.update(
-            conn.execute("SELECT stage, COUNT(*) FROM items GROUP BY stage").fetchall()
+            conn.execute(
+                f"SELECT stage, COUNT(*) FROM items{where} GROUP BY stage", params
+            ).fetchall()
         )
         by_source = dict(
             conn.execute(
-                "SELECT source, COUNT(*) FROM items GROUP BY source ORDER BY source"
+                f"SELECT source, COUNT(*) FROM items{where} "
+                "GROUP BY source ORDER BY source",
+                params,
             ).fetchall()
         )
-        total = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM items{where}", params
+        ).fetchone()[0]
         unclassified = conn.execute(
             "SELECT COUNT(*) FROM items WHERE category IS NULL"
+            + ("" if source is None else " AND source = ?"),
+            params,
         ).fetchone()[0]
     finally:
         conn.close()

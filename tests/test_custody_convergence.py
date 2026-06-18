@@ -266,6 +266,7 @@ from scrolls.maintain import (
     append_log_entry,
     compute_delta,
     compute_trend,
+    custody_snapshot,
     last_run_boundary,
     load_snapshot,
     log_path,
@@ -273,6 +274,7 @@ from scrolls.maintain import (
     report_by_source,
     report_enrichment_by_source,
     save_snapshot,
+    snapshot_headline,
     snapshot_path,
     weakest_source,
 )
@@ -615,6 +617,70 @@ def test_doctor_source_scope_unknown_source_is_the_honest_empty_audit(scrolls_ho
     assert report["custody"]["enrichment"]["by_source"] == {}
     assert report["issues"] == 0
     assert main(["doctor", "--source", "ghost"]) == 0
+
+
+def test_status_source_scope_converges_with_the_whole_library_by_source(scrolls_home, capsys):
+    # roadmap H166: `scrolls status --source S` scopes the status read to one
+    # source's held items — the status-surface counterpart of `doctor --source`
+    # (H162). The convergence pinned here, the status sibling of the doctor-scope
+    # tie above: a `--source S` status's `custody` block equals the whole-library
+    # audit's `by_source[S]` slice *and* a `doctor --source S` audit distilled
+    # (`custody_snapshot`), so the scoped status and the per-source slice of the
+    # whole report can never disagree; `by_source` collapses to the singleton, and
+    # `attention` is honestly `null` (a single source has nothing to flag across).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    whole = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(whole) == {"web", "arxiv"}
+    # non-vacuous: the two sources differ on every axis the scoped status reads
+    assert whole["web"]["tiers"] != whole["arxiv"]["tiers"]
+    assert whole["web"]["drift"] != whole["arxiv"]["drift"]
+    assert whole["web"]["coverage"] != whole["arxiv"]["coverage"]
+
+    for source in ("web", "arxiv"):
+        assert main(["status", "--source", source]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        slice_ = whole[source]
+        custody = payload["custody"]
+        # 1. the scoped status custody view == the whole-library by_source[S] slice
+        assert custody["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(custody["drift"]) == slice_["drift"]
+        assert custody["coverage"] == slice_["coverage"]
+        # 2. == the scoped `doctor --source S` audit distilled (the snapshot shape)
+        assert custody == custody_snapshot(run_doctor(get_paths(), source=source))
+        # 3. by_source collapses to the present-and-singleton {S: that same slice}
+        assert payload["by_source"] == {source: slice_}
+        # 4. the rendered headline is the scoped block rendered (parity with maintain)
+        assert payload["headline"] == snapshot_headline(custody)
+        # 5. attention is null under a single-source scope (nothing stands out)
+        assert payload["attention"] is None
+
+    # teeth: the equality is not vacuous — the cross-source slice never matches the
+    # scoped status, so a real desync between the scope and the by_source split fails.
+    assert main(["status", "--source", "web"]) == 0
+    web_status = json.loads(capsys.readouterr().out)["custody"]
+    assert web_status["tiers"] != whole["arxiv"]["tiers"]
+
+
+def test_status_source_unknown_is_the_honest_empty_headline(scrolls_home, capsys):
+    # the honest-absence gate (H166, mirroring the doctor-scope unknown-source
+    # gate): an unknown source holds nothing, so the scoped status is the empty
+    # headline (`_Custody: 0 scroll(s)._`, score 100 over an initialized library,
+    # empty by_source, null attention) — never an error.
+    main(["init"])
+    _seed_two_source_loss(get_paths().db_path)
+    capsys.readouterr()
+
+    assert main(["status", "--source", "ghost"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["custody"]["score"] == 100
+    assert payload["by_source"] == {}
+    assert payload["headline"] == "_Custody: 0 scroll(s)._"
+    assert payload["attention"] is None
+    assert payload["items"]["total"] == 0
 
 
 def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):

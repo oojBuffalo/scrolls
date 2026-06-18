@@ -835,7 +835,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     show_parser.add_argument("id", help="Item id (e.g. wikipedia:en:SQLite), or the item's URL")
 
-    subparsers.add_parser("status", help="Report library state (JSON output)")
+    status_parser = subparsers.add_parser(
+        "status", help="Report library state (JSON output)"
+    )
+    status_parser.add_argument(
+        "--source",
+        default=None,
+        metavar="S",
+        help="Scope the custody read to one source (e.g. web, arxiv) — the items "
+        "counts, custody headline, and by_source map are that source's view "
+        "(by_source collapses to {S: …}, attention is null). The status-surface "
+        "counterpart of `doctor --source`; an unknown source is the empty headline",
+    )
 
     sync_parser = subparsers.add_parser(
         "sync", help="Register new items from followed feeds (JSON output)"
@@ -1059,7 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "show":
         return _cmd_show(args.id)
     if args.command == "status":
-        return _cmd_status()
+        return _cmd_status(args.source)
     if args.command == "sync":
         return _cmd_sync(args.id)
     if args.command == "unfollow":
@@ -2768,11 +2779,11 @@ def _cmd_history(
     return 0
 
 
-def _cmd_status() -> int:
+def _cmd_status(source: str | None = None) -> int:
     paths = get_paths()
     schema_version = read_schema_version(paths.db_path)
     if schema_version is not None:
-        items = library_counts(paths.db_path)
+        items = library_counts(paths.db_path, source=source)
         subscriptions = len(list_subscriptions(paths.db_path))
     else:
         # an uninitialized library honestly holds nothing; zero-filled
@@ -2793,7 +2804,17 @@ def _cmd_status() -> int:
     # maintenance snapshot (the H21/H25 convergence-by-construction posture).
     # `run_doctor` guards a missing store itself, so before `init` this is the
     # honest zero block (`score: null`), not an error.
-    report = run_doctor(paths)
+    #
+    # `--source` (roadmap H166) scopes the whole custody read to one source's held
+    # items — the status-surface counterpart of `doctor --source` (H162), reusing
+    # the same `run_doctor(source=)` pre-filter. Every block then reads one-source:
+    # the `items` counts (narrowed via `library_counts(source=)` above), the custody
+    # snapshot, the headline, and `by_source` (which collapses to the singleton
+    # `{S: …}`). `attention` is naturally `null` under a single-source scope — the
+    # `weakest_source` gate only flags a source that *stands out* across sources, and
+    # one source has nothing to discriminate against (the documented H139/H119 gate).
+    # An unknown source holds nothing → the honest empty headline, never an error.
+    report = run_doctor(paths, source=source)
     custody = custody_snapshot(report)
     # The per-source custody breakdown the audit already produced (roadmap H133),
     # read faithfully via the shared primitive — computed once so the displayed map

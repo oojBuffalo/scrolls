@@ -556,6 +556,16 @@ each command moves items between stages or derives artifacts from them.
   `maintain`'s own `attention` uses, so the status-surface flag names `doctor`'s
   max-loss source and equals `maintain`'s `attention` by construction (no new audit;
   `tests/test_cli.py`, `tests/test_custody_convergence.py`, roadmap H139).
+  `--source <S>` scopes the whole status read to one source's held items (roadmap
+  H166) — the status-surface counterpart of `doctor --source` (H162), reusing the
+  same `run_doctor(source=)` pre-filter and narrowing the `items` counts through
+  `library_counts(source=)`. Every block is then one-source (counts, custody
+  headline, rendered `headline`, `by_source` collapsed to the singleton `{S: …}`),
+  so the payload stays internally consistent and the scoped custody view equals the
+  whole-library `by_source[S]` slice and a `doctor --source S` audit by construction
+  (`tests/test_custody_convergence.py`). `attention` is `null` under `--source` (the
+  single-source `weakest_source` gate — nothing to flag across sources); an unknown
+  source is the honest empty headline, never an error.
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

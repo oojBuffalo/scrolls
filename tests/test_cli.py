@@ -547,6 +547,83 @@ def test_status_attention_is_null_when_nothing_stands_out(scrolls_home, capsys):
     assert payload["attention"] is None
 
 
+def test_status_source_scopes_the_whole_payload_to_one_source(scrolls_home, capsys):
+    """`scrolls status --source <S>` (H166) scopes the whole status read to one
+    source's held items — the status-surface counterpart of `doctor --source`
+    (H162) and the read-side sibling of the per-source act commands (`verify
+    --source` H125). Every block is the one-source view: the `items` counts, the
+    `custody` headline, the `by_source` map (collapsed to the singleton `{S: …}`),
+    and the rendered `headline` — and the `attention` flag is `null` (a single
+    source has nothing to discriminate across, the `weakest_source` gate)."""
+    paths = get_paths()
+    _status_custody_seed(paths)  # web: held + drifted; arxiv: one held paper
+    capsys.readouterr()
+
+    assert main(["status", "--source", "web"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    # 1. the custody block is web's view, == the whole-library by_source[web] slice
+    whole = run_doctor(paths)["custody"]["by_source"]["web"]
+    custody = payload["custody"]
+    assert custody["tiers"] == whole["tiers"] == {"full": 2, "partial": 0, "reference": 0}
+    # the snapshot's ledger-vocab drift maps to the by_source posture vocab
+    assert custody["drift"]["unchanged"] == whole["drift"]["verified"] == 1
+    assert custody["drift"]["drifted"] == whole["drift"]["drifted"] == 1
+    assert custody["coverage"] == whole["coverage"]
+    # the whole block == the scoped doctor audit distilled (convergence by construction)
+    assert custody == custody_snapshot(run_doctor(paths, source="web"))
+
+    # 2. by_source collapses to the present-and-singleton {web: …}
+    assert list(payload["by_source"]) == ["web"]
+    assert payload["by_source"]["web"] == whole
+
+    # 3. the rendered headline is web's, and names only web's two held scrolls
+    assert payload["headline"] == snapshot_headline(custody)
+    assert payload["headline"] == (
+        "_Custody: 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1._"
+    )
+
+    # 4. the items count block narrows to web too (the whole payload is one-source)
+    assert payload["items"]["total"] == 2
+    assert payload["items"]["by_source"] == {"web": 2}
+    assert payload["items"]["by_stage"] == {"detected": 0, "fetched": 0, "rendered": 2}
+
+    # 5. attention is null under a single-source scope (nothing stands out)
+    assert payload["attention"] is None
+
+
+def test_status_source_unknown_is_the_honest_empty_headline(scrolls_home, capsys):
+    """An unknown source holds nothing, so `status --source <ghost>` is the honest
+    empty headline (`_Custody: 0 scroll(s)._`, score 100 for an initialized library),
+    never an error — the H162 unknown-source posture on the status surface."""
+    paths = get_paths()
+    _status_custody_seed(paths)
+    capsys.readouterr()
+
+    assert main(["status", "--source", "ghost"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["items"]["total"] == 0
+    assert payload["items"]["by_source"] == {}
+    assert payload["custody"]["tiers"] == {"full": 0, "partial": 0, "reference": 0}
+    assert payload["by_source"] == {}
+    assert payload["headline"] == "_Custody: 0 scroll(s)._"
+    assert payload["attention"] is None
+
+
+def test_status_source_before_init_is_the_empty_payload(scrolls_home, capsys):
+    """Before `init` the store holds nothing, so `--source` is moot — the payload is
+    the same honest empty form `status` reports without a source (no crash on a
+    missing store)."""
+    assert main(["status", "--source", "web"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["initialized"] is False
+    assert payload["items"] == _EMPTY_COUNTS
+    assert payload["custody"]["score"] is None
+    assert payload["headline"] == "_Custody: 0 scroll(s)._"
+    assert payload["by_source"] == {}
+    assert payload["attention"] is None
+
+
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):
     main(["add", "https://x.com/karpathy/status/1111"])
     main(["add", "https://example.com/post"])
