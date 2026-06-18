@@ -93,6 +93,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_concept_page",
         "get_tag_page",
         "list_sources",
+        "get_library_health",
         "ingest_url",
         "verify_scroll",
         "follow_feed",
@@ -1291,6 +1292,112 @@ def test_list_sources_counts_items(scrolls_home, fake_wikipedia_api):
 
 def test_list_sources_before_init_is_empty(scrolls_home):
     assert mcp_server.list_sources() == {}
+
+
+# --- get_library_health: the whole-library custody audit over MCP (H161) ---
+
+
+def _seed_health_fixture(db):
+    """Two sources spanning the fidelity tiers and drift postures.
+
+    `web` carries the only actionable loss (one drifted), so it is the
+    unambiguous weakest source the `attention` flag must name; `arxiv` is clean.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    def _item(item_id, source, url, **kw):
+        kw.setdefault("stage", "fetched")
+        return ScrollItem(
+            id=item_id, source=source, url=url,
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Topic {item_id}", **kw)
+
+    insert_item(db, _item("web:full", "web", "https://ex.com/full",
+                          extracted_text="b", raw_text="<r>b</r>", content_hash="sha256:f"))
+    insert_item(db, _item("web:drift", "web", "https://ex.com/drift",
+                          extracted_text="b", raw_text="<r>b</r>", content_hash="sha256:d"))
+    insert_item(db, _item("web:ref", "web", "https://ex.com/ref", stage="detected"))
+    insert_item(db, _item("arxiv:1", "arxiv", "https://arxiv.org/abs/1",
+                          extracted_text="b", raw_text="<r>b</r>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:f", "sha256:f", None),
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:d", "sha256:changed", None),
+    ])
+
+
+def test_get_library_health_returns_the_doctor_custody_block(scrolls_home):
+    # the tool is exactly `run_doctor`'s custody block plus the two distilled
+    # members `status` adds — no new derivation, the doctor-shaped whole-library read.
+    from scrolls.custody import weakest_source
+    from scrolls.doctor import run_doctor
+    from scrolls.maintain import custody_snapshot, snapshot_headline
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_health_fixture(db)
+
+    health = mcp_server.get_library_health()
+    report = run_doctor(get_paths())
+    custody = report["custody"]
+
+    # every custody-block key is carried verbatim
+    for key in custody:
+        assert health[key] == custody[key]
+    # the fixture's non-trivial mix is reproduced (not an all-zero pass)
+    assert health["tiers"] == {"full": 3, "partial": 0, "reference": 1}
+    assert health["drift"]["unchanged"] == 1
+    assert health["drift"]["drifted"] == 1
+    assert health["drift"]["unverified"] == 2  # web:ref + arxiv:1, never checked
+    # the two distilled members, via the same shared primitives `status` uses
+    assert health["attention"] == weakest_source(custody["by_source"])
+    assert health["attention"]["source"] == "web"
+    assert health["attention"]["command"] == "scrolls verify --source web"
+    assert health["headline"] == snapshot_headline(custody_snapshot(report))
+
+
+def test_get_library_health_matches_cli_status_field_for_field(scrolls_home, capsys):
+    # MCP↔CLI parity: the tool's by_source/attention/score/tiers/headline equal a
+    # `scrolls status` over the same seed — one custody picture, two surfaces.
+    import json
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_health_fixture(db)
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health()
+
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+
+    assert health["by_source"] == status["by_source"]
+    assert health["attention"] == status["attention"]
+    assert health["headline"] == status["headline"]
+    assert health["score"] == status["custody"]["score"]
+    assert health["tiers"] == status["custody"]["tiers"]
+
+
+def test_get_library_health_before_init_is_the_honest_empty_block(scrolls_home):
+    # honest absence: an uninitialized library is the present-but-empty custody
+    # block (`score: null`, zeroed counts), never an error or a fabricated 100.
+    health = mcp_server.get_library_health()
+    assert health["score"] is None
+    assert health["tiers"] == {"full": 0, "partial": 0, "reference": 0}
+    assert health["by_source"] == {}
+    assert health["attention"] is None
+    assert health["headline"] == "_Custody: 0 scroll(s)._"
+
+
+def test_get_library_health_empty_initialized_library_is_fully_custodied(scrolls_home):
+    # an empty *initialized* library holds nothing, so it is trivially healthy:
+    # score 100 (no held item is at risk), no source to flag.
+    main(["init"])
+    health = mcp_server.get_library_health()
+    assert health["score"] == 100
+    assert health["by_source"] == {}
+    assert health["attention"] is None
 
 
 # --- feed subscriptions (ADR 0020) ---

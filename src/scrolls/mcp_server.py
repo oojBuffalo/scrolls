@@ -32,8 +32,11 @@ from scrolls.custody import (
     parse_since,
     record_events,
     verify_item,
+    weakest_source,
 )
 from scrolls.db import init_db
+from scrolls.doctor import run_doctor
+from scrolls.maintain import custody_snapshot, snapshot_headline
 from scrolls.generated import generated_body
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import compute_facets
@@ -75,7 +78,9 @@ _INSTRUCTIONS = (
     "get_related_scrolls and "
     "get_concept_page (or get_tag_page) to follow connections, get_link_graph "
     "for the whole "
-    "library's link structure at once, and ingest_url to save "
+    "library's link structure at once, get_library_health for the "
+    "whole-library custody audit (score, fidelity tiers, drift, and which "
+    "source needs attention), and ingest_url to save "
     "something new. verify_scroll re-captures a held scroll and reports "
     "whether its source has drifted or rotted since it was saved. "
     "follow_feed subscribes the library to an RSS/Atom "
@@ -519,6 +524,46 @@ def list_sources() -> dict[str, int]:
     return count_by_source(paths.db_path)
 
 
+def get_library_health() -> dict[str, Any]:
+    """The whole-library custody audit — how custody stands across the library.
+
+    The MCP counterpart of `scrolls status`/`doctor`'s custody picture (roadmap
+    H161). Where get_scroll exposes one item's `fidelity`/`drift` and
+    get_link_graph's `stats.custody.by_source` summarises the graph scope, this
+    is the whole-library health read an agent operating purely over MCP otherwise
+    had no way to ask: "what's the library's custody score, and which source needs
+    attention?" Returns exactly the custody block `run_doctor` produces — `score`
+    (integrity 0–100, `null` before any items), fidelity `tiers`
+    (full/partial/reference), the `drift` posture counts (with `coverage`
+    `{verified, total}` and the recent `events`), the per-source `by_source` map
+    (`{source: {tiers, drift, coverage}}`, the same split `status`/`doctor` carry),
+    and the `enrichment`/`summaries` re-derivability blocks — plus two distilled
+    members `status` adds: the weakest-source `attention` flag (the one source
+    carrying the most actionable loss, with its `{source, tiers, drift, coverage,
+    reason, command}`, or `null` when none stands out) and the one-line `headline`.
+
+    Read-only custody **posture** only: the repairable structural-findings /
+    exit-code axis (`doctor`'s duplicates / missing scrolls / FTS) stays a CLI
+    concern (`scrolls doctor --fix`) — an MCP agent reads the triage signal, the
+    repair act is the shell's. Network-free (no re-capture this run; drift is read
+    from the verify ledger, never re-checked live). Converges with the CLI `status`
+    and `doctor` by construction — one `run_doctor` read, the same distillation
+    primitives. An empty/uninitialized library is the honest present-but-empty
+    block (`score: null`, zeroed counts, `attention: null`), never an error.
+    """
+    paths = get_paths()
+    report = run_doctor(paths)
+    custody = report["custody"]
+    return {
+        **custody,
+        # the two distilled members `scrolls status` adds beside the raw block,
+        # via the same shared primitives — so the MCP flag/headline name the same
+        # source and read the same line the CLI does (convergence by construction).
+        "attention": weakest_source(custody["by_source"]),
+        "headline": snapshot_headline(custody_snapshot(report)),
+    }
+
+
 def ingest_url(url: str) -> dict[str, Any]:
     """Save a URL into the library: register, fetch, classify, render (network).
 
@@ -645,6 +690,7 @@ _TOOLS = (
     get_concept_page,
     get_tag_page,
     list_sources,
+    get_library_health,
     ingest_url,
     verify_scroll,
     follow_feed,

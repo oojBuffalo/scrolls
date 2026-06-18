@@ -1,10 +1,12 @@
 """The custody-convergence cross-surface invariant (roadmap H50).
 
-The custody picture an agent reads is now surfaced in six places — `scrolls
+The custody picture an agent reads is now surfaced in seven places — `scrolls
 status` (H38), the shareable bundle briefing (H45), the `scrolls context` bundle
 (H47), `scrolls facets fidelity`/`drift` (H48), the `scrolls graph` stats block
-(H52), and `doctor`'s `custody` block — each *claimed* to converge for a given
-scope because they all derive from one
+(H52), the MCP `get_library_health` tool (H161 — the whole-library custody read
+over MCP, `run_doctor`'s custody block plus the distilled `attention`/`headline`
+`status` adds), and `doctor`'s `custody` block — each *claimed* to converge for a
+given scope because they all derive from one
 custody tally (`custody.custody_counts`/`custody_headline` over `get_fidelity` +
 `drift_posture`/`latest_events`). That claim is pinned per-surface in scattered
 tests; this module pins it *once*, the way `tests/test_completeness.py` pins the
@@ -1049,6 +1051,76 @@ def test_status_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys
     assert weakest_source(by_source) is None
     assert main(["maintain", "--no-recheck"]) == 0
     assert json.loads(capsys.readouterr().out)["attention"] is None
+
+
+def test_mcp_library_health_converges_with_status_and_doctor(scrolls_home, capsys):
+    # roadmap H161: the MCP-surface sibling of the JSON `by_source`/`attention`
+    # convergence (H157/H139). `get_library_health` returns `run_doctor`'s custody
+    # block plus the two distilled members `status` adds (`attention`/`headline`),
+    # via the same shared primitives — so an agent reading custody purely over MCP
+    # sees the same picture the CLI `status`/`doctor` show. Over the multi-source
+    # loss seed, pin that the MCP read, `status`, and `doctor` are one number on
+    # every axis they share.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full2 drifted); arxiv is clean, so
+    # `web` is the unambiguous max-loss source the flag must name (the H139 seed).
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health()
+
+    # 1. == doctor's custody block on every shared axis (it *is* that block + 2 members)
+    custody = run_doctor(get_paths())["custody"]
+    assert health["score"] == custody["score"]
+    assert health["tiers"] == custody["tiers"]
+    assert health["drift"] == custody["drift"]
+    assert health["by_source"] == custody["by_source"]
+    assert health["enrichment"] == custody["enrichment"]
+    # the distilled flag names doctor's max-loss source (a literal pick, not a
+    # tautology — ranking by *least* loss would name `arxiv`)
+    assert health["attention"] == weakest_source(custody["by_source"])
+    assert health["attention"]["source"] == _max_loss_source(custody["by_source"]) == "web"
+
+    # 2. == the CLI `status` surface field-for-field (the H139 status seed picture)
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert health["by_source"] == status["by_source"]
+    assert health["attention"] == status["attention"]
+    assert health["headline"] == status["headline"]
+    assert health["score"] == status["custody"]["score"]
+    assert health["tiers"] == status["custody"]["tiers"]
+
+
+def test_mcp_library_health_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys):
+    # the honest-null gate on the MCP surface (H161/H139): with ≥2 sources but no
+    # actionable loss, `get_library_health`'s `attention` is `null` — exactly when
+    # `status`'s and `maintain`'s are, and when doctor's per-source map is clean.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1"))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="a",
+                          raw_text="<raw>a</raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+    ])
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health()
+    assert health["attention"] is None
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss
+    assert weakest_source(by_source) is None
 
 
 def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):

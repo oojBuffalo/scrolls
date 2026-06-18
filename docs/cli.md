@@ -3132,6 +3132,7 @@ The tools wrap the same engines as the CLI commands
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
+| `get_library_health()` | `scrolls status` / `doctor` (custody block) | the whole-library custody audit (H161): `run_doctor`'s custody block (`score`/`tiers`/`drift`+`coverage`/`by_source`/`enrichment`/`summaries`) plus the distilled weakest-source `attention` flag and one-line `headline` `status` adds. Read-only **posture** — the repairable structural-findings/exit-code axis stays a CLI concern (`doctor --fix`); network-free (drift read from the ledger). Converges with the CLI `status`/`doctor` by construction (`test_get_library_health_matches_cli_status_field_for_field`, `test_mcp_library_health_converges_with_status_and_doctor`); empty/uninitialized → the honest present-but-empty block (`score: null`, `attention: null`) |
 | `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |
 | `verify_scroll(item_id)` | `scrolls verify <id>` | the custody event (`status` unchanged/drifted/rotted/error + hashes); records to the ledger, never clobbers the capture (ADR 0098; `test_verify_scroll_records_drift`) |
 | `follow_feed(url)` | `scrolls follow <url>` | the subscription plus `created` (ADR 0020) |
