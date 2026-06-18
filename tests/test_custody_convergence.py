@@ -197,6 +197,13 @@ multi-source loss seed, non-vacuous (the two sources differ on every axis) and
 mutation-checked (a perturbed slice never matches the scoped audit). An unknown
 source is the honest empty audit (`score: 100`, empty `by_source`), never an
 error — the per-source-scope counterpart of the per-source-aggregate tie above.
+The **same** `run_doctor(source=)` pre-filter backs the rest of the per-source
+read family: `status --source S` (roadmap H166), `maintain --source S` (H165, the
+scheduled pass), and MCP `get_library_health(source=S)` (H167, the agent-over-MCP
+read). Each is pinned to equal the others and the `by_source[S]` slice over the
+loss seed, with `attention` honestly `null` on every single-source scope (the
+`weakest_source` gate has nothing to rank across) — so the scoped custody picture
+is one number whichever of the four surfaces a worker or agent reaches.
 
 The **`status` surface** carries the same per-source breakdown (roadmap H133): a
 faithful read (`report_by_source`) of the `run_doctor` map `status` already makes
@@ -754,6 +761,82 @@ def test_maintain_source_scope_unknown_source_is_the_honest_empty_pass(
     assert report["headline"] == "_Custody: 0 scroll(s)._"
     assert report["attention"] is None
     assert report["delta"] is None
+
+
+def test_mcp_library_health_source_scope_converges_with_doctor_and_status_source(
+    scrolls_home, capsys
+):
+    # roadmap H167: MCP `get_library_health(source=S)` scopes the whole custody read
+    # to one source's held items — the MCP sibling of `doctor --source` (H162) /
+    # `status --source` (H166), reusing the same `run_doctor(source=)` pre-filter.
+    # The MCP leg of the per-source-scope family (the H169 capstone folds it beside
+    # the three CLI ties): a `get_library_health(source=S)` block equals the
+    # whole-library audit's `by_source[S]` slice, a `doctor --source S` audit, AND a
+    # `status --source S` payload's custody — and `attention` is honestly null on a
+    # single source (the cross-source gate has nothing to rank).
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    whole = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(whole) == {"web", "arxiv"}
+    # non-vacuous: the two sources differ on every axis the scoped read covers
+    assert whole["web"]["tiers"] != whole["arxiv"]["tiers"]
+    assert whole["web"]["drift"] != whole["arxiv"]["drift"]
+    assert whole["web"]["coverage"] != whole["arxiv"]["coverage"]
+
+    for source in ("web", "arxiv"):
+        health = mcp_server.get_library_health(source=source)
+        slice_ = whole[source]
+        scoped_doctor = run_doctor(get_paths(), source=source)["custody"]
+        # 1. == the scoped `doctor --source S` custody block, key for key (the tool
+        #    *is* that block plus the two distilled members)
+        for key in scoped_doctor:
+            assert health[key] == scoped_doctor[key]
+        # 2. the scoped custody view == the whole-library by_source[S] slice
+        assert health["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(health["drift"]) == slice_["drift"]
+        assert health["drift"]["coverage"] == slice_["coverage"]
+        # 3. by_source collapses to the present-and-singleton {S: that same slice}
+        assert health["by_source"] == {source: slice_}
+        # 4. == a `status --source S` payload's custody/by_source/headline
+        assert main(["status", "--source", source]) == 0
+        status = json.loads(capsys.readouterr().out)
+        assert custody_snapshot(run_doctor(get_paths(), source=source)) == status["custody"]
+        assert health["by_source"] == status["by_source"]
+        assert health["headline"] == status["headline"]
+        # 5. attention null under a single-source scope (nothing to rank across)
+        assert health["attention"] is None
+
+    # teeth: the equality is not vacuous — the cross-source slice never matches the
+    # scoped read, so a real desync between the scope and the by_source split fails.
+    web_health = mcp_server.get_library_health(source="web")
+    assert web_health["tiers"] != whole["arxiv"]["tiers"]
+
+
+def test_mcp_library_health_source_scope_unknown_source_is_the_honest_empty_block(
+    scrolls_home, capsys
+):
+    # the honest-absence gate (H167, mirroring the doctor/status/maintain
+    # unknown-source gates): an unknown source holds nothing, so the scoped MCP read
+    # is the empty-but-healthy block (score 100, empty by_source, null attention) —
+    # never an error, and it agrees with `doctor --source ghost` key for key.
+    from scrolls import mcp_server
+
+    main(["init"])
+    _seed_two_source_loss(get_paths().db_path)
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health(source="ghost")
+    assert health["score"] == 100
+    assert health["by_source"] == {}
+    assert health["attention"] is None
+    scoped = run_doctor(get_paths(), source="ghost")["custody"]
+    for key in scoped:
+        assert health[key] == scoped[key]
 
 
 def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):

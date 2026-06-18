@@ -524,7 +524,7 @@ def list_sources() -> dict[str, int]:
     return count_by_source(paths.db_path)
 
 
-def get_library_health() -> dict[str, Any]:
+def get_library_health(source: str | None = None) -> dict[str, Any]:
     """The whole-library custody audit — how custody stands across the library.
 
     The MCP counterpart of `scrolls status`/`doctor`'s custody picture (roadmap
@@ -542,17 +542,30 @@ def get_library_health() -> dict[str, Any]:
     carrying the most actionable loss, with its `{source, tiers, drift, coverage,
     reason, command}`, or `null` when none stands out) and the one-line `headline`.
 
+    `source` scopes the *whole* read to one source's held items (roadmap H167) —
+    the MCP sibling of the CLI `doctor --source` (H162) / `status --source` (H166)
+    per-source reads, reusing the same `run_doctor(source=)` pre-filter — so an
+    agent triaging the weakest source (named by this tool's own `attention` flag)
+    reads just that source's health. Every block is then the one-source view: the
+    custody counts, `by_source` collapses to the present-and-singleton ``{S: …}``,
+    `headline` renders that scoped block, and `attention` is `null` (a single
+    source has nothing to rank across — the `weakest_source` cross-source gate). An
+    unknown source holds nothing, so it is the honest empty block (`score: 100`
+    over an initialized library, empty `by_source`), never an error.
+
     Read-only custody **posture** only: the repairable structural-findings /
     exit-code axis (`doctor`'s duplicates / missing scrolls / FTS) stays a CLI
     concern (`scrolls doctor --fix`) — an MCP agent reads the triage signal, the
     repair act is the shell's. Network-free (no re-capture this run; drift is read
     from the verify ledger, never re-checked live). Converges with the CLI `status`
     and `doctor` by construction — one `run_doctor` read, the same distillation
-    primitives. An empty/uninitialized library is the honest present-but-empty
-    block (`score: null`, zeroed counts, `attention: null`), never an error.
+    primitives (a `source`-scoped read equals a CLI `doctor --source S` /
+    `status --source S` over the same library). An empty/uninitialized library is
+    the honest present-but-empty block (`score: null`, zeroed counts,
+    `attention: null`), never an error.
     """
     paths = get_paths()
-    report = run_doctor(paths)
+    report = run_doctor(paths, source=source)
     custody = report["custody"]
     return {
         **custody,

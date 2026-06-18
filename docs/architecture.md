@@ -1388,13 +1388,18 @@ choice (ADRs 0004, 0005).
   `get_tag_page` (ADR 0064 — tag matched case-insensitively, slug
   collisions resolved by the page's `# Tag:` heading),
   `list_sources`,
-  `get_library_health` (roadmap H161 — the whole-library custody audit:
-  `run_doctor`'s custody block plus the distilled weakest-source
-  `attention` flag and one-line `headline` `scrolls status` adds, the
-  MCP counterpart of the CLI `status`/`doctor` custody picture an agent
-  operating purely over MCP otherwise could not read; read-only posture,
-  the repairable `--fix` axis stays CLI, converges with `status`/`doctor`
-  by construction and is pinned in `tests/test_custody_convergence.py`),
+  `get_library_health(source=…)` (roadmap H161/H167 — the whole-library
+  custody audit: `run_doctor`'s custody block plus the distilled
+  weakest-source `attention` flag and one-line `headline` `scrolls status`
+  adds, the MCP counterpart of the CLI `status`/`doctor` custody picture an
+  agent operating purely over MCP otherwise could not read; the optional
+  `source` scopes the whole read to one source's held items via the same
+  `run_doctor(source=)` pre-filter the CLI `doctor --source`/`status
+  --source` use — the MCP leg of the per-source-scope read family, with
+  `by_source` the singleton and `attention` null on a single source;
+  read-only posture, the repairable `--fix` axis stays CLI, converges with
+  `status`/`doctor` (scoped and whole) by construction and is pinned in
+  `tests/test_custody_convergence.py`),
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
   `compile_library`) registered

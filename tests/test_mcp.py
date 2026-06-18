@@ -1400,6 +1400,62 @@ def test_get_library_health_empty_initialized_library_is_fully_custodied(scrolls
     assert health["attention"] is None
 
 
+def test_get_library_health_source_scopes_the_read_to_one_source(scrolls_home):
+    # roadmap H167: `source=` scopes the whole custody read to one source's held
+    # items, reusing the same `run_doctor(source=)` pre-filter the CLI
+    # `doctor --source`/`status --source` (H162/H166) use — the MCP sibling of the
+    # per-source scope. The scoped block *is* `run_doctor(paths, source=S)`'s custody
+    # block plus the two distilled members, so it equals the whole-library audit's
+    # `by_source[S]` slice; `by_source` collapses to the present-and-singleton.
+    from scrolls.doctor import run_doctor
+    from scrolls.maintain import custody_snapshot, snapshot_headline
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_health_fixture(db)
+
+    health = mcp_server.get_library_health(source="web")
+    scoped = run_doctor(get_paths(), source="web")["custody"]
+
+    # every custody-block key is carried verbatim from the scoped audit
+    for key in scoped:
+        assert health[key] == scoped[key]
+    # the one-source view: only web's items (full ×2 + the reference pointer),
+    # by_source the singleton — arxiv:1 is excluded
+    assert set(health["by_source"]) == {"web"}
+    assert health["tiers"] == {"full": 2, "partial": 0, "reference": 1}
+    assert health["drift"]["drifted"] == 1
+    # the headline is the *scoped* block rendered; attention null on a single source
+    assert health["headline"] == snapshot_headline(
+        custody_snapshot(run_doctor(get_paths(), source="web"))
+    )
+    assert health["attention"] is None
+
+
+def test_get_library_health_source_attention_is_null_under_a_single_source(scrolls_home):
+    # under a single-source scope `attention` is naturally null with no special
+    # casing — `by_source` is a singleton, so the `weakest_source` cross-source
+    # gate (len < 2) returns None, exactly like CLI `status --source` (H166). The
+    # whole-library read still flags web (the H139 max-loss source).
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    assert mcp_server.get_library_health()["attention"]["source"] == "web"
+    assert mcp_server.get_library_health(source="web")["attention"] is None
+
+
+def test_get_library_health_unknown_source_is_the_honest_empty_block(scrolls_home):
+    # honest absence (H167, mirroring `doctor --source ghost`): an unknown source
+    # holds nothing, so the scoped read is the empty-but-healthy block (score 100
+    # over an initialized library, empty by_source, null attention) — never an error.
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    health = mcp_server.get_library_health(source="ghost")
+    assert health["score"] == 100
+    assert health["by_source"] == {}
+    assert health["attention"] is None
+    assert health["headline"] == "_Custody: 0 scroll(s)._"
+
+
 # --- feed subscriptions (ADR 0020) ---
 
 
