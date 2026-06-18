@@ -683,6 +683,79 @@ def test_status_source_unknown_is_the_honest_empty_headline(scrolls_home, capsys
     assert payload["items"]["total"] == 0
 
 
+def test_maintain_source_scope_converges_with_the_whole_library_by_source(
+    scrolls_home, capsys
+):
+    # roadmap H165: `scrolls maintain --source S` scopes the scheduled pass to one
+    # source's held items — the maintenance-surface counterpart of `doctor --source`
+    # (H162) and `status --source` (H166), reusing the same `run_doctor(source=)`
+    # pre-filter. The convergence pinned here, the third leg of the per-source-scope
+    # triad (the capstone H169 ties all four scoped reads + MCP together once H167
+    # lands): a `--source S` pass's `custody`/`by_source`/`headline` equals the
+    # whole-library audit's `by_source[S]` slice, a `doctor --source S` audit
+    # distilled, AND a `status --source S` payload — `--no-recheck` keeps the ledger
+    # pristine so the maintain audit and the fresh doctor/status reads see the same
+    # state. `attention` is null on a single-source scope.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    whole = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(whole) == {"web", "arxiv"}
+    # non-vacuous: the two sources differ on every axis the scoped pass reads
+    assert whole["web"]["tiers"] != whole["arxiv"]["tiers"]
+    assert whole["web"]["drift"] != whole["arxiv"]["drift"]
+    assert whole["web"]["coverage"] != whole["arxiv"]["coverage"]
+
+    for source in ("web", "arxiv"):
+        assert main(["maintain", "--no-recheck", "--source", source]) == 0
+        report = json.loads(capsys.readouterr().out)
+        slice_ = whole[source]
+        custody = report["custody"]
+        # 1. the scoped maintain custody view == the whole-library by_source[S] slice
+        assert custody["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(custody["drift"]) == slice_["drift"]
+        assert custody["coverage"] == slice_["coverage"]
+        # 2. == the scoped `doctor --source S` audit distilled (the snapshot shape)
+        assert custody == custody_snapshot(run_doctor(get_paths(), source=source))
+        # 3. == a `status --source S` payload's custody/by_source/headline
+        assert main(["status", "--source", source]) == 0
+        status = json.loads(capsys.readouterr().out)
+        assert custody == status["custody"]
+        assert report["by_source"] == status["by_source"] == {source: slice_}
+        assert report["headline"] == status["headline"] == snapshot_headline(custody)
+        # 4. attention null + delta null (scoped, non-persisting — keeps no baseline)
+        assert report["attention"] is None
+        assert report["delta"] is None
+
+    # teeth: the equality is not vacuous — the cross-source slice never matches the
+    # scoped pass, so a real desync between the scope and the by_source split fails.
+    assert main(["maintain", "--no-recheck", "--source", "web"]) == 0
+    web_maintain = json.loads(capsys.readouterr().out)["custody"]
+    assert web_maintain["tiers"] != whole["arxiv"]["tiers"]
+
+
+def test_maintain_source_scope_unknown_source_is_the_honest_empty_pass(
+    scrolls_home, capsys
+):
+    # the honest-absence gate (H165, mirroring the doctor/status unknown-source
+    # gates): an unknown source holds nothing, so the scoped pass is the empty
+    # headline (`_Custody: 0 scroll(s)._`, empty by_source, null attention/delta) —
+    # never an error, and it agrees with `doctor --source ghost` distilled.
+    main(["init"])
+    _seed_two_source_loss(get_paths().db_path)
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck", "--source", "ghost"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["custody"] == custody_snapshot(run_doctor(get_paths(), source="ghost"))
+    assert report["by_source"] == {}
+    assert report["headline"] == "_Custody: 0 scroll(s)._"
+    assert report["attention"] is None
+    assert report["delta"] is None
+
+
 def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):
     # roadmap H141: the export-bundle briefing's `_By source:_` breakdown is a
     # derived read view of the same per-source picture doctor reports. Over the

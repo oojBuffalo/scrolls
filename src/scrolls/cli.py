@@ -723,6 +723,18 @@ def build_parser() -> argparse.ArgumentParser:
         "trend distils the window's net score/drift movement into one posture "
         "(improving / holding / regressing); requires --history",
     )
+    maintain_parser.add_argument(
+        "--source",
+        default=None,
+        metavar="S",
+        help="Scope the pass to one source's held items — the scheduled-"
+        "maintenance counterpart of doctor --source / verify --source. The "
+        "recheck, audit, by_source, and headline narrow to <S>; view "
+        "regeneration stays whole-library. A scoped pass is a focused triage "
+        "action: it records per-item drift events but never updates the whole-"
+        "library trend baseline, so its delta is null (composes with "
+        "--all/--limit/--no-recheck; conflicts with --history)",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -1034,6 +1046,16 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        # `--source` scopes a pass; `--history` is a read of recorded passes —
+        # mutually exclusive, rejected here (it lives outside the group so it can
+        # compose with --all/--limit/--no-recheck). The `--all`/`--trend` precedent.
+        if args.source is not None and args.history is not None:
+            print(
+                json.dumps({"error": "--source scopes a maintenance pass; it "
+                            "conflicts with --history (a read, not a pass)"}),
+                file=sys.stderr,
+            )
+            return 2
         if args.history is not None:
             return _cmd_maintain_history(args.history, args.trend)
         if args.trend:
@@ -1041,7 +1063,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps({"error": "--trend requires --history"}), file=sys.stderr
             )
             return 2
-        return _cmd_maintain(args.recheck, args.recheck_all, args.limit)
+        return _cmd_maintain(args.recheck, args.recheck_all, args.limit, args.source)
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -1132,8 +1154,10 @@ def _cmd_doctor(fix: bool, source: str | None = None) -> int:
     return 1 if payload["issues"] > payload["fixed"] else 0
 
 
-def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
-    """One scheduled custody-maintenance pass (roadmap H22/H23/H34/H83).
+def _cmd_maintain(
+    recheck: bool, recheck_all: bool, limit: int | None, source: str | None = None
+) -> int:
+    """One scheduled custody-maintenance pass (roadmap H22/H23/H34/H83/H165).
 
     The dogfood flow's recurring sibling, composed entirely from surfaces that
     already ship: *recheck* the live edge (`verify`, bounded by `--limit`, behind
@@ -1150,61 +1174,109 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
     so also rechecks everything. The same `previous` snapshot is both the
     staleness boundary and the delta baseline, loaded once.
 
+    `source` scopes the pass to one source's held items (roadmap H165) — the
+    scheduled-maintenance counterpart of `doctor --source` (H162) and the act-side
+    `verify --source` (H125), reusing the **same** `run_doctor(source=)` pre-filter
+    so the scoped `custody`/`by_source`/`headline` converge with `doctor --source S`
+    / `status --source S` by construction (H169). Under `--source`:
+
+    - the **recheck** targets only <S>'s held, hash-bearing items (the
+      `verify --source S` set, still stale-bounded / `--all`-able);
+    - the **audit** is scoped (`run_doctor(source=S)`), so every reported block is
+      the one-source view, and `by_source` collapses to the singleton ``{S: …}``
+      (so `attention` is naturally `null` — a single source has nothing to flag
+      across, the `weakest_source` `len < 2` gate);
+    - **view regeneration stays whole-library** — `compile_kb` is a deterministic
+      global recompile, not a per-source one (decision: only recheck + audit + delta
+      narrow);
+    - the pass is **non-persisting**: it records per-item drift events (the next
+      whole-library pass folds them into the trend) but never writes the single
+      whole-library snapshot/log baseline — a scoped pass is a focused triage
+      action, not a trend checkpoint, and must not clobber the one baseline with a
+      one-source slice (decision: no per-source storage shape, ADR 0082). Because
+      no per-source baseline exists to diff against (the stored snapshot drops
+      `by_source`), the scoped `delta` is `null` — the honest-absence posture; the
+      per-pass `recheck` movement is the signal, and the whole-library `maintain`
+      owns the cross-run trend.
+
     Report-only and idempotent (custody-vision §2.4): it records drift events and
     regenerates `library/` views, but never repairs index rows, reclassifies, or
     re-summarizes — `doctor --fix` / `classify --stale` / `kb --stale` stay the
     explicit, on-request mutations. The exit code mirrors `doctor`: nonzero only
     when structural `issues` remain (the operator should run `doctor --fix`);
-    drift and stale enrichment/summaries are reported, never a failure.
+    drift and stale enrichment/summaries are reported, never a failure. Under
+    `--source` the exit reflects only <S>'s attributable findings (orphan/FTS are
+    not source-attributable, so the scoped audit skips them, per `run_doctor`).
     """
     paths = get_paths()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # Load the last run's snapshot once: it is both this run's delta baseline AND
     # (via its recorded_at) the staleness boundary the default recheck windows by.
+    # A scoped pass reads the same whole-library boundary (it shares the staleness
+    # window semantics) but never writes it back (see below).
     path = snapshot_path(paths)
     previous = load_snapshot(path)
     boundary = None if recheck_all else last_run_boundary(previous)
 
     # 1. RECHECK — the one live edge, bounded; records drift events, never
     #    touching the captures (ADR 0098). Skipped entirely with --no-recheck.
+    #    `source` narrows the candidate set to that source's held items (H165).
     if recheck:
-        recheck_report = _recheck_held_items(paths, limit, now, boundary)
+        recheck_report = _recheck_held_items(paths, limit, now, boundary, source)
     else:
         recheck_report = {
             "skipped": True, "scope": None, "since": None, "checked": 0,
             "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
             # Coverage is a read of the current ledger, not the live edge, so it
             # rides --no-recheck too (roadmap H109): "N of M verifiable items
-            # carry a verdict" without re-capturing anything.
-            "coverage": _maintain_coverage(paths),
+            # carry a verdict" without re-capturing anything. Scoped to <S> too,
+            # so the reported coverage agrees with the scoped audit's.
+            "coverage": _maintain_coverage(paths, source),
         }
 
-    # 2. REGENERATE views from canonical rows (views are regenerable).
+    # 2. REGENERATE views from canonical rows (views are regenerable). Whole-
+    #    library even under --source: a deterministic global recompile, not a
+    #    per-source one (decision #3 — only recheck/audit/delta narrow).
     compiled = compile_kb(paths)
 
     # 3. AUDIT the post-maintenance state, read-only (maintain never --fixes).
-    report = run_doctor(paths)
+    #    `source` scopes the whole audit to <S> via the shipped pre-filter (H162).
+    report = run_doctor(paths, source=source)
     current = custody_snapshot(report)
 
     # 4. DELTA vs the last recorded snapshot, then 5. record this run's: refresh
     #    the single baseline AND append the run to the append-only trend log.
-    delta = compute_delta(previous, current)
-    save_snapshot(path, {**current, "recorded_at": now})
-    append_log_entry(
-        log_path(paths),
-        {"recorded_at": now, "snapshot": current, "delta": delta},
-    )
+    #    A SCOPED pass does neither: it must not clobber the single whole-library
+    #    baseline/trend with a one-source slice (no per-source storage shape), and
+    #    the stored snapshot drops `by_source` so it cannot be sliced to <S> — so
+    #    the scoped delta is honestly `null` (the per-pass `recheck` movement is
+    #    the signal; the whole-library pass owns the cross-run trend).
+    if source is None:
+        delta = compute_delta(previous, current)
+        save_snapshot(path, {**current, "recorded_at": now})
+        append_log_entry(
+            log_path(paths),
+            {"recorded_at": now, "snapshot": current, "delta": delta},
+        )
+    else:
+        delta = None
 
     # Per-source custody breakdown (roadmap H123): the `{tiers, drift}` tally split
     # per source the audit already produced, used both to report the full map and
-    # (roadmap H119) to distil the single weakest source worth flagging.
+    # (roadmap H119) to distil the single weakest source worth flagging. Under
+    # --source this is the singleton {S: …}, so `attention` distils to null.
     by_source = report_by_source(report)
 
     print(
         json.dumps(
             {
                 "recorded_at": now,
+                # The source scope this pass ran under (roadmap H165): `null` for
+                # the whole-library pass, the source name when scoped — so a reader
+                # knows every block below is the one-source view and the `delta` is
+                # null because a scoped pass keeps no per-source baseline.
+                "source": source,
                 "recheck": recheck_report,
                 "compiled": dataclasses.asdict(compiled),
                 "custody": current,
@@ -1279,7 +1351,8 @@ def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
 
 
 def _recheck_held_items(
-    paths: LibraryPaths, limit: int | None, now: str, boundary: str | None
+    paths: LibraryPaths, limit: int | None, now: str, boundary: str | None,
+    source: str | None = None,
 ) -> dict:
     """Bounded re-capture of held items carrying a baseline hash; record events.
 
@@ -1296,6 +1369,13 @@ def _recheck_held_items(
     (`--all`, or a first run with no baseline). The reported `scope`/`since`
     disclose which window the pass used.
 
+    `source` scopes the candidate set to one source's held items (roadmap H165) —
+    the same item-intrinsic filter `verify --source` applies, composed with the
+    staleness window: an unbounded scoped recheck targets exactly the
+    `verify --source S` set (`list --source S`'s held, hash-bearing rows), the
+    stale default a window over it. A source nothing is held for is the honest
+    empty no-op (sources are open-ended, never a closed vocabulary).
+
     Coverage-first ordering (roadmap H55): the targeted set is then ordered by
     `recheck_order` — never-checked items first, then already-verified
     oldest-verdict-first — so a ``--limit``-bounded pass spends its budget on new
@@ -1308,7 +1388,9 @@ def _recheck_held_items(
     if not paths.db_path.exists():
         return counts
     init_db(paths.db_path)  # ensure the ledger table exists before recording
-    hash_bearing = [item for item in list_items(paths.db_path) if item.content_hash]
+    hash_bearing = [
+        item for item in list_items(paths.db_path, source=source) if item.content_hash
+    ]
     verdicts = latest_events(paths.db_path)
     if boundary is not None:
         counts["scope"] = "stale"
@@ -1337,18 +1419,22 @@ def _recheck_held_items(
     return counts
 
 
-def _maintain_coverage(paths: LibraryPaths) -> dict:
+def _maintain_coverage(paths: LibraryPaths, source: str | None = None) -> dict:
     """Recheck coverage from a standalone ledger read (the --no-recheck path).
 
     The recheck path folds its events into its own `latest_events` read; with
     `--no-recheck` there is no recheck, so this reads the ledger once to report
     the same `{verified, total}` coverage of the verifiable held set (H109). A
     missing store is the honest empty `{verified: 0, total: 0}` — nothing held,
-    nothing to verify.
+    nothing to verify. `source` scopes the verifiable set to one source's held
+    items (roadmap H165), so an offline `maintain --no-recheck --source S` reports
+    <S>'s coverage, agreeing with the scoped audit's `custody.drift.coverage`.
     """
     if not paths.db_path.exists():
         return {"verified": 0, "total": 0}
-    hash_bearing = [item for item in list_items(paths.db_path) if item.content_hash]
+    hash_bearing = [
+        item for item in list_items(paths.db_path, source=source) if item.content_hash
+    ]
     return recheck_coverage(hash_bearing, latest_events(paths.db_path))
 
 

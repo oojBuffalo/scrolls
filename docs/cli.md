@@ -980,7 +980,7 @@ $ scrolls history web:af2e70e87b6d --status drifted   # only the times the sourc
 [exit 0]
 ```
 
-### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend]`
+### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend] [--source S]`
 
 One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling
 (`docs/dogfood.md`), composed entirely from surfaces that already ship
@@ -1175,7 +1175,41 @@ event, not a loss of what we hold. Exit mirrors `doctor`: nonzero only when
 structural `issues` remain (run `doctor --fix` / `scrolls media`); drift and stale
 enrichment/summaries are reported, never a failure.
 
+`--source <S>` scopes the **whole pass** to one source's held items (roadmap H165)
+— the scheduled-maintenance counterpart of [`doctor --source`](#scrolls-doctor)
+(H162) and [`status --source`](#scrolls-status) (H166), and the maintenance sibling
+of the act-side `verify --source` (H125), reusing the **same** `run_doctor(source=)`
+pre-filter. The **recheck** narrows to that source's held, hash-bearing items (the
+`verify --source S` set, still stale-bounded / `--all`-able / `--limit`-paced); the
+**audit** is scoped, so `custody`, `headline`, `by_source` (the singleton `{S: …}`),
+and `enrichment_by_source` are the one-source view; `attention` is therefore `null`
+(a single source has nothing to flag *across* — the same gate as `status --source`).
+The scoped `custody`/`by_source`/`headline` **converge by construction** with a
+`doctor --source S` audit distilled and a `status --source S` payload, the third leg
+of the per-source-scope triad (pinned in `tests/test_custody_convergence.py`). Three
+properties keep a scoped pass custody-safe: **view regeneration stays whole-library**
+(`compile_kb` is a deterministic global recompile, not a per-source one — only the
+recheck/audit/`by_source` narrow); the pass **records per-item drift events** (real
+work the next whole-library pass folds into the trend) but is otherwise
+**non-persisting** — it never writes the single whole-library snapshot/trend log, so
+a focused triage pass can't clobber the one baseline with a one-source slice (no
+per-source storage shape); and because no per-source baseline exists to diff against
+(the stored snapshot carries only whole-library scalars), the scoped **`delta` is
+`null`** (the honest-absence posture — the per-pass `recheck` movement is the signal;
+the whole-library `maintain` owns the cross-run trend). The report's top-level
+**`source`** member echoes the scope (`null` for the whole-library pass). `--source`
+composes with `--all`/`--limit`/`--no-recheck` (scope ∧ window/bound) and conflicts
+with `--history` (a read of recorded passes, not a pass — exit 2). An unknown source
+holds nothing, so a scoped pass is the honest empty pass (`_Custody: 0 scroll(s)._`,
+empty `by_source`, `null` `attention`/`delta`, exit 0), never an error — sources are
+open-ended. The exit code reflects only `<S>`'s attributable findings (orphan/FTS are
+not source-attributable, so the scoped audit skips them per `doctor --source`).
+
 ```console
+$ scrolls maintain --no-recheck --source web   # triage one source's custody (the `attention` flag named it)
+{"recorded_at": "2026-06-18T17:00:00+00:00", "source": "web", "recheck": {"skipped": true, "scope": null, "since": null, "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0, "coverage": {"verified": 2, "total": 2}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"checked": 2, "unverified": 0, "unchanged": 1, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1._", "by_source": {"web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}}}, "attention": null, "enrichment_by_source": {}, "delta": null, "issues": 0, "suggested": []}
+[exit 0]
+
 $ scrolls maintain --all --limit 50      # second run; force a whole-library recheck — one source has drifted
 {"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 3, "total": 3}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}}}, "attention": {"source": "web", "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}, "reason": "1 drifted", "command": "scrolls verify --source web"}, "enrichment_by_source": {}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]

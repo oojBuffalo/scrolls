@@ -1913,6 +1913,160 @@ def test_maintain_history_does_not_carry_attention(home, monkeypatch, capsys):
     assert all("attention" not in run for run in read_log(log_path(home)))
 
 
+# --- `scrolls maintain --source <S>` — the scoped pass (roadmap H165) ----------
+#
+# The scheduled-maintenance counterpart of `doctor --source` (H162) and the act-
+# side `verify --source` (H125): a `--source` filter narrows the recheck, audit,
+# by_source, and headline to one source's held items, reusing the same shipped
+# `run_doctor(source=)` pre-filter so the scoped picture converges with
+# `doctor --source`/`status --source` by construction. View regeneration stays
+# whole-library, and a scoped pass is non-persisting (it records per-item drift
+# events but never the whole-library trend baseline — its delta is null).
+
+
+def test_source_scopes_the_recheck_to_that_source(home, monkeypatch, capsys):
+    """`maintain --source web --all` re-captures only web's held items, never the
+    arxiv one — the same item-intrinsic filter `verify --source` applies."""
+    items = _held_topic()  # 1 arxiv + 2 web, all full-fidelity with hashes
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--all", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["source"] == "web"
+    # only the two web items were rechecked, the arxiv one untouched
+    assert report["recheck"]["checked"] == 2
+    assert report["recheck"]["unchanged"] == 2
+    # the audit narrows to web: two web scrolls, no arxiv tier
+    assert report["custody"]["tiers"] == {"full": 2, "partial": 0, "reference": 0}
+    assert set(report["by_source"]) == {"web"}
+
+
+def test_source_audit_is_the_one_source_view_converging_with_doctor_source(
+    home, monkeypatch, capsys
+):
+    """A scoped pass's `custody`/`by_source`/`headline` equal a `doctor --source S`
+    audit distilled AND the whole-library audit's `by_source[S]` slice — the
+    convergence the shared `run_doctor(source=)` pre-filter guarantees (H169)."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    # --no-recheck keeps the ledger pristine, so the maintain audit and a fresh
+    # doctor read the identical post-maintenance state (the H127 pattern).
+    assert main(["maintain", "--no-recheck", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    whole_by_source = run_doctor(home)["custody"]["by_source"]
+    scoped_doctor = run_doctor(home, source="web")
+    # 1. the scoped custody view == the scoped doctor audit distilled
+    assert report["custody"] == custody_snapshot(scoped_doctor)
+    # 2. == the whole-library by_source[web] slice (same held subset, same tally)
+    assert report["custody"]["tiers"] == whole_by_source["web"]["tiers"]
+    assert report["custody"]["coverage"] == whole_by_source["web"]["coverage"]
+    # 3. by_source collapses to the present-and-singleton {web: that slice}
+    assert report["by_source"] == {"web": whole_by_source["web"]}
+    # 4. the headline is the scoped block rendered (parity with status --source)
+    assert report["headline"] == snapshot_headline(report["custody"])
+    # 5. attention is null under a single-source scope (nothing to flag across)
+    assert report["attention"] is None
+    # the offline pass reports web's coverage (agrees with the scoped audit)
+    assert report["recheck"]["coverage"] == report["custody"]["coverage"]
+
+
+def test_source_pass_is_non_persisting_and_leaves_the_trend_baseline(
+    home, monkeypatch, capsys
+):
+    """A scoped pass records no snapshot/log: the single whole-library baseline is
+    never clobbered with a one-source slice (no per-source storage shape), and the
+    scoped `delta` is honestly null — the whole-library pass owns the trend."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    # one whole-library pass records the single baseline + first log entry
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+    baseline = load_snapshot(snapshot_path(home))
+    assert baseline is not None
+    assert len(read_log(log_path(home))) == 1
+
+    # a scoped pass: delta null, and the baseline/log are untouched afterwards
+    assert main(["maintain", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["delta"] is None
+    assert load_snapshot(snapshot_path(home)) == baseline  # not clobbered
+    assert len(read_log(log_path(home))) == 1  # no scoped run appended
+
+    # --history therefore still shows only the one whole-library run
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert len(runs) == 1
+
+
+def test_source_records_drift_events_the_next_whole_pass_folds_in(
+    home, monkeypatch, capsys
+):
+    """The scoped recheck is real work: it appends per-item custody events (the
+    next whole-library pass folds them into the trend), even though the scoped
+    pass writes no snapshot. Custody-safe: events accrue, the baseline doesn't."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    drifted = items[1]  # a web item
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
+    assert main(["maintain", "--all", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["drifted"] == 1
+
+    # the per-item ledger recorded the drift event (a real, persisted change)
+    events = latest_events(home.db_path)
+    assert events[drifted.id].status == "drifted"
+    # but no maintenance snapshot was written (the scoped pass is non-persisting)
+    assert load_snapshot(snapshot_path(home)) is None
+
+
+def test_source_unknown_is_an_honest_empty_pass(home, capsys):
+    """An unknown source holds nothing → the honest empty pass (empty headline,
+    null attention/delta, exit 0), never an error — sources are open-ended."""
+    _build(_held_topic())
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck", "--source", "ghost"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["source"] == "ghost"
+    assert report["headline"] == "_Custody: 0 scroll(s)._"
+    assert report["by_source"] == {}
+    assert report["attention"] is None
+    assert report["delta"] is None
+    assert report["recheck"]["coverage"] == {"verified": 0, "total": 0}
+
+
+def test_source_composes_with_limit(home, monkeypatch, capsys):
+    """`--source web --all --limit 1` bounds the scoped recheck — one of web's two
+    held items this pass (composes scope ∧ bound)."""
+    items = _held_topic()
+    _build(items)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--all", "--limit", "1", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["checked"] == 1
+
+
+def test_source_conflicts_with_history(home, capsys):
+    """`--source` scopes a pass; `--history` is a read of recorded passes — a
+    usage error (exit 2), not a silently-ignored flag (the `--all`/history rule)."""
+    assert main(["maintain", "--source", "web", "--history"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"].lower()
+    assert "source" in error and "history" in error
+
+
 # --- suggest_repairs ≡ what `doctor --fix` actually repairs (roadmap H106) ---
 #
 # H40 maps each repairable finding category to its on-request command in the

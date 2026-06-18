@@ -527,7 +527,21 @@ each command moves items between stages or derives artifacts from them.
   `classify --stale` to run without re-running `doctor`. A standalone member (not
   folded into `by_source`, so the H123/H127 byte-identity holds), live-pass only and
   summing to the whole-library `custody.enrichment_stale` by construction (roadmap
-  H147) — the re-derivability counterpart of `by_source`'s drift split.
+  H147) — the re-derivability counterpart of `by_source`'s drift split. `--source S`
+  scopes the **whole pass** to one source's held items (roadmap H165) — the
+  scheduled-maintenance leg of the per-source-scope triad beside `doctor --source`
+  (H162) and `status --source` (H166), reusing the same `run_doctor(source=)`
+  pre-filter so the scoped `custody`/`by_source`/`headline` converge with them by
+  construction (`tests/test_custody_convergence.py`). The recheck narrows to that
+  source's held items (the `verify --source S` set), the audit is scoped (`by_source`
+  collapses to the singleton, `attention` to `null`), and view regeneration stays
+  whole-library. A scoped pass is **non-persisting** — it records per-item drift
+  events (the next whole-library pass folds them into the trend) but never writes the
+  single whole-library snapshot/log, so it can't clobber the one baseline with a
+  one-source slice (no per-source storage shape); its `delta` is `null` (no
+  per-source baseline to diff against) and a top-level `source` member echoes the
+  scope. Composes with `--all`/`--limit`/`--no-recheck`, conflicts with `--history`;
+  an unknown source is the honest empty pass.
 - `scrolls status` carries a one-line **custody headline** under its item
   counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
   the stale enrichment/summary counts — "how custody stands" without parsing a
