@@ -775,12 +775,19 @@ def test_get_link_graph_returns_directed_edges(scrolls_home):
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
     ]
     # both items are bare → reference fidelity, never re-checked → unverified;
-    # the custody block tallies the whole `stats.items` scope (roadmap H52)
+    # the custody block tallies the whole `stats.items` scope (roadmap H52) and
+    # splits it per source (roadmap H150) — `arxiv` and `x`, one scroll each
+    _bare = {
+        "tiers": {"full": 0, "partial": 0, "reference": 1},
+        "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0},
+        "coverage": {"verified": 0, "total": 0},
+    }
     assert graph["stats"] == {
         "items": 2, "nodes": 2, "edges": 1, "clusters": 1,
         "custody": {
             "tiers": {"full": 0, "partial": 0, "reference": 2},
             "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0},
+            "by_source": {"arxiv": _bare, "x": _bare},
         },
     }
 
@@ -793,6 +800,7 @@ def test_get_link_graph_empty_library(scrolls_home):
                 "tiers": {"full": 0, "partial": 0, "reference": 0},
                 "drift": {"verified": 0, "unverified": 0, "drifted": 0,
                           "rotted": 0, "error": 0},
+                "by_source": {},  # honest empty per-source map (roadmap H150)
             },
         },
     }

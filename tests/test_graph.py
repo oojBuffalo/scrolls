@@ -39,13 +39,35 @@ def make_item(item_id, **overrides):
     return ScrollItem(**base)
 
 
-def _all_reference_unverified(n):
-    """The `stats.custody` block for `n` bare items — every one `reference`
-    fidelity (no content) and `unverified` (never re-checked), the default
-    `make_item` shape these graph fixtures use."""
+def _reference_source_tally(n):
+    """One source's `by_source` entry for `n` bare reference/unverified items.
+
+    Every bare `make_item` is `reference` fidelity (no content) and `unverified`
+    (never re-checked); with no content hash there is nothing to verify, so the
+    per-source `coverage` denominator is zero (roadmap H121)."""
     return {
         "tiers": {"full": 0, "partial": 0, "reference": n},
         "drift": {"verified": 0, "unverified": n, "drifted": 0, "rotted": 0, "error": 0},
+        "coverage": {"verified": 0, "total": 0},
+    }
+
+
+def _all_reference_unverified(by_source_counts):
+    """The `stats.custody` block (incl. `by_source`, roadmap H150) for bare items.
+
+    `by_source_counts` maps each source name to how many bare reference/unverified
+    items it holds — every one `reference` fidelity (no content) and `unverified`
+    (never re-checked), the default `make_item` shape these graph fixtures use. The
+    whole-scope `tiers`/`drift` sum the per-source entries, and `by_source` carries
+    sorted source keys (the honest empty `{}` for an empty graph)."""
+    n = sum(by_source_counts.values())
+    return {
+        "tiers": {"full": 0, "partial": 0, "reference": n},
+        "drift": {"verified": 0, "unverified": n, "drifted": 0, "rotted": 0, "error": 0},
+        "by_source": {
+            source: _reference_source_tally(count)
+            for source, count in sorted(by_source_counts.items())
+        },
     }
 
 
@@ -311,7 +333,8 @@ def test_cli_graph_prints_nodes_edges_and_stats(db, capsys):
 
     assert payload["stats"] == {
         "items": 3, "nodes": 2, "edges": 1, "clusters": 1,
-        "custody": _all_reference_unverified(3),  # over the whole library, not just nodes
+        # over the whole library, not just nodes; three sources, one scroll each
+        "custody": _all_reference_unverified({"arxiv": 1, "wikipedia": 1, "x": 1}),
     }
     assert payload["edges"] == [
         {"from": "x:1111", "to": "arxiv:2605.27848", "via": "https://arxiv.org/abs/2605.27848"}
@@ -333,7 +356,7 @@ def test_cli_graph_all_includes_isolated_items(db, capsys):
     # the lone isolate is a singleton, not a cluster: clusters counts 2+ only
     assert payload["stats"] == {
         "items": 1, "nodes": 1, "edges": 0, "clusters": 0,
-        "custody": _all_reference_unverified(1),
+        "custody": _all_reference_unverified({"wikipedia": 1}),
     }
 
 
@@ -345,7 +368,8 @@ def test_cli_graph_empty_library_is_empty_json(scrolls_home, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"nodes": [], "edges": [], "stats": {
         "items": 0, "nodes": 0, "edges": 0, "clusters": 0,
-        "custody": _all_reference_unverified(0),  # empty graph: honest zero counts
+        # empty graph: honest zero counts, honest empty `by_source` map
+        "custody": _all_reference_unverified({}),
     }}
 
 
@@ -422,7 +446,7 @@ def test_cli_graph_stats_count_clusters(db, capsys):
     # the isolate inflates items/nodes but not clusters (2+ members only)
     assert payload["stats"] == {
         "items": 5, "nodes": 5, "edges": 2, "clusters": 2,
-        "custody": _all_reference_unverified(5),
+        "custody": _all_reference_unverified({"web": 5}),
     }
 
 
@@ -443,10 +467,16 @@ def test_graph_stats_custody_reflects_fidelity_and_drift(db, capsys):
 
     main(["graph", "--all"])
     custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
-    assert custody == {
+    assert custody["tiers"] == {"full": 1, "partial": 1, "reference": 1}
+    assert custody["drift"] == {
+        "verified": 1, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}
+    # single source: by_source carries the whole-scope tally under `web` plus the
+    # per-source coverage (only `web:full` is hash-bearing and it carries a verdict)
+    assert custody["by_source"] == {"web": {
         "tiers": {"full": 1, "partial": 1, "reference": 1},
         "drift": {"verified": 1, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0},
-    }
+        "coverage": {"verified": 1, "total": 1},
+    }}
 
 
 def test_graph_stats_custody_is_independent_of_include_all(db, capsys):
@@ -463,7 +493,7 @@ def test_graph_stats_custody_is_independent_of_include_all(db, capsys):
     main(["graph", "--all"])
     widened = json.loads(capsys.readouterr().out)["stats"]
     assert default["nodes"] == 2 and widened["nodes"] == 3  # --all adds the isolate
-    assert default["custody"] == widened["custody"] == _all_reference_unverified(3)
+    assert default["custody"] == widened["custody"] == _all_reference_unverified({"web": 3})
 
 
 def test_graph_custody_block_converges_with_doctor(db, capsys):
@@ -486,6 +516,97 @@ def test_graph_custody_block_converges_with_doctor(db, capsys):
     assert custody["drift"]["verified"] == drift["drift"]["unchanged"]
     assert custody["drift"]["unverified"] == drift["drift"]["unverified"]
     assert custody["drift"]["drifted"] == drift["drift"]["drifted"]
+
+
+# --- stats.custody.by_source (per-source split, roadmap H150) ---------------
+
+
+def _seed_multi_source_custody(db):
+    """A two-source fidelity/drift mix: `web` (full+drifted, partial, reference) and
+    `arxiv` (full, never verified). Returns nothing — the caller reads it back."""
+    insert_item(db, make_item("web:full", raw_text="<raw>b</raw>",
+                              extracted_text="b", content_hash="sha256:wf"))
+    insert_item(db, make_item("web:partial", extracted_text="b"))
+    insert_item(db, make_item("web:ref"))  # reference, never verified
+    insert_item(db, make_item("arxiv:1", url="https://arxiv.org/abs/1",
+                              raw_text="<raw>a</raw>", extracted_text="a",
+                              content_hash="sha256:af"))
+    record_events(db, [CustodyEvent(
+        "web:full", "2026-06-14T00:00:00+00:00", "drifted", "sha256:wf", "sha256:new")])
+
+
+def test_graph_stats_custody_splits_per_source(db, capsys):
+    # H150: stats.custody carries a `by_source` map naming each source's own
+    # fidelity/drift/coverage tally — which source's custody is weakest, without
+    # dropping to status/doctor
+    _seed_multi_source_custody(db)
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    by_source = json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"]
+    assert list(by_source) == ["arxiv", "web"]  # sorted source keys
+    assert by_source["web"] == {
+        "tiers": {"full": 1, "partial": 1, "reference": 1},
+        "drift": {"verified": 0, "unverified": 2, "drifted": 1, "rotted": 0, "error": 0},
+        "coverage": {"verified": 1, "total": 1},  # only web:full is hash-bearing
+    }
+    assert by_source["arxiv"] == {
+        "tiers": {"full": 1, "partial": 0, "reference": 0},
+        "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0},
+        "coverage": {"verified": 0, "total": 1},  # hash-bearing but never verified
+    }
+
+
+def test_graph_stats_custody_by_source_sums_to_the_whole_block(db, capsys):
+    # the per-source entries sum to the whole stats.custody tiers/drift beside them
+    # (the H104 sum-to-whole posture, per source — every item lands in one group)
+    _seed_multi_source_custody(db)
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    summed_tiers = {"full": 0, "partial": 0, "reference": 0}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for entry in custody["by_source"].values():
+        for tier, n in entry["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in entry["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == custody["tiers"]
+    assert summed_drift == custody["drift"]
+
+
+def test_graph_stats_custody_by_source_is_independent_of_include_all(db, capsys):
+    # like the whole custody block, by_source counts the whole stats.items scope,
+    # so --all (which only changes which items become nodes) must not change it
+    insert_item(db, make_item("web:a", links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b"))
+    insert_item(db, make_item("arxiv:isolate", url="https://arxiv.org/abs/9"))
+    capsys.readouterr()
+
+    main(["graph"])
+    default = json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"]
+    main(["graph", "--all"])
+    widened = json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"]
+    assert default == widened
+    assert set(default) == {"web", "arxiv"}
+
+
+def test_graph_stats_custody_by_source_converges_with_doctor(db, capsys):
+    # H150 convergence: graph's per-source split equals doctor's custody.by_source
+    # for the same whole-library scope (both fold custody_counts_by_source)
+    from scrolls.custody import custody_counts_by_source, latest_events
+    from scrolls.items import list_items
+
+    _seed_multi_source_custody(db)
+    capsys.readouterr()
+
+    main(["graph"])
+    by_source = json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"]
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert by_source == doctor_by_source
+    # and == the shared primitive over the same items/ledger
+    assert by_source == custody_counts_by_source(list_items(db), latest_events(db))
 
 
 def test_graph_over_drops_links_to_items_outside_the_given_set():

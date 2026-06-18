@@ -28,7 +28,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import CustodyEvent, custody_counts, drift_posture, last_checked
+from scrolls.custody import (
+    CustodyEvent,
+    custody_counts,
+    custody_counts_by_source,
+    drift_posture,
+    last_checked,
+)
 from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -228,11 +234,28 @@ def to_payload(
     every held item reads `unverified` — honest, nothing has been checked. The
     same `verdicts` feeds both the per-node `drift` and the `stats.custody` tally,
     so a node's posture and its contribution to the count can never disagree.
+
+    `stats.custody.by_source` (roadmap H150) splits that whole-scope tally per
+    source — the shared `custody.custody_counts_by_source` over the *same*
+    `stats.items` scope, a map from source to its own `{tiers, drift, coverage}`
+    (sorted keys). It is the graph-surface counterpart of the per-source `by_source`
+    on JSON `status` (H133), the `export bundle` briefing (H141), the compiled
+    `index.md` (H145), and the `context` bundle (H149), so a reader of the link
+    graph sees *which* source's custody is weakest without dropping to
+    `status`/`doctor`. Because both fold the same tally, the per-source entries sum
+    to the whole `stats.custody` block beside them by construction (every item lands
+    in exactly one source group) and — for the whole-library scope `build_graph`
+    resolves — equal `doctor`'s `custody.by_source`, independent of
+    `include_isolated` (which only changes which items become *nodes*, not the
+    `stats.items` scope). An empty graph is the honest empty `{}` map.
     """
     verdicts = verdicts or {}
     clusters = sum(
         1 for component in connected_components(graph) if len(component.nodes) >= 2
     )
+    scope = list(graph.items)
+    custody = custody_counts(scope, verdicts)
+    custody["by_source"] = custody_counts_by_source(scope, verdicts)
     return {
         "nodes": [
             {
@@ -256,7 +279,7 @@ def to_payload(
             "nodes": len(graph.nodes),
             "edges": len(graph.edges),
             "clusters": clusters,
-            "custody": custody_counts(list(graph.items), verdicts),
+            "custody": custody,
         },
     }
 

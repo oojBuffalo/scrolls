@@ -2614,9 +2614,22 @@ fidelity-tier and drift-posture count maps over the whole `stats.items` scope
 counts travel directly — `verified` is the ledger `unchanged` (custody §2.4),
 `unverified` the held items with no verdict.
 
+`stats.custody.by_source` (roadmap H150) splits that whole-scope tally per
+source — a `{source: {tiers, drift, coverage}}` map (sorted keys) over the same
+`stats.items` scope, the graph-surface counterpart of the per-source `by_source`
+on `scrolls status` (H133), the `export bundle` briefing (H141), and the compiled
+`index.md` (H145). So a reader of the link graph sees *which* source's custody is
+weakest without dropping to `status`/`doctor`. The per-source entries sum to the
+whole `stats.custody` block beside them (every item lands in one source group) and
+equal `doctor`'s `custody.by_source` for the whole-library scope, independent of
+`--all` (`test_graph_stats_custody_splits_per_source`,
+`test_graph_stats_custody_by_source_is_independent_of_include_all`,
+`test_graph_by_source_converges_with_doctor_and_the_per_source_tally`). An empty
+graph is the honest empty `{}` map.
+
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}}}}
 [exit 0]
 ```
 

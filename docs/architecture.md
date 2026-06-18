@@ -372,7 +372,13 @@ each command moves items between stages or derives artifacts from them.
   `_by_source_html`), the same shared-primitive posture that keeps the scope
   headline byte-identical across surfaces. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
-  JSON) over its whole `stats.items` scope (roadmap H52); all three browse
+  JSON) over its whole `stats.items` scope (roadmap H52), and splits it per source
+  in a `stats.custody.by_source` map (`custody.custody_counts_by_source` over the
+  same scope, roadmap H150) — the graph-surface counterpart of the per-source
+  `by_source` on JSON `status` (H133), so a reader of the link graph sees *which*
+  source's custody is weakest; it sums to the whole `stats.custody` block beside it
+  and equals `doctor`'s `custody.by_source` for the whole-library scope, independent
+  of `--all`. All three browse
   surfaces' `--stats` envelopes — `search`, `list` (roadmap H98), and `related`
   (roadmap H99) — carry it as a `stats.custody` member too, over the *matched*
   scope (the full match set past the cap, sourced from each hit's own

@@ -368,7 +368,11 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     says how much of the item the library holds. `stats.custody` summarises how
     custody stands across the whole `stats.items` scope — fidelity-tier and
     drift-posture counts (the same tally doctor/facets/the headlines report), so
-    the graph's custody totals converge with them for the scope.
+    the graph's custody totals converge with them for the scope. `stats.custody.
+    by_source` (roadmap H150) splits that tally per source — a `{source: {tiers,
+    drift, coverage}}` map (sorted keys), the graph-surface counterpart of the
+    per-source `by_source` on `scrolls status`/`doctor` — so a reader sees which
+    source's custody is weakest; it sums to the whole `stats.custody` block.
     """
     paths = get_paths()
     graph = build_graph(paths.db_path, include_isolated=include_isolated)

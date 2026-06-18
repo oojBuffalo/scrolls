@@ -39,7 +39,13 @@ landing `index.md` also follows that headline with a `_By source:_` breakdown
 status / bundle / compiled surfaces. The model-facing `scrolls context` bundle
 carries the *same* breakdown (roadmap H149) for a multi-source scope, pinned the
 same way — so a per-source line reads identically whichever readable surface
-(briefing / compiled page / context bundle) an agent reaches.
+(briefing / compiled page / context bundle) an agent reaches. The **JSON**
+`by_source` map (the structured ``{source: {tiers, drift, coverage}}`` the
+readable lines render from) rides `scrolls status` (H133) and the `scrolls graph`
+stats block (`stats.custody.by_source`, H150); both are asserted to equal
+`doctor`'s `custody.by_source` and `custody_counts_by_source` over the held items,
+and to sum to their own whole `custody` block beside them — so the per-source
+split reads as one number across every JSON surface.
 
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
@@ -833,6 +839,55 @@ def test_status_by_source_converges_with_maintain_and_doctor(scrolls_home, capsy
     assert summed_drift == whole["drift"]
 
 
+def test_graph_by_source_converges_with_doctor_and_the_per_source_tally(scrolls_home, capsys):
+    # roadmap H150: the `scrolls graph` stats block now carries the per-source
+    # custody split (`stats.custody.by_source`) — the graph-surface counterpart of
+    # the JSON `status` `by_source` (H133). It folds the same
+    # `custody_counts_by_source` over the whole `stats.items` scope, so it claims to
+    # agree with the standalone audit and the shared tally. Pin it beside the H133
+    # status tie: over the multi-source seed, the graph block equals `doctor`'s
+    # `custody.by_source`, `status`'s `by_source`, and `custody_counts_by_source`
+    # over the held items, and its per-source entries sum to the whole `stats.custody`
+    # tiers/drift beside them.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # the graph's per-source split — over the whole library, independent of --all
+    assert main(["graph", "--all"]) == 0
+    graph_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    graph_by_source = graph_custody["by_source"]
+    assert set(graph_by_source) == {"web", "arxiv"}
+
+    # 1. == doctor's own `custody.by_source` over the same library
+    assert graph_by_source == run_doctor(get_paths())["custody"]["by_source"]
+
+    # 2. == the JSON `status` `by_source` (the H133 sibling surface)
+    assert main(["status"]) == 0
+    assert graph_by_source == json.loads(capsys.readouterr().out)["by_source"]
+
+    # 3. == the canonical `custody_counts_by_source` tally over the held items
+    items = list_items(db)
+    verdicts = latest_events(db)
+    assert graph_by_source == custody_counts_by_source(items, verdicts)
+
+    # 4. the per-source tallies sum to the graph's own whole `custody` block beside
+    #    them (H104 sum-to-whole, per source — the two members can never disagree)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in graph_by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == graph_custody["tiers"]
+    assert summed_drift == graph_custody["drift"]
+
+
 def test_status_attention_converges_with_maintain_and_doctor(scrolls_home, capsys):
     # roadmap H139: `scrolls status` now carries the single weakest-source
     # `attention` flag — the status-surface counterpart of `maintain`'s `attention`
@@ -1006,11 +1061,16 @@ def test_stats_custody_family_agrees_with_its_own_per_item_fields(scrolls_home, 
     assert "web:1" not in {row["id"] for row in payload["results"]}
     assert payload["stats"]["custody"] == _tally_rows(payload["results"])
 
-    # graph --all: the stats block custody == the tally over its nodes. `--all` so
-    # every item is a node, matching the whole stats.items scope the tally covers (H52).
+    # graph --all: the stats block custody tiers/drift == the tally over its nodes.
+    # `--all` so every item is a node, matching the whole stats.items scope the tally
+    # covers (H52). The graph block also carries a per-source `by_source` split (H150),
+    # tied separately in test_graph_by_source_converges_with_doctor_…, so compare the
+    # tiers/drift axes the per-item fold produces.
     assert main(["graph", "--all"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["stats"]["custody"] == _tally_rows(payload["nodes"])
+    graph_custody, node_tally = payload["stats"]["custody"], _tally_rows(payload["nodes"])
+    assert graph_custody["tiers"] == node_tally["tiers"]
+    assert graph_custody["drift"] == node_tally["drift"]
 
 
 def test_works_stats_custody_agrees_with_its_representations(scrolls_home, capsys):
