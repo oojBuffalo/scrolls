@@ -43,7 +43,14 @@ members; a single-source page — including every `sources/*.md` — omits it (t
 helper's `<2`-source no-op). The model-facing `scrolls context` bundle
 carries the *same* breakdown (roadmap H149) for a multi-source scope, pinned the
 same way — so a per-source line reads identically whichever readable surface
-(briefing / compiled index or group page / context bundle) an agent reaches. The **JSON**
+(briefing / compiled index or group page / context bundle) an agent reaches. That
+"reads identically" claim is itself pinned *once* (roadmap H151): over a single
+multi-source seed every readable surface — the briefing **and its HTML form**, the
+`context` bundle, the compiled `index.md`, and a multi-source group page — renders
+**byte-identical** per-source bullets, all equal to `render_custody_by_source` over
+both `doctor`'s `custody.by_source` and `custody_counts_by_source`, and each
+surface's bullets sum to its own scope headline — the readable-line analogue of the
+JSON `by_source` convergence below. The **JSON**
 `by_source` map (the structured ``{source: {tiers, drift, coverage}}`` the
 readable lines render from) rides `scrolls status` (H133) and the `scrolls graph`
 stats block (`stats.custody.by_source`, H150); both are asserted to equal
@@ -198,6 +205,7 @@ telescoped sum together). It is the trend-layer analogue of the per-surface
 convergence invariants above.
 """
 
+import html
 import json
 import re
 
@@ -217,6 +225,7 @@ from scrolls.custody import (
     parse_since,
     recheck_coverage,
     record_events,
+    render_custody_by_source,
     tally_custody,
     unverified_items,
 )
@@ -1281,6 +1290,151 @@ def _library_headline(text):
     return {"count": count, "tiers": tiers, "drift": drift}
 
 
+def _by_source_bullets(text):
+    """The ``- `<source>` — …`` per-source bullets under a surface's `_By source:_`.
+
+    The Markdown counterpart of `_library_headline` for the per-source breakdown
+    (roadmap H151): finds the `_By source:_` lead-in `render_custody_by_source`
+    writes, then collects the consecutive ``- `…``-prefixed bullets that follow
+    (skipping the blank spacer between the lead-in and the first bullet, stopping at
+    the first non-bullet line). Distinguishes the per-source bullets (``- `<source>`
+    — …``, backtick after the dash) from a compiled group page's per-item rows
+    (``- [Title](path) · …``, a `[` after the dash), so the parse returns exactly
+    the per-source split. Returns `[]` when the surface carries no breakdown (a
+    single-source/empty scope, or the HTML form, which uses `<li>` not `- `).
+    """
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip() == "_By source:_"), None)
+    if start is None:
+        return []
+    bullets = []
+    for line in lines[start + 1:]:
+        stripped = line.strip()
+        if stripped.startswith("- `"):
+            bullets.append(stripped)
+        elif stripped == "":
+            continue  # the blank spacer the renderer writes around the bullets
+        else:
+            break  # the next section (`## …`, per-item rows) ends the breakdown
+    return bullets
+
+
+def _html_by_source_bullets(html_text):
+    """Reconstruct the Markdown `- `<source>` — …` bullets from the HTML twin.
+
+    The `export bundle --format html` form renders the *same* structured
+    `custody_source_breakdown` as one `<li>` per source inside
+    `<ul class="custody-by-source">` (roadmap H141), not literal Markdown bullets.
+    This parses each `<li><code>SOURCE</code> — REST</li>` back into the canonical
+    ``- `SOURCE` — REST`` bullet (HTML-unescaping both halves) so the HTML form's
+    per-source content can be compared byte-for-byte against the Markdown surfaces
+    (roadmap H151). Scoped to the `custody-by-source` list so the per-scroll
+    `custody-facts` `<li>`s (which do not open with `<li><code>`) never leak in.
+    """
+    block = re.search(r'<ul class="custody-by-source">(.*?)</ul>', html_text, re.S)
+    if block is None:
+        return []
+    bullets = []
+    for m in re.finditer(r"<li><code>([^<]+)</code> — (.*?)</li>", block.group(1), re.S):
+        bullets.append(f"- `{html.unescape(m.group(1))}` — {html.unescape(m.group(2))}")
+    return bullets
+
+
+def _parse_by_source_bullet(bullet):
+    """Parse a ``- `<source>` — N scroll(s) · fidelity … · drift …`` bullet.
+
+    Returns ``(source, n, tiers, drift)`` — the per-source counterpart of
+    `_library_headline`'s section parse, reading the *non-zero* fidelity-tier and
+    drift-posture counts a bullet shows (each as ``<name> <count>``). Lets the
+    per-source bullets be summed and checked against the surface's own scope
+    headline (roadmap H151).
+    """
+    m = re.match(r"- `([^`]+)` — (\d+) scroll\(s\)(.*)$", bullet)
+    source, n, rest = m.group(1), int(m.group(2)), m.group(3)
+    tiers, drift = {}, {}
+    for section in rest.split(" · "):
+        section = section.strip()
+        if section.startswith("fidelity "):
+            target, body = tiers, section[len("fidelity "):]
+        elif section.startswith("drift "):
+            target, body = drift, section[len("drift "):]
+        else:
+            continue
+        for pair in body.split(", "):
+            name, value = pair.rsplit(" ", 1)
+            target[name] = int(value)
+    return source, n, tiers, drift
+
+
+def _sum_by_source_bullets(bullets):
+    """Sum a surface's per-source bullets into a `{count, tiers, drift}` whole.
+
+    The per-source split's scope total — every item lands in exactly one source
+    group, so summing the bullets re-counts the whole scope. Compared against the
+    surface's own `_library_headline` so a surface can never render per-source
+    bullets over a different scope than the headline above them (roadmap H151).
+    """
+    count, tiers, drift = 0, {}, {}
+    for bullet in bullets:
+        _, n, bullet_tiers, bullet_drift = _parse_by_source_bullet(bullet)
+        count += n
+        for name, value in bullet_tiers.items():
+            tiers[name] = tiers.get(name, 0) + value
+        for name, value in bullet_drift.items():
+            drift[name] = drift.get(name, 0) + value
+    return {"count": count, "tiers": tiers, "drift": drift}
+
+
+def _seed_unified_per_source_fixture(db):
+    """One multi-source seed every readable per-source surface scopes identically.
+
+    Five held, *rendered* scrolls (so the compiled `index.md`/group page include
+    them), all in category ``ml`` (so `categories/ml.md`'s scope == the whole
+    library), every title carrying "topic" (so `export bundle topic`/`context
+    topic` match the whole library) — across two sources with *different* tier/drift
+    mixes (so the per-source breakdown is genuinely multi-source and the two
+    bullets differ, the H151 mutation-sensitivity). The shared scope lets the
+    readable per-source breakdown be compared byte-for-byte across the bundle
+    (Markdown + HTML), the `context` bundle, the compiled `index.md`, and the
+    compiled `categories/ml.md` group page at once.
+
+    `web`: full+verified, full+drifted, reference+unverified (3).
+    `arxiv`: full+verified, partial+rotted (2).
+    """
+    rendered = dict(stage="rendered", category="ml")
+    insert_item(db, _item(
+        "web:fv", "Topic web full verified", markdown_path="scrolls/web/fv.md",
+        extracted_text="topic body", raw_text="<raw>topic</raw>",
+        content_hash="sha256:wfv", **rendered))
+    insert_item(db, _item(
+        "web:fd", "Topic web full drifted", markdown_path="scrolls/web/fd.md",
+        extracted_text="topic body", raw_text="<raw>topic</raw>",
+        content_hash="sha256:wfd", **rendered))
+    insert_item(db, _item(
+        "web:ru", "Topic web reference pointer", markdown_path="scrolls/web/ru.md",
+        **rendered))  # no content → reference, never re-checked → unverified
+    insert_item(db, _item(
+        "arxiv:fv", "Topic arxiv full verified", source="arxiv",
+        url="https://arxiv.org/abs/fv", markdown_path="scrolls/arxiv/fv.md",
+        extracted_text="topic body", raw_text="<raw>topic</raw>",
+        content_hash="sha256:afv", **rendered))
+    insert_item(db, _item(
+        "arxiv:pr", "Topic arxiv partial rotted", source="arxiv",
+        url="https://arxiv.org/abs/pr", markdown_path="scrolls/arxiv/pr.md",
+        extracted_text="topic only extracted", **rendered))  # extracted, no hash → partial
+    record_events(db, [
+        CustodyEvent("web:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:wfv", "sha256:wfv", None),
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wfd", "sha256:x", None),
+        CustodyEvent("arxiv:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:afv", "sha256:afv", None),
+        CustodyEvent("arxiv:pr", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:pr", None, "HTTP Error 404"),
+        # web:ru left unverified
+    ])
+
+
 def _seed_compiled_scope_fixture(db):
     """Rendered scrolls spanning the fidelity/drift axes across *two* sources, so a
     `--source` filter genuinely narrows the index scope to a group page's scope.
@@ -1495,6 +1649,87 @@ def test_compiled_group_page_per_source_breakdown_converges_with_doctor_by_sourc
     web_page = (library / "sources" / "web.md").read_text(encoding="utf-8")
     assert "_Custody:" in web_page
     assert "_By source:_" not in web_page
+
+
+def test_readable_per_source_breakdown_is_byte_identical_across_surfaces(
+    scrolls_home, capsys
+):
+    # roadmap H151: the four tests above each tie *one* readable surface's
+    # `_By source:_` breakdown to `doctor`'s `custody.by_source`. This pins the
+    # consolidating property *once*: every readable surface that carries the
+    # breakdown — the `export bundle` briefing (H141) **and its HTML form**, the
+    # model-facing `scrolls context` bundle (`connected`+, H149), the compiled
+    # landing `index.md` (H145), and a multi-source compiled group page (H152) —
+    # renders byte-identical per-source bullets for the *same* scope, all equal to
+    # `render_custody_by_source(doctor.custody.by_source)` and to the same renderer
+    # over `custody_counts_by_source`. The readable-line analogue of the JSON
+    # `by_source` convergence (`status`/`graph`/`doctor`, H133/H150/H157). One seed
+    # gives every surface the same scope: all rendered (compiled index/group page),
+    # all category `ml` (group page scope == library), every title "topic" (bundle/
+    # context query == library).
+    from scrolls.bundle import build_bundle, build_bundle_html
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_unified_per_source_fixture(db)  # web (3) + arxiv (2), all rendered, all `ml`
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # the canonical readable breakdown — doctor's map and the tally render identically
+    canonical = render_custody_by_source(by_source)
+    assert canonical == render_custody_by_source(custody_counts_by_source(items, verdicts))
+    expected_bullets = [line for line in canonical if line.startswith("- `")]
+    assert len(expected_bullets) == 2  # genuinely multi-source (non-vacuous)
+    assert expected_bullets[0] != expected_bullets[1]  # the two sources' mixes differ
+
+    # compile the library once for the two compiled surfaces
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+    index_md = (library / "index.md").read_text(encoding="utf-8")
+    group_md = (library / "categories" / "ml.md").read_text(encoding="utf-8")
+
+    bundle_md = build_bundle(db, "topic")
+    bundle_html = build_bundle_html(db, "topic")
+    context_md = build_context(db, "topic", budget="connected")  # the breakdown rides connected+
+
+    surfaces = {
+        "bundle-markdown": _by_source_bullets(bundle_md),
+        "bundle-html": _html_by_source_bullets(bundle_html),
+        "context": _by_source_bullets(context_md),
+        "compiled-index": _by_source_bullets(index_md),
+        "compiled-group-page": _by_source_bullets(group_md),
+    }
+
+    # 1. every readable surface renders the *same* per-source bullets, byte-identical
+    #    to the canonical `render_custody_by_source(doctor.custody.by_source)`
+    for name, bullets in surfaces.items():
+        assert bullets == expected_bullets, f"{name} diverged from the canonical breakdown"
+
+    # 2. each Markdown surface carries the shared scope headline the bullets sit under,
+    #    and its per-source bullets sum to that headline's own scope (the surface can't
+    #    render bullets over a different scope than the headline above them)
+    scope_headline = custody_headline(items, verdicts)
+    canonical_total = _sum_by_source_bullets(expected_bullets)
+    for name, text in {
+        "bundle-markdown": bundle_md,
+        "context": context_md,
+        "compiled-index": index_md,
+        "compiled-group-page": group_md,
+    }.items():
+        assert scope_headline in text, f"{name} missing the shared scope headline"
+        headline = _library_headline(text)
+        summed = _sum_by_source_bullets(surfaces[name])
+        assert summed["count"] == headline["count"], f"{name} bullets ≠ headline count"
+        assert summed["tiers"] == headline["tiers"], f"{name} bullets ≠ headline tiers"
+        assert summed["drift"] == headline["drift"], f"{name} bullets ≠ headline drift"
+        # and that scope total == doctor's whole-library custody (the module spine)
+        assert summed == canonical_total
 
 
 def _seed_marker_fixture(db):

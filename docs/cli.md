@@ -337,6 +337,23 @@ scheduled worker's per-source picture and a fresh standalone audit read identica
 state — the per-source-maintenance counterpart of the `stats.custody` family (H101)
 and stale-recheck (H111) ties above.
 
+The **readable per-source breakdown** carries its own one-place tie (roadmap H151).
+The `_By source:_` bullets that follow a scope custody headline ride four readable
+surfaces — the `export bundle` briefing (H141) **and its HTML form**, the
+model-facing `scrolls context` bundle (`connected`+, H149), the compiled landing
+`index.md` (H145), and a multi-source compiled group page (`categories/`/`concepts/`/
+`tags/`, H152) — each rendered through the shared `custody.render_custody_by_source`.
+The invariant pins that over one multi-source seed (all rendered, all one category,
+every title matching the bundle/context query, so all four surfaces scope to the
+whole library) every surface renders **byte-identical** per-source bullets — the HTML
+`<li>` form parsed back to the same Markdown bullet — all equal to
+`render_custody_by_source` over both `doctor`'s `custody.by_source` and
+`custody_counts_by_source`, and that each surface's bullets sum to its own scope
+headline. So the per-source line reads the same number whichever readable surface an
+agent reaches; it is the readable-line analogue of the JSON `by_source` convergence
+(`status` H133, the `graph` `stats.custody.by_source` H150), pinned once in
+`tests/test_custody_convergence.py` like the per-item and scope-headline ties above.
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
 `drift_change`/`coverage_change`/`stale_change` (and the scalar `score.change`) by
