@@ -756,6 +756,11 @@ def test_maintain_attention_converges_with_doctors_max_loss_source(scrolls_home,
     # and the flagged source's own tally rides along, == doctor's entry for it
     assert attention["tiers"] == by_source["web"]["tiers"]
     assert attention["drift"] == by_source["web"]["drift"]
+    # roadmap H153: the per-source recheck coverage rides the flag too — == doctor's
+    # `custody.by_source[<source>].coverage` for the flagged source by construction
+    # (the same tally `weakest_source` distils), so the flag names the source, the
+    # loss, the act, *and* how much of the weak source is even checked, in one place.
+    assert attention["coverage"] == by_source["web"]["coverage"]
     # roadmap H137: the recheck command names exactly doctor's max-loss source —
     # so the act `maintain` points at re-verifies the source the audit flagged.
     assert attention["command"] == f"scrolls verify --source {attention['source']}"
@@ -937,6 +942,10 @@ def test_status_attention_converges_with_maintain_and_doctor(scrolls_home, capsy
     assert status_attention["source"] == _max_loss_source(by_source) == "web"
     # 2. == `weakest_source` over doctor's own per-source map (the primitive status threads)
     assert status_attention == weakest_source(by_source)
+    # roadmap H153: the per-source recheck coverage rides the flag — == doctor's
+    # `custody.by_source[<source>].coverage` for the flagged source by construction,
+    # so `status`'s `attention` carries how much of the weak source is checked.
+    assert status_attention["coverage"] == by_source["web"]["coverage"]
 
     # 3. == the `maintain --no-recheck` report's `attention` (the scheduled sibling,
     #    H119) — `--no-recheck` keeps the ledger pristine so both read one state

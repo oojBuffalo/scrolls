@@ -467,13 +467,19 @@ each command moves items between stages or derives artifacts from them.
   by construction (roadmap H123). Distilled from that map, the report also carries
   an **`attention`** member (`maintain.weakest_source`) — the single source with
   the most actionable loss (most `drifted` + `rotted`, tie-broken by most
-  `reference`-only then name), `{source, tiers, drift, reason, command}`, so the
-  log flags the one to act on without scanning every source; the `command` is the
-  exact `scrolls verify --source <source>` recheck (roadmap H137) — the bridge to
-  the act, a recheck not a `doctor --fix` repair, so it rides `attention` beside
-  the source, never `suggested`. Honest `null` when nothing stands out (empty,
-  single-source, or fully-clean — reference-only is a tie-breaker, never a
-  trigger), live-pass only like `by_source` (roadmap H119). The report also carries
+  `reference`-only then name), `{source, tiers, drift, coverage, reason, command}`,
+  so the log flags the one to act on without scanning every source; the flagged
+  source's recheck **`coverage`** `{verified, total}` (H121) rides along beside its
+  tiers/drift (a pure read of the same tally, no new ledger read, so it equals
+  `doctor`'s `custody.by_source[<source>].coverage` by construction) — naming not
+  just *which* source is weakest and *how* to recheck it but *how much of it is even
+  checked*, whether the drift is the whole story or just the verified slice of a
+  barely-covered source (roadmap H153); the `command` is the exact `scrolls verify
+  --source <source>` recheck (roadmap H137) — the bridge to the act, a recheck not a
+  `doctor --fix` repair, so it rides `attention` beside the source, never
+  `suggested`. Honest `null` when nothing stands out (empty, single-source, or
+  fully-clean — reference-only is a tie-breaker, never a trigger), live-pass only
+  like `by_source` (roadmap H119). The report also carries
   an **`enrichment_by_source`** member (`maintain.report_enrichment_by_source`) — the
   per-source stale-classification debt the audit already produced (`doctor`'s
   `custody.enrichment.by_source`, roadmap H135), a flat `{source: stale_count}` of
@@ -503,8 +509,9 @@ each command moves items between stages or derives artifacts from them.
   converges with `maintain`/`doctor`/`facets` for the same scope by construction
   (`tests/test_custody_convergence.py`, roadmap H133). Distilled from that same map
   it also carries the single weakest-source **`attention`** flag — `{source, tiers,
-  drift, reason, command}` (most drifted/rotted loss) with the `scrolls verify
-  --source <S>` recheck command (H137), or `null` when nothing stands out (empty /
+  drift, coverage, reason, command}` (most drifted/rotted loss; `coverage` = how
+  much of the weak source is checked, H153) with the `scrolls verify --source <S>`
+  recheck command (H137), or `null` when nothing stands out (empty /
   single-source / fully-clean) — via the shared `maintain.weakest_source` primitive
   `maintain`'s own `attention` uses, so the status-surface flag names `doctor`'s
   max-loss source and equals `maintain`'s `attention` by construction (no new audit;
@@ -1269,10 +1276,13 @@ choice (ADRs 0004, 0005).
   folds in, H121) so the log names which source's custody is weakest (or least
   covered), and distils it to a single **`attention`** member (`maintain.weakest_source`
   — the source with the most actionable loss, most `drifted`+`rotted` tie-broken by
-  most `reference`-only then name, with its tally, a one-line reason, and the exact
-  `scrolls verify --source <source>` recheck `command` (roadmap H137 — the bridge to
-  the act, a recheck not a repair, so on `attention` not `suggested`); `null` when
-  nothing stands out — empty, single-source, or fully-clean, roadmap H119); like
+  most `reference`-only then name, with its tally — including the per-source recheck
+  `coverage` `{verified, total}` the same tally carries (roadmap H153 — so the flag
+  names how much of the weak source is even checked, not just how much has drifted)
+  — a one-line reason, and the exact `scrolls verify --source <source>` recheck
+  `command` (roadmap H137 — the bridge to the act, a recheck not a repair, so on
+  `attention` not `suggested`); `null` when nothing stands out — empty,
+  single-source, or fully-clean, roadmap H119); like
   `suggested` both are live-pass-only members (absent from the snapshot/log, so
   `--history`/`--trend` carry none). Like doctor, deliberately not exposed over MCP
   (a mutating operator surface).

@@ -279,13 +279,19 @@ def weakest_source(
     `drifted` + `rotted` items (the sources *confirmed* to have moved or gone — the
     set a follow-up `verify --drift`/`media` targets), tie-broken by the most
     `reference`-only items (lowest fidelity), then the source name (so the pick is
-    deterministic). Returns ``{source, tiers, drift, reason, command}`` — the
-    flagged source's own tally (so the per-source picture rides along), a one-line
-    reason naming the loss that earned the flag, and (roadmap H137) the **exact
-    recheck command** (``scrolls verify --source <source>``, H125) — the bridge
-    from naming the weakest source to the act, so an unattended worker reads the
-    command without assembling it. The command names a *recheck* (verify), not a
-    `doctor --fix` repair, so it rides `attention` beside the source it names,
+    deterministic). Returns ``{source, tiers, drift, coverage, reason, command}`` —
+    the flagged source's own tally (so the per-source picture rides along, now
+    including the recheck ``coverage`` ``{verified, total}`` H121 the tally already
+    carries, roadmap H153 — so the flag names not just *which* source is weakest
+    and *how much* has drifted but *how much of it is even checked*, whether the
+    drift is the whole story or just the verified slice of a barely-covered
+    source; a pure read of the same tally, **no new ledger read**, so it equals
+    that source's `custody.by_source[<source>].coverage` by construction), a
+    one-line reason naming the loss that earned the flag, and (roadmap H137) the
+    **exact recheck command** (``scrolls verify --source <source>``, H125) — the
+    bridge from naming the weakest source to the act, so an unattended worker reads
+    the command without assembling it. The command names a *recheck* (verify), not
+    a `doctor --fix` repair, so it rides `attention` beside the source it names,
     never the `suggested` block (which carries the structural-repair commands,
     H40); it is `null` exactly when `attention` is (the whole block is absent).
 
@@ -315,6 +321,13 @@ def weakest_source(
         "source": source,
         "tiers": tally["tiers"],
         "drift": tally["drift"],
+        # H153: the flagged source's recheck coverage (`{verified, total}`, H121)
+        # rides along beside its tiers/drift — a pure read of the same tally (no
+        # new ledger read), so an unattended worker sees how much of the weak
+        # source is even checked, and it equals `doctor`'s per-source coverage by
+        # construction. `.get` keeps the degrade-safe posture: an older/empty
+        # schema without coverage reads the honest zero fraction, never a KeyError.
+        "coverage": tally.get("coverage", {"verified": 0, "total": 0}),
         "reason": _attention_reason(tally),
         # H137: the exact act to re-check this source — a recheck, not a repair,
         # so it rides `attention`, never `suggested`. Source slugs are single

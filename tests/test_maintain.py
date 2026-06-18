@@ -1729,12 +1729,15 @@ def test_maintain_history_does_not_carry_the_per_source_enrichment_breakdown(
 
 
 def _source_tally(*, full=0, partial=0, reference=0,
-                  verified=0, unverified=0, drifted=0, rotted=0, error=0):
-    """One source's `{tiers, drift}` tally, shaped like `custody_counts`."""
+                  verified=0, unverified=0, drifted=0, rotted=0, error=0,
+                  cov_verified=0, cov_total=0):
+    """One source's `{tiers, drift, coverage}` tally, shaped like
+    `custody_counts_by_source` (which carries the per-source `coverage` since H121)."""
     return {
         "tiers": {"full": full, "partial": partial, "reference": reference},
         "drift": {"verified": verified, "unverified": unverified,
                   "drifted": drifted, "rotted": rotted, "error": error},
+        "coverage": {"verified": cov_verified, "total": cov_total},
     }
 
 
@@ -1742,8 +1745,8 @@ def test_weakest_source_picks_the_most_drifted_and_rotted():
     # The flagged source is the one with the most actionable loss (drifted +
     # rotted), and it carries its own tally plus a one-line reason naming the loss.
     by_source = {
-        "arxiv": _source_tally(full=2, verified=1, drifted=1),  # loss 1
-        "web": _source_tally(full=3, drifted=2, rotted=1),       # loss 3 — weakest
+        "arxiv": _source_tally(full=2, verified=1, drifted=1, cov_verified=1, cov_total=2),
+        "web": _source_tally(full=3, drifted=2, rotted=1, cov_verified=1, cov_total=3),
     }
     flagged = weakest_source(by_source)
     assert flagged["source"] == "web"
@@ -1764,6 +1767,42 @@ def test_weakest_source_names_the_recheck_command():
     flagged = weakest_source(by_source)
     assert flagged["command"] == "scrolls verify --source web"
     assert flagged["command"] == f"scrolls verify --source {flagged['source']}"
+
+
+def test_weakest_source_carries_the_flagged_sources_coverage():
+    # roadmap H153: the flag carries the flagged source's own recheck `coverage`
+    # (`{verified, total}`, H121) — so an unattended worker reads not just *which*
+    # source is weakest (H119) and *how* to recheck it (H137), but *how much of it
+    # is even checked*: whether the drift is the whole story or just the verified
+    # slice of a barely-covered source. It is exactly that source's `by_source`
+    # coverage (a pure read of the tally, no new ledger read).
+    by_source = {
+        "arxiv": _source_tally(full=2, verified=1, drifted=1, cov_verified=1, cov_total=2),
+        "web": _source_tally(full=3, drifted=2, rotted=1, cov_verified=1, cov_total=3),
+    }
+    flagged = weakest_source(by_source)
+    assert flagged["source"] == "web"  # the weakest source (loss 3)
+    assert flagged["coverage"] == by_source["web"]["coverage"] == {"verified": 1, "total": 3}
+    # present whenever `attention` is — the flagged source's coverage rides along,
+    # not the loser's (a literal pick: arxiv's coverage is a different fraction).
+    assert flagged["coverage"] != by_source["arxiv"]["coverage"]
+
+
+def test_weakest_source_coverage_degrades_to_zero_fraction_without_a_tally():
+    # Honest absence (the module's degrade-safe posture): a tally missing the
+    # `coverage` key (an older/empty schema) reads the honest `{0, 0}` fraction,
+    # never a `KeyError` — mirroring `custody_snapshot`'s coverage default.
+    legacy = {
+        "arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0},
+                  "drift": {"verified": 1, "unverified": 0, "drifted": 0,
+                            "rotted": 0, "error": 0}},
+        "web": {"tiers": {"full": 1, "partial": 0, "reference": 0},
+                "drift": {"verified": 0, "unverified": 0, "drifted": 1,
+                          "rotted": 0, "error": 0}},
+    }
+    flagged = weakest_source(legacy)
+    assert flagged["source"] == "web"
+    assert flagged["coverage"] == {"verified": 0, "total": 0}
 
 
 def test_weakest_source_tie_broken_by_most_reference_then_name():
@@ -1824,6 +1863,10 @@ def test_maintain_report_flags_the_weakest_source(home, monkeypatch, capsys):
     assert attention["source"] == "web"
     assert attention["drift"]["drifted"] == 1
     assert attention["reason"] == "1 drifted"
+    # H153: the flag carries the flagged source's own recheck coverage — exactly
+    # the `by_source` coverage the report shows beside it (a pure read, no new
+    # ledger read), so the worker sees how much of the weak source is checked.
+    assert attention["coverage"] == report["by_source"]["web"]["coverage"]
     # H137: the report names the exact recheck command, not just the source.
     assert attention["command"] == "scrolls verify --source web"
     # a recheck, not a `doctor --fix` repair — it rides `attention`, never the
