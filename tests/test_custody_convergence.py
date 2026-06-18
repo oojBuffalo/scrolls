@@ -30,7 +30,13 @@ fidelity`/`facets drift` for the same `--source` filter — and the `index.md`
 headline to equal `custody_counts` over the whole rendered library *and*
 `doctor`'s `custody` aggregate. So the compiled library's *scope* custody summary
 reads the same as the agent aggregates — the scope-level counterpart of H91's
-per-item compiled-page tie, completing the compiled-surface custody theme.
+per-item compiled-page tie, completing the compiled-surface custody theme. The
+landing `index.md` also follows that headline with a `_By source:_` breakdown
+(roadmap H145), the compiled-surface counterpart of the JSON `status` `by_source`
+(H133) and the `export bundle` briefing (H141): its bullets equal
+`custody.render_custody_by_source` over both `doctor`'s `custody.by_source` and
+`custody_counts_by_source`, so the per-source line reads byte-identical across the
+status / bundle / compiled surfaces.
 
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
@@ -1239,6 +1245,47 @@ def test_compiled_library_pages_agree_on_the_scope_custody_headline(scrolls_home
     #    group pages + the index
     for rollup in ("graph.md", "works.md"):
         assert _library_headline((library / rollup).read_text(encoding="utf-8")) is None
+
+
+def test_compiled_index_per_source_breakdown_converges_with_doctor_by_source(
+    scrolls_home, capsys
+):
+    # roadmap H145: the landing `index.md` follows its whole-library headline with a
+    # `_By source:_` breakdown — the compiled-surface counterpart of the JSON
+    # `status` `by_source` (H133) and the `export bundle` briefing (H141), through
+    # the same shared `custody.render_custody_by_source`. Fold it into the
+    # cross-surface invariant beside the bundle tie above: over the multi-source
+    # seed (all rendered, so the index scope == the whole library == doctor's
+    # scope) the compiled bullets equal `render_custody_by_source` over *both*
+    # `doctor.custody.by_source` and `custody_counts_by_source`, and the headline
+    # (the whole-scope sum the per-source lines total) is present too.
+    from scrolls.custody import render_custody_by_source
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_compiled_scope_fixture(db)  # web (3) + arxiv (1), every item rendered
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # the rendered breakdown is a faithful read of doctor's map and of the tally
+    expected = render_custody_by_source(by_source)
+    assert expected == render_custody_by_source(custody_counts_by_source(items, verdicts))
+    assert expected  # the seed is genuinely multi-source (non-vacuous)
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    index = (get_paths().library_dir / "index.md").read_text(encoding="utf-8")
+    header = index.split("## Sources")[0]
+    # every breakdown line (the trailing spacer aside) reads in the compiled index,
+    # under the whole-library headline the per-source bullets total
+    for line in expected[:-1]:
+        assert line in header
+    assert custody_headline(items, verdicts) in header
+    assert header.index("_Custody:") < header.index("_By source:_")
 
 
 def _seed_marker_fixture(db):

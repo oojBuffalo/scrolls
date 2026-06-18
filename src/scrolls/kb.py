@@ -29,10 +29,12 @@ from pathlib import Path
 
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts_by_source,
     custody_headline,
     drift_posture,
     last_checked,
     latest_events,
+    render_custody_by_source,
 )
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
@@ -300,6 +302,18 @@ def _write_index(
         # equals `status`/`doctor` when every held item is rendered.
         custody_headline(items, verdicts),
     ]
+    # the per-source custody breakdown under the headline (roadmap H145) — the
+    # compiled landing-page counterpart of the `export bundle` briefing (H141)
+    # and JSON `status` (H133), over the same shared `render_custody_by_source`
+    # so the `_By source:_` bullets read byte-identical across surfaces and sum
+    # to the headline by construction (every scroll lands in one source group).
+    # A single-source/empty library is the honest no-op (the helper returns []).
+    # The helper's trailing spacer is dropped: a breakdown is present only with
+    # ≥2 sources, so `## Sources` always follows and supplies the separator.
+    by_source_lines = render_custody_by_source(
+        custody_counts_by_source(items, verdicts))
+    if by_source_lines:
+        lines += [""] + by_source_lines[:-1]
     if by_source:
         lines += ["", "## Sources", ""]
         for source in sorted(by_source):

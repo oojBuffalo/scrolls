@@ -1037,8 +1037,17 @@ choice (ADRs 0004, 0005).
   `custody.custody_headline` over the rendered library it heads (the items its
   count line counts), the compiled counterpart of `scrolls status`'s headline
   (H38), so opening the library answers "how custody stands" at a glance and the
-  line converges with `status`/`doctor` when every held item is rendered.
-  Concept pages merge spellings by
+  line converges with `status`/`doctor` when every held item is rendered. When
+  the rendered library spans **more than one source**, the index follows that
+  headline with a **`_By source:_` breakdown** (roadmap H145) — one bullet per
+  source naming its fidelity tiers and drift postures, through the same shared
+  `custody.render_custody_by_source` the `export bundle` briefing (H141) uses, so
+  the compiled landing page, the shareable briefing, and JSON `status` (H133)
+  read byte-identical per-source lines; its bullets sum to the index headline by
+  construction and equal `doctor`'s `custody.by_source` over the rendered scope, a
+  single-source library omitting the split (the helper's no-op). Both the headline
+  and the breakdown render inside the `@generated` fence, so a recompile refreshes
+  them after a re-verify. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,

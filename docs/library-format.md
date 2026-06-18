@@ -386,7 +386,15 @@ library, the landing-page counterpart of `scrolls status` (the same shared
 group-page scope headlines, H95). It is scoped to the *rendered* library the
 index heads — the same items its count line counts — so its `N` never disagrees
 with the page it summarises, and it equals `status`/`doctor`'s custody aggregate
-when every held item is rendered. Then `## Sources`, `## Categories`,
+when every held item is rendered. When the library spans **more than one
+source**, a `_By source:_` breakdown follows the headline (roadmap H145) — one
+bullet per source naming that source's fidelity tiers and drift postures, the
+compiled-surface counterpart of the `export bundle` briefing (H141) and JSON
+`status` (H133), through the same shared `custody.render_custody_by_source`. Its
+per-source bullets sum to the headline by construction (every scroll lands in one
+source group) and equal `doctor`'s `custody.by_source` over the rendered scope; a
+single-source library omits the split (the whole-library headline already says
+everything). Then `## Sources`, `## Categories`,
 `## Concepts`, and `## Tags` lists linking to group pages (the categories list
 ends with an unlinked `- unclassified — N scrolls` line when any rendered item
 lacks a category, `test_kb_counts_unclassified_items_in_index`), then
@@ -412,6 +420,11 @@ both report nothing held:
 [Link graph](graph.md) — no linked scrolls yet.
 [Works](works.md) — no works held in multiple representations yet.
 _Custody: 2 scroll(s) · fidelity full 1, reference 1 · drift unverified 2._
+
+_By source:_
+
+- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1
+- `wikipedia` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
 
 ## Sources
 

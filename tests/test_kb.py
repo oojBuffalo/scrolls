@@ -655,6 +655,119 @@ def test_kb_empty_library_index_has_honest_custody_headline(scrolls_home, capsys
     assert "_Custody: 0 scroll(s)._" in index
 
 
+def test_kb_index_carries_a_per_source_custody_breakdown(scrolls_home, capsys):
+    """A multi-source compiled index carries a `_By source:_` breakdown under the
+    whole-library headline (roadmap H145), byte-identical to the shared
+    `custody.render_custody_by_source` and summing to the headline by construction."""
+    from scrolls.custody import (
+        custody_counts_by_source,
+        latest_events,
+        render_custody_by_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # web: a full+drifted and a reference+never; arxiv: a full+never
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="news"))
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", raw_text="b", content_hash="h3"))
+    _drift(db, "web:a", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    rendered = [i for i in list_items(db) if i.markdown_path]
+    expected = render_custody_by_source(custody_counts_by_source(rendered, latest_events(db)))
+    assert expected == [
+        "_By source:_",
+        "",
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1",
+        "- `web` — 2 scroll(s) · fidelity full 1, reference 1"
+        " · drift unverified 1, drifted 1",
+        "",
+    ]
+    # the breakdown sits under the headline, before ## Sources
+    header = index.split("## Sources")[0]
+    assert "_By source:_" in header
+    for line in expected[:-1]:  # the bullets (the trailing spacer is dropped)
+        assert line in header
+    # and the headline precedes the breakdown in the header block
+    assert header.index("_Custody:") < header.index("_By source:_")
+
+
+def test_kb_index_per_source_breakdown_sums_to_the_headline(scrolls_home, capsys):
+    """Each per-source bullet's tier/posture counts sum to the index headline's
+    totals — convergence by construction (every scroll lands in one source)."""
+    import re
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="news"))
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", raw_text="b", content_hash="h3"))
+    _drift(db, "web:a", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    # tally the per-source bullets' fidelity counts (sections read `<tier> <count>`)
+    fid_total: dict[str, int] = {}
+    for bullet in re.findall(r"^- `\w+` — .*$", header, re.MULTILINE):
+        for tier, count in re.findall(r"(full|partial|reference) (\d+)", bullet):
+            fid_total[tier] = fid_total.get(tier, 0) + int(count)
+    # the headline names exactly those non-zero totals (2 full, 1 reference)
+    assert fid_total == {"full": 2, "reference": 1}
+    assert "_Custody: 3 scroll(s) · fidelity full 2, reference 1" in header
+
+
+def test_kb_index_single_source_omits_the_per_source_breakdown(scrolls_home, capsys):
+    """A single-source library's index carries the headline but no `_By source:_`
+    split — the whole-library headline already says everything (the helper no-op)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:a", "web", "Alpha", category="news"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="news"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "_Custody:" in index
+    assert "_By source:_" not in index
+
+
+def test_kb_index_per_source_breakdown_is_refresh_safe(scrolls_home, capsys):
+    """A re-verify refreshes the per-source breakdown on recompile, inside the
+    `@generated` fence; an annotation outside the fence survives."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered("arxiv:1", "arxiv", "A Paper", category="ml"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index_path = scrolls_home / "library" / "index.md"
+    page = index_path.read_text(encoding="utf-8")
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in page
+    assert "_By source:_" in generated_body(page)  # inside the fence
+    index_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    _drift(db, "web:a", "drifted")
+    run_kb(capsys)
+    refreshed = index_path.read_text(encoding="utf-8")
+    # the web posture moved unverified → drifted; its bullet refreshed in-fence
+    # (arxiv is reference-only and never re-checked, so it stays unverified)
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift drifted 1" in refreshed
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift unverified 1" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
