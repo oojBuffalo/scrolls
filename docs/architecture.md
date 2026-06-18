@@ -385,7 +385,20 @@ each command moves items between stages or derives artifacts from them.
   rides every readable surface at once. Both bundle forms render it from the
   one structured `custody.custody_source_breakdown` (shared with the HTML
   `_by_source_html`), the same shared-primitive posture that keeps the scope
-  headline — coverage section included — byte-identical across surfaces. The `scrolls graph` payload carries the same tally as a JSON
+  headline — coverage section included — byte-identical across surfaces. Above
+  that map, the readable surfaces carry a one-line weakest-source `_Attention:_`
+  pointer (roadmap H159, `custody.render_custody_attention`) — the readable
+  counterpart of the JSON `attention` flag on `status`/`maintain`: it names the
+  single source with the most actionable loss and the exact `scrolls verify
+  --source <S>` recheck command, so an agent skims "this one source needs
+  attention" before the per-source map. It is distilled by the shared
+  `custody.weakest_source` primitive — lifted from `maintain` to live in
+  `custody.py` beside `custody_counts_by_source`, re-exported by `maintain` so
+  `status`/`maintain` keep importing it unchanged — over the bundle scope's own
+  per-source map, so the readable line names the same source/reason/command as the
+  JSON flag by construction and is honestly absent (omitted) exactly when the flag
+  is `null` (single-source, clean, or empty scope). The HTML form renders it as a
+  red `custody-attention` paragraph (`_attention_html`). The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
   JSON) over its whole `stats.items` scope (roadmap H52), and splits it per source
   in a `stats.custody.by_source` map (`custody.custody_counts_by_source` over the
@@ -490,7 +503,9 @@ each command moves items between stages or derives artifacts from them.
   `suggested` it rides the live pass only (never recorded in the snapshot/log, so
   `--history`/`--trend` carry none) and sums to the whole-library `custody` block
   by construction (roadmap H123). Distilled from that map, the report also carries
-  an **`attention`** member (`maintain.weakest_source`) — the single source with
+  an **`attention`** member (`custody.weakest_source`, re-exported by `maintain`;
+  lifted to `custody.py` in H159 so the readable `export bundle`/`context` briefings
+  share it) — the single source with
   the most actionable loss (most `drifted` + `rotted`, tie-broken by most
   `reference`-only then name), `{source, tiers, drift, coverage, reason, command}`,
   so the log flags the one to act on without scanning every source; the flagged

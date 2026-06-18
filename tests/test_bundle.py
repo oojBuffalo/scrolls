@@ -515,6 +515,142 @@ def test_bundle_html_per_source_breakdown_omitted_for_a_single_source(scrolls_ho
     assert "By source:" not in doc
 
 
+# --- readable weakest-source `_Attention:_` line (roadmap H159) --------------
+
+
+def _seed_clean_multi_source(db):
+    """Two sources, neither carrying any drifted/rotted loss — a clean scope.
+
+    `web` verified, `arxiv` never checked: the per-source split is non-trivial
+    (two sources) but nothing is actionable, so `weakest_source`/the readable
+    `_Attention:_` line are both honestly absent.
+    """
+    insert_item(db, make_item(
+        "web:ok", "OK database", "An ok database.",
+        source="web", url="https://web.example/ok"))
+    insert_item(db, make_item(
+        "arxiv:2", "Arxiv database note", "A database note.",
+        source="arxiv", url="https://arxiv.org/abs/2"))
+    record_events(db, [_event("web:ok", "unchanged", observed="deadbeef")])
+
+
+def test_bundle_carries_a_weakest_source_attention_line(scrolls_home):
+    # roadmap H159: one `_Attention:_` line names the single source with the most
+    # actionable loss and the exact recheck command. In `_seed_multi_source`, web
+    # carries the only loss (1 drifted), so it is flagged.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    bundle = build_bundle(db, "database")
+    assert (
+        "_Attention: source `web` carries the most drift (1 drifted) — "
+        "recheck with `scrolls verify --source web`._" in bundle
+    )
+    # the pointer is skimmed first: it sits above the per-source map
+    assert bundle.index("_Attention:") < bundle.index("_By source:_")
+
+
+def test_attention_line_converges_with_weakest_source(scrolls_home):
+    # the rendered line comes straight from the shared `weakest_source`/
+    # `render_custody_attention` primitives over the bundle scope's own
+    # `custody_counts_by_source`, so the readable line and the JSON `attention`
+    # flag (status/maintain) name the same source by construction
+    from scrolls.custody import (
+        custody_counts_by_source,
+        latest_events,
+        render_custody_attention,
+        weakest_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = custody_counts_by_source(items, verdicts)
+
+    bundle = build_bundle(db, "database")
+    for line in render_custody_attention(by_source):
+        assert line in bundle
+    flagged = weakest_source(by_source)
+    assert flagged["source"] == "web"
+    assert flagged["command"] == "scrolls verify --source web"
+    assert f"`{flagged['command']}`" in bundle
+
+
+def test_attention_line_omitted_for_a_single_source(scrolls_home):
+    # one source never stands out — the scope headline says everything (the same
+    # honest-absence count as the JSON `attention` flag)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:moved", "Moved database", "A moved database.",
+        source="web", url="https://web.example/moved"))
+    record_events(db, [_event("web:moved", "drifted", observed="cafe1234")])
+    bundle = build_bundle(db, "database")
+    assert "custody `drifted`" in bundle  # the loss is still recorded per-scroll
+    assert "_Attention:" not in bundle  # but no cross-source pointer
+    assert "_By source:_" not in bundle
+
+
+def test_attention_line_omitted_for_a_clean_multi_source_scope(scrolls_home):
+    # multi-source but no source carries drifted/rotted loss → the `_By source:_`
+    # split still renders, but there is nothing actionable to flag
+    main(["init"])
+    db = get_paths().db_path
+    _seed_clean_multi_source(db)
+    bundle = build_bundle(db, "database")
+    assert "_By source:_" in bundle
+    assert "_Attention:" not in bundle
+
+
+def test_attention_line_empty_scope_is_a_no_op(scrolls_home):
+    main(["init"])
+    bundle = build_bundle(get_paths().db_path, "nothingmatcheshere")
+    assert "_Custody: 0 scroll(s)._" in bundle
+    assert "_Attention:" not in bundle
+
+
+def test_attention_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H35/H141 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    bundle = build_bundle(db, "database")
+    assert "_Attention:" in bundle
+    assert sorted(i.id for i in parse_bundle(bundle)) == [
+        "arxiv:1", "web:full", "web:moved",
+    ]
+
+
+def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
+    # roadmap H159: the HTML briefing carries the same pointer, from the same
+    # `weakest_source`, so the two readable forms cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-attention">Attention: source <code>web</code> '
+        "carries the most drift (1 drifted) — recheck with "
+        "<code>scrolls verify --source web</code>.</p>" in doc
+    )
+    # skimmed first: above the per-source list (the <p>/<ul> elements, not the
+    # always-present CSS rule of the same class name in the <style> block)
+    assert doc.index('<p class="custody-attention">') < doc.index('<ul class="custody-by-source">')
+
+
+def test_bundle_html_attention_line_omitted_when_clean_or_single_source(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_clean_multi_source(db)
+    doc = build_bundle_html(db, "database")
+    assert "By source:" in doc  # multi-source split still renders
+    assert '<p class="custody-attention">' not in doc  # nothing actionable to flag
+
+
 def test_a_drifted_scroll_is_still_carried_losslessly(scrolls_home):
     # raw is sacred: a drifted scroll is a recorded posture, never dropped
     main(["init"])

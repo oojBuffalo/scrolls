@@ -45,7 +45,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import parse_since, render_custody_headline
+from scrolls.custody import parse_since, render_custody_headline, weakest_source
 from scrolls.paths import LibraryPaths
 
 # The axes a snapshot carries from a doctor report. `score`/`enrichment_stale`/
@@ -254,99 +254,12 @@ def report_enrichment_by_source(report: dict[str, Any]) -> dict[str, int]:
     return dict(report.get("custody", {}).get("enrichment", {}).get("by_source", {}))
 
 
-# The actionable-loss postures: the items confirmed to have moved or gone since
-# capture (a follow-up `verify --drift drifted`/`media` targets exactly these).
-# `unverified` (never checked) and `error` (a transient re-check failure) are not
-# *confirmed* loss, so they do not flag a source — `drifted`/`rotted` do.
-_LOSS_POSTURES = ("drifted", "rotted")
-
-
-def _source_loss(tally: dict[str, dict[str, int]]) -> int:
-    """How many of a source's held items are confirmed drifted or rotted."""
-    drift = tally.get("drift", {})
-    return sum(drift.get(posture, 0) for posture in _LOSS_POSTURES)
-
-
-def weakest_source(
-    by_source: dict[str, dict[str, dict[str, int]]]
-) -> dict[str, Any] | None:
-    """The single source carrying the most actionable custody loss (roadmap H119).
-
-    H123 threads `doctor`'s *whole* per-source breakdown (`custody.by_source`,
-    H104) into the `maintain` report; this distils that map to the **one** source
-    worth flagging, so an unattended log reads "source `x` is weakest — N drifted"
-    without scanning every source. Weakest = the most **actionable loss**: the most
-    `drifted` + `rotted` items (the sources *confirmed* to have moved or gone — the
-    set a follow-up `verify --drift`/`media` targets), tie-broken by the most
-    `reference`-only items (lowest fidelity), then the source name (so the pick is
-    deterministic). Returns ``{source, tiers, drift, coverage, reason, command}`` —
-    the flagged source's own tally (so the per-source picture rides along, now
-    including the recheck ``coverage`` ``{verified, total}`` H121 the tally already
-    carries, roadmap H153 — so the flag names not just *which* source is weakest
-    and *how much* has drifted but *how much of it is even checked*, whether the
-    drift is the whole story or just the verified slice of a barely-covered
-    source; a pure read of the same tally, **no new ledger read**, so it equals
-    that source's `custody.by_source[<source>].coverage` by construction), a
-    one-line reason naming the loss that earned the flag, and (roadmap H137) the
-    **exact recheck command** (``scrolls verify --source <source>``, H125) — the
-    bridge from naming the weakest source to the act, so an unattended worker reads
-    the command without assembling it. The command names a *recheck* (verify), not
-    a `doctor --fix` repair, so it rides `attention` beside the source it names,
-    never the `suggested` block (which carries the structural-repair commands,
-    H40); it is `null` exactly when `attention` is (the whole block is absent).
-
-    Honest absence (`None`), the report's first-run/empty posture, on three counts:
-
-    - an **empty** map — no library / no sources, nothing to flag;
-    - a **single** source — no source *stands out*; the whole-library `custody`
-      block already says everything `attention` could, which only adds value by
-      discriminating *across* sources, so a one-source library is null even when it
-      carries drift;
-    - a **fully-clean** library — no source carries any `drifted`/`rotted` loss, so
-      there is nothing actionable to flag (reference-only is the normal capture
-      posture, a tie-breaker, never a trigger on its own).
-
-    Pure over the `by_source` map — **no new ledger read**; surfaced live-pass only
-    (like `report_by_source`/`suggest_repairs`), so `--history`/`--trend` carry none.
-    """
-    if len(by_source) < 2:
-        return None
-    source, tally = min(
-        by_source.items(),
-        key=lambda kv: (-_source_loss(kv[1]), -kv[1].get("tiers", {}).get("reference", 0), kv[0]),
-    )
-    if _source_loss(tally) == 0:
-        return None
-    return {
-        "source": source,
-        "tiers": tally["tiers"],
-        "drift": tally["drift"],
-        # H153: the flagged source's recheck coverage (`{verified, total}`, H121)
-        # rides along beside its tiers/drift — a pure read of the same tally (no
-        # new ledger read), so an unattended worker sees how much of the weak
-        # source is even checked, and it equals `doctor`'s per-source coverage by
-        # construction. `.get` keeps the degrade-safe posture: an older/empty
-        # schema without coverage reads the honest zero fraction, never a KeyError.
-        "coverage": tally.get("coverage", {"verified": 0, "total": 0}),
-        "reason": _attention_reason(tally),
-        # H137: the exact act to re-check this source — a recheck, not a repair,
-        # so it rides `attention`, never `suggested`. Source slugs are single
-        # tokens (no shell-quoting needed), matching the `suggested` command form.
-        "command": f"scrolls verify --source {source}",
-    }
-
-
-def _attention_reason(tally: dict[str, dict[str, int]]) -> str:
-    """A one-line reason naming the actionable loss that flagged a source.
-
-    Lists only the non-zero loss postures (`drifted`/`rotted`) in canonical order —
-    e.g. ``"2 drifted, 1 rotted"`` — never empty (a source is flagged only when its
-    loss is non-zero), so the log line is always self-describing.
-    """
-    drift = tally.get("drift", {})
-    return ", ".join(
-        f"{drift[posture]} {posture}" for posture in _LOSS_POSTURES if drift.get(posture)
-    )
+# `weakest_source` — the distillation of `doctor`'s per-source breakdown to the
+# one source worth flagging — now lives in `custody.py` beside the
+# `custody_counts_by_source` map it reads, so the readable `export bundle`/`context`
+# briefings can render the same `attention` flag without reaching into `maintain`
+# (roadmap H159). It is imported above and re-exported here, so `maintain`'s report
+# (H123) and `scrolls status` (H139) keep importing it from `maintain` unchanged.
 
 
 def _scalar_delta(before: int | None, after: int | None) -> dict[str, Any]:

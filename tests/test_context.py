@@ -806,6 +806,129 @@ def test_context_per_source_breakdown_mcp_parity(scrolls_home):
     )
 
 
+# --- readable weakest-source `_Attention:_` line (roadmap H159) --------------
+
+
+def test_context_carries_a_weakest_source_attention_line(scrolls_home, capsys):
+    # roadmap H159: a model-facing bundle names the single source with the most
+    # actionable loss + the recheck command, skimmed before the per-source map.
+    # In `_seed_multi_source`, web carries the only loss (1 drifted).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert (
+        "_Attention: source `web` carries the most drift (1 drifted) — "
+        "recheck with `scrolls verify --source web`._" in out
+    )
+    assert out.index("_Attention:") < out.index("_By source:_")
+
+
+def test_context_attention_line_converges_with_weakest_source(scrolls_home, capsys):
+    # the line is the shared `weakest_source`/`render_custody_attention` over the
+    # bundle scope's own `custody_counts_by_source`, so it names the same source as
+    # the JSON `attention` flag status/maintain carry, by construction
+    from scrolls.custody import (
+        custody_counts_by_source,
+        latest_events,
+        render_custody_attention,
+        weakest_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = custody_counts_by_source(items, verdicts)
+
+    out = run_context(capsys, "database")
+    expected = render_custody_attention(by_source)
+    assert expected  # the seed is genuinely multi-source with loss (non-vacuous)
+    for line in expected:
+        assert line in out
+    assert weakest_source(by_source)["source"] == "web"
+
+
+def test_context_attention_line_gated_off_index(scrolls_home, capsys):
+    # like the scope headline/per-source split, the attention line is gated to
+    # `connected`/`full` — the leanest `index` tier stays a bare catalog (H47 gate)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Attention:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_attention_line_present_from_connected_up(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_Attention: source `web`" in out
+
+
+def test_context_attention_line_omitted_for_a_single_source(scrolls_home, capsys):
+    # one source never stands out, even when it carries drift (the JSON flag's
+    # single-source honest absence)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:moved", "Moved database", "A moved database body.", source="web",
+        url="https://web/moved", content_hash="beefcafe",
+        raw_text="<raw>A moved database body.</raw>"))
+    record_events(db, [_drift_event("web:moved", "drifted", observed="cafe1234")])
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_Attention:" not in out
+
+
+def test_context_attention_line_omitted_for_a_clean_multi_source_scope(scrolls_home, capsys):
+    # multi-source but no drifted/rotted loss → the split renders, no pointer
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:ok", "OK database", "An ok database body.", source="web",
+        url="https://web/ok", content_hash="deadbeef",
+        raw_text="<raw>An ok database body.</raw>"))
+    insert_item(db, make_item(
+        "arxiv:2", "Arxiv database note", "A database note body.", source="arxiv",
+        url="https://arxiv.org/abs/2", content_hash="aa11bb22",
+        raw_text="<raw>A database note body.</raw>"))
+    record_events(db, [_drift_event("web:ok", "unchanged", observed="deadbeef")])
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_By source:_" in out
+    assert "_Attention:" not in out
+
+
+def test_context_attention_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the attention line
+    # rides MCP identically (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+
+    bundle = get_context_bundle("database")
+    assert (
+        "_Attention: source `web` carries the most drift (1 drifted) — "
+        "recheck with `scrolls verify --source web`._" in bundle
+    )
+
+
 # --- per-excerpt provenance tags at the `full` budget (H44 + H62) ----------
 
 

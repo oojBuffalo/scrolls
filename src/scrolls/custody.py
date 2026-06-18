@@ -36,7 +36,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, get_fidelity
@@ -776,6 +776,96 @@ def custody_counts_by_source(
     return result
 
 
+# The drift postures that count as *actionable* custody loss — the sources a
+# follow-up recheck/recapture targets. `verified`/`unverified`/`error` are not
+# *confirmed* loss, so they do not flag a source — `drifted`/`rotted` do. (The
+# same postures `maintain`'s attention flag has always keyed off; this is its
+# canonical home now that the readable surfaces share the primitive, roadmap H159.)
+_LOSS_POSTURES = ("drifted", "rotted")
+
+
+def _source_loss(tally: dict[str, dict[str, int]]) -> int:
+    """How many of a source's held items are confirmed drifted or rotted."""
+    drift = tally.get("drift", {})
+    return sum(drift.get(posture, 0) for posture in _LOSS_POSTURES)
+
+
+def _attention_reason(tally: dict[str, dict[str, int]]) -> str:
+    """A one-line reason naming the actionable loss that flagged a source.
+
+    Lists only the non-zero loss postures (`drifted`/`rotted`) in canonical order —
+    e.g. ``"2 drifted, 1 rotted"`` — never empty (a source is flagged only when its
+    loss is non-zero), so the line is always self-describing.
+    """
+    drift = tally.get("drift", {})
+    return ", ".join(
+        f"{drift[posture]} {posture}" for posture in _LOSS_POSTURES if drift.get(posture)
+    )
+
+
+def weakest_source(
+    by_source: dict[str, dict[str, dict[str, int]]]
+) -> dict[str, Any] | None:
+    """The single source carrying the most actionable custody loss (roadmap H119/H159).
+
+    The shared distillation behind every weakest-source `attention` flag: JSON
+    `scrolls status` (H139) and `scrolls maintain` (H119/H137) thread it over
+    `doctor`'s per-source breakdown, and the readable `export bundle`/`scrolls
+    context` briefings render it as an `_Attention:_` line (H159, via
+    `render_custody_attention`) over the bundle scope's own `custody_counts_by_source`
+    — so every surface's flag is *the same source, the same tally* by construction.
+    It lives here, beside `custody_counts_by_source`, so the readable surfaces no
+    longer reach into `maintain` for it (`maintain.weakest_source` re-exports this).
+
+    Weakest = the most **actionable loss**: the most `drifted` + `rotted` items (the
+    sources *confirmed* to have moved or gone — the set a follow-up
+    `verify --drift`/`media` targets), tie-broken by the most `reference`-only items
+    (lowest fidelity), then the source name (so the pick is deterministic). Returns
+    ``{source, tiers, drift, coverage, reason, command}`` — the flagged source's own
+    tally (so the per-source picture rides along, including the recheck ``coverage``
+    ``{verified, total}`` H121 the tally already carries, roadmap H153 — a pure read
+    of the same tally, **no new ledger read**, so it equals that source's
+    `custody.by_source[<source>].coverage` by construction), a one-line reason naming
+    the loss that earned the flag, and (roadmap H137) the **exact recheck command**
+    (``scrolls verify --source <source>``, H125) — the bridge from naming the weakest
+    source to the act.
+
+    Honest absence (`None`), the same three counts as the JSON flag — so a surface's
+    readable line is absent exactly when its JSON `attention` is:
+
+    - an **empty** map — no library / no sources, nothing to flag;
+    - a **single** source — no source *stands out*; the whole-scope custody headline
+      already says everything `attention` could, which only adds value by
+      discriminating *across* sources, so a one-source scope is null even with drift;
+    - a **fully-clean** scope — no source carries any `drifted`/`rotted` loss, so
+      there is nothing actionable to flag (reference-only is the normal capture
+      posture, a tie-breaker, never a trigger on its own).
+    """
+    if len(by_source) < 2:
+        return None
+    source, tally = min(
+        by_source.items(),
+        key=lambda kv: (-_source_loss(kv[1]), -kv[1].get("tiers", {}).get("reference", 0), kv[0]),
+    )
+    if _source_loss(tally) == 0:
+        return None
+    return {
+        "source": source,
+        "tiers": tally["tiers"],
+        "drift": tally["drift"],
+        # H153: the flagged source's recheck coverage (`{verified, total}`, H121)
+        # rides along beside its tiers/drift — a pure read of the same tally (no
+        # new ledger read), so it equals `doctor`'s per-source coverage by
+        # construction. `.get` keeps the degrade-safe posture: an older/empty
+        # schema without coverage reads the honest zero fraction, never a KeyError.
+        "coverage": tally.get("coverage", {"verified": 0, "total": 0}),
+        "reason": _attention_reason(tally),
+        # H137: the exact act to re-check this source — a recheck, not a repair.
+        # Source slugs are single tokens (no shell-quoting needed).
+        "command": f"scrolls verify --source {source}",
+    }
+
+
 def custody_sections(
     tiers: dict[str, int],
     drift: dict[str, int],
@@ -901,6 +991,41 @@ def render_custody_by_source(
         lines.append(f"- `{source}` — {n} scroll(s){suffix}")
     lines.append("")
     return lines
+
+
+def render_custody_attention(
+    by_source: dict[str, dict[str, dict[str, int]]]
+) -> list[str]:
+    """The readable weakest-source `_Attention:_` line for a briefing (roadmap H159).
+
+    The readable counterpart of the JSON `attention` flag `scrolls status`/`maintain`
+    carry: one line naming the single source with the most actionable custody loss and
+    the exact recheck command, so an agent skimming the `export bundle`/`scrolls
+    context` briefing reads "this one source needs attention" without scanning the
+    whole `_By source:_` map below it. Distilled by the shared `weakest_source`
+    primitive over the *same* `custody_counts_by_source` the breakdown folds, so the
+    line names the same source and tally as the JSON flag by construction:
+
+        ``_Attention: source `<S>` carries the most drift (<reason>) — recheck with
+        `scrolls verify --source <S>`._``
+
+    where ``<reason>`` is the flagged source's non-zero loss postures (``2 drifted,
+    1 rotted``), so the line is self-describing even for a rotted-only source.
+
+    Returns ``[line, ""]`` (the line plus a trailing blank) so a caller splices it
+    straight in above the `_By source:_` bullets. Returns ``[]`` on honest absence —
+    exactly when `weakest_source` is `None` (empty, single-source, or fully-clean
+    scope), the same no-op the JSON flag and the `_By source:_` split take — so a
+    surface never shows an attention pointer it has no JSON counterpart for.
+    """
+    flagged = weakest_source(by_source)
+    if flagged is None:
+        return []
+    line = (
+        f"_Attention: source `{flagged['source']}` carries the most drift "
+        f"({flagged['reason']}) — recheck with `{flagged['command']}`._"
+    )
+    return [line, ""]
 
 
 def custody_headline(

@@ -51,6 +51,7 @@ from scrolls.custody import (
     drift_posture,
     last_checked,
     latest_events,
+    render_custody_attention,
     render_custody_by_source,
 )
 from scrolls.graph import build_graph
@@ -197,6 +198,16 @@ def build_context(
     # sections (H44): the leanest `index` tier stays a bare catalog.
     if _tier_at_least(budget, "connected"):
         lines += [custody_headline(items, verdicts), ""]
+        by_source = custody_counts_by_source(items, verdicts)
+        # the readable weakest-source pointer (roadmap H159): one `_Attention:_`
+        # line naming the single source with the most actionable loss and the
+        # exact recheck command, so an agent reads "this one source needs
+        # attention" before scanning the per-source map below. Distilled by the
+        # shared `weakest_source` over the same `by_source` the breakdown folds, so
+        # it converges field-for-field with `status`/`maintain`'s JSON `attention`;
+        # honest no-op when no source carries actionable loss (single-source /
+        # clean / empty scope — [] lines).
+        lines += render_custody_attention(by_source)
         # the per-source custody breakdown under the scope headline (roadmap
         # H149): a multi-source bundle names *which* source's custody is weakest
         # within the scope, so an agent gauges the weak source without
@@ -205,7 +216,7 @@ def build_context(
         # by construction and equals `doctor`'s `custody.by_source` for the same
         # scope. The renderer's `<2`-source no-op omits the split for a
         # single-source bundle ([] lines), where the headline says everything.
-        lines += render_custody_by_source(custody_counts_by_source(items, verdicts))
+        lines += render_custody_by_source(by_source)
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):

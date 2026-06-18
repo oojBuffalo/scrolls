@@ -237,6 +237,7 @@ from scrolls.custody import (
     parse_since,
     recheck_coverage,
     record_events,
+    render_custody_attention,
     render_custody_by_source,
     tally_custody,
     tally_custody_by_source,
@@ -2047,6 +2048,148 @@ def test_readable_per_source_coverage_converges_with_the_json_by_source(
         summed["verified"] += cov["verified"]
         summed["total"] += cov["total"]
     assert summed == recheck_coverage(hash_bearing, verdicts)
+
+
+_ATTENTION_MD = re.compile(
+    r"_Attention: source `([^`]+)` carries the most drift \(([^)]+)\) — "
+    r"recheck with `([^`]+)`\._"
+)
+_ATTENTION_HTML = re.compile(
+    r'<p class="custody-attention">Attention: source <code>([^<]+)</code> '
+    r"carries the most drift \(([^)]+)\) — recheck with "
+    r"<code>([^<]+)</code>\.</p>"
+)
+
+
+def _attention_fields(text, pattern):
+    """Parse a readable weakest-source `_Attention:_` line back into a dict.
+
+    Returns ``{source, reason, command}`` (HTML matches are unescaped), or ``None``
+    when the surface carries no attention line — so a surface's honest absence and a
+    genuine flag are both observable. Mirrors `_library_headline`/`_parse_by_source_
+    bullet`: the readable surface is parsed back and compared to the primitive.
+    """
+    match = pattern.search(text)
+    if match is None:
+        return None
+    source, reason, command = (html.unescape(g) for g in match.groups())
+    return {"source": source, "reason": reason, "command": command}
+
+
+def test_readable_attention_line_converges_across_surfaces_and_the_json_flag(
+    scrolls_home, capsys
+):
+    # roadmap H159: the weakest-source pointer now rides three readable surfaces —
+    # the `export bundle` briefing (Markdown + HTML) and the `scrolls context`
+    # bundle — each *claimed* to carry the same flag the JSON `status`/`maintain`
+    # `attention` does. Fold the readable-line tie into the convergence spine beside
+    # the H139 JSON `attention` tie (the readable counterpart): over one multi-source
+    # loss seed, every surface's parsed `{source, reason, command}` equals the shared
+    # `weakest_source` over the scope's own `custody_counts_by_source`, which equals
+    # `weakest_source(doctor.custody.by_source)` and the JSON `status`/`maintain`
+    # flag — so the readable line and the JSON flag can never name different sources.
+    # (The full field-for-field three-surface invariant is H160; this pins the
+    # readable line's identity to the primitive, the H151 readable-breakdown analogue.)
+    from scrolls.bundle import build_bundle, build_bundle_html
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_unified_per_source_fixture(db)  # web (1 drifted) + arxiv (1 rotted)
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # the canonical flag — over doctor's map and over the scope's own tally, equal
+    flagged = weakest_source(by_source)
+    assert flagged == weakest_source(custody_counts_by_source(items, verdicts))
+    # non-vacuous: a genuine cross-source pick. web (1 drifted) and arxiv (1 rotted)
+    # tie on loss; web carries the lone reference item, so the tie-break names web.
+    assert flagged is not None
+    assert flagged["source"] == "web"
+    assert flagged["reason"] == "1 drifted"
+    expected = {
+        "source": flagged["source"],
+        "reason": flagged["reason"],
+        "command": flagged["command"],
+    }
+
+    # the canonical readable line the primitive renders (Markdown)
+    canonical_line = render_custody_attention(by_source)
+    assert canonical_line  # the renderer agrees there is a flag to show
+
+    bundle_md = build_bundle(db, "topic")
+    bundle_html = build_bundle_html(db, "topic")
+    context_md = build_context(db, "topic", budget="connected")  # rides connected+
+
+    # 1. every readable surface's parsed attention fields == the canonical primitive
+    surfaces = {
+        "bundle-markdown": _attention_fields(bundle_md, _ATTENTION_MD),
+        "bundle-html": _attention_fields(bundle_html, _ATTENTION_HTML),
+        "context": _attention_fields(context_md, _ATTENTION_MD),
+    }
+    for name, fields in surfaces.items():
+        assert fields == expected, f"{name} attention diverged from weakest_source"
+    # the Markdown surfaces carry the byte-identical canonical line, not just the fields
+    for line in canonical_line:
+        assert line in bundle_md
+        assert line in context_md
+
+    # 2. == the JSON `status` flag (status threads weakest_source over the same audit)
+    assert main(["status"]) == 0
+    status_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert status_attention == flagged
+    assert status_attention["source"] == surfaces["bundle-markdown"]["source"]
+    assert status_attention["command"] == surfaces["bundle-markdown"]["command"]
+
+    # 3. == the `maintain --no-recheck` report's flag (the scheduled sibling). The
+    #    exit mirrors doctor's structural issues (the rendered fixture's markdown
+    #    files are absent → missing_scrolls), but the custody `attention` is the same
+    #    distillation regardless — the flag, not the exit code, is what converges.
+    main(["maintain", "--no-recheck"])
+    maintain_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert maintain_attention == flagged
+
+
+def test_readable_attention_line_absent_together_with_the_json_flag(scrolls_home, capsys):
+    # the honest-absence counterpart: a clean multi-source scope (≥2 sources, no
+    # `drifted`/`rotted`) shows the `_By source:_` split but no `_Attention:_` line on
+    # any readable surface — exactly when the JSON `status`/`maintain` flag is null.
+    from scrolls.bundle import build_bundle, build_bundle_html
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:ok", "Topic web ok", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:wok"))
+    insert_item(db, _item("arxiv:ok", "Topic arxiv ok", source="arxiv",
+                          url="https://arxiv.org/abs/ok", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:aok"))
+    record_events(db, [
+        CustodyEvent("web:ok", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:wok", "sha256:wok", None),
+        # arxiv:ok left unverified — neither source carries loss
+    ])
+    capsys.readouterr()
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss
+    assert weakest_source(by_source) is None
+    assert render_custody_attention(by_source) == []
+
+    bundle_md = build_bundle(db, "topic")
+    assert "_By source:_" in bundle_md  # the multi-source split still renders
+    assert _attention_fields(bundle_md, _ATTENTION_MD) is None
+    assert _attention_fields(build_bundle_html(db, "topic"), _ATTENTION_HTML) is None
+    assert _attention_fields(build_context(db, "topic", budget="connected"),
+                             _ATTENTION_MD) is None
+
+    # the JSON flag is null on both surfaces, together with the readable absence
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
 
 
 def _seed_marker_fixture(db):

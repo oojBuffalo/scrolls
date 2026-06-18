@@ -88,7 +88,9 @@ from scrolls.custody import (
     event_from_dict,
     events_for_items,
     latest_events,
+    render_custody_attention,
     render_custody_by_source,
+    weakest_source,
 )
 from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
 from scrolls.items import (
@@ -132,6 +134,7 @@ h2 { font-size: 1.15rem; margin-top: 2rem; padding-top: 1rem;
 code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px;
        font-size: .9em; }
 .custody-headline { font-weight: 600; }
+.custody-attention { font-weight: 600; color: #b3261e; }
 .note { color: #6a6a6a; font-size: .85rem; }
 .custody-facts { list-style: none; padding-left: 0; }
 .custody-facts li { margin: .15rem 0; }
@@ -233,12 +236,21 @@ def build_bundle(
     # totals equal the per-scroll entries by construction (same get_fidelity +
     # drift_posture), the H42 convergence at scope level.
     lines += [custody_headline(items, verdicts), ""]
+    # the readable weakest-source pointer (roadmap H159): one `_Attention:_` line
+    # naming the single source with the most actionable loss and the exact recheck
+    # command, so a reader skims "this one source needs attention" before scanning
+    # the per-source map below. Distilled by the shared `weakest_source` over the
+    # same `by_source` the breakdown folds, so it converges field-for-field with
+    # `status`/`maintain`'s JSON `attention`; honest no-op when no source carries
+    # actionable loss (single-source / clean / empty scope — [] lines).
+    by_source = custody_counts_by_source(items, verdicts)
+    lines += render_custody_attention(by_source)
     # the per-source custody breakdown under the scope headline (roadmap H141):
     # a multi-source shared briefing names *which* source's custody is weakest
     # within the scope. Folds the same `custody_counts_by_source` the per-scroll
     # entries and the scope headline already cover, so it sums to the headline by
     # construction; a single-source/empty scope is the honest no-op ([] lines).
-    lines += render_custody_by_source(custody_counts_by_source(items, verdicts))
+    lines += render_custody_by_source(by_source)
     # a concept-scoped bundle is *about* that concept, so its synthesized
     # summary and how that summary was derived belong in the briefing (H35)
     if concept is not None:
@@ -327,6 +339,11 @@ def build_bundle_html(
     # to the Markdown briefing's and to `status`/`context`/`doctor` (H45/H47)
     headline = custody_headline(items, verdicts).strip("_")
     body.append(f'<p class="custody-headline">{html.escape(headline)}</p>')
+    # the readable weakest-source pointer (roadmap H159), the HTML twin of the
+    # Markdown `_Attention:_` line — distilled by the *same* `weakest_source` over
+    # the same per-source map, so the two forms (and the JSON `attention` flag)
+    # cannot desync; honest no-op when no source carries actionable loss
+    body += _attention_html(items, verdicts)
     # the per-source custody breakdown (roadmap H141), from the *same* structured
     # `custody_source_breakdown` the Markdown form renders, so the two forms cannot
     # desync — a single-source/empty scope omits it (the [] no-op)
@@ -375,6 +392,30 @@ def _html_document(title: str, body: list[str]) -> str:
         + "\n".join(body)
         + "\n</main>\n</body>\n</html>\n"
     )
+
+
+def _attention_html(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> list[str]:
+    """The HTML twin of the Markdown weakest-source `_Attention:_` line (roadmap H159).
+
+    Distilled by the *same* `weakest_source` over the *same* `custody_counts_by_source`
+    the Markdown `render_custody_attention` and the JSON `status`/`maintain` flag read,
+    so the three surfaces name the same source, reason, and recheck command by
+    construction. Returns [] on honest absence — exactly when `weakest_source` is
+    `None` (empty, single-source, or fully-clean scope) — like the Markdown no-op. The
+    source/command are controlled tokens (a source slug, a fixed command form);
+    escaped for safety regardless.
+    """
+    flagged = weakest_source(custody_counts_by_source(items, verdicts))
+    if flagged is None:
+        return []
+    return [
+        '<p class="custody-attention">Attention: source '
+        f"<code>{html.escape(flagged['source'])}</code> carries the most drift "
+        f"({html.escape(flagged['reason'])}) — recheck with "
+        f"<code>{html.escape(flagged['command'])}</code>.</p>"
+    ]
 
 
 def _by_source_html(

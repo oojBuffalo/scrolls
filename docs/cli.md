@@ -379,6 +379,26 @@ readable-coverage counterpart of the per-source coverage axis (H121), so the sur
 an agent reads and the audit can never disagree on how much of a source is checked
 (`test_readable_per_source_coverage_converges_with_the_json_by_source`).
 
+Above that `_By source:_` map, the readable surfaces carry the **weakest-source
+`_Attention:_` line** (roadmap H159) — the readable counterpart of the JSON
+`attention` flag `scrolls status`/`maintain` carry. One line names the single source
+with the most actionable loss and the exact recheck command —
+`_Attention: source `<S>` carries the most drift (N drifted, M rotted) — recheck with
+`scrolls verify --source <S>`._` — so an agent skimming the `export bundle` briefing
+(Markdown **and** its HTML form, a red `custody-attention` paragraph) or the
+`scrolls context` bundle (`connected`+) reads "this one source needs attention" before
+scanning the whole map. It is distilled by the shared `custody.weakest_source`
+primitive (now home in `custody.py` beside `custody_counts_by_source`, re-exported by
+`maintain`) over the bundle scope's *own* per-source map, so the line names the same
+source, reason, and command as the JSON flag by construction. Honest absence — omitted
+entirely when no source carries actionable loss (single-source, clean, or empty scope),
+exactly when the JSON `attention` is `null`. The readable-line tie is folded into the
+convergence spine beside the JSON `attention` tie: every readable surface's parsed
+`{source, reason, command}` equals `weakest_source(doctor.custody.by_source)` and the
+`status`/`maintain` flag, all absent together on a clean scope
+(`test_readable_attention_line_converges_across_surfaces_and_the_json_flag`,
+`test_readable_attention_line_absent_together_with_the_json_flag`).
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
 `drift_change`/`coverage_change`/`stale_change` (and the scalar `score.change`) by
