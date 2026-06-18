@@ -337,6 +337,22 @@ scheduled worker's per-source picture and a fresh standalone audit read identica
 state — the per-source-maintenance counterpart of the `stats.custody` family (H101)
 and stale-recheck (H111) ties above.
 
+Finally, the **trend layer** is pinned to the per-run history the same way
+(roadmap H143). `maintain --trend` reports the net first→last movement on
+`drift_change`/`coverage_change`/`stale_change` (and the scalar `score.change`) by
+reading only the window's *endpoints* (`compute_trend`), while `maintain --history`
+shows the per-run before/after/change `compute_delta` records between consecutive
+snapshots. The invariant pins that the trend's net change equals the **telescoped
+sum** of those per-run deltas across the window — on every axis — so the trajectory
+a worker reads can never silently disagree with the step-by-step history it also
+reads. It asserts the identity over a non-monotone multi-run window (drift up then
+down, score down then up), both by recomputing `compute_delta` over consecutive
+snapshots and by telescoping the *recorded* deltas read back through the real
+`.maintenance/log.jsonl`; covers the honest-absence edges (a `None`-score endpoint
+yields a null trend `score.change` while the count axes still telescope; a `<2`-run
+window has no trajectory) and is mutation-checked non-vacuous — the trend-layer
+analogue of the per-surface convergence invariants above.
+
 ## Library lifecycle
 
 ### `scrolls init`

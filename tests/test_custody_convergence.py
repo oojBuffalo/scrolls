@@ -163,6 +163,26 @@ tie is pinned here too: over the loss seed `status`'s `attention` equals `mainta
 --no-recheck`'s, names `doctor`'s max-loss source, and is honestly `null` exactly
 when no source carries actionable loss — the status-surface counterpart of the
 H129 maintain↔doctor `attention` tie.
+
+Finally, the **trend layer** is pinned to the per-run history the same way
+(roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
+first→last movement on `drift_change`/`coverage_change`/`stale_change` (and the
+scalar `score.change`) by reading only the window's *endpoints*, while
+`maintain.compute_delta` (H34) records the per-run before/after/change between
+consecutive snapshots — the step-by-step history `maintain --history` reads back.
+The load-bearing property neither layer pins alone is that the trend's net change
+equals the **telescoped sum** of the per-run deltas across the window, so the
+endpoint-only trajectory can never silently disagree with the recorded history a
+worker also reads. The trend section asserts that identity on every axis over a
+non-monotone multi-run window (drift up then down, score down then up), both
+recomputing `compute_delta` over consecutive snapshots and telescoping the
+*recorded* `delta` member each entry carries through the real
+`append_log_entry`/`read_log` path; covers the honest-absence edges (a
+`None`-score endpoint → a null trend `score.change` while the count axes still
+telescope, a `<2`-run window has no trajectory to telescope); and is
+mutation-checked non-vacuous (perturbing one endpoint moves the trend and the
+telescoped sum together). It is the trend-layer analogue of the per-surface
+convergence invariants above.
 """
 
 import json
@@ -191,8 +211,13 @@ from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
 from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items
 from scrolls.maintain import (
+    append_log_entry,
+    compute_delta,
+    compute_trend,
     last_run_boundary,
     load_snapshot,
+    log_path,
+    read_log,
     report_by_source,
     save_snapshot,
     snapshot_path,
@@ -2292,3 +2317,220 @@ def test_maintain_all_recheck_ignores_the_boundary(scrolls_home, monkeypatch, ca
     # the whole hash-bearing set, strictly more than the stale set the boundary picks
     assert rechecked == hash_bearing == {"web:1", "web:2", "web:3", "web:4"}
     assert stale < rechecked
+
+
+# --- the trend ≡ telescoped per-run deltas invariant (roadmap H143) ----------
+#
+# `compute_trend` (H46/H115/H131) reports the net first→last movement on three
+# count axes — `drift_change` (drifted+rotted), `coverage_change`, `stale_change`
+# — plus the scalar `score.change`, by reading only the window's *endpoints*
+# (`runs[0]`/`runs[-1]`). `compute_delta` (H34) records the *per-run* before/after/
+# change between consecutive snapshots — the step-by-step history `maintain
+# --history` reads back. The load-bearing property neither layer pins is that the
+# trend's net change equals the **telescoped sum** of those per-run deltas across
+# the window: the endpoint-only aggregation and the recorded steps agree, so the
+# trajectory a worker reads can never silently disagree with the history it also
+# reads. This section pins that identity — the trend-layer analogue of the
+# per-surface convergence invariants above.
+
+# The drift axes a snapshot carries (maintain's `_DRIFT_AXES`); only `drifted`/
+# `rotted` feed the trend, but a snapshot populates them all, so `compute_delta`'s
+# per-key diff has every key on both sides.
+_DRIFT_KEYS = ("checked", "unverified", "unchanged", "drifted", "rotted", "error")
+
+
+def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries):
+    """A custody snapshot in the `custody_snapshot` shape the trend/delta read.
+
+    Only the axes the trend and delta compare are populated meaningfully; `tiers`
+    is irrelevant to the trend's three count axes and the scalar score, so it is
+    left empty (the delta diffs it, but this invariant asserts the trend axes).
+    """
+    return {
+        "score": score,
+        "tiers": {},
+        "drift": {axis: 0 for axis in _DRIFT_KEYS} | {"drifted": drifted, "rotted": rotted},
+        "coverage": {"verified": verified, "total": total},
+        "enrichment_stale": enrichment,
+        "summaries_stale": summaries,
+    }
+
+
+def _telescoped(snapshots):
+    """Σ the per-run `compute_delta` changes across consecutive snapshots.
+
+    The step-by-step history a worker reads: `compute_delta(snapshots[i-1],
+    snapshots[i])` for every adjacent pair, summed per axis. `compute_trend` reads
+    only the endpoints; this sums every recorded step, so the two must agree (the
+    telescoping identity). Returns the count-axis sums plus the deltas themselves
+    (so a caller can telescope the scalar score when no endpoint is null).
+    """
+    deltas = [compute_delta(snapshots[i - 1], snapshots[i]) for i in range(1, len(snapshots))]
+    drift = sum(
+        d["drift"]["drifted"]["change"] + d["drift"]["rotted"]["change"] for d in deltas
+    )
+    coverage = {
+        "verified": sum(d["coverage"]["verified"]["change"] for d in deltas),
+        "total": sum(d["coverage"]["total"]["change"] for d in deltas),
+    }
+    stale = {
+        "enrichment": sum(d["enrichment_stale"]["change"] for d in deltas),
+        "summaries": sum(d["summaries_stale"]["change"] for d in deltas),
+    }
+    return drift, coverage, stale, deltas
+
+
+def _trend_window(snapshots):
+    """Wrap snapshots as the `{recorded_at, snapshot}` run records `compute_trend`
+    consumes (the shape `read_log` returns), timestamped one day apart."""
+    return [
+        {"recorded_at": f"2026-06-{10 + i:02d}T00:00:00+00:00", "snapshot": snap}
+        for i, snap in enumerate(snapshots)
+    ]
+
+
+# A four-run window that moves *non-monotonically* on every axis — drift rises
+# then falls, score falls then rises, enrichment rises then falls — so the
+# telescoping is a genuine sum of signed intermediate steps, not an endpoint
+# coincidence a monotone window would also satisfy.
+_TREND_SNAPSHOTS = [
+    _snapshot(score=100, drifted=0, rotted=0, verified=1, total=4, enrichment=0, summaries=0),
+    _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0),
+    _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1),
+    _snapshot(score=85, drifted=0, rotted=1, verified=4, total=5, enrichment=1, summaries=1),
+]
+
+
+def test_trend_change_equals_the_telescoped_per_run_deltas():
+    # roadmap H143: the trend's endpoint-only net change == the telescoped sum of
+    # the per-run `compute_delta` changes, on every axis — so the trajectory and
+    # the step-by-step history are the same numbers.
+    trend = compute_trend(_trend_window(_TREND_SNAPSHOTS))
+    drift, coverage, stale, deltas = _telescoped(_TREND_SNAPSHOTS)
+
+    # the scalar score telescopes (last − first == Σ per-run changes)
+    first_score = _TREND_SNAPSHOTS[0]["score"]
+    last_score = _TREND_SNAPSHOTS[-1]["score"]
+    assert trend["score"]["change"] == last_score - first_score
+    assert trend["score"]["change"] == sum(d["score"]["change"] for d in deltas)
+
+    # the three count axes telescope
+    assert trend["drift_change"] == drift
+    assert trend["coverage_change"] == coverage
+    assert trend["stale_change"] == stale
+
+    # non-vacuous: the window genuinely moves on every axis (else the identity is
+    # trivially 0 == 0), and the intermediate steps are signed (a real telescope)
+    assert trend["score"]["change"] == -15
+    assert trend["drift_change"] == 1
+    assert trend["coverage_change"] == {"verified": 3, "total": 1}
+    assert trend["stale_change"] == {"enrichment": 1, "summaries": 1}
+    assert [d["drift"]["drifted"]["change"] for d in deltas] == [1, 0, -1]  # up then down
+
+
+def test_perturbing_one_endpoint_moves_trend_and_telescope_together():
+    # mutation check (roadmap H143): perturbing one endpoint changes *both* the
+    # trend's net change and the telescoped sum by the same amount — the identity
+    # tracks the data, not a constant, so the assertion above is not vacuous.
+    base_trend = compute_trend(_trend_window(_TREND_SNAPSHOTS))
+
+    # add one more `rotted` at the *last* endpoint (one step's worth of drift loss)
+    perturbed = [*_TREND_SNAPSHOTS[:-1], _snapshot(
+        score=85, drifted=0, rotted=2, verified=4, total=5, enrichment=1, summaries=1)]
+    perturbed_trend = compute_trend(_trend_window(perturbed))
+    p_drift, _, _, _ = _telescoped(perturbed)
+
+    # the perturbation moved the value (so the test has teeth) …
+    assert perturbed_trend["drift_change"] == base_trend["drift_change"] + 1
+    # … and the telescoped identity still holds at the new value
+    assert perturbed_trend["drift_change"] == p_drift
+
+
+def test_recorded_history_deltas_telescope_to_the_trend(scrolls_home, capsys):
+    # roadmap H143, the worker-facing form: the per-run deltas `maintain --history`
+    # reads back from `.maintenance/log.jsonl` (each entry's recorded `delta`,
+    # `compute_delta(prev, this)` exactly as a real pass records it) telescope to
+    # `compute_trend` over the same read-back window. Ties the trend to the recorded
+    # history a worker also reads, through the real `append_log_entry`/`read_log`
+    # path — not a hand-summed delta.
+    main(["init"])
+    path = log_path(get_paths())
+
+    # write the window as a real maintain log: entry[0]'s delta is the first-run
+    # (previous=None → null changes); entry[i]'s is compute_delta(S[i-1], S[i]).
+    previous = None
+    for record in _trend_window(_TREND_SNAPSHOTS):
+        snap = record["snapshot"]
+        entry = {
+            "recorded_at": record["recorded_at"],
+            "snapshot": snap,
+            "delta": compute_delta(previous, snap),
+        }
+        append_log_entry(path, entry)
+        previous = snap
+
+    window = read_log(path)
+    assert len(window) == len(_TREND_SNAPSHOTS)
+    assert window[0]["delta"]["first_run"] is True  # the first run telescopes from nothing
+
+    trend = compute_trend(window)
+
+    # telescope the *recorded* deltas (the ones `--history` shows), skipping the
+    # first-run entry (null changes) — exactly the consecutive-pair deltas
+    steps = [entry["delta"] for entry in window[1:]]
+    assert trend["drift_change"] == sum(
+        s["drift"]["drifted"]["change"] + s["drift"]["rotted"]["change"] for s in steps)
+    assert trend["coverage_change"] == {
+        "verified": sum(s["coverage"]["verified"]["change"] for s in steps),
+        "total": sum(s["coverage"]["total"]["change"] for s in steps),
+    }
+    assert trend["stale_change"] == {
+        "enrichment": sum(s["enrichment_stale"]["change"] for s in steps),
+        "summaries": sum(s["summaries_stale"]["change"] for s in steps),
+    }
+    assert trend["score"]["change"] == sum(s["score"]["change"] for s in steps)
+
+
+def test_trend_telescopes_on_count_axes_with_a_null_score_endpoint():
+    # honest-absence edge (roadmap H143): a `None`-score endpoint (an
+    # uninitialized-library run) yields a *null* trend score change, never a
+    # fabricated zero — but the count axes still telescope cleanly (they do not
+    # depend on the score). So the score honesty does not break the drift/coverage/
+    # stale telescoping.
+    snapshots = [
+        _snapshot(score=None, drifted=0, rotted=0, verified=0, total=0, enrichment=0, summaries=0),
+        _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0),
+        _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1),
+    ]
+    trend = compute_trend(_trend_window(snapshots))
+    drift, coverage, stale, deltas = _telescoped(snapshots)
+
+    # the score change is the honest null (a None endpoint has no scalar movement)
+    assert trend["score"]["change"] is None
+    assert trend["score"]["first"] is None
+    # the first step's score change is null too (before is None) — so it does *not*
+    # telescope on the score axis, exactly why the trend reports null there
+    assert deltas[0]["score"]["change"] is None
+
+    # the count axes still telescope — independent of the score
+    assert trend["drift_change"] == drift == 2
+    assert trend["coverage_change"] == coverage == {"verified": 3, "total": 5}
+    assert trend["stale_change"] == stale == {"enrichment": 2, "summaries": 1}
+
+
+def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
+    # honest-absence edge (roadmap H143): a window of fewer than two runs is not a
+    # trajectory — a single point has no direction — so `compute_trend` reports
+    # *null* deltas and `insufficient-history`, never a fabricated zero. There are
+    # no consecutive pairs to telescope, so the null trend is the honest counterpart
+    # of "no steps recorded" (distinct from a real 0-change telescope over ≥2 runs).
+    for snapshots in ([], [_TREND_SNAPSHOTS[0]]):
+        trend = compute_trend(_trend_window(snapshots))
+        assert trend["posture"] == "insufficient-history"
+        assert trend["score"] is None
+        assert trend["drift_change"] is None
+        assert trend["coverage_change"] is None
+        assert trend["stale_change"] is None
+        # no adjacent pairs → no per-run deltas to sum (the empty telescope)
+        _, _, _, deltas = _telescoped(snapshots)
+        assert deltas == []
