@@ -13,6 +13,7 @@ files (not provably tool-owned) are report-only.
 import json
 import shutil
 import sqlite3
+from dataclasses import replace
 
 import pytest
 
@@ -640,6 +641,162 @@ def test_custody_by_source_coverage_excludes_reference_only(paths):
     insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
     by_source = run_doctor(paths)["custody"]["by_source"]
     assert by_source["web"]["coverage"] == {"verified": 0, "total": 0}
+
+
+# --- per-source scoped audit (roadmap H162) ---
+
+
+def _arxiv_item(suffix, **overrides):
+    """A source_id-identity arxiv item (a second source for scope tests)."""
+    fields = dict(
+        id=f"arxiv:{suffix}", source="arxiv", source_id=suffix,
+        url=f"https://arxiv.org/abs/{suffix}", saved_at="2026-06-12T08:00:00+00:00",
+        extracted_text="paper body", content_hash=f"sha256:{suffix}", stage="fetched",
+    )
+    fields.update(overrides)
+    return ScrollItem(**fields)
+
+
+def _seed_two_sources(paths):
+    """One full web item, one reference-only web item, one full arxiv item."""
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/post", fetched=True,
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:w"))
+    insert_item(paths.db_path, _web_item("https://example.com/ref"))  # reference-only
+    insert_item(paths.db_path, _arxiv_item("1"))
+
+
+def test_doctor_source_scopes_the_custody_view_to_one_source(paths):
+    # --source narrows the whole audit to that source's held items: tiers/drift
+    # count only web, and by_source collapses to the singleton {web: ...}.
+    _seed_two_sources(paths)
+    custody = run_doctor(paths, source="web")["custody"]
+    # web holds one full + one reference (the arxiv full item is excluded)
+    assert custody["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert list(custody["by_source"]) == ["web"]  # present-and-singleton
+    assert custody["by_source"]["web"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    # only web's two items are counted as unverified (arxiv's is not in scope)
+    assert custody["drift"]["unverified"] == 2
+
+
+def test_doctor_source_audit_equals_the_whole_library_by_source_slice(paths):
+    # the load-bearing convergence (pinned cross-surface in
+    # test_custody_convergence.py): a --source S audit's tiers/drift/coverage
+    # equals the whole-library audit's by_source[S] — same held subset, same tally.
+    _seed_two_sources(paths)
+    record_events(paths.db_path, [
+        CustodyEvent(_web_item("https://example.com/post").id,
+                     "2026-06-15T00:00:00+00:00", "unchanged",
+                     "sha256:w", "sha256:w", None),
+    ])
+    whole = run_doctor(paths)["custody"]["by_source"]["web"]
+    scoped = run_doctor(paths, source="web")["custody"]
+    assert scoped["tiers"] == whole["tiers"]
+    assert scoped["by_source"]["web"]["drift"] == whole["drift"]
+    assert scoped["drift"]["coverage"] == whole["coverage"] == {"verified": 1, "total": 1}
+
+
+def test_doctor_source_narrows_the_drift_events_to_that_source(paths):
+    # the offending-id lists narrow too, not just the counts: a drifted web item
+    # and a drifted arxiv item, scoped to web → only web's event is listed.
+    _seed_two_sources(paths)
+    web_id = _web_item("https://example.com/post").id
+    record_events(paths.db_path, [
+        CustodyEvent(web_id, "2026-06-15T00:00:00+00:00", "drifted",
+                     "sha256:w", "sha256:new", None),
+        CustodyEvent("arxiv:1", "2026-06-15T00:00:00+00:00", "drifted",
+                     "sha256:1", "sha256:new", None),
+    ])
+    scoped = run_doctor(paths, source="web")["custody"]["drift"]
+    assert scoped["drifted"] == 1
+    assert [e["id"] for e in scoped["events"]] == [web_id]
+
+
+def test_doctor_source_narrows_enrichment_stale_to_that_source(paths):
+    # the enrichment offending-id list + count narrow to the scoped source, and
+    # equal the whole-library enrichment.by_source[S] entry by construction.
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    def _classified(item, ruleset):
+        return replace(item, category="tutorial", provenance={
+            "classified_by": "rules-v1", "classified_basis": "weak-source",
+            "classified_ruleset": ruleset})
+
+    insert_item(paths.db_path, _classified(
+        _web_item("https://example.com/post", fetched=True), "deadbeef0000"))
+    insert_item(paths.db_path, _classified(_arxiv_item("1"), "cafe00000000"))
+    whole = run_doctor(paths)["custody"]["enrichment"]
+    assert whole["by_source"] == {"arxiv": 1, "web": 1}
+
+    scoped = run_doctor(paths, source="web")["custody"]["enrichment"]
+    assert scoped["stale"] == whole["by_source"]["web"] == 1
+    assert [entry["id"] for entry in scoped["items"]] == [
+        _web_item("https://example.com/post").id]
+    assert scoped["by_source"] == {"web": 1}  # the singleton offenders map
+
+
+def test_doctor_unknown_source_is_the_honest_empty_audit(paths):
+    # an unknown source holds nothing → the empty audit (score 100, zeroed
+    # counts, empty by_source), never an error.
+    _seed_two_sources(paths)
+    report = run_doctor(paths, source="ghost")
+    custody = report["custody"]
+    assert custody["score"] == 100  # empty is healthy
+    assert custody["tiers"] == {"full": 0, "partial": 0, "reference": 0}
+    assert custody["by_source"] == {}
+    assert custody["drift"]["checked"] == 0 and custody["drift"]["unverified"] == 0
+    assert report["issues"] == 0
+    assert main(["doctor", "--source", "ghost"]) == 0
+
+
+def test_doctor_source_skips_orphan_and_fts_checks(paths):
+    # the two non-source-attributable checks are skipped under --source: another
+    # source's owned scroll is never an orphan, a genuine stray .md is left to the
+    # whole-library audit, and the single FTS index reports its skipped default.
+    rendered_arxiv = _rendered(paths, _arxiv_item("1"))
+    assert rendered_arxiv.markdown_path  # arxiv's scroll is on disk, owned by arxiv
+    stray = paths.scrolls_dir / "stray.md"
+    stray.write_text("orphaned, owned by no item")
+
+    scoped = run_doctor(paths, source="web")
+    assert scoped["orphan_scrolls"] == []  # arxiv's scroll + the stray are not web's
+    assert scoped["fts"] == {"in_sync": None, "status": "skipped"}
+    assert scoped["issues"] == 0  # nothing web-attributable
+
+    # sanity: the whole-library audit *does* flag the stray orphan
+    whole = run_doctor(paths)
+    assert [o["path"] for o in whole["orphan_scrolls"]] == [str(stray.relative_to(paths.root))]
+
+
+def test_doctor_source_reports_only_that_sources_missing_scrolls(paths):
+    # a missing scroll for each source: scoped to web, only web's is a finding and
+    # only it drives the exit code (whole-audit semantics, scoped to the source).
+    web = _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    arxiv = _rendered(paths, _arxiv_item("1"))
+    (paths.root / web.markdown_path).unlink()
+    (paths.root / arxiv.markdown_path).unlink()
+
+    scoped = run_doctor(paths, source="web")
+    assert [m["id"] for m in scoped["missing_scrolls"]] == [web.id]
+    assert scoped["issues"] == 1
+    assert main(["doctor", "--source", "web"]) == 1  # web's drift fails the exit code
+
+
+def test_doctor_source_fix_repairs_only_that_source(paths):
+    # --source composes with --fix on the attributable repairs: it rewrites web's
+    # missing scroll and leaves arxiv's gone (a whole-library --fix repairs both).
+    web = _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    arxiv = _rendered(paths, _arxiv_item("1"))
+    (paths.root / web.markdown_path).unlink()
+    (paths.root / arxiv.markdown_path).unlink()
+
+    report = run_doctor(paths, source="web", fix=True)
+    assert report["fixed"] == 1
+    assert (paths.root / web.markdown_path).exists()  # web's scroll rebuilt
+    assert not (paths.root / arxiv.markdown_path).exists()  # arxiv's left for later
+    # the whole-library audit now sees only arxiv's scroll still missing
+    whole = run_doctor(paths)
+    assert [m["id"] for m in whole["missing_scrolls"]] == [arxiv.id]
 
 
 def test_custody_flags_a_rendered_scroll_gone_from_disk(paths):

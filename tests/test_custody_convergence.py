@@ -184,6 +184,20 @@ with `attention` honestly `null` exactly when no source carries actionable loss
 maintain audit and a fresh `doctor` read the identical state — the scheduled
 worker's per-source picture can never silently desync from the audit it reads.
 
+The **scoped audit** is the read-side sibling (roadmap H162): `scrolls doctor
+--source S` scopes the *whole* audit to one source's held items, so a worker
+triaging the weakest source reads its full custody picture (drift, enrichment,
+coverage, the offending-id lists) directly instead of slicing it out of the
+whole-library report. This pins the convergence by construction — a `--source S`
+audit's `custody.tiers`/`drift`/`coverage` equals the whole-library audit's
+`by_source[S]` slice, `by_source` collapses to the present-and-singleton
+`{S: that slice}`, and `enrichment.stale` equals the whole-library
+`enrichment.by_source[S]` (0 + omitted for a clean source) — over the same
+multi-source loss seed, non-vacuous (the two sources differ on every axis) and
+mutation-checked (a perturbed slice never matches the scoped audit). An unknown
+source is the honest empty audit (`score: 100`, empty `by_source`), never an
+error — the per-source-scope counterpart of the per-source-aggregate tie above.
+
 The **`status` surface** carries the same per-source breakdown (roadmap H133): a
 faithful read (`report_by_source`) of the `run_doctor` map `status` already makes
 for its custody headline. This pins it beside the maintain tie — over the
@@ -496,6 +510,111 @@ def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls
         summed_coverage["verified"] += counts["coverage"]["verified"]
         summed_coverage["total"] += counts["coverage"]["total"]
     assert summed_coverage == custody["drift"]["coverage"]
+
+
+def _seed_two_source_loss(db):
+    """A multi-source seed whose two sources differ on every custody axis.
+
+    web: a verified+stale-classified full item, a drifted full item, a
+    reference-only pointer. arxiv: a never-checked full item with a *current*
+    classification, and a partial item. So web and arxiv differ on tiers
+    (full 2/ref 1 vs full 1/partial 1), drift (1 verified + 1 drifted vs 2
+    unverified), coverage (2/2 vs 0/1), and enrichment stale (1 vs 0) — every
+    leg of the scoped-audit convergence is non-vacuous.
+    """
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    insert_item(db, _item(
+        "web:full", "Topic web full", category="tutorial",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:wf",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))  # stale ruleset
+    insert_item(db, _item(
+        "web:drift", "Topic web drift",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:wd"))
+    insert_item(db, _item("web:ref", "Topic web pointer", stage="detected"))
+    insert_item(db, _item(
+        "arxiv:full", "Topic arxiv full", source="arxiv",
+        url="https://arxiv.org/abs/full", category="tutorial",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:af",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": RULESET_FINGERPRINT}))  # current
+    insert_item(db, _item(
+        "arxiv:partial", "Topic arxiv partial", source="arxiv",
+        url="https://arxiv.org/abs/partial", extracted_text="topic"))  # no hash
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:wf", "sha256:wf", None),
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wd", "sha256:changed", None),
+    ])
+
+
+def test_doctor_source_scope_converges_with_the_whole_library_by_source(scrolls_home, capsys):
+    # roadmap H162: `scrolls doctor --source S` scopes the whole audit to one
+    # source's held items — the audit-side counterpart of the per-source act
+    # commands (`verify --source`, H125). The convergence it guarantees, the
+    # per-source-scope sibling of H104's `by_source` tie: a `--source S` audit's
+    # `custody.tiers`/`drift`/`coverage` equals the whole-library audit's
+    # `by_source[S]` slice (same held subset, same tally), and its
+    # `enrichment.stale` equals the whole-library `enrichment.by_source[S]` — so
+    # the scoped read and the per-source slice of the whole report can never
+    # disagree.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    whole = run_doctor(get_paths())["custody"]
+    by_source = whole["by_source"]
+    enrichment_by_source = whole["enrichment"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+    # non-vacuous: the two sources genuinely differ on every axis the scope reads
+    assert by_source["web"]["tiers"] != by_source["arxiv"]["tiers"]
+    assert by_source["web"]["drift"] != by_source["arxiv"]["drift"]
+    assert by_source["web"]["coverage"] != by_source["arxiv"]["coverage"]
+    assert enrichment_by_source == {"web": 1}  # only web carries stale debt
+
+    for source in ("web", "arxiv"):
+        scoped = run_doctor(get_paths(), source=source)["custody"]
+        slice_ = by_source[source]
+        # 1. the scoped custody view == the whole-library by_source[S] slice
+        assert scoped["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(scoped["drift"]) == slice_["drift"]
+        assert scoped["drift"]["coverage"] == slice_["coverage"]
+        # 2. by_source collapses to the present-and-singleton {S: that same slice}
+        assert scoped["by_source"] == {source: slice_}
+        # 3. the enrichment offending count == the whole-library by_source entry
+        #    (0 — and omitted from the offenders map — for a clean source)
+        assert scoped["enrichment"]["stale"] == enrichment_by_source.get(source, 0)
+        assert scoped["enrichment"]["by_source"] == (
+            {source: enrichment_by_source[source]} if source in enrichment_by_source else {}
+        )
+
+    # 4. teeth: the equality is not vacuous — a perturbed slice would not match the
+    #    scoped audit (so a real desync between the scope and the by_source split
+    #    fails this test), and the cross-source slice never matches either.
+    web_scoped = run_doctor(get_paths(), source="web")["custody"]
+    perturbed = {**by_source["web"]["tiers"], "full": by_source["web"]["tiers"]["full"] + 1}
+    assert web_scoped["tiers"] != perturbed
+    assert web_scoped["tiers"] != by_source["arxiv"]["tiers"]
+
+
+def test_doctor_source_scope_unknown_source_is_the_honest_empty_audit(scrolls_home, capsys):
+    # the honest-absence gate (H162): an unknown source holds nothing, so the
+    # scoped audit is the empty-but-healthy report (score 100, zeroed counts, empty
+    # by_source) — never an error, exactly like the whole-library empty audit.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    report = run_doctor(get_paths(), source="ghost")
+    assert report["custody"]["score"] == 100
+    assert report["custody"]["by_source"] == {}
+    assert report["custody"]["enrichment"]["by_source"] == {}
+    assert report["issues"] == 0
+    assert main(["doctor", "--source", "ghost"]) == 0
 
 
 def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):

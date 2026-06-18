@@ -540,7 +540,7 @@ $ scrolls paths
 [exit 0]
 ```
 
-### `scrolls doctor [--fix]`
+### `scrolls doctor [--fix] [--source S]`
 
 Check integrity between the SQLite index and the file tree, offline
 (ADR 0026; all cited tests in `tests/test_doctor.py`). Five checks,
@@ -630,6 +630,33 @@ per-source tally also equals `facets fidelity`/`drift --source <name>`).
 Report-only like the rest of the block — a weak per-source custody picture is a
 view, never an `issue` or the exit code
 (`test_custody_by_source_never_feeds_issues_or_the_exit_code` in
+`tests/test_doctor.py`).
+
+`--source S` scopes the **whole** audit to one source's held items (roadmap H162)
+— the audit-side counterpart of the per-source act commands
+[`verify --source`](#scrolls-verify-id) (H125) and
+[`classify --stale --source`](#scrolls-classify-id) (H154). Once `by_source` (or
+[`status`](#scrolls-status)'s weakest-source `attention` flag) names the weakest
+source, `--source` reads *that source's full custody report* — `score`, `tiers`,
+`drift`, `coverage`, `enrichment`, and the offending-id lists (`drift.events`,
+`enrichment.items`, `missing_scrolls`) — instead of slicing them out of the
+whole-library report by hand. Scoping filters the *input* item set, so every
+block is genuinely one-source and `by_source` collapses to the present-and-
+singleton `{S: …}`. The convergence this guarantees, pinned in
+`tests/test_custody_convergence.py`
+(`test_doctor_source_scope_converges_with_the_whole_library_by_source`): a
+`--source S` audit's `tiers`/`drift`/`coverage` equals the whole-library audit's
+`by_source[S]` slice and its `enrichment.stale` equals `enrichment.by_source[S]`
+(same held subset, same tally). Two checks are **not** source-attributable and so
+are skipped under `--source`: `orphan_scrolls` (an unowned `.md` file belongs to
+no source — and scoping the item set must not flag *other* sources' owned scrolls
+as orphans) and `fts` (a single library-wide index), both reporting their empty/
+`skipped` defaults and left to a whole-library `scrolls doctor --fix`. The
+exit-code rule is unchanged — structural `issues > fixed` fails — now over only
+that source's attributable findings; an unknown source holds nothing, so it is the
+honest empty audit (`score: 100`, empty `by_source`, exit 0), never an error
+(`test_doctor_unknown_source_is_the_honest_empty_audit`,
+`test_doctor_source_reports_only_that_sources_missing_scrolls` in
 `tests/test_doctor.py`).
 
 The drift block states *what it verified* (completeness contract G2): doctor

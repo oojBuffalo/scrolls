@@ -52,7 +52,9 @@ _STAGE_RANK = {"detected": 0, "fetched": 1, "rendered": 2}
 _FTS_VERIFY_VERSION = (3, 42, 0)
 
 
-def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
+def run_doctor(
+    paths: LibraryPaths, fix: bool = False, source: str | None = None
+) -> dict[str, Any]:
     """Diagnose (and with `fix`, repair) index/file-tree drift.
 
     Returns the report payload `scrolls doctor` prints: per-finding
@@ -60,6 +62,35 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     library is healthy when `issues` is 0 and fully repaired when
     `issues == fixed`. Never creates a library; a missing one is empty,
     hence healthy. One unrepairable finding never aborts the rest.
+
+    `source` scopes the *whole* audit to one source's held items — the
+    audit-side counterpart of the per-source act commands `verify --source`
+    (roadmap H125) / `classify --stale --source` (H154), and the way a worker
+    triaging "source <S> is weakest" (named by the per-source `by_source` map,
+    H104, or the weakest-source `attention` flag, H119/H139) reads <S>'s *full*
+    custody picture — drift, enrichment, coverage, score, and the offending-id
+    lists — instead of slicing them out of the whole-library report by hand.
+
+    Scoping filters the *input* item set (not the finished report), so every
+    item-derived block is genuinely one-source: the custody view
+    (`tiers`/`drift`/`coverage`/`enrichment`/`summaries`), the per-source
+    `by_source` (which collapses to the singleton ``{S: …}``), **and** the
+    offending-id lists (`drift.events`, `enrichment.items`, `missing_scrolls`,
+    duplicates) all narrow to <S>. The convergence this guarantees by
+    construction: a `--source S` audit's `tiers`/`drift`/`coverage` equals the
+    whole-library audit's `by_source[S]` (same held subset, same tally) and its
+    `enrichment.stale` equals `enrichment.by_source[S]` — pinned in
+    `tests/test_custody_convergence.py`.
+
+    Two checks are **not** source-attributable, so a scoped audit skips them:
+    `orphan_scrolls` (an unowned scroll file belongs to no source, and scoping
+    the item set would falsely flag *other* sources' legitimately-owned scrolls
+    as orphans) and `fts` (a single library-wide index, not a per-source view).
+    Both are whole-library repairs left to `scrolls doctor --fix` without
+    `--source`; under a source scope they report empty/`skipped`. The exit-code
+    rule is unchanged — structural `issues > fixed` fails — now over only <S>'s
+    attributable findings (an unknown source holds nothing, so it is the honest
+    empty audit: `score: 100`, zeroed counts, never an error).
     """
     report: dict[str, Any] = {
         "issues": 0,
@@ -111,13 +142,17 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     if not paths.db_path.exists():
         return report
 
-    _check_duplicates(paths, report, fix)
+    _check_duplicates(paths, report, fix, source)
     # re-read after merges so the other checks see the repaired rows
-    items = list_items(paths.db_path)
+    items = list_items(paths.db_path, source=source)
     _check_missing_scrolls(paths, report, items, fix)
     _check_missing_media(paths, report, items)
-    _check_orphan_scrolls(paths, report, items)
-    _check_fts(paths, report, fix)
+    if source is None:
+        # Not source-attributable (see the run_doctor docstring): an orphan file
+        # owns no source, and the single FTS index is a whole-library view. A
+        # scoped audit leaves both at their honest empty/skipped defaults.
+        _check_orphan_scrolls(paths, report, items)
+        _check_fts(paths, report, fix)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
     _check_enrichment_provenance(report, items)
@@ -125,15 +160,19 @@ def run_doctor(paths: LibraryPaths, fix: bool = False) -> dict[str, Any]:
     return report
 
 
-def _check_duplicates(paths: LibraryPaths, report: dict, fix: bool) -> None:
+def _check_duplicates(
+    paths: LibraryPaths, report: dict, fix: bool, source: str | None = None
+) -> None:
     """Items minted from different spellings of one URL (ADR 0023's debt).
 
     Only url-hash identities qualify: for items with a `source_id`, the
     URL spelling never was the identity, and second-guessing source
-    detection is not doctor's business.
+    detection is not doctor's business. `source` scopes the scan to one
+    source's items (duplicates group within a source — the key is
+    ``(source, url)`` — so the filter only drops other sources' groups).
     """
     groups: dict[tuple[str, str], list[ScrollItem]] = {}
-    for item in list_items(paths.db_path):
+    for item in list_items(paths.db_path, source=source):
         if item.source_id is not None:
             continue
         key = (item.source, normalize_url(item.url))

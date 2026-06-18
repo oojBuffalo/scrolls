@@ -260,6 +260,16 @@ def build_parser() -> argparse.ArgumentParser:
         "Missing media files (run `scrolls media`) and orphan scroll "
         "files are reported but never touched",
     )
+    doctor_parser.add_argument(
+        "--source",
+        default=None,
+        metavar="S",
+        help="Scope the whole custody audit to one source (e.g. web, arxiv) — "
+        "every block (score, tiers, drift, coverage, enrichment, by_source, and "
+        "the offending-id lists) is that source's view, the audit-side of the "
+        "per-source act commands. Orphan-file and FTS-index checks (not "
+        "source-attributable) are skipped; an unknown source is the empty audit",
+    )
 
     facets_parser = subparsers.add_parser(
         "facets",
@@ -925,7 +935,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "detect":
         return _cmd_detect(args.url)
     if args.command == "doctor":
-        return _cmd_doctor(args.fix)
+        return _cmd_doctor(args.fix, args.source)
     if args.command == "facets":
         return _cmd_facets(
             args.field,
@@ -1100,9 +1110,12 @@ def _cmd_ingest(url: str) -> int:
     return 1 if "error" in payload else 0
 
 
-def _cmd_doctor(fix: bool) -> int:
+def _cmd_doctor(fix: bool, source: str | None = None) -> int:
     paths = get_paths()
-    payload = run_doctor(paths, fix=fix)
+    # `source` scopes the whole audit to one source's held items (roadmap H162):
+    # the audit-side of `verify --source`/`classify --stale --source`. Every block
+    # is that source's view; orphan/FTS (not source-attributable) are skipped.
+    payload = run_doctor(paths, fix=fix, source=source)
     print(json.dumps(payload))
     # healthy or fully repaired → 0; any drift left behind → 1
     return 1 if payload["issues"] > payload["fixed"] else 0

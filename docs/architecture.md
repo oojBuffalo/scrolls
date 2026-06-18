@@ -1278,7 +1278,21 @@ choice (ADRs 0004, 0005).
   of classification coupling. The **summary** axis has no per-source split: a
   concept summary spans sources, so a stale one cannot be attributed to one source
   and summed to the whole — summary debt stays whole-library (`kb --stale` acts on
-  concepts, not sources).
+  concepts, not sources). `scrolls doctor --source S` scopes the *whole* audit to
+  one source's held items (roadmap H162) — the audit-side counterpart of the
+  per-source act commands (`verify --source`, `classify --stale --source`): once
+  `by_source` (or `status`'s `attention` flag) names the weakest source, a worker
+  reads that source's full report (score/tiers/drift/coverage/enrichment + the
+  offending-id lists) instead of slicing it by hand. Scoping filters the *input*
+  item set (`run_doctor(paths, source=…)` over `list_items(source=…)`), so every
+  block is genuinely one-source and `by_source` collapses to the singleton `{S: …}`;
+  the scoped `tiers`/`drift`/`coverage` equals the whole-library `by_source[S]` and
+  `enrichment.stale` the `enrichment.by_source[S]` by construction (pinned in
+  `tests/test_custody_convergence.py`). The two non-source-attributable checks —
+  `orphan_scrolls` (an unowned file belongs to no source) and `fts` (one global
+  index) — are skipped under `--source` and left to a whole-library `--fix`; the
+  exit-code rule is unchanged over the source's attributable findings, and an
+  unknown source is the honest empty audit (`score: 100`), never an error.
 - **Maintain** (`maintain.py`, roadmap H22/H23/H34, H36, H40, H55, H83, H103, H109, H115, H119, H121, H123) — `scrolls maintain`
   is the scheduled custody-maintenance pass: **stale-bounded** recheck by default
   (`custody.items_checked_before` windowed by the last run's `recorded_at` via
