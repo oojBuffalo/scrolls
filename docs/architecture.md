@@ -1059,7 +1059,13 @@ choice (ADRs 0004, 0005).
   the compiled landing page, the shareable briefing, and JSON `status` (H133)
   read byte-identical per-source lines; its bullets sum to the index headline by
   construction and equal `doctor`'s `custody.by_source` over the rendered scope, a
-  single-source library omitting the split (the helper's no-op). Both the headline
+  single-source library omitting the split (the helper's no-op). Each **group list
+  page** that spans more than one source carries the *same* `_By source:_`
+  breakdown under its own scope headline (roadmap H152) — a `categories/`,
+  `concepts/`, or `tags/` page over several sources names which source on it is
+  weakest, summing to that page's headline by construction; the rule is uniform
+  (≥2 sources ⟹ a split), so every `sources/*.md` page (always one source) and any
+  single-source category/tag omits it via the same helper no-op. Both the headline
   and the breakdown render inside the `@generated` fence, so a recompile refreshes
   them after a re-verify. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept

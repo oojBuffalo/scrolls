@@ -36,10 +36,14 @@ landing `index.md` also follows that headline with a `_By source:_` breakdown
 (H133) and the `export bundle` briefing (H141): its bullets equal
 `custody.render_custody_by_source` over both `doctor`'s `custody.by_source` and
 `custody_counts_by_source`, so the per-source line reads byte-identical across the
-status / bundle / compiled surfaces. The model-facing `scrolls context` bundle
+status / bundle / compiled surfaces. A multi-source **group list page**
+(`categories/`/`concepts/`/`tags/` spanning sources) carries the *same* breakdown
+under its own scope headline (roadmap H152), pinned the same way over the page's
+members; a single-source page — including every `sources/*.md` — omits it (the
+helper's `<2`-source no-op). The model-facing `scrolls context` bundle
 carries the *same* breakdown (roadmap H149) for a multi-source scope, pinned the
 same way — so a per-source line reads identically whichever readable surface
-(briefing / compiled page / context bundle) an agent reaches. The **JSON**
+(briefing / compiled index or group page / context bundle) an agent reaches. The **JSON**
 `by_source` map (the structured ``{source: {tiers, drift, coverage}}`` the
 readable lines render from) rides `scrolls status` (H133) and the `scrolls graph`
 stats block (`stats.custody.by_source`, H150); both are asserted to equal
@@ -1424,6 +1428,73 @@ def test_compiled_index_per_source_breakdown_converges_with_doctor_by_source(
         assert line in header
     assert custody_headline(items, verdicts) in header
     assert header.index("_Custody:") < header.index("_By source:_")
+
+
+def test_compiled_group_page_per_source_breakdown_converges_with_doctor_by_source(
+    scrolls_home, capsys
+):
+    # roadmap H152: a multi-source group list page (a category/concept/tag spanning
+    # sources) follows its scope headline with the same `_By source:_` breakdown the
+    # landing `index.md` (H145), the `export bundle` briefing (H141), and the
+    # `context` bundle (H149) carry, through the shared
+    # `custody.render_custody_by_source`. Fold it into the cross-surface invariant
+    # beside the index tie above: over a multi-source category where every item shares
+    # the category (so the page scope == the whole rendered library == doctor's scope)
+    # the compiled group-page bullets equal `render_custody_by_source` over *both*
+    # `doctor.custody.by_source` and `custody_counts_by_source`, under the page
+    # headline they total. The single-source `sources/*.md` pages carry no breakdown
+    # (the helper's `<2`-source no-op).
+    from scrolls.custody import render_custody_by_source
+
+    main(["init"])
+    db = get_paths().db_path
+    # category `ml` spans web (full+drifted, reference+never) and arxiv (full+verified);
+    # every held item is in `ml`, so `categories/ml.md`'s scope == the whole library
+    insert_item(db, _item(
+        "web:fd", "ML full drifted", category="ml", stage="rendered",
+        markdown_path="scrolls/web/ml-full-drifted.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fd"))
+    insert_item(db, _item(
+        "web:ru", "ML reference unverified", category="ml", stage="rendered",
+        markdown_path="scrolls/web/ml-reference-unverified.md"))  # no content → reference
+    insert_item(db, _item(
+        "arxiv:fv", "ML full verified", source="arxiv",
+        url="https://arxiv.org/abs/fv", category="ml", stage="rendered",
+        markdown_path="scrolls/arxiv/ml-full-verified.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fv"))
+    record_events(db, [
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:fd", "sha256:x", None),
+        CustodyEvent("arxiv:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:fv", "sha256:fv", None),
+        # web:ru left unverified
+    ])
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # the rendered breakdown is a faithful read of doctor's map and of the tally
+    expected = render_custody_by_source(by_source)
+    assert expected == render_custody_by_source(custody_counts_by_source(items, verdicts))
+    assert expected  # the seed is genuinely multi-source (non-vacuous)
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+    page = (library / "categories" / "ml.md").read_text(encoding="utf-8")
+    # every breakdown line (the trailing spacer aside) reads in the compiled group
+    # page, under the scope headline the per-source bullets total
+    for line in expected[:-1]:
+        assert line in page
+    assert custody_headline(items, verdicts) in page
+    assert page.index("_Custody:") < page.index("_By source:_")
+    # a single-source `sources/*.md` page carries the headline but no breakdown
+    web_page = (library / "sources" / "web.md").read_text(encoding="utf-8")
+    assert "_Custody:" in web_page
+    assert "_By source:_" not in web_page
 
 
 def _seed_marker_fixture(db):

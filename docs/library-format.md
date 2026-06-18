@@ -247,6 +247,22 @@ _Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
   (`test_kb_group_pages_carry_a_scope_custody_headline`,
   `test_kb_graph_and_works_pages_omit_the_scope_custody_headline`,
   `test_kb_index_carries_a_library_wide_custody_headline`).
+- When the page's members span **more than one source**, a **`_By source:_`
+  breakdown** follows the headline (roadmap H152) — one bullet per source naming
+  that source's fidelity tiers and drift postures (`` - `<source>` — N scroll(s)
+  · fidelity … · drift … ``) — so a reader browsing a multi-source group page
+  (a `ml` category over `arxiv` + `web`, a tag across sources) sees *which* source
+  on it is weakest. It is the same shared `custody.render_custody_by_source` the
+  landing `index.md` (H145), the `export bundle` briefing (H141), and the `scrolls
+  context` bundle (H149) render, so the per-source line is byte-identical across
+  surfaces; its bullets sum to this page's headline by construction and equal
+  `doctor`'s `custody.by_source` for the page's scope. The rule is uniform — **≥2
+  sources ⟹ a split** — so a `sources/*.md` page (always one source) and any
+  single-source category/tag omits it (the helper's no-op), and it renders inside
+  the `@generated` fence so a recompile refreshes it after a re-verify
+  (`test_kb_multi_source_group_page_carries_a_per_source_breakdown`,
+  `test_kb_source_page_omits_the_per_source_breakdown`,
+  `test_kb_group_page_per_source_breakdown_is_refresh_safe`).
 - One bullet per member — the title as a Markdown link to its scroll
   file — sorted by case-folded title with the item id as tiebreak. The
   ` — note` suffix is the item's category on source pages, and its
@@ -332,6 +348,11 @@ representation as a **nested** bullet linking to its own scroll:
 2 scrolls.
 
 _Custody: 2 scroll(s) · fidelity reference 2 · drift unverified 2._
+
+_By source:_
+
+- `arxiv` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
+- `crossref` — 1 scroll(s) · fidelity reference 1 · drift unverified 1
 
 - **Attention Is All You Need** — 2 representations ([doi.org/10.5555/3295222](https://doi.org/10.5555/3295222))
   - [Attention Is All You Need](../../scrolls/arxiv/attention-is-all-you-need.md) — arxiv · reference · unverified · never checked

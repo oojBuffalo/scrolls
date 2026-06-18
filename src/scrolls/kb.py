@@ -368,6 +368,17 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
     # across surfaces and its tier/posture totals equal this page's per-row markers
     # by construction (every scroll has one fidelity tier and one drift posture)
     lines += [custody_headline(members, verdicts), ""]
+    # the per-source custody breakdown under the headline (roadmap H152) — a
+    # multi-source group page (a category/concept/tag spanning sources) names
+    # *which* source is weakest, the compiled counterpart of the `export bundle`
+    # briefing (H141), the `context` bundle (H149), and `index.md` (H145), over the
+    # same shared `render_custody_by_source` so the `_By source:_` bullets read
+    # byte-identical and sum to the headline by construction. The helper's `<2`-source
+    # no-op omits the split on single-source pages — including every `sources/*.md`
+    # page (always one source) and any single-source category/tag — so the rule is
+    # uniform (≥2 sources ⟹ a split). The helper's trailing spacer separates the
+    # block from the first item bullet (the consolidated or singleton body follows).
+    lines += render_custody_by_source(custody_counts_by_source(members, verdicts))
     if consolidate_works is not None:  # category pages collapse works (ADR 0071)
         lines += _consolidated_body(members, page_dir, note, consolidate_works, verdicts)
     else:

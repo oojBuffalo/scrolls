@@ -768,6 +768,137 @@ def test_kb_index_per_source_breakdown_is_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed  # annotation outside the fence preserved
 
 
+def test_kb_multi_source_group_page_carries_a_per_source_breakdown(scrolls_home, capsys):
+    """A multi-source group list page (a category over arxiv + web) carries a
+    `_By source:_` breakdown under its scope headline (roadmap H152) — byte-identical
+    to the shared `custody.render_custody_by_source` over the page's members, and
+    sitting under the headline before the first item bullet."""
+    from scrolls.custody import (
+        custody_counts_by_source,
+        latest_events,
+        render_custody_by_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # category `ml` spans two sources: arxiv (full+drifted) and web
+    # (a full+verified and a reference+never) — no shared DOI, so no consolidation
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="ml", raw_text="b", content_hash="h2"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="ml"))
+    _drift(db, "arxiv:1", "drifted")
+    _drift(db, "web:a", "unchanged")  # reads as `verified`
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "ml.md").read_text(encoding="utf-8")
+    members = [i for i in list_items(db) if i.category == "ml"]
+    verdicts = latest_events(db)
+    expected = render_custody_by_source(custody_counts_by_source(members, verdicts))
+    assert expected == [
+        "_By source:_",
+        "",
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift drifted 1",
+        "- `web` — 2 scroll(s) · fidelity full 1, reference 1"
+        " · drift verified 1, unverified 1",
+        "",
+    ]
+    # the breakdown sits directly under the page headline, before the first bullet
+    headline = "_Custody: 3 scroll(s) · fidelity full 2, reference 1" \
+        " · drift verified 1, unverified 1, drifted 1._"
+    body = page.split("3 scrolls.\n\n")[1]
+    assert body.startswith(headline + "\n\n_By source:_")
+    assert (headline + "\n\n" + "\n".join(expected)) in body
+
+
+def test_kb_group_page_per_source_breakdown_sums_to_the_page_headline(scrolls_home, capsys):
+    """Each per-source bullet's fidelity counts sum to the page headline's totals —
+    convergence by construction (every scroll on the page lands in one source)."""
+    import re
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="ml", raw_text="b", content_hash="h2"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="ml"))
+    _drift(db, "arxiv:1", "drifted")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    body = generated_body(
+        (scrolls_home / "library" / "categories" / "ml.md").read_text(encoding="utf-8"))
+    fid_total: dict[str, int] = {}
+    for bullet in re.findall(r"^- `\w+` — .*$", body, re.MULTILINE):
+        for tier, count in re.findall(r"(full|partial|reference) (\d+)", bullet):
+            fid_total[tier] = fid_total.get(tier, 0) + int(count)
+    assert fid_total == {"full": 2, "reference": 1}
+    assert "_Custody: 3 scroll(s) · fidelity full 2, reference 1" in body
+
+
+def test_kb_source_page_omits_the_per_source_breakdown(scrolls_home, capsys):
+    """A `sources/*.md` page is always single-source, so the per-source split is the
+    helper's `<2`-source no-op — it carries the headline but never a `_By source:_`."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="news", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="news"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "sources" / "web.md").read_text(encoding="utf-8")
+    assert "_Custody:" in page
+    assert "_By source:_" not in page
+
+
+def test_kb_single_source_category_page_omits_the_per_source_breakdown(scrolls_home, capsys):
+    """A category page whose members all share one source omits the split — the
+    multi-source gate is uniform (≥2 sources ⟹ a split), not special-cased to
+    `sources/`, so a single-source category likewise carries only the headline."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered("web:a", "web", "Alpha", category="news"))
+    insert_item(db, make_rendered("web:b", "web", "Beta", category="news"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(encoding="utf-8")
+    assert "_Custody:" in page
+    assert "_By source:_" not in page
+
+
+def test_kb_group_page_per_source_breakdown_is_refresh_safe(scrolls_home, capsys):
+    """A re-verify refreshes a group page's per-source breakdown on recompile, inside
+    the `@generated` fence; an annotation outside the fence survives."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="ml", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered("arxiv:1", "arxiv", "A Paper", category="ml"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page_path = scrolls_home / "library" / "categories" / "ml.md"
+    page = page_path.read_text(encoding="utf-8")
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in page
+    assert "_By source:_" in generated_body(page)  # inside the fence
+    page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    _drift(db, "web:a", "drifted")
+    run_kb(capsys)
+    refreshed = page_path.read_text(encoding="utf-8")
+    # the web posture moved unverified → drifted; its bullet refreshed in-fence
+    # (arxiv is reference-only and never re-checked, so it stays unverified)
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift drifted 1" in refreshed
+    assert "- `web` — 1 scroll(s) · fidelity full 1 · drift unverified 1" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
@@ -1154,11 +1285,19 @@ def test_kb_recompile_clears_a_stale_work(scrolls_home, capsys):
 
 
 def _category_bullets(scrolls_home, slug):
-    """The top-level (column-0) bullets of a compiled category page."""
+    """The top-level (column-0) item/work bullets of a compiled category page.
+
+    Excludes the per-source custody breakdown bullets (roadmap H152), which are
+    backtick-wrapped source names (`` - `web` — N scroll(s) ``); item/work bullets
+    are markdown links (`- [Title](…)`) or bold work headings (`- **Title**`).
+    """
     page = (scrolls_home / "library" / "categories" / f"{slug}.md").read_text(
         encoding="utf-8"
     )
-    return [line for line in page.splitlines() if line.startswith("- ")]
+    return [
+        line for line in page.splitlines()
+        if line.startswith("- ") and not line.startswith("- `")
+    ]
 
 
 def test_kb_category_page_consolidates_work_representations(scrolls_home, capsys):
