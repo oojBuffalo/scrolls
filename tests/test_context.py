@@ -647,6 +647,160 @@ def test_context_custody_headline_converges_with_doctor(scrolls_home, capsys):
     assert custody["drift"]["unverified"] == 1
 
 
+# --- per-source custody breakdown (roadmap H149) ---------------------------
+
+
+def _seed_multi_source(db):
+    """Two `web` scrolls (verified + drifted) and one never-checked `arxiv`.
+
+    Every title carries "database" so a `database` query covers the whole scope.
+    web: fidelity full 2, drift verified 1 + drifted 1. arxiv: fidelity full 1,
+    drift unverified 1 — a non-trivial multi-source custody split (the sources
+    differ in custody, which is what a per-source breakdown must surface).
+    """
+    insert_item(db, make_item(
+        "web:full", "Full database", "A full database body.",
+        source="web", url="https://web.example/full",
+        content_hash="deadbeef", raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, make_item(
+        "web:moved", "Moved database", "A moved database body.",
+        source="web", url="https://web.example/moved",
+        content_hash="beefcafe", raw_text="<raw>A moved database body.</raw>"))
+    insert_item(db, make_item(
+        "arxiv:1", "Arxiv database paper", "A database paper body.",
+        source="arxiv", url="https://arxiv.org/abs/1",
+        content_hash="aa11bb22", raw_text="<raw>A database paper body.</raw>"))
+    record_events(db, [_drift_event("web:full", "unchanged", observed="deadbeef")])
+    record_events(db, [_drift_event("web:moved", "drifted", observed="cafe1234")])
+
+
+def test_context_carries_a_per_source_custody_breakdown(scrolls_home, capsys):
+    # roadmap H149: a multi-source model-facing bundle names which source's
+    # custody is weakest within the scope, under the scope `_Custody:_` headline
+    # (sources sorted) — the context-surface counterpart of the bundle briefing.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_By source:_" in out
+    assert (
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in out
+    )
+    assert (
+        "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
+        in out
+    )
+
+
+def test_context_per_source_breakdown_sums_to_the_scope_headline(scrolls_home, capsys):
+    # the rendered lines come straight from the shared primitive, and the
+    # per-source tallies sum to the scope headline's whole-scope counts (H45/H104)
+    from scrolls.custody import (
+        custody_counts,
+        custody_counts_by_source,
+        latest_events,
+        render_custody_by_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = custody_counts_by_source(items, verdicts)
+
+    out = run_context(capsys, "database")
+    expected = render_custody_by_source(by_source)
+    assert expected  # the seed is genuinely multi-source (non-vacuous)
+    for line in expected:
+        assert line in out
+
+    whole = custody_counts(items, verdicts)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"]
+    assert summed_drift == whole["drift"]
+
+
+def test_context_per_source_breakdown_gated_off_index(scrolls_home, capsys):
+    # like the scope headline, the per-source split is gated to `connected`/`full`
+    # — the leanest `index` tier stays a bare catalog (H47 gate)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_By source:_" not in out
+    assert "_Custody:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_per_source_breakdown_present_from_connected_up(scrolls_home, capsys):
+    # the split rides `connected` (no excerpts) just as the scope headline does
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_By source:_" in out
+    assert "- `arxiv` — 1 scroll(s)" in out
+
+
+def test_context_per_source_breakdown_omitted_for_a_single_source(scrolls_home, capsys):
+    # the whole-scope headline already says everything when there is one source
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:a", "A database", "A database body.", source="web",
+        url="https://web/a"))
+    insert_item(db, make_item(
+        "web:b", "B database", "B database body.", source="web",
+        url="https://web/b"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_By source:_" not in out
+
+
+def test_context_per_source_breakdown_empty_scope_is_a_no_op(scrolls_home, capsys):
+    # an empty scope carries no headline and no per-source split (honest no-op)
+    main(["init"])
+    capsys.readouterr()
+
+    out = run_context(capsys, "nothingmatcheshere")
+    assert "_By source:_" not in out
+    assert "No matching scrolls." in out
+
+
+def test_context_per_source_breakdown_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so it carries the
+    # identical per-source line (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+
+    bundle = get_context_bundle("database")
+    assert "_By source:_" in bundle
+    assert "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in bundle
+    assert (
+        "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
+        in bundle
+    )
+
+
 # --- per-excerpt provenance tags at the `full` budget (H44 + H62) ----------
 
 

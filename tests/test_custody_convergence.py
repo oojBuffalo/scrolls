@@ -36,7 +36,10 @@ landing `index.md` also follows that headline with a `_By source:_` breakdown
 (H133) and the `export bundle` briefing (H141): its bullets equal
 `custody.render_custody_by_source` over both `doctor`'s `custody.by_source` and
 `custody_counts_by_source`, so the per-source line reads byte-identical across the
-status / bundle / compiled surfaces.
+status / bundle / compiled surfaces. The model-facing `scrolls context` bundle
+carries the *same* breakdown (roadmap H149) for a multi-source scope, pinned the
+same way — so a per-source line reads identically whichever readable surface
+(briefing / compiled page / context bundle) an agent reaches.
 
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
@@ -489,6 +492,42 @@ def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_hom
     assert expected  # the seed is genuinely multi-source (non-vacuous)
 
     bundle = build_bundle(db, "topic")
+    for line in expected:
+        assert line in bundle
+    # the scope headline (the whole-scope sum the per-source lines total) is present
+    assert custody_headline(items, verdicts) in bundle
+
+
+def test_context_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):
+    # roadmap H149: the model-facing `scrolls context` bundle carries the same
+    # `_By source:_` breakdown the `export bundle` briefing (H141) and compiled
+    # `index.md` (H145) do — a derived read view of doctor's per-source picture.
+    # Over the multi-source seed the rendered lines equal `render_custody_by_source`
+    # over *both* `doctor.custody.by_source` and `custody_counts_by_source`, appear
+    # in the context bundle, and the scope headline (whole-scope sum) is present —
+    # the context-surface counterpart of the bundle tie above.
+    from scrolls.context import build_context
+    from scrolls.custody import render_custody_by_source
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # the rendered breakdown is a faithful read of doctor's map and of the tally
+    expected = render_custody_by_source(by_source)
+    assert expected == render_custody_by_source(custody_counts_by_source(items, verdicts))
+    assert expected  # the seed is genuinely multi-source (non-vacuous)
+
+    bundle = build_context(db, "topic")
     for line in expected:
         assert line in bundle
     # the scope headline (the whole-scope sum the per-source lines total) is present

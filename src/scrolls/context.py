@@ -46,10 +46,12 @@ from pathlib import Path
 
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts_by_source,
     custody_headline,
     drift_posture,
     last_checked,
     latest_events,
+    render_custody_by_source,
 )
 from scrolls.graph import build_graph
 from scrolls.items import (
@@ -120,8 +122,12 @@ def build_context(
     (roadmap H47) — fidelity-tier and drift-posture counts over the in-bundle
     scrolls, the same `custody_headline` the shareable bundle and `scrolls
     status` render — so an agent sees how much of what it is about to read is
-    full-fidelity and how much has drifted. Gated off `index` so the leanest
-    tier stays a bare catalog.
+    full-fidelity and how much has drifted. A *multi-source* bundle follows it
+    with a `_By source:_` breakdown (roadmap H149) naming which source in the
+    bundle is weakest, through the same `render_custody_by_source` the `export
+    bundle` briefing (H141) and the compiled `library/index.md` (H145) use, so
+    the line reads byte-identical across surfaces and sums to the headline. Both
+    are gated off `index` so the leanest tier stays a bare catalog.
 
     No matches (or no library yet) still yields a valid bundle saying so,
     because agents shouldn't crash on an empty library.
@@ -191,6 +197,15 @@ def build_context(
     # sections (H44): the leanest `index` tier stays a bare catalog.
     if _tier_at_least(budget, "connected"):
         lines += [custody_headline(items, verdicts), ""]
+        # the per-source custody breakdown under the scope headline (roadmap
+        # H149): a multi-source bundle names *which* source's custody is weakest
+        # within the scope, so an agent gauges the weak source without
+        # re-deriving it. Folds the same `custody_counts_by_source` the scope
+        # headline already covers (one ledger read), so it sums to the headline
+        # by construction and equals `doctor`'s `custody.by_source` for the same
+        # scope. The renderer's `<2`-source no-op omits the split for a
+        # single-source bundle ([] lines), where the headline says everything.
+        lines += render_custody_by_source(custody_counts_by_source(items, verdicts))
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):

@@ -2748,6 +2748,23 @@ aggregate (`test_context_custody_headline_converges_with_doctor`). Gated to
 `connected`/`full` (like the depth-bearing sections) so the leanest `index`
 tier stays a bare catalog (`test_context_custody_headline_gated_off_index`).
 
+A *multi-source* bundle follows that headline with a **`_By source:_`
+breakdown** — one bullet per source naming that source's fidelity tiers and
+drift postures — so an agent gauges *which source in the bundle is weakest*
+without re-deriving it (roadmap H149,
+`test_context_carries_a_per_source_custody_breakdown`). It is the same shared
+`custody.render_custody_by_source` the `export bundle` briefing (H141) and the
+compiled `library/index.md` (H145) render, so the per-source line reads
+byte-identical across surfaces; it folds the same `custody_counts_by_source` the
+scope headline already covers (one ledger read), so the bullets sum to the
+headline by construction and equal `doctor`'s `custody.by_source` for the same
+scope (`test_context_per_source_breakdown_sums_to_the_scope_headline`,
+`test_context_per_source_breakdown_converges_with_doctor_by_source`). A
+single-source or empty scope omits the split — the whole-scope headline already
+says everything (`test_context_per_source_breakdown_omitted_for_a_single_source`)
+— and like the headline it is gated off `index`
+(`test_context_per_source_breakdown_gated_off_index`).
+
 At the `full` budget each excerpt also carries two compact **per-source trust
 tags** beneath its meta line (roadmap H44 + H62 + H90) — the per-excerpt
 counterpart of the scope `_Custody:_` headline, so an agent dropping an excerpt
@@ -2815,6 +2832,32 @@ SQLite FTS5 is criminally underrated for local search.
 ## Links
 
 - [@karpathy: SQLite FTS5 is criminally underrated for local search.](https://x.com/karpathy/status/1111)
+[exit 0]
+```
+
+A multi-source bundle adds the `_By source:_` breakdown under the headline (here
+at `--budget connected`, so no excerpts — just the catalog and the link graph):
+
+```console
+$ scrolls context "database" --budget connected
+# Scrolls Context Bundle: database
+
+_Coverage: all 3 matching scrolls._
+
+_Budget: connected — best matches, the link graph, and source links, no excerpts. Re-run with `--budget full` for excerpts; `scrolls show <id>` reads a body._
+
+_Custody: 3 scroll(s) · fidelity full 3 · drift verified 1, unverified 1, drifted 1._
+
+_By source:_
+
+- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1
+- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1
+
+## Best Matches
+
+1. Full database (`web:full`)
+2. Moved database (`web:moved`)
+3. Arxiv database paper (`arxiv:1`)
 [exit 0]
 ```
 

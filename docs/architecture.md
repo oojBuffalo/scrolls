@@ -1156,7 +1156,16 @@ choice (ADRs 0004, 0005).
   stated explicitly). Both read the same derived views every browse/inspect
   surface carries, off the one `latest_events` read the scope `_Custody:_`
   headline (H47) already shares — the per-source counterpart of that scope-level
-  headline, gated to `full` like `## Excerpts` (the H10 depth honesty).
+  headline, gated to `full` like `## Excerpts` (the H10 depth honesty). From the
+  `connected` tier up a *multi-source* bundle also follows its scope `_Custody:_`
+  headline with a **`_By source:_` breakdown** (roadmap H149) — one bullet per
+  source naming that source's fidelity tiers and drift postures, through the same
+  shared `custody.render_custody_by_source` over `custody_counts_by_source` the
+  `export bundle` briefing (H141) and the compiled `library/index.md` (H145) use,
+  so the per-source line reads byte-identical across surfaces, sums to the scope
+  headline by construction, and equals `doctor`'s `custody.by_source` for the same
+  scope; a single-source/empty scope omits the split (the helper's `<2`-source
+  no-op).
 - **Agent install** (`agents.py`, ADR 0006) — writes instruction files
   under `<root>/agents/` only, never into another tool's config tree
   (`tests/test_agents.py`). Regeneration is **refresh-safe** the same way the
