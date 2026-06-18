@@ -55,11 +55,20 @@ JSON `by_source` convergence below. Each readable bullet now also trails a
 `by_source[S].coverage` (`doctor`'s map and the shared tally's) once, the
 readable-coverage counterpart of the per-source coverage tie (H121). The **JSON**
 `by_source` map (the structured ``{source: {tiers, drift, coverage}}`` the
-readable lines render from) rides `scrolls status` (H133) and the `scrolls graph`
-stats block (`stats.custody.by_source`, H150); both are asserted to equal
-`doctor`'s `custody.by_source` and `custody_counts_by_source` over the held items,
-and to sum to their own whole `custody` block beside them — so the per-source
-split reads as one number across every JSON surface.
+readable lines render from) rides `scrolls status` (H133), the `scrolls graph`
+stats block (`stats.custody.by_source`, H150), and the browse-stats `--stats`
+envelopes (`list`/`search`, H155 — the lean `{tiers, drift}` axes, no per-source
+coverage); each is asserted to equal `doctor`'s `custody.by_source` and
+`custody_counts_by_source` over the held items, and to sum to its own whole
+`custody`/`stats.custody` block beside it. Those per-surface ties are pinned
+scattered (the H133/H150/H155 tests); the consolidating property is pinned *once*
+(roadmap H157), the JSON-surface sibling of H151's byte-identical readable test:
+over one multi-source seed every JSON `by_source`-bearing surface — `status`, the
+`graph` block, and the `list`/`search --stats` envelopes — reads the *same*
+per-source picture (equal to `custody_counts_by_source` and `doctor`'s map on the
+tiers/drift axes the lean browse family carries, coverage tied where present), and
+each surface sums to its own whole block — so the per-source split reads as one
+number across every JSON surface, mutation-checked non-vacuous.
 
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
@@ -1247,6 +1256,128 @@ def test_browse_stats_by_source_converges_with_doctor_for_the_whole_library(scro
                 summed_drift[posture] += n
         assert summed_tiers == custody["tiers"]
         assert summed_drift == custody["drift"]
+
+
+def _lean_by_source(by_source):
+    """Project a per-source custody map to the tiers/drift axes *every* JSON
+    `by_source` surface carries.
+
+    The lean browse family (`list`/`search --stats`) omits the heavier
+    `coverage` axis `doctor`/`status`/`graph` keep (a `(fidelity, drift)` pair
+    cannot recover `content_hash` presence, roadmap H155), so the cross-surface
+    tie is on tiers/drift here, with coverage asserted separately on the surfaces
+    that carry it.
+    """
+    return {
+        source: {"tiers": entry["tiers"], "drift": entry["drift"]}
+        for source, entry in by_source.items()
+    }
+
+
+def _sum_tiers_drift(by_source):
+    """Sum a per-source map's tiers/drift into whole-scope counts (posture vocab)."""
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for entry in by_source.values():
+        for tier, n in entry["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in entry["drift"].items():
+            summed_drift[posture] += n
+    return summed_tiers, summed_drift
+
+
+def test_every_json_by_source_surface_converges_on_one_map(scrolls_home, capsys):
+    # roadmap H157: the three tests above each tie *one* JSON `by_source`-bearing
+    # surface to `doctor`'s map — JSON `status` (H133), the `graph`
+    # `stats.custody.by_source` (H150), and the browse-stats `--stats` envelopes
+    # (H155). This pins the consolidating property *once*, the JSON-surface sibling
+    # of H151 (which pins the readable `_By source:_` line byte-identical across
+    # surfaces): over one multi-source seed every structured `by_source` map —
+    # JSON `status`, the `graph` block, and the `list`/`search --stats` envelopes —
+    # reads the *same* per-source picture, all equal to `custody_counts_by_source`
+    # over the held items and to `doctor`'s `custody.by_source` on the tiers/drift
+    # axes the lean browse family carries (coverage, the heavier axis only
+    # doctor/status/graph keep, is tied separately below), and each surface's
+    # per-source entries sum to its own whole `custody`/`stats.custody` block (the
+    # H104 sum-to-whole, per surface). A future change that desyncs any one JSON
+    # surface's fold fails here, in one obvious place.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    canonical = custody_counts_by_source(items, verdicts)
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    expected_lean = _lean_by_source(canonical)
+    # non-vacuous: genuinely multi-source, and the two sources' mixes differ — so a
+    # fold that merged or mislabeled sources would break the cross-surface equality
+    assert set(canonical) == {"arxiv", "web"}
+    assert expected_lean["web"] != expected_lean["arxiv"]
+    # the audit and the pure tally already agree on the full map (the module spine)
+    assert doctor_by_source == canonical
+
+    # collect every JSON `by_source` surface from one seeded library ...
+    assert main(["status"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert main(["graph", "--all"]) == 0
+    graph_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert main(["list", "--stats"]) == 0
+    list_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert main(["search", "topic", "--stats"]) == 0
+    search_custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+
+    # status/graph carry the full {tiers, drift, coverage} map (like doctor); the
+    # lean browse surfaces carry {tiers, drift} only
+    coverage_bearing = {"status": status_payload["by_source"], "graph": graph_custody["by_source"]}
+    lean_only = {"list --stats": list_custody["by_source"],
+                 "search --stats": search_custody["by_source"]}
+
+    # 1. every surface's tiers/drift map == the canonical tally == doctor's map
+    #    (compared on the lean axes, so the browse family is held to the same
+    #    picture as doctor/status/graph — the consolidating cross-surface tie)
+    for name, by_source in {**coverage_bearing, **lean_only}.items():
+        assert set(by_source) == {"arxiv", "web"}, f"{name} source set diverged"
+        assert _lean_by_source(by_source) == expected_lean, f"{name} diverged from the canonical map"
+
+    # 2. the coverage axis ties too on the surfaces that carry it (status/graph),
+    #    == doctor's / the tally's per-source coverage for each source
+    for name, by_source in coverage_bearing.items():
+        for source in ("web", "arxiv"):
+            assert by_source[source]["coverage"] == canonical[source]["coverage"], \
+                f"{name} coverage diverged for {source}"
+
+    # 3. each surface's per-source entries sum to its own whole custody block beside
+    #    them (H104 sum-to-whole, per surface — the two members can never disagree).
+    #    `status`'s whole block uses the ledger vocabulary (`unchanged`); the graph
+    #    and browse blocks use the posture vocabulary (`verified`), so normalise each
+    #    to the canonical posture counts.
+    whole = custody_counts(items, verdicts)
+    per_surface = [
+        ("status", status_payload["by_source"], status_payload["custody"]["tiers"],
+         _posture_from_ledger_counts(status_payload["custody"]["drift"])),
+        ("graph", graph_custody["by_source"], graph_custody["tiers"], graph_custody["drift"]),
+        ("list --stats", list_custody["by_source"], list_custody["tiers"], list_custody["drift"]),
+        ("search --stats", search_custody["by_source"], search_custody["tiers"],
+         search_custody["drift"]),
+    ]
+    for name, by_source, block_tiers, block_drift in per_surface:
+        summed_tiers, summed_drift = _sum_tiers_drift(by_source)
+        assert summed_tiers == block_tiers == whole["tiers"], f"{name} tiers ≠ its block"
+        assert summed_drift == block_drift == whole["drift"], f"{name} drift ≠ its block"
+
+    # mutation-check: the cross-surface equality has teeth — perturbing a single
+    # per-source count on any one surface's fold breaks the tie to the canonical map
+    perturbed = {
+        source: {"tiers": dict(entry["tiers"]), "drift": dict(entry["drift"])}
+        for source, entry in expected_lean.items()
+    }
+    perturbed["web"]["tiers"]["full"] += 1
+    assert perturbed != expected_lean
 
 
 # --- the per-item invariant (roadmap H59) ------------------------------------

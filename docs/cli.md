@@ -244,7 +244,12 @@ construction, and — for an uncapped whole-library scope — equal `doctor`'s
 tiers/drift axes* (the lean browse family omits the per-source `coverage` the audit
 surfaces add — coverage needs `content_hash` presence a `(fidelity, drift)` pair
 cannot recover, so it stays a `doctor`/`graph` axis), pinned in
-`test_browse_stats_by_source_converges_with_doctor_for_the_whole_library`. The
+`test_browse_stats_by_source_converges_with_doctor_for_the_whole_library`. Those
+per-surface JSON `by_source` ties (`status` H133, the `graph` block H150, and these
+browse envelopes H155) are then pinned *together once* (roadmap H157) — the
+JSON-surface sibling of H151's byte-identical readable test — so every structured
+`by_source` map reads the same per-source picture in one obvious place
+(`test_every_json_by_source_surface_converges_on_one_map`). The
 **compiled human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
@@ -363,7 +368,9 @@ whole library) every surface renders **byte-identical** per-source bullets — t
 `custody_counts_by_source`, and that each surface's bullets sum to its own scope
 headline. So the per-source line reads the same number whichever readable surface an
 agent reaches; it is the readable-line analogue of the JSON `by_source` convergence
-(`status` H133, the `graph` `stats.custody.by_source` H150), pinned once in
+(`status` H133, the `graph` `stats.custody.by_source` H150, the `list`/`search
+--stats` envelopes H155 — pinned together once in H157,
+`test_every_json_by_source_surface_converges_on_one_map`), pinned once in
 `tests/test_custody_convergence.py` like the per-item and scope-headline ties above.
 Each readable bullet also trails a `coverage V/T` section (roadmap H158); a sibling
 tie pins its *value* — the readable coverage on each bullet equals the JSON
