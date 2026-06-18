@@ -284,6 +284,7 @@ from scrolls.maintain import (
     read_log,
     report_by_source,
     report_enrichment_by_source,
+    report_summary_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1004,7 +1005,7 @@ def _concept_member(item_id, concept, source, content_hash):
 
 
 def test_summaries_by_source_converges_with_the_per_source_stale_summaries(
-    scrolls_home,
+    scrolls_home, capsys
 ):
     # roadmap H171: doctor's `custody.summaries.by_source` splits the stale-summary
     # count per source — the summary-axis sibling of H135's `enrichment.by_source`.
@@ -1062,6 +1063,25 @@ def test_summaries_by_source_converges_with_the_per_source_stale_summaries(
     #    the drift/enrichment maps rest on.
     assert summaries["stale"] == 2
     assert sum(summaries["by_source"].values()) == 3 > summaries["stale"]
+
+    # 4. roadmap H175: the `maintain` report surfaces the same per-source map (a
+    #    faithful read via `report_summary_by_source`), so the scheduled worker's
+    #    summary-by-source picture, a fresh `doctor` read, and the pure-layer read are
+    #    one map — the maintain↔doctor sibling of the H147 enrichment tie (step 3 of
+    #    `test_enrichment_by_source_converges_…`), on the summary axis. Because the
+    #    map need not sum to the whole (the H171 asymmetry above), this tie is
+    #    faithful-read *equality*, not a sum-to-whole check. `--no-recheck` keeps the
+    #    pass network-free and the ledger pristine, so the maintain audit and a fresh
+    #    `doctor` agree. (This fixture's rendered members carry markdown_paths but write
+    #    no scroll files, so the audit flags `missing_scrolls` and the pass exits 1 — a
+    #    fixture artifact on the structural axis, orthogonal to the summary tie below.)
+    capsys.readouterr()  # drain the `init` output buffered since the start
+    main(["maintain", "--no-recheck"])
+    maintain_summary_by_source = json.loads(capsys.readouterr().out)["summary_by_source"]
+    assert maintain_summary_by_source == summaries["by_source"]
+    assert maintain_summary_by_source == report_summary_by_source(
+        run_doctor(get_paths())
+    )
 
 
 def test_classify_stale_source_refreshes_exactly_the_doctor_per_source_count(

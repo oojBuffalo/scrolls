@@ -107,6 +107,7 @@ from scrolls.maintain import (
     read_log,
     report_by_source,
     report_enrichment_by_source,
+    report_summary_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1317,6 +1318,17 @@ def _cmd_maintain(
                 # `custody.enrichment_stale` by construction. Honest empty `{}` when no
                 # source carries stale debt (the offenders-only posture).
                 "enrichment_by_source": report_enrichment_by_source(report),
+                # The per-source stale-summary debt (roadmap H171/H175): doctor's
+                # `custody.summaries.by_source` map (H171) — a flat `{source:
+                # stale_count}` of the offending sources only — read faithfully so an
+                # unattended log names *which* source's `kb --stale` to run without
+                # re-running doctor. The summary-axis sibling of `enrichment_by_source`,
+                # live-pass only. Unlike that map, it need NOT sum to
+                # `summaries_stale`: a concept spanning several sources counts toward
+                # each (the H171 asymmetry), so the maintain↔doctor tie is
+                # faithful-read equality, not a sum-to-whole check. Honest empty `{}`
+                # when no source carries stale-summary debt.
+                "summary_by_source": report_summary_by_source(report),
                 "delta": delta,
                 "issues": report["issues"],
                 # Actionable guidance, never an action: the explicit on-request

@@ -556,7 +556,17 @@ each command moves items between stages or derives artifacts from them.
   `classify --stale` to run without re-running `doctor`. A standalone member (not
   folded into `by_source`, so the H123/H127 byte-identity holds), live-pass only and
   summing to the whole-library `custody.enrichment_stale` by construction (roadmap
-  H147) — the re-derivability counterpart of `by_source`'s drift split. `--source S`
+  H147) — the re-derivability counterpart of `by_source`'s drift split. Its
+  summary-axis sibling **`summary_by_source`** (`maintain.report_summary_by_source`)
+  threads `doctor`'s `custody.summaries.by_source` (roadmap H171) the same way — a
+  flat `{source: stale_count}` of the offending sources only, so the log names
+  *which* source's `kb --stale` to run without re-running `doctor` (roadmap H175).
+  Unlike `enrichment_by_source`, it need **not** sum to the whole `summaries_stale`:
+  a concept summary spans a cluster whose members can come from several sources, so a
+  stale summary is attributed to *each* of them (the H171 asymmetry). The
+  `maintain`↔`doctor` tie is therefore faithful-read equality
+  (`summary_by_source == doctor.custody.summaries.by_source`), never a sum-to-whole
+  check (`tests/test_custody_convergence.py`). `--source S`
   scopes the **whole pass** to one source's held items (roadmap H165) — the
   scheduled-maintenance leg of the per-source-scope triad beside `doctor --source`
   (H162) and `status --source` (H166), reusing the same `run_doctor(source=)`

@@ -54,6 +54,7 @@ from scrolls.maintain import (
     read_log,
     report_by_source,
     report_enrichment_by_source,
+    report_summary_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1723,6 +1724,161 @@ def test_maintain_history_does_not_carry_the_per_source_enrichment_breakdown(
     assert all("enrichment_by_source" not in run["snapshot"] for run in runs)
     # and not stored in the log either (the snapshot/log carry only the scalars)
     assert all("enrichment_by_source" not in run for run in read_log(log_path(home)))
+
+
+# --- per-source stale-summary debt: `summary_by_source` (roadmap H175) -------
+#
+# The summary-axis sibling of `enrichment_by_source` (H147). H171 added doctor's
+# `custody.summaries.by_source` — a flat `{source: stale_count}` of the offending
+# sources only — and this surfaces it on the `maintain` report so the scheduled
+# worker names *which* source's `kb --stale` to run without a second doctor pass.
+# The load-bearing asymmetry (H171): a concept summary spans a *cluster* whose
+# members can come from several sources, so a stale summary is attributed to every
+# such source and the map need NOT sum to the whole `summaries_stale` (unlike the
+# drift/enrichment maps). The `maintain`↔`doctor` tie is therefore faithful-read
+# equality, never a sum-to-whole check.
+
+
+def _summary_by_source_report(by_source):
+    """A doctor report carrying just the per-source stale-summary map."""
+    return {"custody": {"summaries": {"by_source": by_source}}}
+
+
+def test_report_summary_by_source_threads_the_doctor_audits_map():
+    # The pure layer is a faithful read of the offenders-only `{source: stale_count}`
+    # map the audit produces (`doctor`'s `custody.summaries.by_source`, H171). A
+    # multi-source stale concept counts toward each source, so the values can sum to
+    # more than the whole `summaries_stale` — the read preserves that as-is.
+    by_source = {"arxiv": 1, "web": 2}
+    assert report_summary_by_source(_summary_by_source_report(by_source)) == by_source
+
+
+def test_report_summary_by_source_without_a_map_is_the_empty_map():
+    # Forward-compat / empty library / clean library: an absent block reads as the
+    # honest empty map, never a KeyError (the degrade-safely posture, this axis).
+    assert report_summary_by_source({"custody": {"summaries": {}}}) == {}
+    assert report_summary_by_source({"custody": {}}) == {}
+    assert report_summary_by_source({}) == {}
+
+
+def _concept_member(source, slug, concept) -> ScrollItem:
+    """A minimal rendered cluster member carrying one concept (stale-summary fixture)."""
+    return _rendered(
+        source, None, f"https://{source}.example.com/{slug}",
+        title=slug, extracted_text="A note about the concept.",
+        concepts=(concept,),
+    )
+
+
+def _store_stale_summary(slug, display) -> None:
+    """Store a concept summary whose fingerprint no longer matches its live cluster,
+    so the live ruleset reads it stale (the summary-axis counterpart of
+    `_mark_stale_classified`)."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(get_paths().db_path, ConceptSummary(
+        slug=slug, display=display, summary="How it shows up.",
+        members_hash="stale-old-digest", engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def _seed_stale_summaries() -> None:
+    """A library with two stale concept summaries: Bm25 over a web+arxiv cluster
+    (attributes to BOTH), Vector over a web-only cluster (attributes to web). So
+    the per-source debt is {arxiv: 1, web: 2} while only 2 summaries are stale."""
+    _build([
+        _concept_member("web", "bm25-web", "Bm25"),
+        _concept_member("arxiv", "bm25-arxiv", "Bm25"),
+        _concept_member("web", "vector-1", "Vector"),
+        _concept_member("web", "vector-2", "Vector"),
+    ])
+    _store_stale_summary("bm25", "Bm25")
+    _store_stale_summary("vector", "Vector")
+
+
+def test_maintain_report_carries_the_per_source_summary_staleness(home, capsys):
+    """The report names each source's stale-summary debt — the per-source map the
+    audit (`doctor`'s `custody.summaries.by_source`, H171) already produces, surfaced
+    so an unattended log shows *which* source's `kb --stale` to run without re-running
+    doctor."""
+    _seed_stale_summaries()
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0  # stale summaries report, never fail
+    report = json.loads(capsys.readouterr().out)
+
+    # offenders-only, sorted source keys; web in both stale concepts, arxiv in one
+    summary_by_source = report["summary_by_source"]
+    assert summary_by_source == {"arxiv": 1, "web": 2}
+    # it is exactly the map this pass's doctor audit produces (no new read)
+    assert (
+        summary_by_source
+        == run_doctor(home)["custody"]["summaries"]["by_source"]
+    )
+
+
+def test_maintain_summary_by_source_need_not_sum_to_the_whole(home, capsys):
+    """The H171 asymmetry, carried faithfully onto the report: the Bm25 summary is
+    double-attributed (web + arxiv), so the per-source values sum to MORE than the
+    whole-library `summaries_stale` — unlike `enrichment_by_source`, the member can
+    and does exceed the scalar, and the maintain↔doctor tie is faithful-read
+    equality, not a sum-to-whole check."""
+    _seed_stale_summaries()
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["custody"]["summaries_stale"] == 2
+    assert sum(report["summary_by_source"].values()) == 3 > 2
+
+
+def test_maintain_per_source_summary_on_a_clean_library_is_empty(home, capsys):
+    """A current summary → no stale debt, so the honest empty map (offenders-only —
+    a source with no stale summaries is omitted, never a 0 entry)."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+    from scrolls.kb_llm import eligible_concepts, members_hash
+
+    _build([
+        _concept_member("web", "bm25-web", "Bm25"),
+        _concept_member("arxiv", "bm25-arxiv", "Bm25"),
+    ])
+    # store a *current* summary (its fingerprint matches the live cluster digest)
+    eligible = eligible_concepts(list_items(get_paths().db_path))
+    save_concept_summary(get_paths().db_path, ConceptSummary(
+        slug="bm25", display="Bm25", summary="How it shows up.",
+        members_hash=members_hash(eligible["bm25"]["items"]), engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-16T00:00:00+00:00"))
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["summary_by_source"] == {}
+    assert report["custody"]["summaries_stale"] == 0
+
+
+def test_maintain_per_source_summary_on_an_uninitialized_library_is_empty(home, capsys):
+    """No library yet → the honest empty map, the first-run honesty the report keeps."""
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["summary_by_source"] == {}
+
+
+def test_maintain_history_does_not_carry_the_per_source_summary_breakdown(home, capsys):
+    """`summary_by_source` rides the live pass, not the recorded snapshot: it is
+    derived fresh from this pass's audit (like `enrichment_by_source` H147, `by_source`
+    H123), so `--history` (which replays snapshots) carries none and the log stays
+    bare."""
+    _seed_stale_summaries()
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("summary_by_source" not in run for run in runs)
+    assert all("summary_by_source" not in run["snapshot"] for run in runs)
+    # and not stored in the log either (the snapshot/log carry only the scalars)
+    assert all("summary_by_source" not in run for run in read_log(log_path(home)))
 
 
 # --- the single weakest source: `attention` (roadmap H119) ------------------

@@ -254,6 +254,43 @@ def report_enrichment_by_source(report: dict[str, Any]) -> dict[str, int]:
     return dict(report.get("custody", {}).get("enrichment", {}).get("by_source", {}))
 
 
+def report_summary_by_source(report: dict[str, Any]) -> dict[str, int]:
+    """The per-source stale-summary debt from this pass's doctor audit (roadmap H171/H175).
+
+    `doctor`'s `custody.summaries` block carries a `by_source` map (roadmap H171) —
+    a flat ``{source: stale_count}`` of the *offending* sources only (a source with
+    no stale summaries is omitted, the ``items``-list posture), source keys in sorted
+    order. It names *which* source's `kb --stale` an operator should run — the
+    summary-axis sibling of `report_enrichment_by_source` (H147), which does the same
+    on the classification axis. The scheduled worker's own `maintain` report distils
+    only the *whole-library* `summaries_stale` scalar (via `custody_snapshot`), so an
+    unattended log could not name the source without re-running `doctor`. This threads
+    the per-source map the audit already produces into the report.
+
+    A pure read of the report `run_doctor` returns — **no new read**, the map is
+    already computed in the audit (`doctor._check_summary_provenance`). A **standalone**
+    report member, like `report_enrichment_by_source`.
+
+    **The load-bearing asymmetry (H171):** a concept summary spans a *cluster* whose
+    live members can come from several sources, and the stored fingerprint records only
+    the digest (not which member moved), so a stale summary is attributed to *every*
+    source among its members. One multi-source stale concept therefore counts toward
+    each contributing source, and ``sum(by_source.values()) >= summaries_stale`` —
+    the map need **not** sum to the whole, unlike the drift/enrichment maps where each
+    item has exactly one source. The `maintain`↔`doctor` tie is consequently
+    **faithful-read equality** (``summary_by_source == doctor.custody.summaries.by_source``),
+    never a sum-to-whole check.
+
+    Surfaced **live-pass only** (like `report_enrichment_by_source` H147, `report_by_source`
+    H123, `suggest_repairs` H40): derived fresh from this pass's audit, never recorded
+    in the snapshot/log, so `--history` / `--trend` (which replay recorded snapshots)
+    carry none. Honest absence: a report without the block (an empty library, no stale
+    summaries, or an older schema) reads as the empty map, never a `KeyError` — the
+    module's degrade-safely posture on this axis.
+    """
+    return dict(report.get("custody", {}).get("summaries", {}).get("by_source", {}))
+
+
 # `weakest_source` — the distillation of `doctor`'s per-source breakdown to the
 # one source worth flagging — now lives in `custody.py` beside the
 # `custody_counts_by_source` map it reads, so the readable `export bundle`/`context`
