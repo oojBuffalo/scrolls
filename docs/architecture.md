@@ -244,19 +244,28 @@ each command moves items between stages or derives artifacts from them.
   the llm engine and composing with `--batch`, while leaving never-summarized
   concepts and orphan pruning to a full `kb --engine llm` — a targeted refresh on
   request, never doctor's silent overwrite, closing the summary-axis loop H29
-  (record/report) → H31 (refresh), the counterpart of `classify --stale`. The
-  `custody.summaries` block also carries a `by_source` map (roadmap H171, the
-  summary-axis counterpart of `enrichment.by_source`): the stale-summary count
-  split per source, so a worker sees *which* source's items drove a cluster stale.
-  Its load-bearing difference from the enrichment/drift maps — a concept summary
-  spans a cluster, and only the members digest is stored (not which member moved),
-  so a stale summary is attributed to **every source among its live members**
-  (the offenders set a future `kb --stale --source <S>` must re-synthesize, since
-  `kb --stale` acts on concepts, not members). One multi-source stale concept
-  therefore counts toward >1 source, so this map need not sum to `stale` — unlike
-  the per-item enrichment/drift maps. This supersedes the H135-era choice to omit
-  the breakdown (justified by the sum-to-whole convergence this map does not
-  claim).
+  (record/report) → H31 (refresh), the counterpart of `classify --stale`.
+  `scrolls kb --stale --source <S>` narrows that refresh to one source (roadmap
+  H172, the summary-axis sibling of `classify --stale --source`, H154): it
+  re-synthesizes exactly the stale concepts `<S>` participates in — the
+  `custody.summaries.by_source[S]` offenders below — sharing the `stale_only`
+  mode and `is_stale_summary` predicate, so the count it refreshes equals doctor's
+  per-source debt and refreshing clears that source's entry while leaving the rest.
+  Because a stale summary is attributed to *every* member source, a multi-source
+  cluster is refreshed under any of its sources; `--source` is a narrowing of
+  `--stale` (alone it is a usage error), implies the llm engine, and composes with
+  `--batch`. The `custody.summaries` block carries the `by_source` map this acts on
+  (roadmap H171, the summary-axis counterpart of `enrichment.by_source`): the
+  stale-summary count split per source, so a worker sees *which* source's items
+  drove a cluster stale. Its load-bearing difference from the enrichment/drift
+  maps — a concept summary spans a cluster, and only the members digest is stored
+  (not which member moved), so a stale summary is attributed to **every source
+  among its live members** (the offenders set `kb --stale --source <S>`
+  re-synthesizes, since `kb --stale` acts on concepts, not members). One
+  multi-source stale concept therefore counts toward >1 source, so this map need
+  not sum to `stale` — unlike the per-item enrichment/drift maps. This supersedes
+  the H135-era choice to omit the breakdown (justified by the sum-to-whole
+  convergence this map does not claim).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
@@ -1319,10 +1328,15 @@ choice (ADRs 0004, 0005).
   has one source). It lives under `enrichment` rather than folded into
   `custody.by_source` so the shared `custody_counts_by_source` (and the `maintain`
   report that reads it) stay byte-identical and the verify-ledger module stays free
-  of classification coupling. The **summary** axis has no per-source split: a
-  concept summary spans sources, so a stale one cannot be attributed to one source
-  and summed to the whole — summary debt stays whole-library (`kb --stale` acts on
-  concepts, not sources). `scrolls doctor --source S` scopes the *whole* audit to
+  of classification coupling. The **summary** axis carries its own `by_source`
+  split too (roadmap H171), with one load-bearing difference: a concept summary
+  spans a cluster, and only the members digest is stored (not which member moved),
+  so a stale summary is attributed to *every* source among its live members and the
+  map need **not** sum to the whole (one multi-source stale concept counts toward
+  >1 source). `scrolls kb --stale --source <S>` acts on that map (roadmap H172),
+  re-synthesizing the stale concepts `<S>` participates in — the summary-axis
+  per-source refresh, the counterpart of `classify --stale --source`. `scrolls
+  doctor --source S` scopes the *whole* audit to
   one source's held items (roadmap H162) — the audit-side counterpart of the
   per-source act commands (`verify --source`, `classify --stale --source`): once
   `by_source` (or `status`'s `attention` flag) names the weakest source, a worker

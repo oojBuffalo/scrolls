@@ -1921,3 +1921,147 @@ def test_kb_stale_batch_refreshes_the_stale_summary_in_one_submission(
     assert payload["generated"] == 1
     assert len(fake_summary_llm_batch) == 1  # one submission for the one stale concept
     assert len(fake_summary_llm) == 1  # no extra per-call beyond the initial synthesis
+
+
+# --- scrolls kb --stale --source <S>: the per-source summary refresh (H172) ---
+#
+# The summary-axis counterpart of `classify --stale --source` (H154). `--source`
+# narrows the `--stale` refresh to the concepts that source participates in —
+# doctor's custody.summaries.by_source[<S>] offenders (H171). A multi-source
+# cluster is refreshed under any of its sources (it shares the cluster); the
+# refresh clears that source's entry from the by_source map and leaves the rest.
+
+
+def _seed_two_source_stale_summaries(db):
+    """BM25 (wikipedia+web) and Graphs (arxiv): both summarized, then both stale."""
+    insert_item(db, make_rendered("wikipedia:bm25", "wikipedia", "Okapi BM25",
+                                  concepts=("BM25",)))
+    insert_item(db, make_rendered("web:fts", "web", "FTS in practice",
+                                  concepts=("BM25",)))
+    insert_item(db, make_rendered("arxiv:g1", "arxiv", "Graph one",
+                                  concepts=("Graphs",)))
+    insert_item(db, make_rendered("arxiv:g2", "arxiv", "Graph two",
+                                  concepts=("Graphs",)))
+    main(["kb", "--engine", "llm"])  # both synthesized
+    insert_item(db, make_rendered("web:bm25-3", "web", "More BM25", concepts=("BM25",)))
+    insert_item(db, make_rendered("arxiv:g3", "arxiv", "Graph three",
+                                  concepts=("Graphs",)))
+
+
+def test_kb_stale_source_refreshes_only_that_sources_concepts(
+    scrolls_home, fake_summary_llm, capsys
+):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_stale_summaries(db)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--stale", "--source", "arxiv"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    # only arxiv's concept (Graphs) is refreshed — BM25 (web/wikipedia) is left
+    assert payload["generated"] == 1
+    assert payload["results"] == [
+        {"slug": "graphs", "concept": "Graphs", "status": "generated"}
+    ]
+
+
+def test_kb_stale_source_clears_only_that_sources_doctor_entry(
+    scrolls_home, fake_summary_llm, capsys
+):
+    # the per-source signal-clears property: doctor reports both sources stale,
+    # `--source arxiv` refreshes just arxiv's concept, and doctor then reports
+    # only the other sources (web/wikipedia) stale — arxiv's entry is gone.
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_stale_summaries(db)
+    capsys.readouterr()
+
+    before = run_doctor(get_paths())["custody"]["summaries"]
+    assert before["stale"] == 2  # BM25 + Graphs
+    assert before["by_source"] == {"arxiv": 1, "web": 1, "wikipedia": 1}
+
+    assert main(["kb", "--stale", "--source", "arxiv"]) == 0
+    capsys.readouterr()
+
+    after = run_doctor(get_paths())["custody"]["summaries"]
+    assert after["stale"] == 1  # only BM25 remains
+    assert after["by_source"] == {"web": 1, "wikipedia": 1}  # arxiv cleared
+
+
+def test_kb_stale_source_for_a_multi_source_cluster_refreshes_under_either_source(
+    scrolls_home, fake_summary_llm, capsys
+):
+    # BM25 spans wikipedia + web; refreshing under *either* source regenerates it
+    # (the H171 attribution — a stale cluster is "stale for" every member source).
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_stale_summaries(db)
+    capsys.readouterr()
+
+    assert main(["kb", "--stale", "--source", "wikipedia"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"] == [
+        {"slug": "bm25", "concept": "BM25", "status": "generated"}
+    ]
+    after = run_doctor(get_paths())["custody"]["summaries"]
+    # BM25 refreshed → web *and* wikipedia entries clear; only arxiv (Graphs) left
+    assert after["by_source"] == {"arxiv": 1}
+
+
+def test_kb_stale_source_unknown_is_a_network_free_noop(
+    scrolls_home, fake_summary_llm, capsys
+):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_stale_summaries(db)
+    calls_before = len(fake_summary_llm)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--stale", "--source", "ghost"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["generated"] == 0
+    assert payload["results"] == []
+    assert len(fake_summary_llm) == calls_before  # no model call for an unknown source
+
+
+def test_kb_source_without_stale_is_a_usage_error(scrolls_home, capsys):
+    # `--source` narrows the --stale refresh; alone it has no stale set to narrow
+    exit_code = main(["kb", "--source", "web"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--stale" in json.loads(captured.err)["error"]
+
+
+def test_kb_stale_source_rejects_the_deterministic_engine(scrolls_home, capsys):
+    # --stale is rules-free here: it's the llm summary refresh; deterministic is a
+    # contradiction even with --source (the existing --stale guard covers it)
+    exit_code = main(["kb", "--stale", "--source", "web", "--engine", "deterministic"])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "deterministic" in json.loads(captured.err)["error"]
+
+
+def test_kb_stale_source_composes_with_batch(
+    scrolls_home, fake_summary_llm, fake_summary_llm_batch, capsys
+):
+    # --source narrows the batch transport identically (both are the llm engine)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_stale_summaries(db)
+    capsys.readouterr()
+
+    exit_code = main(["kb", "--stale", "--source", "arxiv", "--batch"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"] == [
+        {"slug": "graphs", "concept": "Graphs", "status": "generated"}
+    ]
+    assert len(fake_summary_llm_batch) == 1  # one submission for the one scoped concept

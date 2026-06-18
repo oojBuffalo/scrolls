@@ -614,6 +614,14 @@ def build_parser() -> argparse.ArgumentParser:
         "(implies --engine llm; never-summarized concepts are left for a full "
         "--engine llm run)",
     )
+    kb_parser.add_argument(
+        "--source",
+        default=None,
+        help="Narrow --stale to one source's stale summaries, e.g. web, arxiv "
+        "(the concepts that source participates in, doctor's "
+        "custody.summaries.by_source[<source>]) — the summary-axis counterpart "
+        "of `classify --stale --source`; requires --stale",
+    )
     list_parser = subparsers.add_parser(
         "list", help="List library items (JSON output)"
     )
@@ -1020,7 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init()
     if args.command == "kb":
-        return _cmd_kb(args.engine, args.batch, args.stale)
+        return _cmd_kb(args.engine, args.batch, args.stale, args.source)
     if args.command == "list":
         return _cmd_list(
             args.source,
@@ -2345,11 +2353,27 @@ def _cmd_agent_install() -> int:
 
 
 def _cmd_kb(
-    engine: str | None = None, batch: bool = False, stale: bool = False
+    engine: str | None = None,
+    batch: bool = False,
+    stale: bool = False,
+    source: str | None = None,
 ) -> int:
     paths = get_paths()
     explicit_engine = engine
     engine = engine or "deterministic"
+    # `--source` is a *narrowing* of `--stale` (the per-source refresh, H172), not
+    # a standalone selection: the worker reads "source web's summaries are stale"
+    # off doctor's custody.summaries.by_source and refreshes just those. `--source`
+    # alone has no stale set to narrow, so it is a loud usage error (the
+    # `classify --source` posture, H154).
+    if source is not None and not stale:
+        print(
+            json.dumps(
+                {"error": "kb --source narrows the --stale refresh; pass --stale"}
+            ),
+            file=sys.stderr,
+        )
+        return 1
     if stale:
         # --stale refreshes *LLM concept summaries*, so it is an llm operation:
         # the deterministic compiler has no summaries to refresh. It forces the
@@ -2395,7 +2419,10 @@ def _cmd_kb(
             )
             try:
                 counts, results = generate(
-                    paths.db_path, model=resolve_llm_model(config), stale_only=stale
+                    paths.db_path,
+                    model=resolve_llm_model(config),
+                    stale_only=stale,
+                    source=source,
                 )
             except LLMError as exc:
                 # whole-run failure (no credentials, or — for --batch — a

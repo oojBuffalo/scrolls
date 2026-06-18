@@ -12,12 +12,13 @@ import json
 import pytest
 
 from scrolls.db import init_db
-from scrolls.items import ScrollItem, insert_item, update_item
+from scrolls.items import ScrollItem, insert_item, list_items, update_item
 from scrolls.kb import ConceptSummary, load_concept_summaries, save_concept_summary
 from scrolls.kb_llm import (
     ENGINE,
     MIN_MEMBERS,
     SYSTEM_PROMPT,
+    _summary_targets,
     concept_card,
     eligible_concepts,
     generate_concept_summaries,
@@ -681,3 +682,119 @@ def test_generate_stale_only_count_matches_the_stale_summary_set(db_path):
     counts, _ = generate_concept_summaries(
         db_path, complete=complete, stale_only=True)
     assert counts["generated"] == len(stale_slugs) == 1
+
+
+# --- generate stale_only + source: the per-source refresh (H172) -----------
+#
+# `kb --stale --source <S>` narrows the stale refresh to the concepts source
+# `<S>` participates in — `<S>` among a concept's live members — the same
+# attribution doctor's custody.summaries.by_source uses (H171): a stale summary
+# records only the members digest, not which member moved, so a multi-source
+# cluster is refreshed under any of its sources. The concepts the scoped refresh
+# regenerates equal doctor's summaries.by_source[<S>] offenders, so refreshing
+# clears that source's entry (the H154/H27 signal-clears property, summary axis).
+
+
+def _seed_two_source_stale(db_path, complete):
+    """Two stale concepts on disjoint sources.
+
+    BM25 spans wikipedia + web; Graphs lives on arxiv. Both are summarized, then
+    each gains a member so both turn stale — so a scoped refresh has something to
+    leave behind. Attribution: BM25 → {web, wikipedia}, Graphs → {arxiv}.
+    """
+    insert_item(db_path, make_rendered(
+        "wikipedia:bm25", "wikipedia", "Okapi BM25", concepts=("BM25",)))
+    insert_item(db_path, make_rendered(
+        "web:fts", "web", "FTS in practice", concepts=("BM25",)))
+    insert_item(db_path, make_rendered(
+        "arxiv:g1", "arxiv", "Graph one", concepts=("Graphs",)))
+    insert_item(db_path, make_rendered(
+        "arxiv:g2", "arxiv", "Graph two", concepts=("Graphs",)))
+    generate_concept_summaries(db_path, complete=complete)  # both synthesized
+    # each concept's members change → both stale
+    insert_item(db_path, make_rendered(
+        "web:bm25-3", "web", "More BM25", concepts=("BM25",)))
+    insert_item(db_path, make_rendered(
+        "arxiv:g3", "arxiv", "Graph three", concepts=("Graphs",)))
+
+
+def _stale_targets(db_path, source=None):
+    eligible = eligible_concepts([i for i in list_items(db_path) if i.markdown_path])
+    stored = load_concept_summaries(db_path)
+    return set(_summary_targets(eligible, stored, True, source=source))
+
+
+def test_summary_targets_source_narrows_to_concepts_that_source_participates_in(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    # whole-library stale: both concepts
+    assert _stale_targets(db_path) == {"bm25", "graphs"}
+    # arxiv → only Graphs; web/wikipedia → only BM25 (the multi-source cluster is
+    # refreshed under *either* of its sources — H171 attribution)
+    assert _stale_targets(db_path, "arxiv") == {"graphs"}
+    assert _stale_targets(db_path, "web") == {"bm25"}
+    assert _stale_targets(db_path, "wikipedia") == {"bm25"}
+
+
+def test_summary_targets_unknown_source_is_the_empty_set(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    assert _stale_targets(db_path, "ghost") == set()
+
+
+def test_summary_targets_source_is_ignored_without_stale_only(db_path):
+    # `source` only narrows the *stale* refresh; a full run returns every eligible
+    # concept regardless (the CLI guards `--source` to `--stale`, but the helper
+    # keeps the narrowing scoped to the stale branch).
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    eligible = eligible_concepts([i for i in list_items(db_path) if i.markdown_path])
+    stored = load_concept_summaries(db_path)
+    assert _summary_targets(eligible, stored, False, source="web") == eligible
+
+
+def test_generate_stale_only_source_refreshes_only_that_sources_concepts(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    assert len(complete.calls) == 2  # initial synthesis of both concepts
+
+    counts, results = generate_concept_summaries(
+        db_path, complete=complete, stale_only=True, source="arxiv")
+    assert counts == {"generated": 1, "current": 0, "failed": 0, "pruned": 0}
+    assert results == [{"slug": "graphs", "concept": "Graphs", "status": "generated"}]
+    assert len(complete.calls) == 3  # exactly one scoped refresh
+
+    # arxiv's concept is now current; BM25 (web/wikipedia) is left stale
+    stored = load_concept_summaries(db_path)
+    eligible = eligible_concepts([i for i in list_items(db_path) if i.markdown_path])
+    assert not is_stale_summary(stored.get("graphs"), members_hash(eligible["graphs"]["items"]))
+    assert is_stale_summary(stored.get("bm25"), members_hash(eligible["bm25"]["items"]))
+
+
+def test_generate_stale_only_source_unknown_is_a_network_free_noop(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    assert len(complete.calls) == 2
+
+    counts, results = generate_concept_summaries(
+        db_path, complete=complete, stale_only=True, source="ghost")
+    assert counts == {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
+    assert results == []
+    assert len(complete.calls) == 2  # no model call for an unknown source
+
+
+def test_batch_stale_only_source_refreshes_only_that_sources_concepts(db_path):
+    # the batch transport narrows identically (only the transport differs)
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+
+    def complete_batch(system, requests, model):
+        return {cid: json.dumps({"summary": "scoped batch refresh."}) for cid, _ in requests}
+
+    counts, results = generate_concept_summaries_batch(
+        db_path, complete_batch=complete_batch, stale_only=True, source="arxiv")
+    assert counts == {"generated": 1, "current": 0, "failed": 0, "pruned": 0}
+    assert results == [{"slug": "graphs", "concept": "Graphs", "status": "generated"}]
+    stored = load_concept_summaries(db_path)
+    eligible = eligible_concepts([i for i in list_items(db_path) if i.markdown_path])
+    assert is_stale_summary(stored.get("bm25"), members_hash(eligible["bm25"]["items"]))

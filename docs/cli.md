@@ -780,9 +780,10 @@ load-bearing way.** A concept summary spans a *cluster* whose members can come
 from several sources, and the stored fingerprint records only the members digest,
 not which member moved — so a stale summary is attributed to **every source among
 its live members** (a summary is "stale for source S" if S participates in the
-concept). That is exactly the offenders set a future `kb --stale --source <S>`
-(roadmap H172) must re-synthesize, since `kb --stale` operates on concepts, not
-members. The consequence: one multi-source stale concept counts toward more than
+concept). That is exactly the offenders set [`kb --stale --source <S>`](#scrolls-kb---engine----stale)
+(roadmap H172) re-synthesizes, since `kb --stale` operates on concepts, not
+members — refreshing one source clears its entry here while leaving the rest. The
+consequence: one multi-source stale concept counts toward more than
 one source, so `by_source` **need not sum to `stale`**
 (`sum(by_source.values()) >= stale`, equality iff every stale concept is
 single-source) — unlike the enrichment/drift maps, where each item has exactly one
@@ -3090,7 +3091,7 @@ _By source:_
 
 ## Derived artifacts
 
-### `scrolls kb [--engine ...] [--stale]`
+### `scrolls kb [--engine ...] [--stale [--source S]]`
 
 Rebuild the interlinked library pages under `library/` from scratch
 (stale groups can't linger; other files there are untouched — ADR 0005,
@@ -3186,6 +3187,23 @@ clears `custody.enrichment.stale`. It never rewrites a current summary or
 generates a missing one — regeneration on request, never doctor's silent
 overwrite (custody §2.4).
 
+`--source <S>` narrows that `--stale` refresh to one source — the summary-axis
+counterpart of [`classify --stale --source`](#scrolls-classify-id) (roadmap
+H172, H154 on the enrichment axis). It re-synthesizes exactly the stale concepts
+**source `<S>` participates in** — `<S>` among a concept's live members, the same
+attribution `doctor`'s `custody.summaries.by_source[<S>]` reports (a stale
+summary records only the members digest, not which member moved, so a
+multi-source cluster is "stale for" every member source and is refreshed under
+*any* of them). The concepts it regenerates therefore equal that offenders set,
+and refreshing **clears that source's entry** from the `by_source` map while
+leaving the rest (`test_kb_stale_source_clears_only_that_sources_doctor_entry`,
+`test_kb_stale_source_for_a_multi_source_cluster_refreshes_under_either_source`).
+`--source` is a *narrowing* of `--stale`, not a standalone selection: `--source`
+without `--stale` is a usage error (`test_kb_source_without_stale_is_a_usage_error`),
+and a source with no stale debt is the network-free no-op
+(`test_kb_stale_source_unknown_is_a_network_free_noop`). It implies the llm engine
+and composes with `--batch`, exactly like whole-library `--stale`.
+
 ```console
 $ scrolls kb
 {"items": 2, "sources": 1, "categories": 2, "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 6}
@@ -3202,6 +3220,14 @@ $ scrolls kb --engine llm     # with a 2-scroll concept but no credentials set
 $ scrolls kb --batch          # the deterministic engine has nothing to batch
 {"error": "--batch requires the llm engine (--engine llm)"}
 [exit 1]
+
+$ scrolls kb --source web     # --source narrows the --stale refresh; it needs it
+{"error": "kb --source narrows the --stale refresh; pass --stale"}
+[exit 1]
+
+$ scrolls kb --stale --source web   # refresh only the stale concepts web is in
+{"generated": 1, "current": 0, "failed": 0, "pruned": 0, "results": [{"slug": "bm25", "concept": "BM25", "status": "generated"}], "items": 6, "sources": 3, "categories": 0, "concepts": 2, "tags": 0, "summaries": 2, "clusters": 0, "works": 0, "pages": 8}
+[exit 0]
 ```
 
 ### `scrolls agent install`

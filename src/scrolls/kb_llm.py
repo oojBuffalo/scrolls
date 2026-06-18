@@ -227,7 +227,9 @@ def _parse_summary(raw: str) -> str:
     return summary.strip()
 
 
-def _summary_targets(eligible: dict, stored: dict, stale_only: bool) -> dict:
+def _summary_targets(
+    eligible: dict, stored: dict, stale_only: bool, source: str | None = None
+) -> dict:
     """The eligible concepts a generation run should consider.
 
     Normally every eligible concept (the loop short-circuits current ones to a
@@ -240,13 +242,30 @@ def _summary_targets(eligible: dict, stored: dict, stale_only: bool) -> dict:
     ones are already a no-op. The shared predicate makes the count doctor shows
     equal the count `--stale` regenerates (the H27 convergence, on the summary
     axis).
+
+    With `source` (roadmap H172, `scrolls kb --stale --source <S>`), the stale
+    set is narrowed to the concepts source `<S>` participates in — `<S>` among a
+    concept's live members — the same attribution `doctor`'s
+    `custody.summaries.by_source` uses (H171). A stale summary records only the
+    members digest, not which member moved, so a multi-source cluster is refreshed
+    under *any* of its sources (it shares the cluster). The concepts returned then
+    equal doctor's `summaries.by_source[<S>]` offenders, so refreshing clears that
+    source's entry from the map (the H154/H27 signal-clears property, summary
+    axis). `source` only narrows the stale refresh — a full run ignores it.
     """
     if not stale_only:
         return eligible
-    return {
+    targets = {
         slug: entry
         for slug, entry in eligible.items()
         if is_stale_summary(stored.get(slug), members_hash(entry["items"]))
+    }
+    if source is None:
+        return targets
+    return {
+        slug: entry
+        for slug, entry in targets.items()
+        if any(item.source == source for item in entry["items"])
     }
 
 
@@ -256,6 +275,7 @@ def generate_concept_summaries(
     complete: Completer | None = None,
     model: str | None = None,
     stale_only: bool = False,
+    source: str | None = None,
 ) -> tuple[dict[str, int], list[dict]]:
     """Bring the summary store up to date with the library's concepts.
 
@@ -271,13 +291,16 @@ def generate_concept_summaries(
     changed since synthesis — and nothing else: never-summarized eligible
     concepts and orphan pruning are left to a full `kb --engine llm`. A
     current/fresh library is then a network-free no-op (no targets → no model
-    call), the way `classify --stale` is on the classification axis.
+    call), the way `classify --stale` is on the classification axis. With
+    `source` (`scrolls kb --stale --source <S>`, roadmap H172), that refresh is
+    narrowed to the concepts source `<S>` participates in (see `_summary_targets`);
+    an unknown source has no targets, so it is the network-free no-op too.
     """
     model = model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL
     items = [item for item in list_items(db_path) if item.markdown_path]
     eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
-    targets = _summary_targets(eligible, stored, stale_only)
+    targets = _summary_targets(eligible, stored, stale_only, source)
 
     counts = {"generated": 0, "current": 0, "failed": 0, "pruned": 0}
     results: list[dict] = []
@@ -318,14 +341,15 @@ def generate_concept_summaries_batch(
     complete_batch: BatchCompleter | None = None,
     model: str | None = None,
     stale_only: bool = False,
+    source: str | None = None,
 ) -> tuple[dict[str, int], list[dict]]:
     """Bring the summary store up to date with one Message Batches run.
 
     The batch transport of `generate_concept_summaries` (ADR 0022, 0032):
     every concept that needs (re)generation is sent in one submission at
     half the per-token price, instead of one API call each. Eligibility,
-    incremental skipping, `stale_only` targeting, pruning, the JSON result
-    shape, and per-concept failure isolation are identical — only the
+    incremental skipping, `stale_only`/`source` targeting, pruning, the JSON
+    result shape, and per-concept failure isolation are identical — only the
     transport differs. A whole-batch failure (no credentials, the submission
     itself rejected) raises, since every concept would fail identically;
     summaries already saved stay saved.
@@ -336,7 +360,7 @@ def generate_concept_summaries_batch(
     items = [item for item in list_items(db_path) if item.markdown_path]
     eligible = eligible_concepts(items)
     stored = load_concept_summaries(db_path)
-    targets = _summary_targets(eligible, stored, stale_only)
+    targets = _summary_targets(eligible, stored, stale_only, source)
 
     # One pass in page order (sorted slug) settles which concepts are
     # current and which need a request; positional custom_ids key the
