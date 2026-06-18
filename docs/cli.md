@@ -743,10 +743,11 @@ construction (the H104/H121 sum-to-whole posture, on the enrichment axis —
 It lives under `enrichment` (not folded into `custody.by_source`) so the shared
 `custody_counts_by_source` — and the `maintain` report that faithfully reads it
 (H123/H127) — stay byte-identical, and the verify-ledger module stays free of
-classification coupling. The **summary axis has no per-source counterpart**: a
-concept summary spans sources, so a stale one cannot be attributed to one source
-and summed to the whole (it would double-count), so summary debt stays
-whole-library — and `kb --stale` acts on concepts, not sources.
+classification coupling. The **summary axis carries its own per-source map**
+(roadmap H171, documented with the `summaries` block below) — but, because a
+concept summary spans a multi-source cluster, that map is attributed differently
+and deliberately does **not** sum to the whole the way the enrichment/drift maps
+do.
 
 The custody block also carries a `summaries` sub-block — the same re-derivability
 posture on the *LLM concept-summary* axis (cap 8, roadmap H29). Each stored
@@ -770,6 +771,25 @@ To act on the signal, run [`scrolls kb --stale`](#scrolls-kb---engine----stale),
 the explicit refresh that re-synthesizes exactly the concepts reported here — the
 summary-axis counterpart of `classify --stale`
 (`test_kb_stale_clears_the_doctor_stale_signal`).
+
+The `summaries` block also carries a `by_source` map (roadmap H171) — the
+summary-axis counterpart of `enrichment.by_source` — so a worker triaging "source
+`<S>`'s summaries are stale" sees which source's items drove a cluster stale
+without scanning `items`. **It differs from the enrichment/drift maps in one
+load-bearing way.** A concept summary spans a *cluster* whose members can come
+from several sources, and the stored fingerprint records only the members digest,
+not which member moved — so a stale summary is attributed to **every source among
+its live members** (a summary is "stale for source S" if S participates in the
+concept). That is exactly the offenders set a future `kb --stale --source <S>`
+(roadmap H172) must re-synthesize, since `kb --stale` operates on concepts, not
+members. The consequence: one multi-source stale concept counts toward more than
+one source, so `by_source` **need not sum to `stale`**
+(`sum(by_source.values()) >= stale`, equality iff every stale concept is
+single-source) — unlike the enrichment/drift maps, where each item has exactly one
+source. A flat `{source: stale_count}` map of the **offending sources only** (a
+clean source omitted), keys sorted; pinned in
+`test_summaries_by_source_attributes_a_multi_source_stale_concept_to_each_source`
+and `test_summaries_by_source_converges_with_the_per_source_stale_summaries`.
 
 ### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE | --source S] [--limit N]`
 

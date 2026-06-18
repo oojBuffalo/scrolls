@@ -136,6 +136,7 @@ def run_doctor(
                 "stale": 0,
                 "never": 0,
                 "items": [],
+                "by_source": {},
             },
         },
     }
@@ -563,6 +564,31 @@ def _check_summary_provenance(
       are listed in ``items`` so a re-synthesis can be targeted.
     - ``never`` — eligible but never summarized: unknown, not silently current
       (the drift block's ``unverified`` honesty, on the summary axis).
+    - ``by_source`` — the stale count split per source (roadmap H171): a flat
+      ``{source: stale_count}`` map of the *offending* sources only (a source
+      with no stale debt is omitted, the ``items``-list posture), source keys in
+      sorted order. The summary-axis counterpart of `enrichment.by_source`
+      (H135), so a worker triaging "source <S>'s summaries are stale" sees which
+      source's items drove a cluster stale without scanning ``items`` — the
+      read-side precursor of `scrolls kb --stale --source <S>` (roadmap H172).
+
+      **The load-bearing decision (H171), and why this map differs from the
+      drift/enrichment ones.** A concept summary spans a *cluster* whose members
+      may come from several sources, and the stored fingerprint records only the
+      members digest, not which member moved — so we cannot attribute a stale
+      summary to a single member's source. A stale summary is therefore
+      attributed to **every source present among its live members** (a summary is
+      "stale for source S" if S participates in the concept), which is exactly the
+      offenders set `kb --stale --source S` must act on: `kb --stale` operates on
+      *concepts*, not members, so refreshing source S re-synthesizes every stale
+      concept S is a member of. The consequence: one multi-source stale concept
+      counts toward >1 source, so ``by_source`` **need not sum to ``stale``**
+      (``sum(by_source.values()) >= stale``, equality iff every stale concept is
+      single-source) — unlike the drift/enrichment maps, where each item has
+      exactly one source and the per-source values sum to the whole. This
+      supersedes the H135-era decision to omit the breakdown: the omission was
+      justified by the sum-to-whole convergence, which this map deliberately does
+      not claim (and so cannot break).
 
     Like drift and the enrichment block, this is a *report*, never repairable
     ``issues`` and never the exit code: stale members mean the concept's
@@ -570,17 +596,6 @@ def _check_summary_provenance(
     synthesis of the members it was written from). Doctor never auto-regenerates —
     a refreshed summary is produced on request (`scrolls kb --stale`, roadmap
     H31), never as a silent overwrite (custody §2.4).
-
-    Unlike the classification axis (`_check_enrichment_provenance`), this block
-    carries **no** per-source breakdown (the H135 decision): a summary is keyed by
-    *concept* slug, and a concept's member items span sources, so a stale summary
-    cannot be attributed to one source and summed to the whole without double-
-    counting — which would break the sum-to-whole convergence the per-source
-    custody breakdown rests on. The enrichment axis decomposes cleanly (a stale
-    classification is per-item, with one source, and `classify --stale` is the
-    per-item refresh it points at); the summary axis genuinely does not (`kb
-    --stale` operates on concepts, not sources), so summary debt stays whole-
-    library.
     """
     summaries = report["custody"]["summaries"]
     # Same denominator the generator uses: rendered members only (an unrendered
@@ -596,8 +611,10 @@ def _check_summary_provenance(
     # share one derivation, so the count here can never disagree with the view or
     # the `kb --stale` pool (the H31 convergence the classification axis pins too).
     stale = []
+    stale_by_source: dict[str, int] = {}
     for slug in sorted(eligible):
-        live = members_hash(eligible[slug]["items"])
+        members = eligible[slug]["items"]
+        live = members_hash(members)
         prior = stored.get(slug)
         freshness = summary_freshness(prior, live)
         summaries["eligible"] += 1
@@ -608,4 +625,14 @@ def _check_summary_provenance(
             stale.append(
                 {"slug": slug, "members_hash": prior.members_hash, "live_hash": live}
             )
+            # Attribute the stale summary to every source among its live members
+            # (the H171 decision — see the `by_source` docstring bullet). A
+            # multi-source cluster lands in each contributing source, so this map
+            # need not sum to `stale`.
+            for source in {item.source for item in members}:
+                stale_by_source[source] = stale_by_source.get(source, 0) + 1
     summaries["items"] = stale  # already slug-ordered (sorted iteration)
+    # Per-source stale-summary debt (roadmap H171): offenders only, sorted keys.
+    summaries["by_source"] = {
+        source: stale_by_source[source] for source in sorted(stale_by_source)
+    }

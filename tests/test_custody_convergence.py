@@ -986,6 +986,84 @@ def test_enrichment_by_source_converges_with_the_per_source_stale_classification
     )
 
 
+def _stored_summary(db, slug, members_hash, *, engine="kb-llm-v1"):
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(db, ConceptSummary(
+        slug=slug, display=slug.upper(), summary="How it shows up.",
+        members_hash=members_hash, engine=engine, model="claude-opus-4-8",
+        generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def _concept_member(item_id, concept, source, content_hash):
+    return _item(
+        item_id, item_id, source=source, url=f"https://{source}.example.com/{item_id}",
+        stage="rendered", markdown_path=f"scrolls/{source}/{item_id}.md",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash=content_hash, concepts=(concept,))
+
+
+def test_summaries_by_source_converges_with_the_per_source_stale_summaries(
+    scrolls_home,
+):
+    # roadmap H171: doctor's `custody.summaries.by_source` splits the stale-summary
+    # count per source — the summary-axis sibling of H135's `enrichment.by_source`.
+    # Unlike the enrichment/drift maps, a concept summary spans a *cluster* whose
+    # members can come from several sources and the stored fingerprint records only
+    # the digest (not which member moved), so a stale summary is attributed to
+    # *every* source among its live members and the map need NOT sum to `stale`
+    # (the documented H171 asymmetry). Pin it against an independent re-derivation
+    # via the `kb --stale` selector (`is_stale_summary`), grouped by source — the
+    # convergence the future `kb --stale --source` (H172) will act on.
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import eligible_concepts, is_stale_summary, members_hash
+
+    main(["init"])
+    db = get_paths().db_path
+
+    # Bm25: a stale summary over a web + arxiv cluster → attributes to BOTH.
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    # Vector: a stale summary over a web-only cluster → attributes to web.
+    insert_item(db, _concept_member("v1", "Vector", "web", "h3"))
+    insert_item(db, _concept_member("v2", "Vector", "web", "h4"))
+    # Clean: a *current* summary over a reddit + web cluster → no stale debt, so
+    # both reddit and web's clean participation is omitted from the map.
+    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
+    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
+
+    _stored_summary(db, "bm25", "stale-old-1")
+    _stored_summary(db, "vector", "stale-old-2")
+    eligible = eligible_concepts(list_items(db))
+    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+
+    summaries = run_doctor(get_paths())["custody"]["summaries"]
+
+    # 1. each per-source count == an independent per-source re-derivation via the
+    #    `kb --stale` selector (`is_stale_summary`), grouped by every source among
+    #    a stale concept's live members.
+    stored = load_concept_summaries(db)
+    expected: dict[str, int] = {}
+    for slug, entry in eligible.items():
+        if is_stale_summary(stored.get(slug), members_hash(entry["items"])):
+            for source in {item.source for item in entry["items"]}:
+                expected[source] = expected.get(source, 0) + 1
+    expected = {source: expected[source] for source in sorted(expected)}
+    assert summaries["by_source"] == expected == {"arxiv": 1, "web": 2}
+
+    # 2. the clean concept's sources (reddit, and web's clean participation) carry
+    #    no stale debt — reddit, which appears only in the current cluster, is
+    #    omitted entirely (the offenders-only map).
+    assert "reddit" not in summaries["by_source"]
+
+    # 3. the H171 asymmetry: the Bm25 summary is double-attributed (web + arxiv),
+    #    so the per-source values sum to MORE than `stale` — non-vacuous, and the
+    #    reason this map deliberately does not claim the sum-to-whole convergence
+    #    the drift/enrichment maps rest on.
+    assert summaries["stale"] == 2
+    assert sum(summaries["by_source"].values()) == 3 > summaries["stale"]
+
+
 def test_classify_stale_source_refreshes_exactly_the_doctor_per_source_count(
     scrolls_home, capsys
 ):

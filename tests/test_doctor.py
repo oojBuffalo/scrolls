@@ -913,7 +913,7 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             # the all-zero block (the summary-axis counterpart of enrichment)
             "basis": "members_hash",
             "eligible": 0, "summarized": 0, "current": 0, "stale": 0, "never": 0,
-            "items": [],
+            "items": [], "by_source": {},
         },
     }
 
@@ -1176,9 +1176,10 @@ def test_enrichment_ignores_non_rules_classifications(paths):
 # tiers/drift/coverage). H135 adds the re-derivability counterpart on the
 # classification axis: a `by_source` sub-map under `custody.enrichment` naming
 # how much stale-ruleset debt each source carries, so an operator can target a
-# `classify --stale` at the source with the most. (The summary axis stays
-# whole-library: a concept summary spans sources, so it does not decompose into
-# a per-source count that sums to the whole — see the `summaries` docstring.)
+# `classify --stale` at the source with the most. (The summary axis gets its own
+# `summaries.by_source` in H171 — but attributed per contributing source and not
+# summing to the whole, since a concept summary spans a cluster; see the
+# `summaries` docstring and the per-source tests below.)
 
 
 def _classified_arxiv(source_id, *, ruleset):
@@ -1323,15 +1324,17 @@ def test_stale_ruleset_does_not_affect_issues_or_exit_code(paths, capsys):
 # auto-regenerates (the refresh is `kb --stale`, H31).
 
 
-def _concept_item(item_id, concept, *, content_hash):
-    """A web item carrying one concept and full custody (so it is clean).
+def _concept_item(item_id, concept, *, content_hash, source="web"):
+    """An item carrying one concept and full custody (so it is clean).
 
     Provenance + a body + a hash keep it free of custody findings; it is
     written to disk by `_seed_eligible_concept` so it has a real scroll file
-    and joins its concept group.
+    and joins its concept group. `source` defaults to ``web`` (the single-source
+    callers); the per-source `by_source` tests pass it to seed a cluster whose
+    members span sources.
     """
     return ScrollItem(
-        id=item_id, source="web", url=f"https://example.org/{item_id}",
+        id=item_id, source=source, url=f"https://{source}.example.org/{item_id}",
         saved_at="2026-06-01T00:00:00+00:00", title=item_id,
         extracted_text="body", raw_text="body", concepts=(concept,),
         content_hash=content_hash, provenance={"fetched_at": "2026-06-01T00:00:00+00:00"})
@@ -1348,6 +1351,23 @@ def _seed_eligible_concept(paths, concept="BM25", hashes=("h1", "h2")):
     rendered = []
     for n, h in enumerate(hashes):
         item = _concept_item(f"web:{concept.lower()}-{n}", concept, content_hash=h)
+        rendered.append(_rendered(paths, item))
+    return members_hash(rendered)
+
+
+def _seed_multi_source_concept(paths, concept, members):
+    """A rendered concept whose members span sources; returns the live digest.
+
+    `members` is a sequence of ``(source, content_hash)`` pairs — one rendered
+    item per pair — so the per-source `by_source` tests can build a cluster
+    drawing on more than one source.
+    """
+    from scrolls.kb_llm import members_hash
+
+    rendered = []
+    for n, (source, h) in enumerate(members):
+        item = _concept_item(
+            f"{source}:{concept.lower()}-{n}", concept, content_hash=h, source=source)
         rendered.append(_rendered(paths, item))
     return members_hash(rendered)
 
@@ -1480,3 +1500,70 @@ def test_summaries_aggregate_converges_with_the_per_concept_view(paths):
     assert rolled["current"] == summaries["current"] == 1
     assert rolled["stale"] == summaries["stale"] == 1
     assert rolled["never"] == summaries["never"] == 1
+
+
+# --- per-source stale-summary debt (roadmap H171) ---
+# `custody.summaries.by_source` splits the stale-summary count per source — the
+# summary-axis counterpart of `enrichment.by_source` (H135). A concept summary
+# spans a *cluster* whose members can come from several sources, and the stored
+# fingerprint records only the digest, not which member moved — so a stale
+# summary is attributed to *every* source among its live members. One stale
+# multi-source concept therefore counts toward each contributing source, and the
+# map need **not** sum to `summaries.stale` (unlike drift/enrichment, where each
+# item has exactly one source). Offenders-only, sorted keys, the H135 posture.
+
+
+def test_summaries_by_source_is_empty_when_no_summary_is_stale(paths):
+    # a current concept + a never-summarized concept contribute no stale debt, so
+    # no source appears (the offenders-only map, honest empty)
+    fresh = _seed_eligible_concept(paths, concept="Fresh", hashes=("a", "b"))
+    _seed_eligible_concept(paths, concept="New", hashes=("c", "d"))
+    _store_summary(paths, "fresh", fresh)
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["stale"] == 0
+    assert summaries["by_source"] == {}
+
+
+def test_summaries_by_source_attributes_a_multi_source_stale_concept_to_each_source(paths):
+    # a single stale concept whose members span web + arxiv counts toward *both*
+    # sources — so by_source is {arxiv: 1, web: 1} while summaries.stale is 1, and
+    # the per-source values sum to MORE than stale (the documented asymmetry).
+    _seed_multi_source_concept(paths, "BM25", [("web", "h1"), ("arxiv", "h2")])
+    _store_summary(paths, "bm25", "stale-old-digest")
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["stale"] == 1
+    assert summaries["by_source"] == {"arxiv": 1, "web": 1}
+    # the multi-source stale concept is double-attributed, so the map need not
+    # sum to `stale` (the H171 decision, unlike the enrichment/drift maps)
+    assert sum(summaries["by_source"].values()) == 2 > summaries["stale"]
+
+
+def test_summaries_by_source_omits_clean_sources_and_counts_offenders_only(paths):
+    # web drives two stale concepts, arxiv one; reddit only participates in a
+    # *current* concept, so it is omitted. Keys are sorted; a single-source stale
+    # concept attributes to exactly its one source.
+    _seed_multi_source_concept(paths, "Stale1", [("web", "a"), ("arxiv", "b")])
+    _seed_multi_source_concept(paths, "Stale2", [("web", "c"), ("web", "d")])
+    clean = _seed_multi_source_concept(paths, "Clean", [("reddit", "e"), ("web", "f")])
+    _store_summary(paths, "stale1", "old-1")
+    _store_summary(paths, "stale2", "old-2")
+    _store_summary(paths, "clean", clean)
+    summaries = run_doctor(paths)["custody"]["summaries"]
+    assert summaries["stale"] == 2
+    # web: in both stale concepts; arxiv: in one. reddit only touches the current
+    # concept, so it carries no stale debt and is omitted.
+    assert summaries["by_source"] == {"arxiv": 1, "web": 2}
+    assert list(summaries["by_source"]) == ["arxiv", "web"]  # sorted keys
+    assert "reddit" not in summaries["by_source"]
+
+
+def test_summaries_by_source_never_feeds_issues_or_the_exit_code(paths, capsys):
+    # report-only like the whole summaries block: a per-source stale count is a
+    # refresh signal, not repairable drift
+    _seed_multi_source_concept(paths, "BM25", [("web", "h1"), ("arxiv", "h2")])
+    _store_summary(paths, "bm25", "stale-old-digest")
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["issues"] == 0
+    assert report["custody"]["summaries"]["by_source"] == {"arxiv": 1, "web": 1}

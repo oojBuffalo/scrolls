@@ -218,9 +218,10 @@ each command moves items between stages or derives artifacts from them.
   selector filters the one predicate by source, so the count it refreshes
   equals doctor's per-source number and the refresh clears that source's entry
   from the offenders-only map. It is a *narrowing* of `--stale` (it needs
-  `--stale`), and the summary axis has no per-source counterpart (a concept
-  summary spans sources), so it completes the per-source refresh on the one
-  enrichment axis that decomposes. User overrides stay out of that pool: a
+  `--stale`). The summary axis now carries its own per-source map too (roadmap
+  H171, below) — but, because a summary spans a multi-source cluster, that map is
+  attributed per contributing source and deliberately need not sum to the whole.
+  User overrides stay out of that pool: a
   hand-set category drops the engine stamp (`overrides.apply_overrides`), so
   it is never counted stale and never refreshed — user overrides always win.
   The classification axis now also carries a per-item confidence/recency marker
@@ -243,7 +244,19 @@ each command moves items between stages or derives artifacts from them.
   the llm engine and composing with `--batch`, while leaving never-summarized
   concepts and orphan pruning to a full `kb --engine llm` — a targeted refresh on
   request, never doctor's silent overwrite, closing the summary-axis loop H29
-  (record/report) → H31 (refresh), the counterpart of `classify --stale`.
+  (record/report) → H31 (refresh), the counterpart of `classify --stale`. The
+  `custody.summaries` block also carries a `by_source` map (roadmap H171, the
+  summary-axis counterpart of `enrichment.by_source`): the stale-summary count
+  split per source, so a worker sees *which* source's items drove a cluster stale.
+  Its load-bearing difference from the enrichment/drift maps — a concept summary
+  spans a cluster, and only the members digest is stored (not which member moved),
+  so a stale summary is attributed to **every source among its live members**
+  (the offenders set a future `kb --stale --source <S>` must re-synthesize, since
+  `kb --stale` acts on concepts, not members). One multi-source stale concept
+  therefore counts toward >1 source, so this map need not sum to `stale` — unlike
+  the per-item enrichment/drift maps. This supersedes the H135-era choice to omit
+  the breakdown (justified by the sum-to-whole convergence this map does not
+  claim).
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content
