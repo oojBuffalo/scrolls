@@ -2803,9 +2803,24 @@ equal `doctor`'s `custody.by_source` for the whole-library scope, independent of
 `test_graph_by_source_converges_with_doctor_and_the_per_source_tally`). An empty
 graph is the honest empty `{}` map.
 
+`stats.custody.attention` (roadmap H164) distils that per-source map to the
+single weakest source — the one carrying the most actionable loss
+(`drifted` + `rotted`, tie-broken by most `reference`-only then name) — via the
+shared `custody.weakest_source`, the *same* primitive JSON `scrolls status`
+(H139) and `scrolls maintain` (H119) thread. So a reader of the link graph sees
+not just *which* source's custody is weakest but the one to act on, with its own
+`{tiers, drift, coverage}` tally and the exact `scrolls verify --source <S>`
+recheck command (H137). It is honestly `null` on the same three gates as the JSON
+flags — an empty map, a single source (nothing to rank across), or a fully-clean
+scope (no `drifted`/`rotted` loss) — so a loss-free or one-source graph flags
+nothing even with drift, and it ranks the whole `stats.custody.by_source` scope so
+it is independent of `--all`. Converges with `status`/`maintain`/`doctor` by
+construction (same primitive over the same map),
+pinned in `test_graph_attention_converges_with_status_maintain_and_doctor`.
+
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}}}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null}}}
 [exit 0]
 ```
 
@@ -3205,7 +3220,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `item_id` is an id or URL (ADR 0028) |
-| `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)) |
+| `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); `stats.custody` tallies the reported reps (H100) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |

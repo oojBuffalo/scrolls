@@ -789,6 +789,8 @@ def test_get_link_graph_returns_directed_edges(scrolls_home):
             "tiers": {"full": 0, "partial": 0, "reference": 2},
             "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0},
             "by_source": {"arxiv": _bare, "x": _bare},
+            # no source carries drift loss → no weakest-source flag (roadmap H164)
+            "attention": None,
         },
     }
 
@@ -802,9 +804,50 @@ def test_get_link_graph_empty_library(scrolls_home):
                 "drift": {"verified": 0, "unverified": 0, "drifted": 0,
                           "rotted": 0, "error": 0},
                 "by_source": {},  # honest empty per-source map (roadmap H150)
+                "attention": None,  # nothing to flag in an empty library (roadmap H164)
             },
         },
     }
+
+
+def test_get_link_graph_custody_carries_the_weakest_source_flag(scrolls_home):
+    # roadmap H164: the weakest-source `attention` flag rides MCP `get_link_graph`
+    # for free (CLI + MCP share `graph.to_payload`), and names the same source the
+    # CLI `status` flag does — so an agent reading the link graph over MCP sees which
+    # source most needs action without dropping to the shell.
+    import json
+
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full drifted); arxiv is clean
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://example.org/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A", stage="rendered",
+        raw_text="<raw>a</raw>", extracted_text="a", content_hash="sha256:wf"))
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:00+00:00", title="P", stage="rendered",
+        raw_text="<raw>p</raw>", extracted_text="p", content_hash="sha256:af"))
+    record_events(db, [CustodyEvent(
+        "web:full", "2026-06-14T00:00:00+00:00", "drifted", "sha256:wf", "sha256:new", None)])
+
+    attention = mcp_server.get_link_graph()["stats"]["custody"]["attention"]
+    assert attention is not None
+    assert attention["source"] == "web"
+    assert attention["command"] == "scrolls verify --source web"
+
+    # agrees with the CLI `status` flag — the two surfaces read one weak source
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert main(["status"]) == 0
+    assert json.loads(buf.getvalue())["attention"] == attention
 
 
 def test_node_shape_carries_drift_across_both_mcp_surfaces(scrolls_home):

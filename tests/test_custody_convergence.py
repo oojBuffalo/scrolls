@@ -217,7 +217,11 @@ that map to the single weakest-source `attention` flag (roadmap H139) via the sa
 tie is pinned here too: over the loss seed `status`'s `attention` equals `maintain
 --no-recheck`'s, names `doctor`'s max-loss source, and is honestly `null` exactly
 when no source carries actionable loss — the status-surface counterpart of the
-H129 maintain↔doctor `attention` tie.
+H129 maintain↔doctor `attention` tie. The `graph` `stats.custody.attention`
+(roadmap H164) is folded in beside it: distilled by the *same* `weakest_source`
+over the graph's own `by_source` (which equals `doctor`'s for the whole-library
+scope), so over the loss seed the graph flag equals `status`'s, `maintain`'s, and
+`weakest_source(doctor.by_source)`, and is honestly `null` on the same gate.
 
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
@@ -1392,6 +1396,79 @@ def test_status_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys
     assert weakest_source(by_source) is None
     assert main(["maintain", "--no-recheck"]) == 0
     assert json.loads(capsys.readouterr().out)["attention"] is None
+
+
+def test_graph_attention_converges_with_status_maintain_and_doctor(scrolls_home, capsys):
+    # roadmap H164: the `graph` `stats.custody` block now carries the same weakest-
+    # source `attention` flag JSON `status` (H139) and `maintain` (H119) do —
+    # distilled by the shared `weakest_source` over the graph's own `by_source`,
+    # which equals `doctor`'s for the whole-library scope (pinned in test_graph.py).
+    # Fold the graph leg into the attention convergence beside the status tie: over
+    # the loss seed the graph's `attention` equals `status`'s, `maintain
+    # --no-recheck`'s, and `weakest_source(doctor.by_source)`, all naming doctor's
+    # max-loss source — so the single flag the four surfaces show can never disagree.
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full2 drifted); arxiv is clean, so
+    # `web` is the unambiguous max-loss source the flag must name (the H139 seed).
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # the graph's weakest-source flag — distilled from its own by_source
+    assert main(["graph", "--all"]) == 0
+    graph_attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # sanity: the seed makes `web` the unambiguous max-loss source (1 drifted vs 0)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["drifted"] == 0
+
+    # 1. names exactly doctor's max-loss source (a literal pick — least-loss is arxiv)
+    assert graph_attention is not None
+    assert graph_attention["source"] == _max_loss_source(by_source) == "web"
+    # 2. == `weakest_source` over doctor's own per-source map (the primitive graph threads)
+    assert graph_attention == weakest_source(by_source)
+    # H153: the per-source recheck coverage rides the flag
+    assert graph_attention["coverage"] == by_source["web"]["coverage"]
+
+    # 3. == `status`'s and `maintain --no-recheck`'s flags — the three JSON surfaces
+    #    read one weak source (all distil the same map via the same primitive)
+    assert main(["status"]) == 0
+    status_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert graph_attention == status_attention == maintain_attention
+
+    # 4. the recheck command names exactly that source (H137) — the bridge to the act
+    assert graph_attention["command"] == f"scrolls verify --source {graph_attention['source']}"
+
+
+def test_graph_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys):
+    # the honest-null gate on the graph surface (H164/H139): with ≥2 sources but no
+    # `drifted`/`rotted` anywhere, the graph's `attention` is `null` — exactly when
+    # `status`/`maintain` are and when doctor's per-source map carries zero loss.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1"))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="a",
+                          raw_text="<raw>a</raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+        # arxiv:1 left unverified — no source carries loss
+    ])
+    capsys.readouterr()
+
+    assert main(["graph", "--all"]) == 0
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss
+    assert weakest_source(by_source) is None
 
 
 def test_mcp_library_health_converges_with_status_and_doctor(scrolls_home, capsys):

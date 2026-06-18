@@ -59,7 +59,9 @@ def _all_reference_unverified(by_source_counts):
     items it holds — every one `reference` fidelity (no content) and `unverified`
     (never re-checked), the default `make_item` shape these graph fixtures use. The
     whole-scope `tiers`/`drift` sum the per-source entries, and `by_source` carries
-    sorted source keys (the honest empty `{}` for an empty graph)."""
+    sorted source keys (the honest empty `{}` for an empty graph). `attention` is
+    `null` (roadmap H164): bare items carry no `drifted`/`rotted` loss, so no source
+    stands out — the honest-absence gate the JSON status/maintain flags share."""
     n = sum(by_source_counts.values())
     return {
         "tiers": {"full": 0, "partial": 0, "reference": n},
@@ -68,6 +70,7 @@ def _all_reference_unverified(by_source_counts):
             source: _reference_source_tally(count)
             for source, count in sorted(by_source_counts.items())
         },
+        "attention": None,
     }
 
 
@@ -607,6 +610,78 @@ def test_graph_stats_custody_by_source_converges_with_doctor(db, capsys):
     assert by_source == doctor_by_source
     # and == the shared primitive over the same items/ledger
     assert by_source == custody_counts_by_source(list_items(db), latest_events(db))
+
+
+# --- stats.custody.attention (the weakest-source flag, roadmap H164) ---------
+
+
+def test_graph_stats_custody_flags_the_weakest_source(db, capsys):
+    # H164: stats.custody carries a single weakest-source `attention` flag — the
+    # source with the most actionable loss (drifted + rotted), distilled from the
+    # graph's own `by_source` via the shared `weakest_source` primitive `status`/
+    # `maintain` use, so a reader of the link graph sees *which* source most needs
+    # action without scanning `by_source` itself.
+    _seed_multi_source_custody(db)  # web carries the only loss (web:full drifted)
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    attention = custody["attention"]
+    assert attention is not None
+    assert attention["source"] == "web"  # the only source with drift
+    # the flag carries the flagged source's own tally — equal to its by_source entry
+    assert attention["tiers"] == custody["by_source"]["web"]["tiers"]
+    assert attention["drift"] == custody["by_source"]["web"]["drift"]
+    # H153: the recheck coverage rides the flag (== that source's by_source coverage)
+    assert attention["coverage"] == custody["by_source"]["web"]["coverage"]
+    # H137: the exact recheck command bridges naming the source to the act
+    assert attention["command"] == "scrolls verify --source web"
+
+
+def test_graph_stats_custody_attention_is_null_without_cross_source_loss(db, capsys):
+    # honest absence (the same gate as the JSON status/maintain flags): with ≥2
+    # sources but no drifted/rotted anywhere, `attention` is `null` — nothing stands
+    # out across sources (reference-only is the normal capture posture, not a trigger)
+    insert_item(db, make_item("web:1"))
+    insert_item(db, make_item("arxiv:1", url="https://arxiv.org/abs/1"))
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert set(custody["by_source"]) == {"arxiv", "web"}  # ≥2 sources → the gate is loss
+    assert custody["attention"] is None
+
+
+def test_graph_stats_custody_attention_is_null_for_a_single_source(db, capsys):
+    # the single-source gate: one source has nothing to rank across, so even a
+    # drifted item leaves `attention` null (the whole-scope headline already says it)
+    insert_item(db, make_item("web:1", raw_text="<raw>b</raw>", extracted_text="b",
+                              content_hash="sha256:1"))
+    record_events(db, [CustodyEvent(
+        "web:1", "2026-06-14T00:00:00+00:00", "drifted", "sha256:1", "sha256:new")])
+    capsys.readouterr()
+
+    main(["graph", "--all"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert custody["drift"]["drifted"] == 1  # there *is* loss ...
+    assert custody["attention"] is None      # ... but one source, so nothing to flag
+
+
+def test_graph_stats_custody_attention_is_independent_of_include_all(db, capsys):
+    # like by_source, the flag ranks the whole stats.items scope — --all only changes
+    # which items become nodes, not the custody scope it ranks over
+    _seed_multi_source_custody(db)
+    # an isolate the default view drops from nodes but not from the custody scope
+    insert_item(db, make_item("wikipedia:isolate",
+                              url="https://en.wikipedia.org/wiki/X"))
+    capsys.readouterr()
+
+    main(["graph"])
+    default = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    main(["graph", "--all"])
+    widened = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert default == widened
+    assert default["source"] == "web"  # web still carries the only loss
 
 
 def test_graph_over_drops_links_to_items_outside_the_given_set():

@@ -34,6 +34,7 @@ from scrolls.custody import (
     custody_counts_by_source,
     drift_posture,
     last_checked,
+    weakest_source,
 )
 from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
 from scrolls.sources.detect import detect_source
@@ -248,6 +249,19 @@ def to_payload(
     resolves — equal `doctor`'s `custody.by_source`, independent of
     `include_isolated` (which only changes which items become *nodes*, not the
     `stats.items` scope). An empty graph is the honest empty `{}` map.
+
+    `stats.custody.attention` (roadmap H164) distils that per-source map to the
+    single weakest source — the one carrying the most actionable loss
+    (`drifted` + `rotted`) — via the shared `custody.weakest_source`, the *same*
+    primitive JSON `scrolls status` (H139) and `scrolls maintain` (H119) thread, so
+    a reader of the link graph sees *which* source most needs action without
+    scanning `by_source` itself. It carries that source's own `{tiers, drift,
+    coverage}` tally and the exact `scrolls verify --source <S>` recheck command
+    (H137), and converges with `status`/`maintain`/`doctor` by construction (same
+    primitive over the same map). Honest `null` on the same three gates as the JSON
+    flags — empty / single-source / fully-clean — so a one-source or loss-free graph
+    flags nothing even with drift. Ranks the whole `stats.custody.by_source` scope,
+    so it is independent of `include_isolated` like the map it distils.
     """
     verdicts = verdicts or {}
     clusters = sum(
@@ -256,6 +270,7 @@ def to_payload(
     scope = list(graph.items)
     custody = custody_counts(scope, verdicts)
     custody["by_source"] = custody_counts_by_source(scope, verdicts)
+    custody["attention"] = weakest_source(custody["by_source"])
     return {
         "nodes": [
             {
