@@ -738,6 +738,33 @@ def custody_counts_by_source(
     return result
 
 
+def custody_sections(tiers: dict[str, int], drift: dict[str, int]) -> list[str]:
+    """The ` · `-joined ``fidelity …``/``drift …`` sections of a custody line.
+
+    The shared core behind both the scope headline (`render_custody_headline`) and
+    the per-source breakdown (`render_custody_by_source`, roadmap H141): the
+    *non-zero* fidelity tiers and drift postures in canonical order
+    (`FIDELITY_TIERS`/`DRIFT_POSTURES`), each as ``<axis> <a> <i>, <b> <j>``. Both
+    surfaces fold the same counts through this one helper, so a per-source line's
+    sections read byte-identical to the scope headline's. Absent counts read as
+    zero, so a partial mapping never crashes the renderer.
+    """
+    parts = []
+    fidelity = ", ".join(
+        f"{tier} {tiers.get(tier, 0)}" for tier in FIDELITY_TIERS if tiers.get(tier)
+    )
+    if fidelity:
+        parts.append(f"fidelity {fidelity}")
+    drift_str = ", ".join(
+        f"{posture} {drift.get(posture, 0)}"
+        for posture in DRIFT_POSTURES
+        if drift.get(posture)
+    )
+    if drift_str:
+        parts.append(f"drift {drift_str}")
+    return parts
+
+
 def render_custody_headline(
     n: int, tiers: dict[str, int], drift: dict[str, int]
 ) -> str:
@@ -755,20 +782,60 @@ def render_custody_headline(
     ``_Custody: 0 scroll(s)._`` with no sections. Absent counts read as zero, so a
     partial mapping never crashes the renderer.
     """
-    parts = [f"{n} scroll(s)"]
-    fidelity = ", ".join(
-        f"{tier} {tiers.get(tier, 0)}" for tier in FIDELITY_TIERS if tiers.get(tier)
-    )
-    if fidelity:
-        parts.append(f"fidelity {fidelity}")
-    drift_str = ", ".join(
-        f"{posture} {drift.get(posture, 0)}"
-        for posture in DRIFT_POSTURES
-        if drift.get(posture)
-    )
-    if drift_str:
-        parts.append(f"drift {drift_str}")
+    parts = [f"{n} scroll(s)"] + custody_sections(tiers, drift)
     return "_Custody: " + " · ".join(parts) + "._"
+
+
+def custody_source_breakdown(
+    by_source: dict[str, dict[str, dict[str, int]]]
+) -> list[tuple[str, int, list[str]]]:
+    """Structured per-source custody breakdown for a readable briefing (roadmap H141).
+
+    Maps a `custody_counts_by_source` map to an ordered list of
+    ``(source, n, sections)`` — ``n`` the source's scroll count, ``sections`` its
+    non-zero ``fidelity …``/``drift …`` strings (canonical order, the *same*
+    `custody_sections` the scope headline shows). Sources keep the sorted order
+    `custody_counts_by_source` returns. Returns ``[]`` when fewer than two sources
+    are present: a single-source scope's split says nothing the scope headline
+    doesn't, and an empty scope has none — the honest no-op a caller omits. The
+    structured layer shared by the Markdown (`render_custody_by_source`) and HTML
+    per-source renderers, so a surface's per-source line and the JSON `by_source`
+    can never disagree.
+    """
+    if len(by_source) < 2:
+        return []
+    breakdown: list[tuple[str, int, list[str]]] = []
+    for source, counts in by_source.items():
+        tiers, drift = counts["tiers"], counts["drift"]
+        breakdown.append((source, sum(tiers.values()), custody_sections(tiers, drift)))
+    return breakdown
+
+
+def render_custody_by_source(
+    by_source: dict[str, dict[str, dict[str, int]]]
+) -> list[str]:
+    """Markdown per-source custody breakdown lines under a scope headline (roadmap H141).
+
+    A ``_By source:_`` lead-in then one bullet per source —
+    ``- `<source>` — N scroll(s) · fidelity … · drift …`` — the per-source
+    counterpart of `render_custody_headline`, the same non-zero `custody_sections`
+    per source. Returns ``[]`` for fewer than two sources (the
+    `custody_source_breakdown` no-op), so a single-source/empty briefing omits the
+    split entirely (the whole-scope headline already says everything). Shared by the
+    `export bundle` briefing (H141) and the `scrolls context` bundle (H149), so the
+    per-source line reads identically across surfaces and — because it folds the
+    same `custody_counts_by_source` — sums to the scope headline and equals
+    `doctor`'s `custody.by_source` for the same scope by construction.
+    """
+    breakdown = custody_source_breakdown(by_source)
+    if not breakdown:
+        return []
+    lines = ["_By source:_", ""]
+    for source, n, sections in breakdown:
+        suffix = (" · " + " · ".join(sections)) if sections else ""
+        lines.append(f"- `{source}` — {n} scroll(s){suffix}")
+    lines.append("")
+    return lines
 
 
 def custody_headline(

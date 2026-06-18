@@ -374,6 +374,144 @@ def test_empty_scope_custody_headline_is_zero_scrolls(scrolls_home):
     assert "No matching scrolls." in bundle
 
 
+# --- per-source custody breakdown under the scope headline (roadmap H141) ----
+
+
+def _seed_multi_source(db):
+    """Two `web` scrolls (one verified, one drifted) + one never-checked `arxiv`.
+
+    Every title carries "database" so a `database` query covers the whole scope.
+    web: fidelity full 2, drift verified 1 + drifted 1. arxiv: fidelity full 1,
+    drift unverified 1. So the per-source split is non-trivial and the sources
+    differ in custody — what a multi-source briefing must surface.
+    """
+    insert_item(db, make_item(
+        "web:full", "Full database", "A full database.",
+        source="web", url="https://web.example/full"))
+    insert_item(db, make_item(
+        "web:moved", "Moved database", "A moved database.",
+        source="web", url="https://web.example/moved"))
+    insert_item(db, make_item(
+        "arxiv:1", "Arxiv database paper", "A database paper.",
+        source="arxiv", url="https://arxiv.org/abs/1"))
+    record_events(db, [_event("web:full", "unchanged", observed="deadbeef")])
+    record_events(db, [_event("web:moved", "drifted", observed="cafe1234")])
+
+
+def test_bundle_carries_a_per_source_custody_breakdown(scrolls_home):
+    # roadmap H141: a multi-source briefing names which source's custody is weakest
+    # within the shared scope, under the scope headline (sources sorted)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    bundle = build_bundle(db, "database")
+    assert "_By source:_" in bundle
+    assert (
+        "- `arxiv` — 1 scroll(s) · fidelity full 1 · drift unverified 1" in bundle
+    )
+    assert (
+        "- `web` — 2 scroll(s) · fidelity full 2 · drift verified 1, drifted 1"
+        in bundle
+    )
+
+
+def test_per_source_breakdown_converges_with_custody_counts_by_source(scrolls_home):
+    # the rendered lines come straight from the shared primitive, and the
+    # per-source tallies sum to the scope headline's whole-scope counts (H45/H104)
+    from scrolls.custody import (
+        custody_counts,
+        custody_counts_by_source,
+        latest_events,
+        render_custody_by_source,
+    )
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = custody_counts_by_source(items, verdicts)
+
+    bundle = build_bundle(db, "database")
+    for line in render_custody_by_source(by_source):
+        assert line in bundle
+
+    whole = custody_counts(items, verdicts)
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"]
+    assert summed_drift == whole["drift"]
+
+
+def test_per_source_breakdown_omitted_for_a_single_source(scrolls_home):
+    # the whole-scope headline already says everything when there is one source
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:a", "A database", "A database.", source="web", url="https://web/a"))
+    insert_item(db, make_item(
+        "web:b", "B database", "B database.", source="web", url="https://web/b"))
+    bundle = build_bundle(db, "database")
+    assert "_Custody:" in bundle
+    assert "_By source:_" not in bundle
+
+
+def test_per_source_breakdown_empty_scope_is_a_no_op(scrolls_home):
+    # an empty scope carries the scope headline but no per-source split
+    main(["init"])
+    bundle = build_bundle(get_paths().db_path, "nothingmatcheshere")
+    assert "_Custody: 0 scroll(s)._" in bundle
+    assert "_By source:_" not in bundle
+
+
+def test_per_source_breakdown_preserves_the_round_trip(scrolls_home):
+    # the breakdown is a derived read view *outside* the @generated JSONL fence,
+    # so the lossless round-trip is untouched
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    bundle = build_bundle(db, "database")
+    assert "_By source:_" in bundle
+    assert sorted(i.id for i in parse_bundle(bundle)) == [
+        "arxiv:1", "web:full", "web:moved",
+    ]
+
+
+def test_bundle_html_carries_a_per_source_custody_breakdown(scrolls_home):
+    # roadmap H141: the HTML briefing carries the same per-source breakdown,
+    # from the shared structured primitive so the two forms cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)
+    doc = build_bundle_html(db, "database")
+    assert "By source:" in doc
+    assert '<ul class="custody-by-source">' in doc
+    assert (
+        "<code>web</code> — 2 scroll(s) · fidelity full 2 · "
+        "drift verified 1, drifted 1" in doc
+    )
+    assert (
+        "<code>arxiv</code> — 1 scroll(s) · fidelity full 1 · drift unverified 1"
+        in doc
+    )
+
+
+def test_bundle_html_per_source_breakdown_omitted_for_a_single_source(scrolls_home):
+    # parity with the Markdown form: one source → no split
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:a", "A database", "A database.", source="web", url="https://web/a"))
+    doc = build_bundle_html(db, "database")
+    assert "By source:" not in doc
+
+
 def test_a_drifted_scroll_is_still_carried_losslessly(scrolls_home):
     # raw is sacred: a drifted scroll is a recorded posture, never dropped
     main(["init"])

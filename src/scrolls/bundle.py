@@ -29,8 +29,13 @@ Two layers in one file:
 1. A briefing body (Markdown) — title + scope, a one-line scope **custody
    headline** (N scrolls, fidelity-tier counts, drift-posture counts — how
    custody stands across the whole bundle, roadmap H45; totals equal the entries
-   and `doctor`'s `custody` aggregate for the scope by construction), then one
-   entry per in-scope scroll naming its id, source, fidelity tier, capture
+   and `doctor`'s `custody` aggregate for the scope by construction), then — for a
+   *multi-source* scope — a **per-source breakdown** under it (`_By source:_`, one
+   bullet per source: fidelity/drift counts, roadmap H141; the same
+   `custody_counts_by_source` `doctor`'s `custody.by_source` reports, so it sums to
+   the scope headline and names *which* source's custody is weakest within the
+   shared scope). Then one entry per in-scope scroll naming its id, source,
+   fidelity tier, capture
    timestamp, link, a capped excerpt, its custody **drift posture** from the
    verify ledger
    (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — the same
@@ -75,12 +80,15 @@ from pathlib import Path
 
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts_by_source,
     custody_headline,
+    custody_source_breakdown,
     drift_posture,
     dump_events_export,
     event_from_dict,
     events_for_items,
     latest_events,
+    render_custody_by_source,
 )
 from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
 from scrolls.items import (
@@ -225,6 +233,12 @@ def build_bundle(
     # totals equal the per-scroll entries by construction (same get_fidelity +
     # drift_posture), the H42 convergence at scope level.
     lines += [custody_headline(items, verdicts), ""]
+    # the per-source custody breakdown under the scope headline (roadmap H141):
+    # a multi-source shared briefing names *which* source's custody is weakest
+    # within the scope. Folds the same `custody_counts_by_source` the per-scroll
+    # entries and the scope headline already cover, so it sums to the headline by
+    # construction; a single-source/empty scope is the honest no-op ([] lines).
+    lines += render_custody_by_source(custody_counts_by_source(items, verdicts))
     # a concept-scoped bundle is *about* that concept, so its synthesized
     # summary and how that summary was derived belong in the briefing (H35)
     if concept is not None:
@@ -313,6 +327,10 @@ def build_bundle_html(
     # to the Markdown briefing's and to `status`/`context`/`doctor` (H45/H47)
     headline = custody_headline(items, verdicts).strip("_")
     body.append(f'<p class="custody-headline">{html.escape(headline)}</p>')
+    # the per-source custody breakdown (roadmap H141), from the *same* structured
+    # `custody_source_breakdown` the Markdown form renders, so the two forms cannot
+    # desync — a single-source/empty scope omits it (the [] no-op)
+    body += _by_source_html(items, verdicts)
     body.append(
         '<p class="note">Read-only briefing. The canonical lossless re-import '
         "unit is the <strong>Markdown</strong> bundle (<code>scrolls export "
@@ -357,6 +375,35 @@ def _html_document(title: str, body: list[str]) -> str:
         + "\n".join(body)
         + "\n</main>\n</body>\n</html>\n"
     )
+
+
+def _by_source_html(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> list[str]:
+    """The HTML twin of the Markdown per-source custody breakdown (roadmap H141).
+
+    Renders the *same* structured `custody_source_breakdown` the Markdown
+    `render_custody_by_source` does — one `<li>` per source, the same non-zero
+    fidelity/drift sections — so the two forms cannot desync. Returns [] for fewer
+    than two sources (the breakdown no-op), so a single-source/empty briefing omits
+    the split, like the Markdown form. The source name is escaped; the section
+    strings are controlled count tokens (no user content), escaped for safety.
+    """
+    breakdown = custody_source_breakdown(custody_counts_by_source(items, verdicts))
+    if not breakdown:
+        return []
+    out = [
+        '<p class="custody-headline">By source:</p>',
+        '<ul class="custody-by-source">',
+    ]
+    for source, n, sections in breakdown:
+        suffix = (" · " + " · ".join(sections)) if sections else ""
+        out.append(
+            f"<li><code>{html.escape(source)}</code> — "
+            f"{n} scroll(s){html.escape(suffix)}</li>"
+        )
+    out.append("</ul>")
+    return out
 
 
 def _briefing_entry_html(

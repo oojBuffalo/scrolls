@@ -361,7 +361,16 @@ each command moves items between stages or derives artifacts from them.
   headline rides the `scrolls context` bundle from the `connected` tier up
   (roadmap H47) and `scrolls status`'s custody block (H38), so the scope
   headlines converge for a scope by construction — one custody tally, many
-  surfaces. The `scrolls graph` payload carries the same tally as a JSON
+  surfaces. For a *multi-source* bundle a **per-source breakdown**
+  (`custody.render_custody_by_source` over `custody_counts_by_source`, roadmap
+  H141) follows the headline (`_By source:_`, one line per source), so a recipient
+  sees *which* source's custody is weakest within the shared scope; it folds the
+  same per-source tally `doctor`'s `custody.by_source` reports, so it sums to the
+  scope headline by construction and is itself a derived read view outside the
+  `@generated` fence (round-trip untouched). Both bundle forms render it from the
+  one structured `custody.custody_source_breakdown` (shared with the HTML
+  `_by_source_html`), the same shared-primitive posture that keeps the scope
+  headline byte-identical across surfaces. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
   JSON) over its whole `stats.items` scope (roadmap H52); all three browse
   surfaces' `--stats` envelopes — `search`, `list` (roadmap H98), and `related`

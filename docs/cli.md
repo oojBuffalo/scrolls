@@ -1589,8 +1589,19 @@ the fidelity-tier counts, and the drift-posture counts across the *whole*
 bundle, so a reader gauges "how custody stands" without scanning every entry
 (roadmap H45); its totals equal the per-scroll entries and `doctor`'s `custody`
 aggregate for the same scope by construction, the bundle-level counterpart of
-`status`'s custody headline — `test_scope_custody_headline_totals_equal_the_entries_and_doctor`),
-then one entry per in-scope scroll naming its id, source, custody **fidelity**
+`status`'s custody headline — `test_scope_custody_headline_totals_equal_the_entries_and_doctor`).
+For a **multi-source** scope a per-source **breakdown** follows under the headline
+(`_By source:_`, one bullet per source with that source's fidelity/drift counts,
+roadmap H141), so a recipient of a shared briefing sees *which* source's custody
+is weakest within the scope without re-deriving it. It is built from the same
+`custody_counts_by_source` `doctor`'s `custody.by_source` reports, so it sums to
+the scope headline by construction and equals that map for the in-bundle items
+(`test_bundle_per_source_breakdown_converges_with_doctor_by_source`); a
+single-source or empty scope omits it (the whole-scope headline already says
+everything). Like the headline it is a *derived read view outside* the
+`@generated` JSONL fence, so the lossless round-trip is untouched
+(`test_per_source_breakdown_preserves_the_round_trip`). Then one entry per
+in-scope scroll naming its id, source, custody **fidelity**
 tier, capture timestamp, link, content hash, a capped excerpt, its custody
 **drift posture** from the verify ledger
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H42 — derived
@@ -1642,8 +1653,9 @@ yields a valid, importable bundle saying `No matching scrolls.`
 is the **canonical, lossless, re-importable** bundle described above — the form
 `scrolls import bundle` round-trips against. `html` renders the *same* scope and
 the *same* per-scroll custody picture (fidelity tier, drift posture,
-classification provenance, the scope custody headline, and a `--concept`
-bundle's summary) as a **self-contained, browser-readable briefing** — one
+classification provenance, the scope custody headline, the per-source breakdown,
+and a `--concept` bundle's summary) as a **self-contained, browser-readable
+briefing** — one
 offline HTML file with inline CSS, no scripts, and nothing fetched from the
 network; all dynamic content is HTML-escaped so a tag-bearing title or body can
 never inject markup (`test_bundle_html_escapes_dynamic_content`). The HTML is

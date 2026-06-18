@@ -428,6 +428,41 @@ def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls
     assert summed_coverage == custody["drift"]["coverage"]
 
 
+def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):
+    # roadmap H141: the export-bundle briefing's `_By source:_` breakdown is a
+    # derived read view of the same per-source picture doctor reports. Over the
+    # multi-source seed the rendered lines equal `render_custody_by_source` over
+    # *both* `doctor.custody.by_source` and `custody_counts_by_source`, appear in
+    # the bundle, and the scope headline (whole-scope sum) is present too — the
+    # bundle-surface counterpart of the JSON `by_source` ties above.
+    from scrolls.bundle import build_bundle
+    from scrolls.custody import render_custody_by_source
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    items = list_items(db)
+    verdicts = latest_events(db)
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}
+
+    # the rendered breakdown is a faithful read of doctor's map and of the tally
+    expected = render_custody_by_source(by_source)
+    assert expected == render_custody_by_source(custody_counts_by_source(items, verdicts))
+    assert expected  # the seed is genuinely multi-source (non-vacuous)
+
+    bundle = build_bundle(db, "topic")
+    for line in expected:
+        assert line in bundle
+    # the scope headline (the whole-scope sum the per-source lines total) is present
+    assert custody_headline(items, verdicts) in bundle
+
+
 def test_enrichment_by_source_converges_with_the_per_source_stale_classifications(
     scrolls_home, capsys
 ):
