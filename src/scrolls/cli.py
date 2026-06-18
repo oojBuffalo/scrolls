@@ -105,6 +105,7 @@ from scrolls.maintain import (
     log_path,
     read_log,
     report_by_source,
+    report_enrichment_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1193,6 +1194,16 @@ def _cmd_maintain(recheck: bool, recheck_all: bool, limit: int | None) -> int:
                 # out (a clean, single-source, or empty library). Live-pass only,
                 # like `by_source`.
                 "attention": weakest_source(by_source),
+                # The per-source stale-classification debt (roadmap H147): doctor's
+                # `custody.enrichment.by_source` map (H135) — a flat `{source:
+                # stale_count}` of the offending sources only — read faithfully so an
+                # unattended log names *which* source's `classify --stale` to run
+                # without re-running doctor. A standalone member (not folded into the
+                # drift `by_source`, so the H123/H127 byte-identity holds), live-pass
+                # only like `by_source`/`attention`/`suggested`, summing to
+                # `custody.enrichment_stale` by construction. Honest empty `{}` when no
+                # source carries stale debt (the offenders-only posture).
+                "enrichment_by_source": report_enrichment_by_source(report),
                 "delta": delta,
                 "issues": report["issues"],
                 # Actionable guidance, never an action: the explicit on-request

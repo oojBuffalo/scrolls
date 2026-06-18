@@ -53,6 +53,7 @@ from scrolls.maintain import (
     log_path,
     read_log,
     report_by_source,
+    report_enrichment_by_source,
     save_snapshot,
     snapshot_headline,
     snapshot_path,
@@ -1585,6 +1586,143 @@ def test_maintain_history_does_not_carry_the_per_source_breakdown(
     assert all("by_source" not in run["snapshot"] for run in runs)
     # and not stored in the log either (the snapshot/log carry only the scalars)
     assert all("by_source" not in run for run in read_log(log_path(home)))
+
+
+# --- per-source enrichment staleness in the report (roadmap H147) ----------
+
+
+def _enrichment_by_source_report(by_source):
+    """A doctor report carrying just the per-source stale-classification map."""
+    return {"custody": {"enrichment": {"by_source": by_source}}}
+
+
+def test_report_enrichment_by_source_threads_the_doctor_audits_map():
+    # The pure layer is a faithful read of the offenders-only `{source: stale_count}`
+    # map the audit produces (`doctor`'s `custody.enrichment.by_source`, H135).
+    by_source = {"arxiv": 1, "web": 2}
+    assert report_enrichment_by_source(_enrichment_by_source_report(by_source)) == by_source
+
+
+def test_report_enrichment_by_source_without_a_map_is_the_empty_map():
+    # Forward-compat / empty library / clean library: an absent block reads as the
+    # honest empty map, never a KeyError (the degrade-safely posture, this axis).
+    assert report_enrichment_by_source({"custody": {"enrichment": {}}}) == {}
+    assert report_enrichment_by_source({"custody": {}}) == {}
+    assert report_enrichment_by_source({}) == {}
+
+
+def _mark_stale_classified(item_id):
+    """Stamp a persisted item rules-classified under a *superseded* ruleset, so the
+    live ruleset reads it stale (the H40 stale-classification fixture)."""
+    persisted = get_item(get_paths().db_path, item_id)
+    update_item(
+        get_paths().db_path,
+        replace(
+            persisted,
+            provenance={
+                **persisted.provenance,
+                "classified_by": "rules-v1",
+                "classified_basis": "title-pattern",
+                "classified_ruleset": "deadbeef0000",  # superseded by the live ruleset
+            },
+        ),
+    )
+
+
+def test_maintain_report_carries_the_per_source_enrichment_staleness(
+    home, monkeypatch, capsys
+):
+    """The report names each source's stale-classification debt — the per-source
+    map the audit (`doctor`'s `custody.enrichment.by_source`, H135) already
+    produces, surfaced so an unattended log shows *which* source's `classify
+    --stale` to run without re-running doctor."""
+    items = _held_topic()  # 1 arxiv + 2 web
+    _build(items)
+    _mark_stale_classified(items[0].id)  # arxiv
+    _mark_stale_classified(items[1].id)  # web
+    _mark_stale_classified(items[2].id)  # web
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0  # stale enrichment is reported, never a failure
+    report = json.loads(capsys.readouterr().out)
+
+    # offenders-only, sorted source keys; arxiv:1, web:2
+    enrichment_by_source = report["enrichment_by_source"]
+    assert enrichment_by_source == {"arxiv": 1, "web": 2}
+    # it is exactly the map this pass's doctor audit produces (no new read)
+    assert (
+        enrichment_by_source
+        == run_doctor(home)["custody"]["enrichment"]["by_source"]
+    )
+
+
+def test_maintain_enrichment_by_source_sums_to_the_whole_library_enrichment_stale(
+    home, monkeypatch, capsys
+):
+    """The H104/H135 sum-to-whole posture on the enrichment axis: every stale item
+    has exactly one source, so the per-source counts total the report's whole-library
+    `custody.enrichment_stale` — the member can never disagree with the scalar."""
+    items = _held_topic()
+    _build(items)
+    _mark_stale_classified(items[0].id)  # arxiv
+    _mark_stale_classified(items[1].id)  # web
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert (
+        sum(report["enrichment_by_source"].values())
+        == report["custody"]["enrichment_stale"]
+        == 2
+    )
+
+
+def test_maintain_per_source_enrichment_on_a_clean_library_is_empty(
+    home, monkeypatch, capsys
+):
+    """No stale classifications → the honest empty map (offenders-only — a source
+    with no stale debt is omitted, never a 0 entry)."""
+    _build(_held_topic())  # categories present but no rules stamp → not stale
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["enrichment_by_source"] == {}
+    assert report["custody"]["enrichment_stale"] == 0
+
+
+def test_maintain_per_source_enrichment_on_an_uninitialized_library_is_empty(
+    home, capsys
+):
+    """No library yet → the honest empty map, the first-run honesty the report keeps."""
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["enrichment_by_source"] == {}
+
+
+def test_maintain_history_does_not_carry_the_per_source_enrichment_breakdown(
+    home, monkeypatch, capsys
+):
+    """`enrichment_by_source` rides the live pass, not the recorded snapshot: it is
+    derived fresh from this pass's audit (like `by_source` H123, `suggested` H40, and
+    `scope`/`since` H83), so `--history` (which replays snapshots) carries none and
+    the log stays bare."""
+    items = _held_topic()
+    _build(items)
+    _mark_stale_classified(items[1].id)
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("enrichment_by_source" not in run for run in runs)
+    assert all("enrichment_by_source" not in run["snapshot"] for run in runs)
+    # and not stored in the log either (the snapshot/log carry only the scalars)
+    assert all("enrichment_by_source" not in run for run in read_log(log_path(home)))
 
 
 # --- the single weakest source: `attention` (roadmap H119) ------------------

@@ -225,6 +225,35 @@ def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, in
     return dict(report.get("custody", {}).get("by_source", {}))
 
 
+def report_enrichment_by_source(report: dict[str, Any]) -> dict[str, int]:
+    """The per-source stale-classification debt from this pass's doctor audit (roadmap H147).
+
+    `doctor`'s `custody.enrichment` block carries a `by_source` map (roadmap H135) —
+    a flat ``{source: stale_count}`` of the *offending* sources only (a source with
+    no stale classifications is omitted, the ``items``-list posture), source keys in
+    sorted order, summing to the whole-library ``enrichment.stale`` by construction.
+    It names *which* source's `classify --stale` an operator should run — the
+    re-derivability counterpart of `report_by_source`'s per-source coverage on the
+    drift axis (H123). The scheduled worker's own `maintain` report distils only the
+    *whole-library* `enrichment_stale` scalar (via `custody_snapshot`), so an
+    unattended log could not name the source without re-running `doctor`. This threads
+    the per-source map the audit already produces into the report.
+
+    A pure read of the report `run_doctor` returns — **no new read**, the map is
+    already computed in the audit (`doctor._check_enrichment_provenance`). A
+    **standalone** report member, not folded into the drift `by_source` entries, so
+    the H123 ``by_source`` ≡ `custody_counts_by_source` byte-identity and the H127
+    convergence stay untouched (mirroring how H135 kept it under `custody.enrichment`,
+    not `custody.by_source`). Surfaced **live-pass only** (like `report_by_source`
+    H123, `suggest_repairs` H40, and the recheck `scope`/`since` H83): derived fresh
+    from this pass's audit, never recorded in the snapshot/log, so `--history` /
+    `--trend` (which replay recorded snapshots) carry none. Honest absence: a report
+    without the block (an empty library, no stale items, or an older schema) reads as
+    the empty map, never a `KeyError` — the module's degrade-safely posture on this axis.
+    """
+    return dict(report.get("custody", {}).get("enrichment", {}).get("by_source", {}))
+
+
 # The actionable-loss postures: the items confirmed to have moved or gone since
 # capture (a follow-up `verify --drift drifted`/`media` targets exactly these).
 # `unverified` (never checked) and `error` (a transient re-check failure) are not

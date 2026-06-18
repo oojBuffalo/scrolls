@@ -219,6 +219,7 @@ from scrolls.maintain import (
     log_path,
     read_log,
     report_by_source,
+    report_enrichment_by_source,
     save_snapshot,
     snapshot_path,
     weakest_source,
@@ -551,6 +552,19 @@ def test_enrichment_by_source_converges_with_the_per_source_stale_classification
     #    (every stale item has exactly one source — the H104/H121 sum-to-whole
     #    posture, on the enrichment axis).
     assert sum(enrichment["by_source"].values()) == enrichment["stale"] == 3
+
+    # 3. roadmap H147: the `maintain` report surfaces the same per-source map (a
+    #    faithful read via `report_enrichment_by_source`), so the scheduled worker's
+    #    enrichment-by-source picture, a fresh `doctor` read, and the pure-layer read
+    #    are one number — the maintain↔doctor sibling of the H127 drift `by_source`
+    #    tie, on the enrichment axis. `--no-recheck` keeps the pass network-free and
+    #    the ledger pristine, so the maintain audit and a fresh `doctor` agree.
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_enrichment_by_source = json.loads(capsys.readouterr().out)["enrichment_by_source"]
+    assert maintain_enrichment_by_source == enrichment["by_source"]
+    assert maintain_enrichment_by_source == report_enrichment_by_source(
+        run_doctor(get_paths())
+    )
 
 
 def test_recheck_coverage_converges_across_doctor_and_maintain(scrolls_home, capsys):

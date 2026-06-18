@@ -1034,6 +1034,25 @@ block already says everything; `attention` only adds value by discriminating
 is the normal capture posture, a tie-breaker, never a trigger). Like `by_source`,
 it rides the live pass only.
 
+The report also carries an **`enrichment_by_source`** member (roadmap H147) — the
+per-source **stale-classification debt** the audit already produces (`doctor`'s
+`custody.enrichment.by_source`, the re-derivability counterpart of `by_source`'s
+drift split) — a flat `{source: stale_count}` of the *offending* sources only
+(sorted keys), so the unattended log names *which* source's `classify --stale` to
+run without re-running `doctor`. A **standalone** member, not folded into
+`by_source` (so the `by_source` ≡ `custody_counts_by_source` byte-identity holds);
+it **sums to `custody.enrichment_stale`** by construction (every stale item has
+exactly one source). Like `by_source`/`attention`/`suggested` it rides the **live
+pass only** — derived fresh from this pass's audit, never recorded in the
+snapshot/log — so `--history`/`--trend` carry none. Honest empty `{}` when no source
+carries stale debt (the offenders-only posture: a clean source is omitted, never a
+`0` entry), and when there is no library at all
+(`test_maintain_report_carries_the_per_source_enrichment_staleness`,
+`test_maintain_enrichment_by_source_sums_to_the_whole_library_enrichment_stale`,
+`test_maintain_per_source_enrichment_on_a_clean_library_is_empty`,
+`test_maintain_history_does_not_carry_the_per_source_enrichment_breakdown`; the
+maintain↔doctor tie in `test_enrichment_by_source_converges_with_the_per_source_stale_classifications`).
+
 The sharp custody point the delta makes visible (the dogfood proof's, recurring):
 detecting source drift moves the *drift posture* (`unverified` → `drifted`)
 **without lowering the integrity `score`** — raw is sacred, drift is a recorded
@@ -1043,7 +1062,7 @@ enrichment/summaries are reported, never a failure.
 
 ```console
 $ scrolls maintain --all --limit 50      # second run; force a whole-library recheck — one source has drifted
-{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 3, "total": 3}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}}}, "attention": {"source": "web", "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "reason": "1 drifted", "command": "scrolls verify --source web"}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
+{"recorded_at": "2026-06-16T13:00:00+00:00", "recheck": {"skipped": false, "scope": "all", "since": null, "checked": 3, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0, "coverage": {"verified": 3, "total": 3}}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 100, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 2, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 3, "total": 3}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 2, drifted 1._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "web": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "coverage": {"verified": 2, "total": 2}}}, "attention": {"source": "web", "tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}, "reason": "1 drifted", "command": "scrolls verify --source web"}, "enrichment_by_source": {}, "delta": {"first_run": false, "since": "2026-06-16T12:00:00+00:00", "score": {"before": 100, "after": 100, "change": 0}, "tiers": {"full": {"before": 3, "after": 3, "change": 0}, "partial": {"before": 0, "after": 0, "change": 0}, "reference": {"before": 0, "after": 0, "change": 0}}, "drift": {"checked": {"before": 0, "after": 3, "change": 3}, "drifted": {"before": 0, "after": 1, "change": 1}, "error": {"before": 0, "after": 0, "change": 0}, "rotted": {"before": 0, "after": 0, "change": 0}, "unchanged": {"before": 0, "after": 2, "change": 2}, "unverified": {"before": 3, "after": 0, "change": -3}}, "enrichment_stale": {"before": 0, "after": 0, "change": 0}, "summaries_stale": {"before": 0, "after": 0, "change": 0}}, "issues": 0, "suggested": []}
 [exit 0]
 
 $ scrolls maintain --history 2           # the custody trajectory, oldest first
@@ -1055,7 +1074,7 @@ $ scrolls maintain --history --trend     # the trajectory's direction in one wor
 [exit 0]
 
 $ scrolls maintain --no-recheck          # a pass that found a deleted scroll and a stale category
-{"recorded_at": "2026-06-16T14:00:00+00:00", "recheck": {"skipped": true, "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 67, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 3, "total": 3}, "enrichment_stale": 1, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 3._", "delta": {"first_run": false, "since": "2026-06-16T13:00:00+00:00", "score": {"before": 100, "after": 67, "change": -33}}, "issues": 1, "suggested": [{"command": "scrolls doctor --fix", "addresses": ["missing_scrolls"]}, {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}]}
+{"recorded_at": "2026-06-16T14:00:00+00:00", "recheck": {"skipped": true, "checked": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "compiled": {"items": 3, "sources": 2, "categories": 3, "concepts": 2, "tags": 3, "summaries": 0, "clusters": 0, "works": 0, "pages": 9}, "custody": {"score": 67, "tiers": {"full": 3, "partial": 0, "reference": 0}, "drift": {"checked": 3, "unverified": 0, "unchanged": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 3, "total": 3}, "enrichment_stale": 1, "summaries_stale": 0}, "headline": "_Custody: 3 scroll(s) · fidelity full 3 · drift verified 3._", "enrichment_by_source": {"web": 1}, "delta": {"first_run": false, "since": "2026-06-16T13:00:00+00:00", "score": {"before": 100, "after": 67, "change": -33}}, "issues": 1, "suggested": [{"command": "scrolls doctor --fix", "addresses": ["missing_scrolls"]}, {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}]}
 [exit 1]
 ```
 

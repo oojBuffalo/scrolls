@@ -467,7 +467,15 @@ each command moves items between stages or derives artifacts from them.
   the act, a recheck not a `doctor --fix` repair, so it rides `attention` beside
   the source, never `suggested`. Honest `null` when nothing stands out (empty,
   single-source, or fully-clean — reference-only is a tie-breaker, never a
-  trigger), live-pass only like `by_source` (roadmap H119).
+  trigger), live-pass only like `by_source` (roadmap H119). The report also carries
+  an **`enrichment_by_source`** member (`maintain.report_enrichment_by_source`) — the
+  per-source stale-classification debt the audit already produced (`doctor`'s
+  `custody.enrichment.by_source`, roadmap H135), a flat `{source: stale_count}` of
+  the offending sources only, threaded through so the log names *which* source's
+  `classify --stale` to run without re-running `doctor`. A standalone member (not
+  folded into `by_source`, so the H123/H127 byte-identity holds), live-pass only and
+  summing to the whole-library `custody.enrichment_stale` by construction (roadmap
+  H147) — the re-derivability counterpart of `by_source`'s drift split.
 - `scrolls status` carries a one-line **custody headline** under its item
   counts (`custody`): integrity `score`, fidelity `tiers`, drift posture, and
   the stale enrichment/summary counts — "how custody stands" without parsing a
