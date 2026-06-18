@@ -232,8 +232,20 @@ tally over *its own* returned per-item `fidelity`/`drift` fields — so the enve
 aggregate can never desync from the per-item axes (H56/H58) it sums — with the
 `related` anchor excluded, the `works` reps folded, and `graph --all` node ≡ item
 scope (`test_stats_custody_family_agrees_with_its_own_per_item_fields`,
-`test_works_stats_custody_agrees_with_its_representations`). The **compiled
-human-readable**
+`test_works_stats_custody_agrees_with_its_representations`). Each `stats.custody`
+member also carries a **`by_source`** split (roadmap H155) — the same matched scope
+grouped per source (`custody.tally_custody_by_source` over each hit/representation's
+own `source`/`fidelity`/`drift`), a `{source: {tiers, drift}}` map with sorted keys
+and an empty `{}` for an empty scope. It is the browse counterpart of the per-source
+`by_source` on the `graph` stats block (H150) and JSON `status` (H133): the
+per-source entries sum to the whole-scope `stats.custody` beside them by
+construction, and — for an uncapped whole-library scope — equal `doctor`'s
+`custody.by_source` and `custody_counts_by_source` over the held items *on the
+tiers/drift axes* (the lean browse family omits the per-source `coverage` the audit
+surfaces add — coverage needs `content_hash` presence a `(fidelity, drift)` pair
+cannot recover, so it stays a `doctor`/`graph` axis), pinned in
+`test_browse_stats_by_source_converges_with_doctor_for_the_whole_library`. The
+**compiled human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count
 line (H95) and in the landing `index.md` header (H96), and the invariant parses

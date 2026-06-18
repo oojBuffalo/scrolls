@@ -45,6 +45,7 @@ from scrolls.custody import (
     recheck_order,
     record_events,
     tally_custody,
+    tally_custody_by_source,
     unverified_items,
     verify_item,
 )
@@ -2333,11 +2334,14 @@ def _cmd_list(
         # Empty in the surface's own shape, capped or not — never an error
         # (completeness contract G1). The --stats envelope says so explicitly:
         # a checked-and-empty library, scoped to the same facets — with a zeroed
-        # custody tally (roadmap H98) so the stats shape is stable even at empty.
-        empty = (
-            scope_envelope([], scope=scope, matched=0, custody=tally_custody([]))
-            if stats else []
-        )
+        # custody tally (roadmap H98) and an empty `by_source` split (roadmap H155)
+        # so the stats shape is stable even at empty.
+        if stats:
+            empty_custody = tally_custody([])
+            empty_custody["by_source"] = tally_custody_by_source(())
+            empty = scope_envelope([], scope=scope, matched=0, custody=empty_custody)
+        else:
+            empty = []
         print(json.dumps(empty))
         return 0
     matched_items = list_items(
@@ -2380,6 +2384,13 @@ def _cmd_list(
     # `verdicts` the rows' postures read, so the tier/posture counts sum to
     # `stats.matched` and (for a filter-only scope) equal `facets fidelity`/`drift`.
     custody = custody_counts(matched_items, verdicts)
+    # `stats.custody.by_source` (roadmap H155): the same matched scope split per
+    # source — each item's own `source`/`fidelity`/`drift`, the lean `{tiers, drift}`
+    # shape `stats.custody` carries, summing to the whole-scope block beside it.
+    custody["by_source"] = tally_custody_by_source(
+        (item.source, get_fidelity(item), drift_posture(verdicts.get(item.id)))
+        for item in matched_items
+    )
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
@@ -2483,6 +2494,12 @@ def _cmd_related(item_id: str, limit: int, stats: bool = False) -> int:
     # the tally answers "of the N items related to this one, how much is held in
     # full and how much has drifted" without folding in the anchor's own custody.
     custody = tally_custody((hit.fidelity, hit.drift) for hit in hits)
+    # `stats.custody.by_source` (roadmap H155): the same neighbourhood split per
+    # source, folding each hit's own `source`/`fidelity`/`drift` (the anchor stays
+    # excluded), summing to the whole-scope `stats.custody` beside it.
+    custody["by_source"] = tally_custody_by_source(
+        (hit.source, hit.fidelity, hit.drift) for hit in hits
+    )
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
@@ -2608,6 +2625,12 @@ def _cmd_search(
         stage=stage, tag=tag, concept=concept,
     )
     custody = tally_custody((hit.fidelity, hit.drift) for hit in matched_hits)
+    # `stats.custody.by_source` (roadmap H155): the query-matched scope split per
+    # source, folding each hit's own `source`/`fidelity`/`drift` over the same full
+    # match set, summing to the whole-scope `stats.custody` beside it.
+    custody["by_source"] = tally_custody_by_source(
+        (hit.source, hit.fidelity, hit.drift) for hit in matched_hits
+    )
     scope = {
         "query": query,
         "source": source,

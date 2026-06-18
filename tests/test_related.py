@@ -519,9 +519,14 @@ def _related_custody_mix(db):
     ])
 
 
+_RELATED_TIERS = {"full": 1, "partial": 1, "reference": 1}
+_RELATED_DRIFT = {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
 _RELATED_MIX_CUSTODY = {
-    "tiers": {"full": 1, "partial": 1, "reference": 1},
-    "drift": {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0},
+    "tiers": _RELATED_TIERS,
+    "drift": _RELATED_DRIFT,
+    # the neighbourhood is single-source `web`, so the per-source split (roadmap
+    # H155) folds to one `{web: {tiers, drift}}` entry re-stating the whole tally
+    "by_source": {"web": {"tiers": _RELATED_TIERS, "drift": _RELATED_DRIFT}},
 }
 
 
@@ -577,6 +582,7 @@ def test_cli_related_stats_custody_present_even_when_empty(db, capsys):
     assert stats["custody"] == {
         "tiers": {"full": 0, "partial": 0, "reference": 0},
         "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+        "by_source": {},  # no neighbours → the empty per-source split (roadmap H155)
     }
 
 
@@ -588,3 +594,61 @@ def test_cli_related_stats_custody_is_opt_in_absent_from_the_bare_array(db, caps
 
     main(["related", "web:anchor"])
     assert isinstance(json.loads(capsys.readouterr().out), list)
+
+
+# --- H155: stats.custody.by_source — the per-source split on `related --stats` ---
+
+
+def _related_multi_source_mix(db):
+    """An anchor + two neighbours sharing a tag across two sources: a `web` full
+    one re-checked unchanged (→ verified) and an `arxiv` full one drifted. So the
+    related set splits per source into `{web: verified, arxiv: drifted}`.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item("web:anchor", tags=("shared",)))
+    insert_item(db, make_item(
+        "web:nb", tags=("shared",), raw_text="<raw>", content_hash="sha256:w"))
+    insert_item(db, make_item(
+        "arxiv:nb", tags=("shared",), raw_text="<raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:nb", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:w", "sha256:w", None),
+        CustodyEvent("arxiv:nb", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:a", "sha256:x", None),
+    ])
+
+
+def test_cli_related_stats_by_source_splits_the_related_set(db, capsys):
+    # roadmap H155: `related --stats` carries a `stats.custody.by_source` member —
+    # the neighbourhood custody split per source, sorted keys, the lean
+    # `{tiers, drift}` shape — summing to the whole-scope `stats.custody`.
+    _related_multi_source_mix(db)
+    capsys.readouterr()
+
+    assert main(["related", "web:anchor", "--stats"]) == 0
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    by_source = custody["by_source"]
+    assert list(by_source) == ["arxiv", "web"]  # sorted keys
+    assert by_source["web"]["drift"]["verified"] == 1
+    assert by_source["arxiv"]["drift"]["drifted"] == 1
+    assert by_source["web"]["tiers"]["full"] == 1
+    assert by_source["arxiv"]["tiers"]["full"] == 1
+    # sums to the whole-scope tally beside it (the anchor's own custody is excluded
+    # from both, pinned by test_cli_related_stats_custody_excludes_the_anchor)
+    summed = {"full": 0, "partial": 0, "reference": 0}
+    for entry in by_source.values():
+        for tier, n in entry["tiers"].items():
+            summed[tier] += n
+    assert summed == custody["tiers"]
+    # lean: no per-source coverage on the browse envelope
+    assert all("coverage" not in entry for entry in by_source.values())
+
+
+def test_cli_related_stats_by_source_empty_when_isolated(db, capsys):
+    # an isolated anchor has no neighbours → the honest empty `{}` split.
+    insert_item(db, make_item("web:lonely"))
+    capsys.readouterr()
+    main(["related", "web:lonely", "--stats"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert custody["by_source"] == {}

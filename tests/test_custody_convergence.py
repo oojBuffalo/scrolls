@@ -227,6 +227,7 @@ from scrolls.custody import (
     record_events,
     render_custody_by_source,
     tally_custody,
+    tally_custody_by_source,
     unverified_items,
 )
 from scrolls.doctor import run_doctor
@@ -1071,9 +1072,13 @@ def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):
         compute_facets(db, field="fidelity", source="web")["facets"]["fidelity"])
     assert _nonzero(web_stats["custody"]["drift"]) == _facet_map(
         compute_facets(db, field="drift", source="web")["facets"]["drift"])
-    # and it equals the canonical tally over the web-scoped held items
+    # and it equals the canonical tally over the web-scoped held items — including
+    # the per-source `by_source` split (roadmap H155): a single-source scope folds to
+    # one `{web: {tiers, drift}}` entry that re-states the whole-scope tally.
     web_items = [item for item in list_items(db) if item.source == "web"]
-    assert web_stats["custody"] == custody_counts(web_items, latest_events(db))
+    expected = custody_counts(web_items, latest_events(db))
+    expected["by_source"] = {"web": {"tiers": expected["tiers"], "drift": expected["drift"]}}
+    assert web_stats["custody"] == expected
 
 
 # --- the stats.custody family invariant (roadmap H101) -----------------------
@@ -1087,9 +1092,17 @@ def _tally_rows(rows):
     (H56/H58/H64); `tally_custody` over those pairs is exactly what the *same*
     call's `stats.custody` member claims to be. Comparing the two pins that the
     envelope aggregate can never desync from the per-item fields it sums
-    (roadmap H101).
+    (roadmap H101). The `by_source` split (roadmap H155) is the same fold grouped
+    by each row's own `source`, so the per-source member rides along too — pinning
+    that the browse-stats `stats.custody.by_source` is the per-item fold split per
+    source (the `graph` block adds a heavier `coverage`-bearing `by_source`, so its
+    tie compares the tiers/drift axes this fold produces).
     """
-    return tally_custody((row["fidelity"], row["drift"]) for row in rows)
+    tally = tally_custody((row["fidelity"], row["drift"]) for row in rows)
+    tally["by_source"] = tally_custody_by_source(
+        (row["source"], row["fidelity"], row["drift"]) for row in rows
+    )
+    return tally
 
 
 def test_stats_custody_family_agrees_with_its_own_per_item_fields(scrolls_home, capsys):
@@ -1183,6 +1196,54 @@ def test_works_stats_custody_agrees_with_its_representations(scrolls_home, capsy
     assert payload["stats"]["custody"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
     assert payload["stats"]["custody"]["drift"] == {
         "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
+
+
+def test_browse_stats_by_source_converges_with_doctor_for_the_whole_library(scrolls_home, capsys):
+    # roadmap H155: the browse-stats `stats.custody.by_source` (the per-source split
+    # on the `search`/`list --stats` envelopes) is the browse counterpart of the
+    # per-source `by_source` on JSON `status` (H133), the `graph` stats block (H150),
+    # and `doctor` (H104). For an uncapped whole-library scope each must equal
+    # `doctor`'s `custody.by_source` and `custody_counts_by_source` over the held
+    # items on the tiers/drift axes the lean browse family carries (the H101
+    # stats.custody invariant, split per source).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls spanning the tiers/postures
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    verdicts = latest_events(db)
+    canonical = custody_counts_by_source(list_items(db), verdicts)
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # non-vacuous: the seed is genuinely multi-source
+    assert set(canonical) == {"arxiv", "web"}
+
+    # both uncapped browse envelopes split the whole library the same way
+    for argv in (["list", "--stats"], ["search", "topic", "--stats"]):
+        assert main(argv) == 0
+        custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+        by_source = custody["by_source"]
+        assert set(by_source) == {"arxiv", "web"}
+        for source, entry in by_source.items():
+            # == doctor's per-source tally and the canonical per-source tally, on
+            # the tiers/drift axes (doctor/canonical also carry `coverage`, the
+            # heavier axis the lean browse family omits)
+            assert entry["tiers"] == doctor_by_source[source]["tiers"] == \
+                canonical[source]["tiers"]
+            assert entry["drift"] == doctor_by_source[source]["drift"] == \
+                canonical[source]["drift"]
+        # each surface's per-source entries sum to its own whole `stats.custody`
+        summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+        summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+        for entry in by_source.values():
+            for tier, n in entry["tiers"].items():
+                summed_tiers[tier] += n
+            for posture, n in entry["drift"].items():
+                summed_drift[posture] += n
+        assert summed_tiers == custody["tiers"]
+        assert summed_drift == custody["drift"]
 
 
 # --- the per-item invariant (roadmap H59) ------------------------------------

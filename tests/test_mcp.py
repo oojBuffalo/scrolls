@@ -926,6 +926,7 @@ _ZERO_WORKS_CUSTODY = {
     "tiers": {"full": 0, "partial": 0, "reference": 0},
     "drift": {p: 0 for p in
               ("verified", "unverified", "drifted", "rotted", "error")},
+    "by_source": {},  # no reps → the empty per-source split (roadmap H155)
 }
 
 
@@ -1051,13 +1052,19 @@ def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
     assert custody["drift"] == {
         "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
     # the tally equals what the twin's own representation entries carry
+    from scrolls.custody import tally_custody_by_source
     reps = [r for w in mcp_server.get_works()["works"][0:] for r in w["representations"]]
     expected = {"tiers": {"full": 0, "partial": 0, "reference": 0},
                 "drift": {p: 0 for p in
-                          ("verified", "unverified", "drifted", "rotted", "error")}}
+                          ("verified", "unverified", "drifted", "rotted", "error")},
+                "by_source": {}}
     for rep in reps:
         expected["tiers"][rep["fidelity"]] += 1
         expected["drift"][rep["drift"]] += 1
+    # the per-source split (roadmap H155) rides the MCP twin too — both route through
+    # `works.to_payload` — split over the same reps (this seed spans arxiv + crossref)
+    expected["by_source"] = tally_custody_by_source(
+        (rep["source"], rep["fidelity"], rep["drift"]) for rep in reps)
     assert custody == expected
 
 

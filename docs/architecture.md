@@ -398,7 +398,17 @@ each command moves items between stages or derives artifacts from them.
   fidelity`/`drift`. `scrolls works` carries the same member in its always-on
   `stats` block (roadmap H100), folding the reported works' representations through
   `tally_custody` — the works-surface entry in the family, so the custody of the
-  multi-representation works in scope reads without a second `facets` call. And
+  multi-representation works in scope reads without a second `facets` call. Each of
+  those browse `stats.custody` members also carries a `by_source` split (roadmap
+  H155) — `custody.tally_custody_by_source` over each hit/representation's own
+  `(source, fidelity, drift)`, a `{source: {tiers, drift}}` map (sorted keys, empty
+  `{}` for an empty scope) — the browse counterpart of the `graph`
+  `stats.custody.by_source` (H150) and JSON `status` `by_source` (H133). It sums to
+  the whole-scope `stats.custody` beside it and equals `doctor`'s `custody.by_source`
+  on the tiers/drift axes for the whole-library scope; the lean browse family omits
+  the per-source `coverage` the audit surfaces add (coverage needs `content_hash`
+  presence, which a `(fidelity, drift)` pair cannot recover, so it stays a
+  `doctor`/`graph` axis). And
   `scrolls facets fidelity`/`drift` (H48) are the browse
   aggregates of the two axes — all reading `custody.custody_counts` (the
   shape-and-count core `custody.tally_custody`, which `custody_counts` and the
@@ -1007,7 +1017,10 @@ choice (ADRs 0004, 0005).
   member (roadmap H100) — `tally_custody` folded over the reported works'
   representations — the works-surface entry in the `stats.custody` family, so
   the scope custody of the multi-representation works reads without a second
-  `facets` call. `works_over(items)` mirrors `graph_over(items)` so the KB works page
+  `facets` call; it carries a per-source `by_source` split (roadmap H155) too —
+  `tally_custody_by_source` over the same rep `(source, fidelity, drift)` — the
+  works entry in the browse-stats per-source family beside `search`/`list`/`related`.
+  `works_over(items)` mirrors `graph_over(items)` so the KB works page
   (`library/works.md`, ADR 0070) reuses it over rendered items
   (`tests/test_works.py`). `scrolls works <ref>` is the per-item lens
   (ADR 0072) — `works_for_item(items, id)` filters `works_over` to the

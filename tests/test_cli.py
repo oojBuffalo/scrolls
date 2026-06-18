@@ -1200,9 +1200,11 @@ def test_list_stats_before_init_is_the_empty_envelope_not_an_error(scrolls_home,
     assert payload["scope"] == {"source": "web", "limit": 5}
     assert _core_stats(payload["stats"]) == {"returned": 0, "matched": 0, "truncated": False}
     # the custody member is present even at empty — a stable zeroed shape (H98)
+    # with the empty per-source split (roadmap H155)
     assert payload["stats"]["custody"] == {
         "tiers": {"full": 0, "partial": 0, "reference": 0},
         "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+        "by_source": {},
     }
 
 
@@ -1229,9 +1231,14 @@ def _seed_custody_mix(db):
     ])
 
 
+_MIX_TIERS = {"full": 1, "partial": 1, "reference": 1}
+_MIX_DRIFT = {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
 _MIX_CUSTODY = {
-    "tiers": {"full": 1, "partial": 1, "reference": 1},
-    "drift": {"verified": 1, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0},
+    "tiers": _MIX_TIERS,
+    "drift": _MIX_DRIFT,
+    # the seed is single-source `web`, so the per-source split (roadmap H155) folds
+    # to one `{web: {tiers, drift}}` entry re-stating the whole-scope tally
+    "by_source": {"web": {"tiers": _MIX_TIERS, "drift": _MIX_DRIFT}},
 }
 
 
@@ -1269,9 +1276,14 @@ def test_list_stats_custody_is_the_matched_scope_not_the_returned_page(scrolls_h
 # full-text match, so it is *not* in the search-matched scope (only `list` lists it).
 # So search custody tallies the two items that match the query — a sharper picture
 # than `list`'s, and exactly the honest "of the N that matched *this query*" scope.
+_SEARCH_TIERS = {"full": 1, "partial": 1, "reference": 0}
+_SEARCH_DRIFT = {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0}
 _MIX_CUSTODY_SEARCH = {
-    "tiers": {"full": 1, "partial": 1, "reference": 0},
-    "drift": {"verified": 1, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0},
+    "tiers": _SEARCH_TIERS,
+    "drift": _SEARCH_DRIFT,
+    # both query-matched hits are `web`, so the per-source split (roadmap H155)
+    # re-states the whole-scope tally under one key
+    "by_source": {"web": {"tiers": _SEARCH_TIERS, "drift": _SEARCH_DRIFT}},
 }
 
 
@@ -1313,6 +1325,126 @@ def test_stats_custody_is_opt_in_absent_from_the_bare_array(scrolls_home, capsys
         main(argv)
         out = json.loads(capsys.readouterr().out)
         assert isinstance(out, list)  # no envelope → nowhere for a custody block
+
+
+# --- H155: stats.custody.by_source — the per-source split on the browse envelopes -
+
+
+def _seed_multi_source_custody(db):
+    """Three held scrolls matching `alpha` across two sources: a `web` full one
+    re-checked unchanged (→ verified), a `web` partial one never re-checked
+    (→ unverified), and an `arxiv` full one drifted. So the matched-scope custody
+    splits per source into a non-trivial `{web: {full:1, partial:1}, arxiv: {full:1}}`
+    fidelity picture and a `{web: verified+unverified, arxiv: drifted}` drift picture.
+    """
+    insert_item(db, _stats_item(
+        "web:full", raw_text="<raw>alpha</raw>", content_hash="sha256:wf"))
+    insert_item(db, _stats_item("web:partial"))  # extracted only → partial
+    insert_item(db, _stats_item(
+        "arxiv:1", raw_text="<raw>alpha</raw>", content_hash="sha256:af"))
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:wf", "sha256:wf", None),
+        CustodyEvent("arxiv:1", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:af", "sha256:x", None),
+    ])
+
+
+_MULTI_BY_SOURCE = {
+    "arxiv": {
+        "tiers": {"full": 1, "partial": 0, "reference": 0},
+        "drift": {"verified": 0, "unverified": 0, "drifted": 1, "rotted": 0, "error": 0},
+    },
+    "web": {
+        "tiers": {"full": 1, "partial": 1, "reference": 0},
+        "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0},
+    },
+}
+
+
+def _sum_by_source(by_source):
+    """Sum the per-source tallies back into one `{tiers, drift}` whole."""
+    tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            drift[posture] += n
+    return {"tiers": tiers, "drift": drift}
+
+
+def test_list_stats_by_source_splits_the_matched_scope(scrolls_home, capsys):
+    # roadmap H155: `list --stats` carries a `stats.custody.by_source` member —
+    # the matched-scope custody split per source, sorted keys, the lean
+    # `{tiers, drift}` shape — beside the whole-scope `stats.custody`.
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    by_source = custody["by_source"]
+    assert list(by_source) == ["arxiv", "web"]  # sorted keys
+    assert by_source == _MULTI_BY_SOURCE
+    # the per-source split sums to the whole-scope tally beside it (the H104
+    # sum-to-whole posture, per the matched scope)
+    assert _sum_by_source(by_source) == {"tiers": custody["tiers"], "drift": custody["drift"]}
+    # lean: no per-source coverage on the browse envelope (the H98–H101 family shape)
+    assert all("coverage" not in entry for entry in by_source.values())
+
+
+def test_list_stats_by_source_equals_doctor_for_the_whole_library(scrolls_home, capsys):
+    # for the uncapped whole-library scope the browse-stats `by_source` equals
+    # `doctor`'s `custody.by_source` (and `custody_counts_by_source`) on the
+    # tiers/drift axes — the audit and the browse envelope read one number (H155).
+    paths = get_paths()
+    main(["init"])
+    _seed_multi_source_custody(paths.db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    by_source = json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"]
+    doctor_by_source = run_doctor(paths)["custody"]["by_source"]
+    assert set(by_source) == set(doctor_by_source)
+    for source, entry in by_source.items():
+        assert entry["tiers"] == doctor_by_source[source]["tiers"]
+        assert entry["drift"] == doctor_by_source[source]["drift"]
+
+
+def test_list_stats_by_source_covers_the_matched_scope_past_the_cap(scrolls_home, capsys):
+    # the load-bearing claim mirrors the whole-scope tally: a `--limit 1` cap returns
+    # one row but the per-source split still covers the *whole* matched scope.
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 3 and stats["truncated"] is True
+    assert stats["custody"]["by_source"] == _MULTI_BY_SOURCE  # over the matched 3
+
+
+def test_list_stats_by_source_empty_scope_is_the_empty_map(scrolls_home, capsys):
+    # an empty matched scope → the honest empty `{}` split, never omitted.
+    main(["init"])
+    capsys.readouterr()
+    main(["list", "--source", "arxiv", "--stats"])
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["by_source"] == {}
+
+
+def test_search_stats_by_source_splits_the_matched_scope(scrolls_home, capsys):
+    # the `search` twin: each hit carries its own source/fidelity/drift (H58), and
+    # the envelope folds them per source over the query-matched scope (H155).
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--stats"])
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert custody["by_source"] == _MULTI_BY_SOURCE  # all three match the query
+    assert _sum_by_source(custody["by_source"]) == {
+        "tiers": custody["tiers"], "drift": custody["drift"]}
 
 
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):

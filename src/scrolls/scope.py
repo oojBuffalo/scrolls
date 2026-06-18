@@ -49,7 +49,10 @@ def scope_envelope(
     `stats.custody` block). It counts the same matched set `stats.matched`
     totals, so the tier/posture counts sum to `matched`. Omitted (no
     `stats.custody` key) when the caller passes nothing, so surfaces that do not
-    opt in — `related`/`works` — keep the lean stats shape.
+    opt in — `related`/`works` — keep the lean stats shape. The framer is agnostic
+    to the tally's inner shape: a caller folding a per-source `by_source` split into
+    the `custody` dict (roadmap H155) rides through `stats.custody` intact, no
+    envelope change.
     """
     returned = len(results)
     applied = {key: value for key, value in scope.items() if value is not None}

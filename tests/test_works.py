@@ -78,6 +78,8 @@ ZERO_CUSTODY = {
         "rotted": 0,
         "error": 0,
     },
+    # no reported works → no representations → the empty per-source split (H155)
+    "by_source": {},
 }
 
 
@@ -643,7 +645,11 @@ def test_stats_custody_is_zeroed_when_no_work_is_reported():
 def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
     # end to end through the CLI: the stats.custody tally equals the fidelity/
     # drift each rendered representation entry carries (parity by construction)
-    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.custody import (
+        CustodyEvent,
+        record_events,
+        tally_custody_by_source,
+    )
 
     insert_item(db, make_item(
         "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
@@ -660,11 +666,17 @@ def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
     reps = [r for w in payload["works"] for r in w["representations"]]
     expected = {"tiers": {"full": 0, "partial": 0, "reference": 0},
                 "drift": {p: 0 for p in
-                          ("verified", "unverified", "drifted", "rotted", "error")}}
+                          ("verified", "unverified", "drifted", "rotted", "error")},
+                "by_source": {}}
     for rep in reps:
         expected["tiers"][rep["fidelity"]] += 1
         expected["drift"][rep["drift"]] += 1
+    # the per-source split (roadmap H155): the same reps grouped by source — this
+    # seed spans two (`arxiv` preprint + `crossref` published record)
+    expected["by_source"] = tally_custody_by_source(
+        (rep["source"], rep["fidelity"], rep["drift"]) for rep in reps)
     assert payload["stats"]["custody"] == expected
+    assert set(expected["by_source"]) == {"arxiv", "crossref"}  # genuinely multi-source
 
 
 # --- the scope echo: completeness contract G2 -----------------------------

@@ -670,6 +670,44 @@ def tally_custody(
     return {"tiers": tiers, "drift": drift}
 
 
+def tally_custody_by_source(
+    triples: Iterable[tuple[str, str, str]]
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Per-source fidelity-tier / drift-posture counts from `(source, fidelity, drift)`.
+
+    The `by_source` analogue of `tally_custody`: it groups already-derived
+    ``(source, fidelity_tier, drift_posture)`` triples by source and folds each
+    group through `tally_custody`, yielding a map from source name to that source's
+    own ``{"tiers": …, "drift": …}`` tally, source keys in sorted order. It is the
+    pairs-based sibling of `custody_counts_by_source` (which derives the triples
+    from items + the ledger): the browse-stats `--stats` envelopes' `stats.custody`
+    (`search`/`list`/`related`, roadmap H99/H98) and the always-on `works` stats
+    block (roadmap H100) fold each matched hit/representation's own
+    `source`/`fidelity`/`drift` fields — the same per-item parity (roadmap H58) their
+    whole-scope `stats.custody` already folds — through this one helper, so the
+    per-source split (roadmap H155) costs no ledger read beyond the one the
+    whole-scope tally already does.
+
+    Carries only the `{tiers, drift}` axes `tally_custody` produces — *not* the
+    per-source `coverage` `custody_counts_by_source` adds — because the browse-stats
+    `stats.custody` it rides under carries no whole-scope coverage either (the lean
+    family shape, H98–H101): coverage counts strictly `content_hash`-bearing held
+    items (`recheck_coverage`), which a `(fidelity, drift)` pair cannot recover (a
+    raw-only capture is `full` yet hash-less), so it stays an audit/maintenance axis
+    on the surfaces holding the items (`doctor`/`graph`, which fold the heavier
+    `custody_counts_by_source`). Because every triple lands in exactly one source
+    group and each group folds the same `tally_custody`, the per-source tallies sum
+    to `tally_custody(...)` over the whole iterable by construction (the H104
+    sum-to-whole posture, per the matched scope), and — for an uncapped whole-library
+    scope — equal `doctor`'s `custody.by_source` on the tiers/drift axes. An empty
+    iterable is the honest empty map.
+    """
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for source, fidelity, posture in triples:
+        groups.setdefault(source, []).append((fidelity, posture))
+    return {source: tally_custody(pairs) for source, pairs in sorted(groups.items())}
+
+
 def custody_counts(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> dict[str, dict[str, int]]:

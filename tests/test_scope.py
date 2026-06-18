@@ -95,6 +95,30 @@ def test_custody_member_rides_the_stats_block_when_passed():
     assert env["stats"]["returned"] == 1 and env["stats"]["truncated"] is True
 
 
+def test_custody_by_source_split_rides_through_the_envelope_intact():
+    """The framer is agnostic to the tally's inner shape: a caller folding a
+    per-source `by_source` split into the `custody` dict (roadmap H155) rides
+    through `stats.custody` unchanged — the envelope adds no logic, the caller owns
+    the shape (the way `search`/`list`/`related`/`works` attach it)."""
+    custody = {
+        "tiers": {"full": 2, "partial": 0, "reference": 0},
+        "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0},
+        "by_source": {
+            "arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0},
+                      "drift": {"verified": 0, "unverified": 1, "drifted": 0,
+                                "rotted": 0, "error": 0}},
+            "web": {"tiers": {"full": 1, "partial": 0, "reference": 0},
+                    "drift": {"verified": 1, "unverified": 0, "drifted": 0,
+                              "rotted": 0, "error": 0}},
+        },
+    }
+    env = scope_envelope(
+        [{"id": "web:a"}], scope={"query": "x", "limit": 20}, matched=2, custody=custody,
+    )
+    assert env["stats"]["custody"] is custody  # passed through, not rebuilt
+    assert env["stats"]["custody"]["by_source"] == custody["by_source"]
+
+
 def test_an_uncapped_listing_omits_limit_and_never_truncates():
     """List with no `--limit` is uncapped: no `limit` key, truncated False.
 

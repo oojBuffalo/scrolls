@@ -45,7 +45,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import CustodyEvent, drift_posture, last_checked, tally_custody
+from scrolls.custody import (
+    CustodyEvent,
+    drift_posture,
+    last_checked,
+    tally_custody,
+    tally_custody_by_source,
+)
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
@@ -345,8 +351,30 @@ def to_payload(
     totals equal the rendered representation entries by construction; an item that
     represents two works contributes to both, exactly as it is rendered twice. No
     new ledger read — the same `verdicts` the per-rep `drift` already folds.
+
+    `stats.custody.by_source` (roadmap H155) splits that representation-scoped tally
+    per source — `custody.tally_custody_by_source` over the same
+    `(source, fidelity, drift)` rep triples, a `{source: {tiers, drift}}` map (sorted
+    keys) — the works-surface counterpart of the per-source split on the browse
+    `search`/`list`/`related --stats` envelopes and the `graph` stats block (H150).
+    It sums to the whole `stats.custody` block beside it by construction (every rep
+    lands in exactly one source group). An empty scope is the honest empty `{}`.
     """
     verdicts = verdicts or {}
+    # `stats.custody` over the reported works' representations (roadmap H100), and its
+    # per-source split (roadmap H155): the same `(source, fidelity, drift)` each rep
+    # entry above exposes, grouped by source, so the split sums to the whole-scope
+    # tally beside it and adds no ledger read beyond the per-rep `drift` already folds.
+    custody = tally_custody(
+        (rep.fidelity, drift_posture(verdicts.get(rep.id)))
+        for work in works
+        for rep in work.representations
+    )
+    custody["by_source"] = tally_custody_by_source(
+        (rep.source, rep.fidelity, drift_posture(verdicts.get(rep.id)))
+        for work in works
+        for rep in work.representations
+    )
     return {
         "scope": {key: value for key, value in scope.items() if value is not None},
         "works": [
@@ -373,11 +401,7 @@ def to_payload(
         "stats": {
             "items": item_count,
             "works": len(works),
-            "custody": tally_custody(
-                (rep.fidelity, drift_posture(verdicts.get(rep.id)))
-                for work in works
-                for rep in work.representations
-            ),
+            "custody": custody,
         },
     }
 

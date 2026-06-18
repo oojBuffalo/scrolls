@@ -37,6 +37,7 @@ from scrolls.custody import (
     record_events,
     render_custody_headline,
     tally_custody,
+    tally_custody_by_source,
     unverified_items,
     verify_item,
 )
@@ -486,6 +487,86 @@ def test_custody_counts_delegates_to_tally_over_item_derived_pairs():
     # sanity: the fixture spans two tiers and two postures
     assert expected["tiers"]["full"] == 1 and expected["tiers"]["reference"] == 1
     assert expected["drift"]["drifted"] == 1 and expected["drift"]["unverified"] == 1
+
+
+# --- tally_custody_by_source (the pairs-based per-source split, roadmap H155) ---
+
+
+def test_tally_custody_by_source_groups_triples_with_sorted_keys():
+    # the `by_source` analogue of `tally_custody`: one `{tiers, drift}` tally per
+    # source over already-derived (source, fidelity, drift) triples, keys sorted.
+    by_source = tally_custody_by_source([
+        ("web", "full", "verified"),
+        ("arxiv", "full", "unverified"),
+        ("web", "reference", "drifted"),
+    ])
+    assert list(by_source) == ["arxiv", "web"]  # sorted
+    assert by_source["web"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}
+    assert by_source["web"]["drift"]["verified"] == 1
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["tiers"] == {"full": 1, "partial": 0, "reference": 0}
+    assert by_source["arxiv"]["drift"]["unverified"] == 1
+
+
+def test_tally_custody_by_source_empty_is_the_honest_empty_map():
+    # no triples → the empty `{}` map (the honest-empty scope the --stats envelope
+    # and the empty `works`/`related` paths lean on), not a zeroed single entry.
+    assert tally_custody_by_source([]) == {}
+
+
+def test_tally_custody_by_source_carries_only_tiers_and_drift_not_coverage():
+    # the lean browse-stats shape (H98–H101): each source entry is exactly the
+    # `tally_custody` `{tiers, drift}` — *not* the per-source `coverage`
+    # `custody_counts_by_source` adds (coverage needs content_hash presence, which a
+    # (fidelity, drift) pair cannot recover), so it stays an audit/maintenance axis.
+    by_source = tally_custody_by_source([("web", "full", "verified")])
+    assert set(by_source["web"]) == {"tiers", "drift"}
+    assert "coverage" not in by_source["web"]
+
+
+def test_tally_custody_by_source_sums_to_the_whole_tally():
+    # the load-bearing convergence: summing the per-source tallies re-counts the
+    # whole iterable, so by_source can never disagree with `tally_custody` over the
+    # same pairs (the H104 sum-to-whole posture, per the matched scope).
+    triples = [
+        ("web", "full", "verified"),
+        ("web", "partial", "unverified"),
+        ("arxiv", "full", "drifted"),
+        ("arxiv", "reference", "unverified"),
+    ]
+    whole = tally_custody((fidelity, drift) for _, fidelity, drift in triples)
+    by_source = tally_custody_by_source(triples)
+
+    summed_tiers = {tier: 0 for tier in ("full", "partial", "reference")}
+    summed_drift = {p: 0 for p in ("verified", "unverified", "drifted", "rotted", "error")}
+    for counts in by_source.values():
+        for tier, n in counts["tiers"].items():
+            summed_tiers[tier] += n
+        for posture, n in counts["drift"].items():
+            summed_drift[posture] += n
+    assert summed_tiers == whole["tiers"]
+    assert summed_drift == whole["drift"]
+
+
+def test_tally_custody_by_source_matches_custody_counts_by_source_on_tiers_drift():
+    # the pairs-based split agrees with the items+ledger split (`custody_counts_by_
+    # source`) on the tiers/drift axes — the two ways the per-source picture is
+    # sourced (browse hits vs. doctor's held items) read one number, so the H155
+    # browse `by_source` converges with doctor's for the same scope.
+    full = _item("web:full", content_hash="h", extracted_text="b", raw_text="<r>b</r>")
+    ref = _item("arxiv:ref", source="arxiv", content_hash=None, extracted_text=None,
+                raw_text=None, stage="detected")
+    items = [full, ref]
+    verdicts = {"web:full": CustodyEvent("web:full", "t", "drifted", "h", "x")}
+    item_based = custody_counts_by_source(items, verdicts)
+    pairs_based = tally_custody_by_source(
+        (item.source, get_fidelity(item), custody.drift_posture(verdicts.get(item.id)))
+        for item in items
+    )
+    assert set(item_based) == set(pairs_based) == {"arxiv", "web"}
+    for source in item_based:
+        assert pairs_based[source]["tiers"] == item_based[source]["tiers"]
+        assert pairs_based[source]["drift"] == item_based[source]["drift"]
 
 
 # --- custody_counts_by_source (the per-source split, roadmap H104) ---
