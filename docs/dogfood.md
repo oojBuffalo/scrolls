@@ -156,3 +156,33 @@ Each pass also appends its `{recorded_at, snapshot, delta}` to an append-only
 `<root>/.maintenance/log.jsonl`, so `scrolls maintain --history [N]` reads the
 last N runs back as the custody **trend** — the score/drift *trajectory* an
 unattended worker watches over time, not just the single most recent diff.
+
+## The same loop over MCP
+
+The flow above is how an agent drives custody from the **shell**. An agent that
+speaks the [Model Context Protocol](architecture.md) instead drives the *same*
+loop through the MCP tools (`scrolls mcp`), with no network, against fixtures —
+pinned in `tests/test_dogfood_mcp.py`, the MCP sibling of `tests/test_dogfood.py`:
+
+| Leg | CLI command | MCP tool |
+| --- | --- | --- |
+| **Prove custody** | `scrolls doctor` | `get_library_health` (whole-library score, tiers, drift) |
+| **Detect loss** | `scrolls verify --all` | `verify_scroll` per held item (the `mcp_server.live_recapture` seam) |
+| **Recur** | `scrolls maintain` / `--history --trend` | `run_maintenance` then `get_maintenance_history(trend=True)` |
+
+The MCP loop has **no "take it with me" leg** — export/import-bundle is a shell
+concern with no MCP twin (an MCP tool must never trigger a paid or implicit
+write). An MCP agent's *recurring* custody work is the maintenance pass and its
+trend read instead: `run_maintenance` runs offline (always `--no-recheck`,
+never an implicit re-capture — targeted live rechecks stay the explicit
+`verify_scroll`), records a snapshot, and `get_maintenance_history(trend=True)`
+reads the trajectory. Two passes that both carry the recorded drift read
+`holding`, not `regressing` — the recurring form of the custody point above:
+the drift is recorded and the integrity score never drops.
+
+The MCP twins are pinned to converge with the CLI commands they wrap per-tool in
+`tests/test_mcp.py` (`get_library_health` ≡ `status`/`doctor`, `run_maintenance`
+≡ `maintain --no-recheck`, `get_maintenance_history` ≡ `maintain --history`); the
+dogfood-MCP suite ties them into one agent-driven flow and pins that an agent
+reading custody over MCP reaches the same conclusion `scrolls doctor` does over
+the identical post-drift state.
