@@ -2578,7 +2578,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--stale-classification] [--limit N] [--stats]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--stale-classification] [--stale-summary] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -2683,6 +2683,32 @@ A library with nothing stale prints `[]` — honest absence, never an error
 `--stats` the flag is echoed in `scope` only when honored (the `None`-is-pruned
 convention), and `matched` is the post-filter count.
 
+`--stale-summary` is the **summary**-axis read enumeration — the sibling of
+`--stale-classification` on the LLM-summary axis (roadmap H189). It is a flag too:
+it selects the held items that belong to a concept whose stored LLM summary the
+*live* members would no longer reproduce — the **stale-summary set** — via the
+same `kb_llm.eligible_concepts` + `is_stale_summary` predicate `scrolls kb --stale`
+refreshes on and `scrolls doctor`'s `custody.summaries` reports. So the rows it
+returns are *exactly* the members a `kb --stale` refresh's clusters span: where
+`doctor` says *which concepts* are stale and which sources hold them,
+`list --stale-summary` says *which scrolls* drive them stale — the read-side
+sibling of the `kb --stale` act (`test_list_stale_summary_lists_the_members_of_the_doctor_stale_concepts`).
+Unlike the other three filters it is **not** item-local: summary staleness is a
+property of a *concept* over its whole membership, so the stale-member set is
+computed over the **whole library** and then intersected with the filtered rows.
+That intersection makes it AND with the stored facets *and* carry the H171
+attribution: a multi-source stale cluster lists **every** member, so
+`--stale-summary --source S` returns S's members of the clusters S participates in
+— equal to the S-members `kb --stale --source S` would refresh
+(`test_list_stale_summary_ands_with_source_carrying_the_h171_attribution`). An
+item belonging to several stale concepts appears once (deduped by id). A current
+or never-summarized concept contributes nothing (a current summary is a no-op, a
+never-summarized eligible concept is generation not refresh — see `kb --stale`),
+so a library with nothing stale prints `[]` — honest absence, never an error
+(`test_list_stale_summary_is_honestly_empty_when_nothing_stale`); under `--stats`
+the flag is echoed in `scope` only when honored, and `matched` is the post-filter
+member count.
+
 By default the listing is uncapped — every item in scope, oldest saved
 first. `--limit N` caps it to the first `N`; `--stats` then wraps the
 array in the scope-honest `{scope, stats, results}` envelope (the
@@ -2727,6 +2753,14 @@ $ scrolls list --stale-classification             # drill to the rows: which ite
 [{"id": "x:1111", ...}, {"id": "arxiv:1706.03762", ...}]
 $ scrolls list --stale-classification --source x  # one source's refresh debt
 [{"id": "x:1111", ...}]
+[exit 0]
+
+$ scrolls doctor | jq '.custody.summaries.items | length'   # the aggregate: how many concepts are stale
+2
+$ scrolls list --stale-summary                    # drill to the members: which scrolls drive them stale
+[{"id": "wikipedia:bm25", ...}, {"id": "web:fts", ...}, {"id": "arxiv:1706.03762", ...}]
+$ scrolls list --stale-summary --source web       # one source's members of the stale clusters
+[{"id": "web:fts", ...}]
 [exit 0]
 ```
 
@@ -3480,7 +3514,7 @@ The tools wrap the same engines as the CLI commands
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None, budget="full")` | `scrolls context` | Markdown bundle, optionally faceted; `budget` (`index`/`connected`/`full`) bounds depth |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, the per-item custody axes (`fidelity` + `drift` (H58) + `last_checked` (H84)), and `works` membership (ADR 0101), optionally faceted |
-| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, stale_before=None, stale_classification=False, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54), `stale_before` by staleness window (H85), `stale_classification` by the stale-enrichment set (H185) — rows total `get_library_health`'s `enrichment.stale` |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, stale_before=None, stale_classification=False, stale_summary=False, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54), `stale_before` by staleness window (H85), `stale_classification` by the stale-enrichment set (H185) — rows total `get_library_health`'s `enrichment.stale`; `stale_summary` by the stale-summary set (H189) — the members of the concepts `get_library_health` flags stale in `summaries.items` |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |

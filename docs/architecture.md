@@ -265,7 +265,19 @@ each command moves items between stages or derives artifacts from them.
   multi-source stale concept therefore counts toward >1 source, so this map need
   not sum to `stale` — unlike the per-item enrichment/drift maps. This supersedes
   the H135-era choice to omit the breakdown (justified by the sum-to-whole
-  convergence this map does not claim).
+  convergence this map does not claim). `scrolls list --stale-summary` (+ the MCP
+  `list_scrolls` twin) is the summary-axis **read enumeration** — the sibling of
+  `list --stale-classification` on the LLM-summary axis (roadmap H189): it
+  enumerates the held items that belong to a stale concept (the
+  `kb_llm.stale_summary_members` selector over `eligible_concepts` +
+  `is_stale_summary`), so a worker sees *which scrolls* drive a cluster stale
+  before `kb --stale` refreshes it — the members a refresh's clusters span. Unlike
+  the item-local `--stale-classification`/`--drift` filters, summary staleness is a
+  *concept* property, so the stale-member set is computed over the **whole library**
+  and intersected with the filtered rows; that intersection carries the H171
+  attribution to the read side (`--stale-summary --source S` returns S's members of
+  the clusters S participates in), and an item in several stale concepts appears
+  once.
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
 - `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
   `fetched`, since the archive already contains the content

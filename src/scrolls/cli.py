@@ -680,6 +680,16 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh debt",
     )
     list_parser.add_argument(
+        "--stale-summary",
+        dest="stale_summary",
+        action="store_true",
+        help="Only items that belong to a concept whose stored LLM summary the "
+        "live members would no longer reproduce — the stale-summary set; the "
+        "read-side companion of `scrolls kb --stale` (the members a refresh's "
+        "clusters span). Composes with --source to drill one source's members of "
+        "the stale clusters",
+    )
+    list_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -1051,6 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
             args.drift,
             args.stale_before,
             args.stale_classification,
+            args.stale_summary,
             args.limit,
             args.stats,
         )
@@ -2474,6 +2485,7 @@ def _cmd_list(
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
+    stale_summary: bool = False,
     limit: int | None = None,
     stats: bool = False,
 ) -> int:
@@ -2489,6 +2501,7 @@ def _cmd_list(
         # a boolean filter rides the `None`-is-pruned convention (scope_envelope):
         # echoed only when honored, so the scope names exactly the filters applied
         "stale_classification": True if stale_classification else None,
+        "stale_summary": True if stale_summary else None,
         "limit": limit,
     }
     # A `--stale-before` boundary normalizes through the one `checked_at`
@@ -2530,6 +2543,7 @@ def _cmd_list(
         drift=drift,
         stale_before=boundary,
         stale_classification=stale_classification,
+        stale_summary=stale_summary,
     )
     matched = len(matched_items)
     items = matched_items[:limit] if limit is not None else matched_items

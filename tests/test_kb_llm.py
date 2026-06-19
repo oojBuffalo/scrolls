@@ -26,6 +26,7 @@ from scrolls.kb_llm import (
     is_stale_summary,
     members_hash,
     stale_summary_counts_by_source,
+    stale_summary_members,
     summarize_concept_llm,
     summary_freshness,
     summary_provenance,
@@ -850,3 +851,90 @@ def test_stale_summary_counts_by_source_matches_an_independent_re_derivation(db_
                 expected[source] = expected.get(source, 0) + 1
     expected = {s: expected[s] for s in sorted(expected)}
     assert stale_summary_counts_by_source(items, stored) == expected
+
+
+# --- `stale_summary_members`: the read-side enumeration (H189) ---------------
+#
+# The summary-axis counterpart of `classify.stale_classifications`: the held
+# items that belong to a concept whose stored summary the live members would no
+# longer reproduce — the scrolls `scrolls list --stale-summary` returns and a
+# `kb --stale` refresh's clusters span. Deduped by id; eligibility over the
+# given rendered members (the caller controls scope).
+
+
+def test_stale_summary_members_returns_the_members_of_every_stale_concept(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)  # BM25 (3 members) + Graphs (3) stale
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+
+    members = stale_summary_members(items, stored)
+    ids = {m.id for m in members}
+    # every member of both stale clusters, no others
+    assert ids == {
+        "wikipedia:bm25", "web:fts", "web:bm25-3",  # BM25 cluster
+        "arxiv:g1", "arxiv:g2", "arxiv:g3",          # Graphs cluster
+    }
+    # independent re-derivation: the union of members of the stale eligible concepts
+    eligible = eligible_concepts([i for i in items if i.markdown_path])
+    expected = {
+        m.id
+        for slug, entry in eligible.items()
+        if is_stale_summary(stored.get(slug), members_hash(entry["items"]))
+        for m in entry["items"]
+    }
+    assert ids == expected
+
+
+def test_stale_summary_members_excludes_current_and_never_summarized_concepts(db_path):
+    # only a *stale* stored summary counts: a current one is a no-op (its members
+    # are not returned), and a never-summarized eligible concept is generation, not
+    # refresh (is_stale_summary(None, …) is False) — so neither contributes.
+    complete = fake_completer()
+    seed_bm25_concept(db_path)  # BM25 (2 members)
+    insert_item(db_path, make_rendered(
+        "arxiv:g1", "arxiv", "Graph one", concepts=("Graphs",)))
+    insert_item(db_path, make_rendered(
+        "arxiv:g2", "arxiv", "Graph two", concepts=("Graphs",)))
+    generate_concept_summaries(db_path, complete=complete)  # both current
+    stored = load_concept_summaries(db_path)
+    # BM25 stays current; turn only Graphs stale by adding a member
+    insert_item(db_path, make_rendered(
+        "arxiv:g3", "arxiv", "Graph three", concepts=("Graphs",)))
+    items = list_items(db_path)
+
+    members = stale_summary_members(items, stored)
+    # only the (now stale) Graphs members — BM25 is current, nothing never-summarized
+    assert {m.id for m in members} == {"arxiv:g1", "arxiv:g2", "arxiv:g3"}
+
+
+def test_stale_summary_members_dedupes_an_item_in_several_stale_concepts(db_path):
+    # an item belonging to several stale concepts is included once (H189 dedupe).
+    # Alpha = {X, Y}, Beta = {X, Z}; X is in both.
+    insert_item(db_path, make_rendered(
+        "web:x", "web", "X note", concepts=("Alpha", "Beta")))
+    insert_item(db_path, make_rendered(
+        "web:y", "web", "Y note", concepts=("Alpha",)))
+    insert_item(db_path, make_rendered(
+        "web:z", "web", "Z note", concepts=("Beta",)))
+    for slug, display in (("alpha", "Alpha"), ("beta", "Beta")):
+        save_concept_summary(db_path, ConceptSummary(
+            slug=slug, display=display, summary="s.", members_hash="old-digest",
+            engine=ENGINE, model="m", generated_at="2026-06-16T00:00:00+00:00"))
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+
+    members = stale_summary_members(items, stored)
+    ids = [m.id for m in members]
+    assert sorted(ids) == ["web:x", "web:y", "web:z"]
+    assert len(ids) == len(set(ids))  # X appears once, not twice
+
+
+def test_stale_summary_members_clean_or_empty_is_empty(db_path):
+    complete = fake_completer()
+    seed_bm25_concept(db_path)
+    generate_concept_summaries(db_path, complete=complete)  # current, not stale
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+    assert stale_summary_members(items, stored) == []
+    assert stale_summary_members([], {}) == []

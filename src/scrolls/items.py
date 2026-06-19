@@ -531,6 +531,7 @@ def list_items(
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
+    stale_summary: bool = False,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
@@ -576,6 +577,22 @@ def list_items(
     equal to `doctor`'s `enrichment.by_source[S]` — because it filters the
     already-filtered item set. A library with nothing stale is the honest empty
     selection, never an error.
+
+    `stale_summary` is the fourth post-SQL filter that is not a stored column:
+    when true it keeps only the held items that belong to a concept whose stored
+    LLM summary the *live* members would no longer reproduce — the summary-axis
+    counterpart of `stale_classification` (the *enrichment*-axis stale set),
+    the members a `scrolls kb --stale` refresh's clusters span (roadmap H189).
+    Unlike the other three filters it is **not** item-local: summary staleness
+    is a property of a *concept* over its whole membership, so the stale-member
+    set is computed over the **whole library** (`kb_llm.stale_summary_members`
+    over a fresh `list_items` read + the stored summaries) and then intersected
+    with the already-filtered rows. The intersection is what makes it AND with
+    every other facet *and* carry the H171 attribution: `--source S` returns
+    S's members of the clusters S participates in (a multi-source cluster is
+    eligible over its full membership, so narrowing it to S keeps S's members),
+    equal to the S-members `kb --stale --source S` would refresh. Nothing
+    eligible or nothing stale is the honest empty selection, never an error.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
@@ -616,6 +633,25 @@ def list_items(
         from scrolls.classify import stale_classifications
 
         items = stale_classifications(items)
+    if stale_summary:
+        # lazy: kb_llm imports items, so the reverse is import-time only here.
+        # Summary staleness is a *concept* property over its whole membership,
+        # so compute the stale-member set over the WHOLE library (a fresh read,
+        # the way `kb --stale` resolves its targets) and intersect with the
+        # already-filtered rows by id. The intersection ANDs the filter with
+        # every facet above and narrows `--source S` to S's members of the
+        # clusters S participates in (the H171 attribution), while the rows keep
+        # this listing's `saved_at, id` ordering.
+        from scrolls.kb import load_concept_summaries
+        from scrolls.kb_llm import stale_summary_members
+
+        stale_ids = {
+            item.id
+            for item in stale_summary_members(
+                list_items(db_path), load_concept_summaries(db_path)
+            )
+        }
+        items = [item for item in items if item.id in stale_ids]
     return items
 
 

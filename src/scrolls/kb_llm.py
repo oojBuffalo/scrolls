@@ -211,6 +211,49 @@ def stale_summary_counts_by_source(
     return {source: counts[source] for source in sorted(counts)}
 
 
+def stale_summary_members(
+    items: list[ScrollItem], stored: dict[str, ConceptSummary]
+) -> list[ScrollItem]:
+    """Held items that belong to a concept whose stored summary is stale.
+
+    The read-side *enumeration* behind `scrolls list --stale-summary` (roadmap
+    H189), the summary-axis counterpart of `classify.stale_classifications`
+    (the *classification*-axis stale set). Finds the eligible concepts whose
+    stored summary the live members no longer reproduce — `is_stale_summary`,
+    the one predicate `doctor`'s `custody.summaries` and `kb --stale`
+    (`is_stale_summary`/`_summary_targets`) share — then returns the union of
+    those concepts' live members: exactly the scrolls a `kb --stale` refresh's
+    clusters span (`stale_summary_counts_by_source` *counts* the same clusters
+    per source; this *lists* their members).
+
+    Eligibility is computed over the *given* rendered members
+    (`eligible_concepts`), so the caller controls the scope. `list_items` passes
+    the **whole library**, so a multi-source cluster stays eligible over its
+    full membership (the H171 attribution — a stale cluster is stale for every
+    source it spans); the per-source narrowing rides `list_items`' post-SQL
+    intersection (a member appears under its own source), so
+    `--stale-summary --source S` returns S's members of the clusters S
+    participates in. A member belonging to several stale concepts appears once
+    (deduped by id), in slug-sorted concept order — but `list_items` re-imposes
+    its `saved_at, id` ordering by intersecting ids, so that order only matters
+    to a direct caller. Nothing eligible or nothing stale is the honest empty
+    list — a network-free, item-only computation (no model call, no ledger).
+    """
+    rendered = [item for item in items if item.markdown_path]
+    eligible = eligible_concepts(rendered)
+    seen: set[str] = set()
+    members: list[ScrollItem] = []
+    for slug in sorted(eligible):
+        cluster = eligible[slug]["items"]
+        if not is_stale_summary(stored.get(slug), members_hash(cluster)):
+            continue
+        for item in cluster:
+            if item.id not in seen:
+                seen.add(item.id)
+                members.append(item)
+    return members
+
+
 def concept_card(display: str, items: list[ScrollItem]) -> str:
     """The compact concept description the model synthesizes from.
 

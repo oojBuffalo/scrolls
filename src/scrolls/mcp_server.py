@@ -153,6 +153,7 @@ def list_scrolls(
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
+    stale_summary: bool = False,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """Browse library items by facet — the enumeration counterpart to search_scrolls.
@@ -173,7 +174,12 @@ def list_scrolls(
     category the *live* ruleset would no longer reproduce — the stale-enrichment
     set, the read-side companion of `scrolls classify --stale`; the rows returned
     total `get_library_health`'s `custody.enrichment.stale`, and ANDed with
-    `source` they total its `enrichment.by_source[source]`. Items come
+    `source` they total its `enrichment.by_source[source]`. `stale_summary` (a
+    flag) selects the items that belong to a concept whose stored LLM summary the
+    live members would no longer reproduce — the stale-summary set, the read-side
+    companion of `scrolls kb --stale` (the members a refresh's clusters span); an
+    item in several stale concepts appears once, and ANDed with `source` it
+    returns that source's members of the clusters it participates in. Items come
     oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
     summary (id, source, url, title, category, stage, saved_at, the custody
@@ -201,6 +207,7 @@ def list_scrolls(
         drift=drift,
         stale_before=boundary,
         stale_classification=stale_classification,
+        stale_summary=stale_summary,
     )[:limit]
     # Membership is a whole-library property (ADR 0101): cluster over every
     # item so a filtered/limited listing still reports an item's siblings, then

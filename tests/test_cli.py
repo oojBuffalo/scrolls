@@ -4228,6 +4228,164 @@ def test_list_stale_classification_is_echoed_in_the_stats_scope(scrolls_home, ca
     assert "stale_classification" not in json.loads(capsys.readouterr().out)["scope"]
 
 
+def test_list_stale_summary_selects_the_stale_summary_members(scrolls_home, capsys):
+    # H189: enumerate the held items that belong to a concept whose stored LLM
+    # summary the live members would no longer reproduce — the read-side companion
+    # of `kb --stale` (the members a refresh's clusters span). `_seed_refresh_debt`
+    # makes two stale summaries: Bm25 (web+arxiv) and Vector (web+web) — 4 members.
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import stale_summary_members
+
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-summary"])
+    rows = json.loads(capsys.readouterr().out)
+    row_ids = {r["id"] for r in rows}
+
+    # exactly the selector's set over the whole library + the stored summaries
+    expected = {
+        item.id
+        for item in stale_summary_members(
+            list_items(paths.db_path), load_concept_summaries(paths.db_path)
+        )
+    }
+    assert row_ids == expected
+    assert len(rows) == 4  # bm25-web, bm25-arxiv, vector-1, vector-2
+
+
+def test_list_stale_summary_lists_the_members_of_the_doctor_stale_concepts(
+    scrolls_home, capsys
+):
+    # convergence with the audit (H189): the rows are exactly the members of the
+    # concepts `doctor` flags stale in custody.summaries.items — the clusters a
+    # `kb --stale` refresh spans. (The rows are *members*, so they total member
+    # count, not the per-source *concept* count `summary_by_source` carries.)
+    from scrolls.kb import slugify
+
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+    report = run_doctor(paths)
+    stale_slugs = {entry["slug"] for entry in report["custody"]["summaries"]["items"]}
+    assert stale_slugs == {"bm25", "vector"}  # the two stale concepts
+
+    expected = {
+        item.id
+        for item in list_items(paths.db_path)
+        if any(slugify(c) in stale_slugs for c in item.concepts)
+    }
+    main(["list", "--stale-summary"])
+    row_ids = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert row_ids == expected
+
+
+def test_list_stale_summary_ands_with_source_carrying_the_h171_attribution(
+    scrolls_home, capsys
+):
+    # AND-composes with --source (H189): a multi-source stale cluster lists *every*
+    # member, so `--stale-summary --source S` returns S's members of the clusters S
+    # participates in. Bm25 spans web+arxiv, Vector is web-only → web has 3 members
+    # (bm25-web, vector-1, vector-2), arxiv has 1 (bm25-arxiv).
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-summary", "--source", "web"])
+    web = json.loads(capsys.readouterr().out)
+    assert len(web) == 3 and all(r["source"] == "web" for r in web)
+
+    main(["list", "--stale-summary", "--source", "arxiv"])
+    arxiv = json.loads(capsys.readouterr().out)
+    assert len(arxiv) == 1 and arxiv[0]["source"] == "arxiv"
+
+
+def test_list_stale_summary_dedupes_an_item_in_several_stale_concepts(
+    scrolls_home, capsys
+):
+    # H189 inspect-first decision: an item belonging to several stale concepts is
+    # included once (deduped by id). Alpha = {X, Y}, Beta = {X, Z}; X is in both.
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+
+    def member(slug, concepts):
+        return ScrollItem(
+            id=make_item_id("web", None, f"https://web.example.com/{slug}"),
+            source="web", source_id=None,
+            url=f"https://web.example.com/{slug}",
+            saved_at="2026-06-14T00:00:00+00:00", title=slug,
+            extracted_text="A note.", content_hash="sha256:" + slug,
+            concepts=concepts, stage="rendered",
+            provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"})
+
+    members = [
+        member("x", ("Alpha", "Beta")),
+        member("y", ("Alpha",)),
+        member("z", ("Beta",)),
+    ]
+    for item in members:
+        insert_item(paths.db_path, write_scroll(paths, item))
+    assert main(["kb"]) == 0
+    _store_stale_summary("alpha", "Alpha")
+    _store_stale_summary("beta", "Beta")
+    capsys.readouterr()
+
+    main(["list", "--stale-summary"])
+    rows = json.loads(capsys.readouterr().out)
+    ids = [r["id"] for r in rows]
+    assert sorted(ids) == sorted({item.id for item in members})  # all three
+    assert len(ids) == len(set(ids))  # X appears once, not twice
+
+
+def test_list_stale_summary_is_honestly_empty_when_nothing_stale(scrolls_home, capsys):
+    # a library with no stale summaries is [], never an error (completeness G1).
+    # A single fresh-summarized cluster: current, so nothing stale.
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+    # refresh both stale clusters offline by storing fingerprints that match live
+    from scrolls.kb import load_concept_summaries, save_concept_summary
+    from scrolls.kb_llm import eligible_concepts, members_hash
+
+    eligible = eligible_concepts(
+        [i for i in list_items(paths.db_path) if i.markdown_path]
+    )
+    for slug, stored in load_concept_summaries(paths.db_path).items():
+        if slug in eligible:
+            save_concept_summary(
+                paths.db_path,
+                dataclasses.replace(
+                    stored, members_hash=members_hash(eligible[slug]["items"])
+                ),
+            )
+    capsys.readouterr()
+
+    main(["list", "--stale-summary"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_stale_summary_is_echoed_in_the_stats_scope(scrolls_home, capsys):
+    # the --stats envelope names the filter only when honored (the None-is-pruned
+    # convention), and `matched` is the post-filter member count
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-summary", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["stale_summary"] is True
+    assert payload["stats"]["matched"] == 4
+    assert len(payload["results"]) == 4
+
+    # absent when not requested: the scope names exactly the filters applied
+    main(["list", "--stats"])
+    assert "stale_summary" not in json.loads(capsys.readouterr().out)["scope"]
+
+
 def test_search_hit_echoes_the_drift_posture(scrolls_home, capsys):
     # H58: the drift posture rides ranked hits on the CLI too (the search ≡ list
     # parity on the new axis). The seeded titles all carry "Post", so the FTS

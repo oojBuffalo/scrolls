@@ -132,6 +132,8 @@ uv run scrolls list --source web --stage detected --category ""  # filters AND t
 uv run scrolls list --tag python --concept "machine learning"  # membership facets over tags/concepts (ADR 0059)
 uv run scrolls list --drift drifted  # browse by custody drift posture; rows total `facets drift`'s count for it (H54)
 uv run scrolls list --stale-before 2026-06-01  # browse the stale set; exactly what `verify --stale-before` would re-check (H85)
+uv run scrolls list --stale-classification  # browse the stale-enrichment set; which scrolls `classify --stale` would refresh (H185)
+uv run scrolls list --stale-summary  # browse the stale-summary set; the members `kb --stale` would re-synthesize (H189)
 uv run scrolls list --limit 50 --stats  # cap the listing + wrap it in the scope-honest envelope (completeness contract G2)
 uv run scrolls facets         # the filterable vocabulary (sources/categories/tags/concepts) with counts, as JSON
 uv run scrolls facets concepts --source arxiv  # one dimension, scoped by the same facets as search (ADR 0080)

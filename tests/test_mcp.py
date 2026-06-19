@@ -479,6 +479,90 @@ def test_list_scrolls_stale_classification_is_empty_when_nothing_stale(scrolls_h
     assert mcp_server.list_scrolls(stale_classification=True) == []
 
 
+def _seed_stale_summary_member(db, item_id, source, concept):
+    """A rendered cluster member carrying one concept (stale-summary fixture)."""
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id=item_id, source=source, url=f"https://{source}.example.com/{item_id}",
+        saved_at="2026-06-14T00:00:00+00:00", title=item_id,
+        extracted_text="A note about the concept.", content_hash="sha256:" + item_id,
+        concepts=(concept,), stage="rendered",
+        markdown_path=f"scrolls/{source}/{item_id}.md"))
+
+
+def _store_stale_summary(db, slug, display):
+    """A stored summary whose fingerprint no longer matches its live cluster."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(db, ConceptSummary(
+        slug=slug, display=display, summary="How it shows up.",
+        members_hash="stale-old-digest", engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def _seed_stale_summaries(db):
+    """Two stale summaries: Bm25 (web+arxiv) and Vector (web+web) → 4 members."""
+    _seed_stale_summary_member(db, "web:bw", "web", "Bm25")
+    _seed_stale_summary_member(db, "arxiv:ba", "arxiv", "Bm25")
+    _seed_stale_summary_member(db, "web:v1", "web", "Vector")
+    _seed_stale_summary_member(db, "web:v2", "web", "Vector")
+    _store_stale_summary(db, "bm25", "Bm25")
+    _store_stale_summary(db, "vector", "Vector")
+
+
+def test_list_scrolls_filters_by_stale_summary(scrolls_home):
+    # the MCP twin of `scrolls list --stale-summary` (H189): the items belonging to
+    # a concept whose stored LLM summary the live members no longer reproduce — the
+    # members a `kb --stale` refresh's clusters span.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_summaries(db)
+
+    stale = {r["id"] for r in mcp_server.list_scrolls(stale_summary=True)}
+    assert stale == {"web:bw", "arxiv:ba", "web:v1", "web:v2"}
+
+    # ANDs with `source`, carrying the H171 attribution: a multi-source stale
+    # cluster lists every member, so `--source S` returns S's members.
+    web = {r["id"] for r in mcp_server.list_scrolls(stale_summary=True, source="web")}
+    assert web == {"web:bw", "web:v1", "web:v2"}
+    arxiv = mcp_server.list_scrolls(stale_summary=True, source="arxiv")
+    assert [r["id"] for r in arxiv] == ["arxiv:ba"]
+
+
+def test_list_scrolls_stale_summary_lists_the_health_stale_concept_members(scrolls_home):
+    # convergence with the audit (H189): the rows are exactly the members of the
+    # concepts `get_library_health` flags stale in summaries.items.
+    from scrolls.kb import slugify
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_summaries(db)
+
+    stale_slugs = {
+        e["slug"] for e in mcp_server.get_library_health()["summaries"]["items"]
+    }
+    assert stale_slugs == {"bm25", "vector"}
+
+    from scrolls.items import list_items
+
+    expected = {
+        item.id
+        for item in list_items(db)
+        if any(slugify(c) in stale_slugs for c in item.concepts)
+    }
+    rows = {r["id"] for r in mcp_server.list_scrolls(stale_summary=True)}
+    assert rows == expected
+
+
+def test_list_scrolls_stale_summary_is_empty_when_nothing_stale(scrolls_home):
+    # honest absence: a library with no stale summaries is [], never an error
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_summary_member(db, "web:fresh", "web", "Fresh")
+    assert mcp_server.list_scrolls(stale_summary=True) == []
+
+
 def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
     # custody state travels with browse results (ADR 0097): an agent sees which
     # items it holds in full without a follow-up get_scroll
