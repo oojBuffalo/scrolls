@@ -1564,7 +1564,7 @@ choice (ADRs 0004, 0005).
   into a single decision-grade invariant
   (`tests/test_mcp.py::test_mcp_read_surface_shape_contract`, the H157/H50
   "pin it once" move) that records the whole read-surface shape over one shared
-  multi-source seed as **three shape classes** a future read tool must fit:
+  multi-source seed as **four shape classes** a future read tool must fit:
   (A) the **bare-array browse twins** `search_scrolls`/`list_scrolls`/
   `get_related_scrolls` — a `list[dict]`, per-item custody (`fidelity`/`drift`)
   on each hit, never a scope-level `stats`; (B) the **stats-object twins**
@@ -1572,9 +1572,20 @@ choice (ADRs 0004, 0005).
   where the per-source scope rides; (C) the **nested audit twin**
   `get_library_health` — *exactly* `run_doctor`'s custody block (not a
   `stats`-wrapped envelope), so it alone carries the nested
-  `enrichment.by_source`/`summaries.by_source` re-derivability slices. The
-  classes are disjoint and exhaustive over the scope-bearing read twins, so a new
-  tool's shape has one obvious contract to satisfy.
+  `enrichment.by_source`/`summaries.by_source` re-derivability slices; and
+  (D) the **Markdown-string twins** `get_context_bundle`/`get_concept_page`/
+  `get_tag_page` — the artifact-emitting reads that return a `str` (the output
+  *is* the thing, ADR 0077, not a JSON report about it), so they carry their
+  custody honesty **inside the rendered text** (the `custody_headline`, the G2
+  `Coverage:` line, the `_By source:_`/`_Attention:_`/`_Refresh:_` lines) and
+  are never JSON-parseable into a scope envelope. Classes A–C are the JSON
+  scope-bearing twins (pinned by `test_mcp_read_surface_shape_contract`,
+  roadmap H186); class D is pinned by the sibling
+  `test_mcp_read_surface_markdown_string_class` (roadmap H194), which also
+  anchors the context bundle byte-for-byte to the CLI `context` artifact so the
+  two surfaces cannot word the custody-in-text differently. The four classes are
+  disjoint and exhaustive over the custody-bearing read twins, so a new tool's
+  shape has one of four obvious contracts to satisfy.
 
 ## Interface conventions
 

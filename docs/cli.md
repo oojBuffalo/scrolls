@@ -226,7 +226,12 @@ whole MCP read-surface shape — these **array** twins, the **stats-object** twi
 into one decision-grade contract (`test_mcp_read_surface_shape_contract`, roadmap
 H186; the prose home is the "MCP read-surface shape contract" note in
 `docs/architecture.md`), so a future read tool has a single shape contract to
-satisfy. G1
+satisfy. The **Markdown-string** twins `get_context_bundle`/`get_concept_page`/
+`get_tag_page` are the fourth class (roadmap H194): they return a `str` (the
+output *is* the artifact, ADR 0077), carrying their custody honesty inside the
+rendered text rather than a JSON envelope, pinned by the sibling
+`test_mcp_read_surface_markdown_string_class` (which also anchors the context
+bundle byte-for-byte to the CLI `context`). G1
 is the half that is already true across every surface and is locked so it
 cannot regress.
 

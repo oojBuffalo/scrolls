@@ -8,6 +8,7 @@ the real FastMCP server to lock the registered tool surface.
 
 import asyncio
 import dataclasses
+import json
 
 import pytest
 
@@ -1399,9 +1400,14 @@ def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(s
 #       nested enrichment.by_source / summaries.by_source / by_source / attention /
 #       headline.
 
-# the MCP read tools by shape class — the contract's three groups, named once
+# the MCP read tools by shape class — the contract's four groups, named once.
+# A/B/C are the JSON scope-bearing twins (H186); D is the Markdown-string twins
+# (H194) — the artifact-emitting reads that carry custody honesty *inside* the
+# rendered text rather than in a JSON envelope (ADR 0077, "the output is the
+# thing"). get_library_health (class C) is named inline, not a tuple of one.
 _ARRAY_TWINS = ("search_scrolls", "list_scrolls", "get_related_scrolls")
 _STATS_OBJECT_TWINS = ("get_link_graph", "get_works")
+_STRING_TWINS = ("get_context_bundle", "get_concept_page", "get_tag_page")
 
 
 def _seed_surface_shape_fixture(db):
@@ -1519,6 +1525,96 @@ def test_mcp_read_surface_shape_contract(scrolls_home):
     assert set(_ARRAY_TWINS).isdisjoint(_STATS_OBJECT_TWINS)
     assert "get_library_health" not in _ARRAY_TWINS
     assert "get_library_health" not in _STATS_OBJECT_TWINS
+
+
+def _seed_string_twin_pages(db):
+    """A rendered, concept- and tag-bearing pair so a compiled library has a
+    concept page and a tag page for the string twins to serve.
+
+    Distinct topic ("vectors"/`ranking`) from the H186 ``attention`` seed, so a
+    `get_context_bundle("attention")` over the combined library is unchanged —
+    these items don't match that query — keeping the context-bundle ↔ CLI
+    parity a clean structural equality.
+    """
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id="arxiv:vec", source="arxiv", url="https://arxiv.org/abs/vec",
+        saved_at="2026-06-12T00:00:00+00:00", title="Vector Retrieval",
+        raw_text="<r>vectors</r>", extracted_text="dense vector retrieval ranking",
+        content_hash="sha256:v1", stage="rendered",
+        markdown_path="scrolls/arxiv/vec.md",
+        concepts=("Vector retrieval",), tags=("ranking",)))
+    insert_item(db, ScrollItem(
+        id="crossref:vec", source="crossref", url="https://doi.org/10.1234/vec",
+        canonical_url="https://doi.org/10.1234/vec", source_id="10.1234/vec",
+        saved_at="2026-06-12T00:00:00+00:00", title="Vectors, published",
+        raw_text="<r>vectors</r>", extracted_text="vector retrieval published ranking",
+        content_hash="sha256:v2", stage="rendered",
+        markdown_path="scrolls/crossref/vec.md",
+        concepts=("Vector retrieval",), tags=("ranking",)))
+
+
+def test_mcp_read_surface_markdown_string_class(scrolls_home, capsys):
+    # roadmap H194: the *fourth* shape class beside the three JSON classes of
+    # test_mcp_read_surface_shape_contract (H186). The Markdown-string read
+    # twins — get_context_bundle/get_concept_page/get_tag_page — are a
+    # genuinely distinct shape: they return a `str` (the artifact *is* the
+    # output, ADR 0077, not a JSON report about it), so they carry their custody
+    # honesty *inside* the rendered text (the custody_headline, the G2 Coverage:
+    # line, the _By source:_/_Attention:_/_Refresh:_ lines), never a JSON
+    # envelope. Pinning them as class D completes the read-surface taxonomy so a
+    # future read tool's shape has one of four obvious contracts to satisfy.
+    # See the "MCP read-surface shape contract" subsection of docs/architecture.md.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_surface_shape_fixture(db)   # the H186 attention seed → the context bundle
+    _seed_string_twin_pages(db)       # rendered concept/tag-bearing pair → the pages
+    compile_kb(get_paths())
+
+    # class D — every string twin returns a `str` artifact, non-vacuous, and is
+    # NOT a JSON envelope: an agent cannot json.loads() a scope/results object
+    # off it (it is Markdown), so its honesty must be read from the text.
+    string_results = {
+        "get_context_bundle": mcp_server.get_context_bundle("attention"),
+        "get_concept_page": mcp_server.get_concept_page("Vector retrieval"),
+        "get_tag_page": mcp_server.get_tag_page("ranking"),
+    }
+    assert set(string_results) == set(_STRING_TWINS)  # every string twin covered
+    for name, doc in string_results.items():
+        assert isinstance(doc, str), f"{name} must return a Markdown string"
+        assert doc.strip(), f"{name} returned an empty document"
+        assert "# " in doc, f"{name} carries no Markdown heading"
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(doc)  # not parseable into any JSON scope envelope
+    # non-vacuous: each twin serves its own artifact's heading (the concept/tag
+    # heading rides inside the @generated sentinel fence, ADR 0102)
+    assert "# Scrolls Context Bundle: attention" in string_results["get_context_bundle"]
+    assert "# Concept: Vector retrieval" in string_results["get_concept_page"]
+    assert "# Tag: ranking" in string_results["get_tag_page"]
+
+    # get_context_bundle carries the same headline / Coverage / action-line text
+    # the CLI `context` does — the surface-parity the convergence suite proves
+    # per-line; here we assert the *shape class* (the custody honesty rides in
+    # the text, not a JSON field) by pinning byte-identity with the CLI surface
+    # over one scope, so whatever custody/action lines the CLI emits ride
+    # identically on the MCP twin.
+    bundle = string_results["get_context_bundle"]
+    capsys.readouterr()  # discard the `init` payload above
+    assert main(["context", "attention"]) == 0
+    cli_bundle = capsys.readouterr().out
+    assert bundle == cli_bundle  # MCP twin == CLI artifact, byte-for-byte
+    # the custody honesty lives inside the rendered text (not a JSON field):
+    assert "# Scrolls Context Bundle: attention" in bundle
+    assert "_Custody:" in bundle          # the scope custody headline
+    assert "Coverage:" in bundle          # the G2 completeness line
+
+    # the FOUR classes are disjoint and exhaustive over the custody-bearing read
+    # twins: no twin belongs to two classes, and class C (the lone audit twin)
+    # is none of the others — the taxonomy has no overlap or gap.
+    assert set(_STRING_TWINS).isdisjoint(_ARRAY_TWINS)
+    assert set(_STRING_TWINS).isdisjoint(_STATS_OBJECT_TWINS)
+    assert "get_library_health" not in _STRING_TWINS
 
 
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
