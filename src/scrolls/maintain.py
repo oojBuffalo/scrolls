@@ -41,11 +41,21 @@ error), and one corrupt line is skipped rather than hiding every good run.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import parse_since, render_custody_headline, weakest_source
+from scrolls.custody import (
+    latest_events,
+    parse_since,
+    recheck_coverage,
+    render_custody_headline,
+    weakest_source,
+)
+from scrolls.doctor import run_doctor
+from scrolls.items import list_items
+from scrolls.kb import compile_kb
 from scrolls.paths import LibraryPaths
 
 # The axes a snapshot carries from a doctor report. `score`/`enrichment_stale`/
@@ -656,3 +666,120 @@ def read_log(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     if limit is not None:
         entries = entries[-limit:] if limit > 0 else []
     return entries
+
+
+def maintain_coverage(paths: LibraryPaths, source: str | None = None) -> dict[str, int]:
+    """Recheck coverage from a standalone ledger read — the ``--no-recheck`` path.
+
+    The recheck path folds its events into its own `latest_events` read; with no
+    recheck there is no recheck, so this reads the ledger once to report the same
+    ``{verified, total}`` coverage of the verifiable (hash-bearing) held set
+    (roadmap H109). A missing store is the honest empty ``{verified: 0, total: 0}``
+    — nothing held, nothing to verify. `source` scopes the verifiable set to one
+    source's held items (roadmap H165), so an offline scoped pass reports <S>'s
+    coverage, agreeing with the scoped audit's `custody.drift.coverage`.
+    """
+    if not paths.db_path.exists():
+        return {"verified": 0, "total": 0}
+    hash_bearing = [
+        item for item in list_items(paths.db_path, source=source) if item.content_hash
+    ]
+    return recheck_coverage(hash_bearing, latest_events(paths.db_path))
+
+
+def skipped_recheck_report(
+    paths: LibraryPaths, source: str | None = None
+) -> dict[str, Any]:
+    """The ``recheck`` block of a pass that skipped the live edge (``--no-recheck``).
+
+    The recheck is the one live network edge (behind the `live_recapture` seam);
+    a ``--no-recheck`` pass — and every MCP pass (roadmap H196), which must not
+    trigger implicit re-captures — skips it, recording no new drift events. The
+    block is the honest skipped shape: zeroed verdict counts, ``scope``/``since``
+    null (no window was used), and the coverage figure still read from the current
+    ledger (`maintain_coverage`) so even an offline pass reports "N of M verifiable
+    items carry a verdict".
+    """
+    return {
+        "skipped": True, "scope": None, "since": None, "checked": 0,
+        "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
+        "coverage": maintain_coverage(paths, source),
+    }
+
+
+def assemble_report(
+    paths: LibraryPaths,
+    *,
+    recheck_report: dict[str, Any],
+    previous: dict[str, Any] | None,
+    source: str | None,
+    now: str,
+) -> dict[str, Any]:
+    """Build a maintenance-pass report from a recheck result (roadmap H34/H196).
+
+    The shared composition both the CLI `scrolls maintain` command and the MCP
+    `run_maintenance` act run, after the caller has performed the *recheck* step
+    (the one live edge — the CLI may re-capture through the `cli.live_recapture`
+    seam; an MCP pass passes a `skipped_recheck_report`). Given that recheck
+    result, this performs the deterministic, network-free rest of the pass:
+
+    1. *regenerate* views (`compile_kb` — never an LLM re-synthesis),
+    2. *audit* the post-maintenance state once (`run_doctor`, read-only — maintain
+       never ``--fix``es),
+    3. compute the **custody delta** vs the last recorded snapshot and, for a
+       whole-library pass (``source is None``), *record* this run's snapshot (the
+       next delta baseline) and *append* it to the trend log,
+    4. assemble the report: the recheck counts, the compiled-view counts, the
+       distilled `custody` snapshot + one-line `headline`, the live-pass-only
+       per-source breakdowns (`by_source`/`enrichment_by_source`/`summary_by_source`),
+       the single weakest-source `attention` flag, the `delta`, the structural
+       `issues` count, and the `suggested` on-request repair commands.
+
+    A **scoped** pass (``source`` set) does not record the snapshot/log — it must
+    not clobber the single whole-library baseline with a one-source slice — so its
+    `delta` is the honest ``null`` (custody-vision §2.4 / ADR 0082). The whole-
+    library pass owns the cross-run trend.
+
+    Report-only and idempotent: it regenerates `library/` views and records the
+    snapshot/log bookkeeping, but never repairs index rows, reclassifies, or
+    re-summarizes — `doctor --fix` / `classify --stale` / `kb --stale` stay the
+    explicit, on-request mutations.
+    """
+    # 1. REGENERATE views from canonical rows (views are regenerable). Whole-library
+    #    even under --source: a deterministic global recompile, not a per-source one.
+    compiled = compile_kb(paths)
+
+    # 2. AUDIT the post-maintenance state, read-only. `source` scopes the whole
+    #    audit to <S> via the shipped pre-filter (roadmap H162).
+    report = run_doctor(paths, source=source)
+    current = custody_snapshot(report)
+
+    # 3. DELTA vs the last recorded snapshot, then record this run's — but only for
+    #    a whole-library pass: a scoped pass keeps no per-source baseline (the stored
+    #    snapshot drops `by_source`), so its delta is honestly `null`.
+    if source is None:
+        delta = compute_delta(previous, current)
+        save_snapshot(snapshot_path(paths), {**current, "recorded_at": now})
+        append_log_entry(
+            log_path(paths),
+            {"recorded_at": now, "snapshot": current, "delta": delta},
+        )
+    else:
+        delta = None
+
+    by_source = report_by_source(report)
+    return {
+        "recorded_at": now,
+        "source": source,
+        "recheck": recheck_report,
+        "compiled": dataclasses.asdict(compiled),
+        "custody": current,
+        "headline": snapshot_headline(current),
+        "by_source": by_source,
+        "attention": weakest_source(by_source),
+        "enrichment_by_source": report_enrichment_by_source(report),
+        "summary_by_source": report_summary_by_source(report),
+        "delta": delta,
+        "issues": report["issues"],
+        "suggested": suggest_repairs(report, source=source),
+    }

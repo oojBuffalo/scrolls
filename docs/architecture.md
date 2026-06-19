@@ -1531,6 +1531,17 @@ choice (ADRs 0004, 0005).
   read-only posture, the repairable `--fix` axis stays CLI, converges with
   `status`/`doctor` (scoped and whole) by construction and is pinned in
   `tests/test_custody_convergence.py`),
+  `run_maintenance()` (roadmap H196 — the *composed* scheduled custody pass over
+  MCP, the act-side sibling of the read-only `get_library_health`: regenerate the
+  views, audit, compute the custody `delta` vs the last run, and record this run's
+  snapshot + append it to the trend log, returning the same report shape the CLI
+  `scrolls maintain` prints. **The recheck — `maintain`'s one live network edge —
+  is skipped: the MCP path always runs `--no-recheck`** so an MCP tool never
+  triggers implicit re-captures, leaving targeted live rechecks to the explicit
+  `verify_scroll` act (the same read/act boundary `get_library_health` draws against
+  `doctor --fix`). Report-only and idempotent — it records the snapshot/log
+  bookkeeping, never repairs rows; the CLI and MCP share `maintain.assemble_report`,
+  so the two converge field-for-field over the same library),
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
   `compile_library`) registered

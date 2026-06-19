@@ -95,6 +95,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_tag_page",
         "list_sources",
         "get_library_health",
+        "run_maintenance",
         "ingest_url",
         "verify_scroll",
         "follow_feed",
@@ -2199,3 +2200,101 @@ def test_compile_library_before_init_is_a_zero_run(scrolls_home):
     assert payload == {"items": 0, "sources": 0, "categories": 0,
                        "concepts": 0, "tags": 0, "summaries": 0, "clusters": 0, "works": 0, "pages": 0}
     assert not scrolls_home.exists()  # compiling never creates a library
+
+
+# --- run_maintenance: the scheduled custody pass over MCP (H196) ---
+
+
+def test_run_maintenance_returns_the_maintain_report_shape(scrolls_home):
+    # H196: the MCP act wraps the shipped `maintain` engine, returning the same
+    # report shape — custody/headline/delta/by_source/attention/the per-source
+    # refresh-debt maps/suggested — as the CLI `scrolls maintain` pass.
+    from scrolls.custody import weakest_source
+    from scrolls.doctor import run_doctor
+    from scrolls.maintain import custody_snapshot, snapshot_headline
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+
+    report = mcp_server.run_maintenance()
+
+    assert set(report) == {
+        "recorded_at", "source", "recheck", "compiled", "custody", "headline",
+        "by_source", "attention", "enrichment_by_source", "summary_by_source",
+        "delta", "issues", "suggested",
+    }
+    # whole-library and offline by default: the recheck is the one live network
+    # edge (behind the `live_recapture` seam), and an MCP tool must not trigger
+    # implicit re-captures — so the MCP path defaults to --no-recheck (regenerate
+    # + audit + delta + record), leaving targeted live rechecks to `verify_scroll`.
+    assert report["source"] is None
+    assert report["recheck"]["skipped"] is True
+    assert report["recheck"]["scope"] is None
+    # the custody picture reproduces the fixture's mix (not an all-zero pass) and
+    # equals the doctor audit + the shared distillation primitives `status` uses.
+    audit = run_doctor(get_paths())
+    assert report["custody"] == custody_snapshot(audit)
+    assert report["headline"] == snapshot_headline(custody_snapshot(audit))
+    assert report["attention"] == weakest_source(audit["custody"]["by_source"])
+    assert report["attention"]["source"] == "web"
+
+
+def test_run_maintenance_records_the_snapshot_and_log(scrolls_home):
+    # H196: like the CLI pass, the MCP act records this run's snapshot (the next
+    # delta baseline) and appends to the append-only trend log — idempotent,
+    # report-only bookkeeping (the custody-ledger posture, custody-vision §2.4).
+    from scrolls.maintain import load_snapshot, log_path, read_log, snapshot_path
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+
+    first = mcp_server.run_maintenance()
+    assert first["delta"]["first_run"] is True
+    snap = load_snapshot(snapshot_path(get_paths()))
+    assert snap is not None and "recorded_at" in snap
+    assert len(read_log(log_path(get_paths()))) == 1
+
+    # a second pass sees the first as its baseline (no longer a first run) and the
+    # log grows by one — the append-only trend posture, never a rewrite.
+    second = mcp_server.run_maintenance()
+    assert second["delta"]["first_run"] is False
+    assert len(read_log(log_path(get_paths()))) == 2
+
+
+def test_run_maintenance_before_init_is_the_honest_empty_pass(scrolls_home):
+    # honest before-init (H196): an uninitialized library is the honest-empty pass
+    # — score null (never a fabricated 100), the zero-scroll headline — never a crash.
+    report = mcp_server.run_maintenance()
+    assert report["custody"]["score"] is None
+    assert report["headline"] == "_Custody: 0 scroll(s)._"
+    assert report["by_source"] == {}
+    assert report["attention"] is None
+    assert report["issues"] == 0
+
+
+def test_run_maintenance_converges_with_cli_maintain_no_recheck(scrolls_home, capsys):
+    # H196 MCP↔CLI parity: the tool's report equals `scrolls maintain --no-recheck`
+    # over the same seed, field for field (modulo the per-run `recorded_at` stamp) —
+    # one maintenance pass, two surfaces.
+    import json
+
+    from scrolls.maintain import snapshot_path
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    capsys.readouterr()
+
+    report_mcp = mcp_server.run_maintenance()
+
+    # the MCP pass recorded a snapshot; drop it so the CLI pass is also a first run
+    # over the *same* (recheck-free, hence unchanged) custody state — the two reports
+    # then differ only in their `recorded_at` timestamps.
+    snapshot_path(get_paths()).unlink()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report_cli = json.loads(capsys.readouterr().out)
+
+    assert set(report_mcp) == set(report_cli)
+    for key in report_cli:
+        if key == "recorded_at":
+            continue
+        assert report_mcp[key] == report_cli[key], f"diverged on {key}"

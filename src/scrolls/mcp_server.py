@@ -36,7 +36,14 @@ from scrolls.custody import (
 )
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
-from scrolls.maintain import custody_snapshot, snapshot_headline
+from scrolls.maintain import (
+    assemble_report,
+    custody_snapshot,
+    load_snapshot,
+    skipped_recheck_report,
+    snapshot_headline,
+    snapshot_path,
+)
 from scrolls.generated import generated_body
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import compute_facets
@@ -80,7 +87,9 @@ _INSTRUCTIONS = (
     "for the whole "
     "library's link structure at once, get_library_health for the "
     "whole-library custody audit (score, fidelity tiers, drift, and which "
-    "source needs attention), and ingest_url to save "
+    "source needs attention), run_maintenance for a one-call scheduled custody "
+    "pass (regenerate views, audit, and the custody delta vs the last run; "
+    "offline — it never re-captures), and ingest_url to save "
     "something new. verify_scroll re-captures a held scroll and reports "
     "whether its source has drifted or rotted since it was saved. "
     "follow_feed subscribes the library to an RSS/Atom "
@@ -591,6 +600,50 @@ def get_library_health(source: str | None = None) -> dict[str, Any]:
     }
 
 
+def run_maintenance() -> dict[str, Any]:
+    """Run one scheduled custody-maintenance pass over the library (no network).
+
+    The MCP counterpart of the CLI worker's `scrolls maintain` (roadmap H196).
+    Where `get_library_health` *reads* the whole-library custody audit and
+    `verify_scroll`/`compile_library` *act* on one item or the views,
+    this runs the **composed** maintenance pass the scheduled worker does:
+    *regenerate* the compiled `library/` views, *audit* the post-maintenance state,
+    compute the **custody delta** against the last recorded run, and *record* this
+    run's snapshot + append it to the trend log. Returns the same report shape the
+    CLI prints — `custody` (the distilled snapshot) + the one-line `headline`, the
+    `recheck` counts, the compiled-view counts, the per-source `by_source` /
+    `enrichment_by_source` / `summary_by_source` breakdowns, the weakest-source
+    `attention` flag, the `delta` vs the last run, the structural `issues` count,
+    and the `suggested` on-request repair commands — so an agent-driven dogfood
+    loop reads the one-call delta/`suggested` block instead of re-composing it from
+    primitives.
+
+    **Offline by default — the recheck is skipped.** `maintain`'s recheck is its
+    one live network edge (re-fetching each source to detect drift); an MCP tool
+    must not trigger implicit network re-captures, so this MCP path always runs
+    ``--no-recheck`` (deterministic: regenerate + audit + delta + record, drift read
+    from the verify ledger, never re-checked live). Targeted live rechecks stay the
+    explicit act — `verify_scroll` per item — the same read/act boundary
+    `get_library_health` draws against `scrolls doctor --fix`.
+
+    Report-only and idempotent (custody-vision §2.4): it regenerates views and
+    records the snapshot/log bookkeeping, but never repairs index rows,
+    reclassifies, or re-summarizes — `doctor --fix` / `classify --stale` /
+    `kb --stale` stay the explicit, on-request mutations. Converges field-for-field
+    with the CLI `scrolls maintain --no-recheck` over the same library. An
+    empty/uninitialized library is the honest-empty pass (`score: null`, the
+    `_Custody: 0 scroll(s)._` headline), never an error.
+    """
+    paths = get_paths()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    previous = load_snapshot(snapshot_path(paths))
+    # --no-recheck over MCP: skip the live edge, report coverage from the ledger.
+    recheck_report = skipped_recheck_report(paths)
+    return assemble_report(
+        paths, recheck_report=recheck_report, previous=previous, source=None, now=now
+    )
+
+
 def ingest_url(url: str) -> dict[str, Any]:
     """Save a URL into the library: register, fetch, classify, render (network).
 
@@ -718,6 +771,7 @@ _TOOLS = (
     get_tag_page,
     list_sources,
     get_library_health,
+    run_maintenance,
     ingest_url,
     verify_scroll,
     follow_feed,

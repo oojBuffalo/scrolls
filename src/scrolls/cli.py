@@ -97,8 +97,7 @@ from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
 from scrolls.maintain import (
     DEFAULT_HISTORY_LIMIT,
-    append_log_entry,
-    compute_delta,
+    assemble_report,
     compute_trend,
     custody_snapshot,
     last_run_boundary,
@@ -108,10 +107,9 @@ from scrolls.maintain import (
     report_by_source,
     report_enrichment_by_source,
     report_summary_by_source,
-    save_snapshot,
+    skipped_recheck_report,
     snapshot_headline,
     snapshot_path,
-    suggest_repairs,
     weakest_source,
 )
 from scrolls.media import capture_media, has_pending_media
@@ -1257,118 +1255,23 @@ def _cmd_maintain(
     if recheck:
         recheck_report = _recheck_held_items(paths, limit, now, boundary, source)
     else:
-        recheck_report = {
-            "skipped": True, "scope": None, "since": None, "checked": 0,
-            "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
-            # Coverage is a read of the current ledger, not the live edge, so it
-            # rides --no-recheck too (roadmap H109): "N of M verifiable items
-            # carry a verdict" without re-capturing anything. Scoped to <S> too,
-            # so the reported coverage agrees with the scoped audit's.
-            "coverage": _maintain_coverage(paths, source),
-        }
+        # --no-recheck skips the live edge, reporting coverage from a standalone
+        # ledger read (roadmap H109) — the same offline shape every MCP pass uses.
+        recheck_report = skipped_recheck_report(paths, source)
 
-    # 2. REGENERATE views from canonical rows (views are regenerable). Whole-
-    #    library even under --source: a deterministic global recompile, not a
-    #    per-source one (decision #3 — only recheck/audit/delta narrow).
-    compiled = compile_kb(paths)
-
-    # 3. AUDIT the post-maintenance state, read-only (maintain never --fixes).
-    #    `source` scopes the whole audit to <S> via the shipped pre-filter (H162).
-    report = run_doctor(paths, source=source)
-    current = custody_snapshot(report)
-
-    # 4. DELTA vs the last recorded snapshot, then 5. record this run's: refresh
-    #    the single baseline AND append the run to the append-only trend log.
-    #    A SCOPED pass does neither: it must not clobber the single whole-library
-    #    baseline/trend with a one-source slice (no per-source storage shape), and
-    #    the stored snapshot drops `by_source` so it cannot be sliced to <S> — so
-    #    the scoped delta is honestly `null` (the per-pass `recheck` movement is
-    #    the signal; the whole-library pass owns the cross-run trend).
-    if source is None:
-        delta = compute_delta(previous, current)
-        save_snapshot(path, {**current, "recorded_at": now})
-        append_log_entry(
-            log_path(paths),
-            {"recorded_at": now, "snapshot": current, "delta": delta},
-        )
-    else:
-        delta = None
-
-    # Per-source custody breakdown (roadmap H123): the `{tiers, drift}` tally split
-    # per source the audit already produced, used both to report the full map and
-    # (roadmap H119) to distil the single weakest source worth flagging. Under
-    # --source this is the singleton {S: …}, so `attention` distils to null.
-    by_source = report_by_source(report)
-
-    print(
-        json.dumps(
-            {
-                "recorded_at": now,
-                # The source scope this pass ran under (roadmap H165): `null` for
-                # the whole-library pass, the source name when scoped — so a reader
-                # knows every block below is the one-source view and the `delta` is
-                # null because a scoped pass keeps no per-source baseline.
-                "source": source,
-                "recheck": recheck_report,
-                "compiled": dataclasses.asdict(compiled),
-                "custody": current,
-                # The one-line custody picture (roadmap H103): the shared
-                # `custody_headline` rendered from the snapshot this run records,
-                # so the worker's log reads it without assembling the raw counts.
-                # Converges by construction with the `custody` block it sits beside.
-                "headline": snapshot_headline(current),
-                # The per-source map names *which* source's custody to target.
-                # Live-pass only (like `suggested`/`scope`): derived fresh from this
-                # pass's audit, never recorded in the snapshot/log, so
-                # `--history`/`--trend` carry none. Sums to the `custody` block
-                # beside it by construction (H104).
-                "by_source": by_source,
-                # The single weakest source (roadmap H119): the one carrying the
-                # most actionable loss (drifted + rotted), distilled from `by_source`
-                # so an unattended log flags it without scanning every source. Also
-                # carries the exact `scrolls verify --source <S>` recheck command
-                # (roadmap H137) — the bridge to the act. `null` when nothing stands
-                # out (a clean, single-source, or empty library). Live-pass only,
-                # like `by_source`.
-                "attention": weakest_source(by_source),
-                # The per-source stale-classification debt (roadmap H147): doctor's
-                # `custody.enrichment.by_source` map (H135) — a flat `{source:
-                # stale_count}` of the offending sources only — read faithfully so an
-                # unattended log names *which* source's `classify --stale` to run
-                # without re-running doctor. A standalone member (not folded into the
-                # drift `by_source`, so the H123/H127 byte-identity holds), live-pass
-                # only like `by_source`/`attention`/`suggested`, summing to
-                # `custody.enrichment_stale` by construction. Honest empty `{}` when no
-                # source carries stale debt (the offenders-only posture).
-                "enrichment_by_source": report_enrichment_by_source(report),
-                # The per-source stale-summary debt (roadmap H171/H175): doctor's
-                # `custody.summaries.by_source` map (H171) — a flat `{source:
-                # stale_count}` of the offending sources only — read faithfully so an
-                # unattended log names *which* source's `kb --stale` to run without
-                # re-running doctor. The summary-axis sibling of `enrichment_by_source`,
-                # live-pass only. Unlike that map, it need NOT sum to
-                # `summaries_stale`: a concept spanning several sources counts toward
-                # each (the H171 asymmetry), so the maintain↔doctor tie is
-                # faithful-read equality, not a sum-to-whole check. Honest empty `{}`
-                # when no source carries stale-summary debt.
-                "summary_by_source": report_summary_by_source(report),
-                "delta": delta,
-                "issues": report["issues"],
-                # Actionable guidance, never an action: the explicit on-request
-                # command for each repairable finding (custody §2.4). Derived
-                # fresh from this pass's audit, so it is not recorded in the
-                # snapshot/log — `--history` replays snapshots, never suggestions.
-                # The pass's `source` scope (roadmap H182) names the *scoped*
-                # refresh (`classify --stale --source <S>`) so a `maintain --source
-                # <S>` pass — whose pre-filtered audit collapsed the source universe
-                # to {S}, defeating H181's strict-subset rule — still suggests the
-                # scoped act the operator declared, not the whole-library sweep.
-                "suggested": suggest_repairs(report, source=source),
-            }
-        )
+    # 2-5. REGENERATE views, AUDIT, DELTA, record, and assemble the report — the
+    #       shared composition `maintain.assemble_report` owns, run identically by
+    #       the MCP `run_maintenance` act (roadmap H196). A whole-library pass
+    #       records the snapshot/log baseline; a scoped pass keeps none (its delta
+    #       is honestly `null`). The report carries the live-pass-only per-source
+    #       breakdowns, the weakest-source `attention` flag, and the `suggested`
+    #       on-request repairs the audit implies.
+    result = assemble_report(
+        paths, recheck_report=recheck_report, previous=previous, source=source, now=now
     )
+    print(json.dumps(result))
     # nonzero only on structural drift the operator must address (mirrors doctor)
-    return 1 if report["issues"] > 0 else 0
+    return 1 if result["issues"] > 0 else 0
 
 
 def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
@@ -1465,25 +1368,6 @@ def _recheck_held_items(
         hash_bearing, verdicts, {event.item_id for event in events}
     )
     return counts
-
-
-def _maintain_coverage(paths: LibraryPaths, source: str | None = None) -> dict:
-    """Recheck coverage from a standalone ledger read (the --no-recheck path).
-
-    The recheck path folds its events into its own `latest_events` read; with
-    `--no-recheck` there is no recheck, so this reads the ledger once to report
-    the same `{verified, total}` coverage of the verifiable held set (H109). A
-    missing store is the honest empty `{verified: 0, total: 0}` — nothing held,
-    nothing to verify. `source` scopes the verifiable set to one source's held
-    items (roadmap H165), so an offline `maintain --no-recheck --source S` reports
-    <S>'s coverage, agreeing with the scoped audit's `custody.drift.coverage`.
-    """
-    if not paths.db_path.exists():
-        return {"verified": 0, "total": 0}
-    hash_bearing = [
-        item for item in list_items(paths.db_path, source=source) if item.content_hash
-    ]
-    return recheck_coverage(hash_bearing, latest_events(paths.db_path))
 
 
 def _cmd_mcp() -> int:
