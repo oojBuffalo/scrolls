@@ -412,7 +412,17 @@ convergence spine beside the JSON `attention` tie: every readable surface's pars
 `{source, reason, command}` equals `weakest_source(doctor.custody.by_source)` and the
 `status`/`maintain` flag, all absent together on a clean scope
 (`test_readable_attention_line_converges_across_surfaces_and_the_json_flag`,
-`test_readable_attention_line_absent_together_with_the_json_flag`).
+`test_readable_attention_line_absent_together_with_the_json_flag`). The **full
+field-for-field** invariant sharpens that tie (roadmap H160): the readable surface
+distilled — the `_Attention:_` line's source / loss reason **decomposed into
+`{drifted, rotted}`** / recheck command, *plus* the flagged source's `_By source:_`
+`coverage V/T` section (H158) — carries the same `{source, drifted, rotted, coverage,
+command}` the JSON `status`/`maintain` flag does, all equal to
+`weakest_source(doctor.custody.by_source)`. Pinned over a seed whose weakest source
+carries both a drifted and a rotted item over a partial `2/3` coverage (so every field
+is non-trivial) and mutation-checked — perturbing any one field of any surface's
+distillation breaks the tie
+(`test_attention_flag_full_shape_converges_field_for_field`).
 
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on

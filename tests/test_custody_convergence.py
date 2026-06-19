@@ -223,6 +223,21 @@ over the graph's own `by_source` (which equals `doctor`'s for the whole-library
 scope), so over the loss seed the graph flag equals `status`'s, `maintain`'s, and
 `weakest_source(doctor.by_source)`, and is honestly `null` on the same gate.
 
+The **readable `_Attention:_` line** (roadmap H159) the `export bundle`/`scrolls
+context` briefings carry above their `_By source:_` map is folded in too: H159 pins
+its parsed `{source, reason, command}` to the same `weakest_source` primitive and the
+JSON flag; the **full field-for-field** invariant (roadmap H160) sharpens that to the
+shape the JSON `status`/`maintain` flags carry. Over a seed whose weakest source
+carries both a drifted *and* a rotted item over a partial `2/3` coverage (so every
+field is non-trivial), the readable surface distilled — the line's source / loss
+reason **decomposed into `{drifted, rotted}`** / recheck command, *plus* the flagged
+source's `_By source:_` `coverage V/T` section (H158) — equals the JSON `status` and
+`maintain` flags field-for-field, all equal `weakest_source(doctor.custody.by_source)`,
+and mutation-checked (perturbing any one field of any surface's distillation breaks the
+tie). So the single weakest-source pointer reads one number across the readable line
+and both JSON surfaces — the `attention`-axis counterpart of H151's byte-identical
+readable `_By source:_` tie.
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
 first→last movement on `drift_change`/`coverage_change`/`stale_change` (and the
@@ -2873,6 +2888,205 @@ def test_readable_attention_line_absent_together_with_the_json_flag(scrolls_home
     assert json.loads(capsys.readouterr().out)["attention"] is None
     assert main(["maintain", "--no-recheck"]) == 0
     assert json.loads(capsys.readouterr().out)["attention"] is None
+
+
+def _parse_attention_reason(reason):
+    """Decompose a `_Attention:_` line's reason into a `{drifted, rotted}` loss map.
+
+    The reason is the flagged source's non-zero loss postures in canonical order —
+    ``"1 drifted, 1 rotted"`` (or a single ``"2 drifted"``) — the readable rendering
+    of the JSON flag's `drift` block (`_attention_reason`). This reads it back into
+    the structured ``{drifted, rotted}`` integers, zeros filled so the shape is
+    stable, so the readable loss can be compared field-for-field against the JSON
+    flag's `drift["drifted"]`/`drift["rotted"]` (roadmap H160).
+    """
+    counts = {"drifted": 0, "rotted": 0}
+    for piece in reason.split(", "):
+        value, posture = piece.split(" ", 1)
+        counts[posture] = int(value)
+    return counts
+
+
+def _readable_full_shape(text, pattern, bullets):
+    """Distil a readable surface's weakest-source flag to the JSON flag's full shape.
+
+    Reads the `_Attention:_` line (source / loss reason / recheck command) and folds
+    in the flagged source's `_By source:_` ``coverage V/T`` section (H158) — so the
+    readable surface, across its two custody members (the attention line + the
+    per-source breakdown), carries the *same* ``{source, drifted, rotted, coverage,
+    command}`` the JSON `attention` flag does. Returns ``None`` when the surface shows
+    no attention line (honest absence) — the readable counterpart of a `null` JSON
+    flag. The H160 full field-for-field counterpart of `_attention_fields` (which
+    stops at the line's `{source, reason, command}`).
+    """
+    fields = _attention_fields(text, pattern)
+    if fields is None:
+        return None
+    loss = _parse_attention_reason(fields["reason"])
+    coverage = None
+    for bullet in bullets:
+        if _parse_by_source_bullet(bullet)[0] == fields["source"]:
+            coverage = _parse_by_source_coverage(bullet)
+            break
+    return {
+        "source": fields["source"],
+        "drifted": loss["drifted"],
+        "rotted": loss["rotted"],
+        "coverage": coverage,
+        "command": fields["command"],
+    }
+
+
+def _json_full_shape(flag):
+    """The same ``{source, drifted, rotted, coverage, command}`` from a JSON flag.
+
+    Projects a JSON `attention` flag (`status`/`maintain`, the coverage-bearing
+    shape) to the five fields the readable surface can expose, so the readable
+    distillation and the JSON flag compare field-for-field (roadmap H160). ``None``
+    passes through (honest absence on both sides).
+    """
+    if flag is None:
+        return None
+    return {
+        "source": flag["source"],
+        "drifted": flag["drift"]["drifted"],
+        "rotted": flag["drift"]["rotted"],
+        "coverage": flag["coverage"],
+        "command": flag["command"],
+    }
+
+
+def _seed_full_shape_loss(db):
+    """A multi-source loss seed whose weakest source is non-vacuous on every field.
+
+    The H159 seed flags a source with a single-posture reason (``1 drifted``) over a
+    full ``2/2`` coverage — enough to tie the line's *identity* to the primitive, but
+    several H160 fields (the rotted leg, a partial coverage) read a trivial default.
+    This seed makes the weakest source carry **both** a drifted and a rotted item (a
+    two-posture reason) over a **partial** ``2/3`` coverage, so the full-shape
+    field-for-field tie — and its mutation check — exercises every field with a
+    distinct, non-default value.
+
+    web (the weakest source): a drifted full item, a rotted full item, a
+    never-rechecked full item (→ coverage 2/3), and a reference-only pointer. arxiv
+    (clean): a verified full item and a partial item. So web's flag is
+    ``1 drifted, 1 rotted`` over coverage ``2/3``; arxiv carries zero loss — web is
+    the unambiguous weakest source on a genuinely structured flag. Every title carries
+    "topic" so the query-scoped bundle/context scope is the whole library (the
+    readable and JSON flags share one scope).
+    """
+    insert_item(db, _item(
+        "web:drift", "Topic web drift",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:wd"))
+    insert_item(db, _item(
+        "web:rot", "Topic web rot",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:wr"))
+    insert_item(db, _item(
+        "web:fresh", "Topic web fresh",  # hash-bearing, never re-checked → coverage 2/3
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:wfr"))
+    insert_item(db, _item("web:ref", "Topic web pointer", stage="detected"))  # reference
+    insert_item(db, _item(
+        "arxiv:full", "Topic arxiv full", source="arxiv",
+        url="https://arxiv.org/abs/full",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:af"))
+    insert_item(db, _item(
+        "arxiv:partial", "Topic arxiv partial", source="arxiv",
+        url="https://arxiv.org/abs/partial", extracted_text="topic"))  # no hash → partial
+    record_events(db, [
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wd", "sha256:x", None),
+        CustodyEvent("web:rot", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:wr", None, "HTTP Error 404"),
+        CustodyEvent("arxiv:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:af", "sha256:af", None),
+        # web:fresh, web:ref, arxiv:partial left unverified
+    ])
+
+
+def test_attention_flag_full_shape_converges_field_for_field(scrolls_home, capsys):
+    # roadmap H160: the weakest-source `attention` flag rides three surfaces — JSON
+    # `status` (H139), JSON `maintain` (H119/H137), and the readable bundle/context
+    # `_Attention:_` line (H159) — each *claimed* to carry the same `{source, drifted,
+    # rotted, coverage, command}` distilled from doctor's `custody.by_source`. H159's
+    # tie pins the readable line's source/reason/command to the primitive; this is the
+    # *full field-for-field* invariant (the H151/H157 readable+JSON pattern): over a
+    # loss seed whose weakest source carries BOTH drifted and rotted over a *partial*
+    # coverage (so every field is non-trivial), the readable surface distilled (the
+    # `_Attention:_` line's source/loss/command PLUS the flagged source's `_By source:_`
+    # coverage section, H158) equals the JSON `status` and `maintain` flags field-for-
+    # field, all equal `weakest_source(doctor.custody.by_source)` — mutation-checked, so
+    # perturbing any one field of any surface's distillation breaks the tie.
+    from scrolls.bundle import build_bundle, build_bundle_html
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_full_shape_loss(db)
+    capsys.readouterr()
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    flagged = weakest_source(by_source)
+    # the canonical full shape — non-vacuous on EVERY field the surfaces compare: web
+    # carries both a drifted AND a rotted item (a two-posture reason) over a partial
+    # 2/3 coverage, so no field is a trivial 0 / single-posture / full-coverage default.
+    assert flagged is not None
+    assert flagged["source"] == "web"
+    assert flagged["drift"]["drifted"] == 1 and flagged["drift"]["rotted"] == 1
+    assert flagged["coverage"] == {"verified": 2, "total": 3}
+    canonical = _json_full_shape(flagged)
+    assert canonical == {
+        "source": "web", "drifted": 1, "rotted": 1,
+        "coverage": {"verified": 2, "total": 3},
+        "command": "scrolls verify --source web",
+    }
+
+    # the readable surfaces (Markdown bundle, HTML bundle, context bundle) — the
+    # bundle scope is the whole library (every title carries "topic"), so the readable
+    # flag and the JSON flag distil one scope.
+    bundle_md = build_bundle(db, "topic")
+    bundle_html = build_bundle_html(db, "topic")
+    context_md = build_context(db, "topic", budget="connected")  # rides connected+
+
+    readable = {
+        "bundle-markdown": _readable_full_shape(
+            bundle_md, _ATTENTION_MD, _by_source_bullets(bundle_md)),
+        "bundle-html": _readable_full_shape(
+            bundle_html, _ATTENTION_HTML, _html_by_source_bullets(bundle_html)),
+        "context": _readable_full_shape(
+            context_md, _ATTENTION_MD, _by_source_bullets(context_md)),
+    }
+    # 1. every readable surface distils to the SAME full shape as the canonical flag,
+    #    and the coverage leg is genuinely read off the surface (not an absent None)
+    for name, shape in readable.items():
+        assert shape == canonical, f"{name} full-shape diverged from weakest_source"
+        assert shape["coverage"] == {"verified": 2, "total": 3}, name
+
+    # 2. == the JSON `status` flag distilled, field for field
+    assert main(["status"]) == 0
+    status_flag = json.loads(capsys.readouterr().out)["attention"]
+    assert _json_full_shape(status_flag) == canonical
+
+    # 3. == the `maintain --no-recheck` flag distilled (the scheduled sibling) —
+    #    `--no-recheck` keeps the ledger pristine so it reads the same state
+    assert main(["maintain", "--no-recheck"]) == 0
+    maintain_flag = json.loads(capsys.readouterr().out)["attention"]
+    assert _json_full_shape(maintain_flag) == canonical
+
+    # 4. teeth: the agreement is not vacuous — perturbing any ONE field of the
+    #    canonical shape breaks the tie with every surface, so a real desync in any
+    #    distillation (readable line, coverage bullet, or JSON flag) fails here.
+    md_shape = readable["bundle-markdown"]
+    status_shape = _json_full_shape(status_flag)
+    for field, bad in (
+        ("source", "arxiv"),
+        ("drifted", 2),
+        ("rotted", 0),
+        ("coverage", {"verified": 3, "total": 3}),
+        ("command", "scrolls verify --source arxiv"),
+    ):
+        perturbed = {**canonical, field: bad}
+        assert perturbed != md_shape, field
+        assert perturbed != status_shape, field
 
 
 def _seed_marker_fixture(db):
