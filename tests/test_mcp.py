@@ -1377,6 +1377,150 @@ def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(s
     assert set(health_by_source) == {"arxiv", "web"}
 
 
+# --- the MCP read-surface shape contract, pinned once (roadmap H186) ----------
+#
+# H163 pinned that the *browse* twins are array-only and that the per-source
+# custody split rides the object twins; H180 pinned that `get_library_health`
+# keeps the *nested* `run_doctor` audit block. Those two decisions lived apart.
+# This is the "pin it once" capstone (the H157/H50 move): over ONE shared
+# multi-source seed it records, in one obvious place, the whole MCP read-surface
+# shape — the three shape classes a future tool addition has a single contract to
+# satisfy. The decision-grade prose home is the "MCP read-surface shape contract"
+# subsection of docs/architecture.md; this test is its enforcement.
+#
+#   class A — bare-array browse twins (no scope envelope):
+#       search_scrolls / list_scrolls / get_related_scrolls  → list[dict]
+#       Per-item custody (fidelity/drift) rides each hit; never a scope aggregate.
+#   class B — object twins carrying stats.custody.by_source (the structural /
+#       consolidation surfaces): get_link_graph / get_works  → {..., stats:{custody:
+#       {by_source}}}. The per-source scope an agent reads over MCP rides here.
+#   class C — the nested whole-library audit twin: get_library_health  → exactly
+#       run_doctor's custody block (NOT a stats-wrapped envelope) — carries the
+#       nested enrichment.by_source / summaries.by_source / by_source / attention /
+#       headline.
+
+# the MCP read tools by shape class — the contract's three groups, named once
+_ARRAY_TWINS = ("search_scrolls", "list_scrolls", "get_related_scrolls")
+_STATS_OBJECT_TWINS = ("get_link_graph", "get_works")
+
+
+def _seed_surface_shape_fixture(db):
+    """One multi-source scope that makes all three shape classes non-vacuous.
+
+    A genuine *same-work* pair across two sources — an arxiv preprint and its
+    published crossref record, bound by the shared DOI `10.1234/attn` (the arxiv
+    item via a `doi.org` link, the crossref item via its DOI `source_id`). So:
+
+    * the pair spans two sources (arxiv, crossref) → every per-source `by_source`
+      map is a genuine two-source split, not a singleton;
+    * the arxiv link resolves to the crossref item → the link graph connects them
+      and `get_related_scrolls(arxiv)` reports the crossref neighbour;
+    * the shared DOI clusters them into one 2-representation work →
+      `get_works`'s representation-scoped `stats.custody.by_source` is non-empty;
+    * the two carry distinct custody (arxiv *drifted*, crossref left
+      *unverified*) → the audit twin's drift posture is non-trivial;
+    * both titles/bodies carry "attention" → `search_scrolls("attention")` spans
+      both sources, so the *absence* of a scope envelope on the array twins is a
+      meaningful pin over a genuinely multi-source result set.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id="arxiv:1706", source="arxiv", url="https://arxiv.org/abs/1706",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        raw_text="<r>attention</r>", extracted_text="attention transformer model",
+        content_hash="sha256:af", stage="rendered",
+        links=("https://doi.org/10.1234/attn",)))
+    insert_item(db, ScrollItem(
+        id="crossref:10.1234/attn", source="crossref",
+        url="https://doi.org/10.1234/attn",
+        canonical_url="https://doi.org/10.1234/attn", source_id="10.1234/attn",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention, published",
+        raw_text="<r>attention</r>", extracted_text="attention published article",
+        content_hash="sha256:cf", stage="rendered"))
+    record_events(db, [CustodyEvent(
+        "arxiv:1706", "2026-06-14T00:00:00+00:00", "drifted",
+        "sha256:af", "sha256:new", None)])
+
+
+def test_mcp_read_surface_shape_contract(scrolls_home):
+    # roadmap H186: the single decision-grade pin of the whole MCP read-surface
+    # shape — array twins, stats-object twins, and the nested audit twin — over
+    # one shared multi-source seed. Folds the H163 (array-only browse) and H180
+    # (nested audit block) decisions into one contract. See the
+    # "MCP read-surface shape contract" subsection of docs/architecture.md.
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_surface_shape_fixture(db)
+
+    sources = {"arxiv", "crossref"}  # the non-vacuous two-source universe
+
+    # class A — bare-array browse twins: a list of per-item hit dicts, never an
+    # envelope. No scope-level `stats` anywhere on the result or its hits, so an
+    # agent cannot read a scope aggregate (e.g. by_source) off a browse twin.
+    array_results = {
+        "search_scrolls": mcp_server.search_scrolls("attention"),
+        "list_scrolls": mcp_server.list_scrolls(),
+        "get_related_scrolls": mcp_server.get_related_scrolls("arxiv:1706"),
+    }
+    assert set(array_results) == set(_ARRAY_TWINS)  # every array twin is covered
+    for name, hits in array_results.items():
+        assert isinstance(hits, list), f"{name} must return a bare array"
+        assert hits, f"{name} result is vacuous"  # non-vacuous
+        assert all(isinstance(hit, dict) for hit in hits), f"{name} hits are dicts"
+        # per-item custody rides each hit, but never a scope-level envelope
+        assert all("stats" not in hit for hit in hits), f"{name} hit grew a stats envelope"
+        assert all("fidelity" in hit and "drift" in hit for hit in hits), \
+            f"{name} hit dropped its per-item custody axes"
+    # the array twins genuinely span both sources — the absence of an envelope is
+    # meaningful over a multi-source set (related is anchored, so it reports the
+    # cross-source neighbour, anchor excluded)
+    assert {h["source"] for h in array_results["search_scrolls"]} == sources
+    assert {h["source"] for h in array_results["list_scrolls"]} == sources
+    assert {h["source"] for h in array_results["get_related_scrolls"]} == {"crossref"}
+
+    # class B — object twins carrying stats.custody.by_source: the per-source
+    # custody scope an agent reads over MCP rides HERE (not the array twins). The
+    # split is a genuine two-source map and sums to the whole stats.custody tally.
+    object_results = {
+        "get_link_graph": mcp_server.get_link_graph(),
+        "get_works": mcp_server.get_works(),
+    }
+    assert set(object_results) == set(_STATS_OBJECT_TWINS)
+    for name, payload in object_results.items():
+        assert isinstance(payload, dict), f"{name} must return an object"
+        by_source = payload["stats"]["custody"]["by_source"]
+        assert set(by_source) == sources, f"{name} by_source is not the two-source split"
+
+    # class C — the nested whole-library audit twin: get_library_health IS
+    # run_doctor's custody block (plus status's two distilled members), NOT a
+    # stats-wrapped envelope — so it carries the *nested* re-derivability blocks
+    # (enrichment.by_source / summaries.by_source) the object twins' lean
+    # stats.custody does not. This is the deliberate asymmetry H180 records.
+    health = mcp_server.get_library_health()
+    custody = run_doctor(get_paths())["custody"]
+    assert isinstance(health, dict)
+    assert "stats" not in health  # the audit twin is the block itself, not wrapped
+    for key in custody:  # every custody-block key carried verbatim
+        assert health[key] == custody[key], f"get_library_health dropped/changed {key}"
+    assert set(health["by_source"]) == sources
+    # the nested re-derivability blocks the lean stats.custody by_source omits
+    assert "by_source" in health["enrichment"]
+    assert "by_source" in health["summaries"]
+    # the two distilled members status adds on top of the raw custody block
+    assert "attention" in health and "headline" in health
+
+    # the three classes are disjoint and exhaustive over the read twins that
+    # carry a scope: no twin is both a bare array and a stats-object, and the
+    # audit twin is neither shape — the contract has no overlap or gap.
+    assert set(_ARRAY_TWINS).isdisjoint(_STATS_OBJECT_TWINS)
+    assert "get_library_health" not in _ARRAY_TWINS
+    assert "get_library_health" not in _STATS_OBJECT_TWINS
+
+
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     bundle = mcp_server.get_context_bundle("database engine")

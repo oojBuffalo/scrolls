@@ -219,7 +219,14 @@ by_source` (H150/H100), and the dedicated whole-library audit
 MCP, H161). That asymmetry — browse twins array-only, the per-source picture
 on the object/audit twins — is pinned in `tests/test_mcp.py`
 (`test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins`),
-so a later run cannot silently grow a divergent MCP browse-stats envelope. G1
+so a later run cannot silently grow a divergent MCP browse-stats envelope. The
+whole MCP read-surface shape — these **array** twins, the **stats-object** twins
+(`get_link_graph`/`get_works`), and the **nested audit** twin
+(`get_library_health`, exactly `run_doctor`'s custody block) — is consolidated
+into one decision-grade contract (`test_mcp_read_surface_shape_contract`, roadmap
+H186; the prose home is the "MCP read-surface shape contract" note in
+`docs/architecture.md`), so a future read tool has a single shape contract to
+satisfy. G1
 is the half that is already true across every surface and is locked so it
 cannot regress.
 

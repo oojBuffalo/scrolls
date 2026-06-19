@@ -1559,7 +1559,22 @@ choice (ADRs 0004, 0005).
   by construction. Both asymmetries are pinned in `tests/test_mcp.py`
   (`test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins`,
   `test_get_library_health_refresh_debt_equals_cli_status_flat_maps`) so a later
-  run cannot silently grow a divergent MCP envelope.
+  run cannot silently grow a divergent MCP envelope. **MCP read-surface shape
+  contract (the one pin, roadmap H186).** Those two decisions are consolidated
+  into a single decision-grade invariant
+  (`tests/test_mcp.py::test_mcp_read_surface_shape_contract`, the H157/H50
+  "pin it once" move) that records the whole read-surface shape over one shared
+  multi-source seed as **three shape classes** a future read tool must fit:
+  (A) the **bare-array browse twins** `search_scrolls`/`list_scrolls`/
+  `get_related_scrolls` — a `list[dict]`, per-item custody (`fidelity`/`drift`)
+  on each hit, never a scope-level `stats`; (B) the **stats-object twins**
+  `get_link_graph`/`get_works` — an object carrying `stats.custody.by_source`,
+  where the per-source scope rides; (C) the **nested audit twin**
+  `get_library_health` — *exactly* `run_doctor`'s custody block (not a
+  `stats`-wrapped envelope), so it alone carries the nested
+  `enrichment.by_source`/`summaries.by_source` re-derivability slices. The
+  classes are disjoint and exhaustive over the scope-bearing read twins, so a new
+  tool's shape has one obvious contract to satisfy.
 
 ## Interface conventions
 
