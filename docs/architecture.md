@@ -1518,6 +1518,26 @@ choice (ADRs 0004, 0005).
   `feeds.sync_many`, and `compile_library` is the deterministic
   compiler only: LLM summary generation (ADR 0025) stays a CLI step so
   no MCP tool ever makes paid API calls implicitly (`tests/test_mcp.py`).
+  **Surface-shape over MCP — each twin keeps the shape that fits it, the
+  per-source custody picture is never lost, only relocated.** The browse twins
+  `search_scrolls`/`list_scrolls`/`get_related_scrolls` are **array-only by
+  design** (roadmap H163): they return the bare per-item hit list — the
+  G1-locked browse contract (custody-vision §6 surface parity) — because the CLI
+  `--stats` scope/custody envelope is a flag affordance with no natural MCP
+  analogue (an MCP tool returns one shape). The per-source `stats.custody.by_source`
+  split those CLI envelopes carry (H155) therefore rides the *object-returning*
+  twins instead — `get_link_graph`/`get_works` `stats.custody.by_source`
+  (H150/H100) — and the dedicated audit `get_library_health` `by_source` (H161),
+  the scope-level custody read over MCP. The same call recurs for the **refresh
+  debt** (roadmap H180): CLI `status` flattens the per-source stale-classification/
+  stale-summary maps to top-level `enrichment_by_source`/`summary_by_source`, but
+  `get_library_health` — being *exactly* `run_doctor`'s custody block — keeps the
+  fuller **nested** `custody.enrichment`/`custody.summaries` re-derivability blocks,
+  of which `by_source` is one slice; the flat CLI maps equal the nested MCP slices
+  by construction. Both asymmetries are pinned in `tests/test_mcp.py`
+  (`test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins`,
+  `test_get_library_health_refresh_debt_equals_cli_status_flat_maps`) so a later
+  run cannot silently grow a divergent MCP envelope.
 
 ## Interface conventions
 

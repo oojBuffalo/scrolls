@@ -197,10 +197,23 @@ verified-now-vs-as-of-last-check honest (`docs/agents/autonomous-roadmap.md`).
 With H8, **G2 is enforced across every read surface and M2 is complete.**
 Each landed with its own tests in the matching suite. The MCP twins read
 from the same builders, so `get_works`/`get_context_bundle` carry the scope
-echo and coverage line too; the bare-list `search_scrolls`/`list_scrolls`
-twins keep returning the bare list for now, their G2 parity (an envelope
-option) following once the CLI shape has stabilized. G1 is the half that is
-already true across every surface and is locked so it cannot regress.
+echo and coverage line too. The bare-list `search_scrolls`/`list_scrolls`/
+`get_related_scrolls` twins are **array-only by design** (roadmap H163): they
+return the bare per-item hit list — the G1-locked browse contract, never an
+envelope — because the `--stats` opt-in is a CLI affordance with no natural
+MCP analogue (an MCP tool returns one shape, not a flag-toggled one), and
+custody-vision §6 surface parity keeps the bare array the agent contract. The
+per-source `stats.custody.by_source` split those CLI envelopes carry (H155) is
+therefore *not* lost over MCP, only **relocated** to the surfaces that already
+return an object: `get_link_graph` and `get_works` carry `stats.custody.
+by_source` (H150/H100), and the dedicated whole-library audit
+`get_library_health` carries `by_source` (the scope-level custody read over
+MCP, H161). That asymmetry — browse twins array-only, the per-source picture
+on the object/audit twins — is pinned in `tests/test_mcp.py`
+(`test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins`),
+so a later run cannot silently grow a divergent MCP browse-stats envelope. G1
+is the half that is already true across every surface and is locked so it
+cannot regress.
 
 ### A sibling invariant — custody reads the same everywhere
 
@@ -573,6 +586,25 @@ check (`test_status_refresh_debt_summary_need_not_sum_to_the_whole`). A clean,
 empty, or uninitialized library is the honest empty `{}` map on both axes
 (`test_status_refresh_debt_maps_are_empty_on_a_clean_library`,
 `test_status_refresh_debt_maps_are_empty_before_init`).
+
+Over **MCP** the refresh debt rides the audit twin `get_library_health` (the
+custody read an MCP agent makes), but in a **different — richer — shape**, the
+H163-style "the MCP twin keeps its natural shape" call (roadmap H180):
+`get_library_health` is *exactly* `run_doctor`'s custody block, so it carries the
+whole **nested** `custody.enrichment` / `custody.summaries` re-derivability blocks
+(`basis`, `current_ruleset`, `classified`/`eligible`, `current`, `stale`, `items`,
+**and** `by_source`) — the flat CLI `status` maps are just the `by_source` slice of
+those blocks hoisted to top level for the unattended worker. So the refresh debt is
+not lost over MCP, only nested: `status.enrichment_by_source ==
+get_library_health()["enrichment"]["by_source"]` and `status.summary_by_source ==
+get_library_health()["summaries"]["by_source"]` by construction (both read the same
+slice off one `run_doctor` audit), pinned scope-wide and source-scoped in
+`tests/test_mcp.py`
+(`test_get_library_health_refresh_debt_equals_cli_status_flat_maps`,
+`test_get_library_health_source_scopes_the_refresh_debt`). The CLI does **not**
+flatten and the MCP twin does **not** sprout flat duplicates — each surface keeps the
+shape that fits it (the CLI a worker-friendly distillation, MCP the full audit
+block).
 
 | Key | Meaning |
 | --- | --- |
@@ -3407,7 +3439,7 @@ The tools wrap the same engines as the CLI commands
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
-| `get_library_health(source=…)` | `scrolls status` / `doctor [--source]` (custody block) | the whole-library custody audit (H161): `run_doctor`'s custody block (`score`/`tiers`/`drift`+`coverage`/`by_source`/`enrichment`/`summaries`) plus the distilled weakest-source `attention` flag and one-line `headline` `status` adds. The optional `source` scopes the *whole* read to one source's held items (H167) — the MCP sibling of CLI `doctor --source`/`status --source`, reusing the same `run_doctor(source=)` pre-filter; `by_source` collapses to the singleton `{S: …}`, `attention` is `null` (single-source gate), and the scoped block equals a `doctor --source S` / `status --source S` over the same library. Read-only **posture** — the repairable structural-findings/exit-code axis stays a CLI concern (`doctor --fix`); network-free (drift read from the ledger). Converges with the CLI `status`/`doctor` by construction (`test_get_library_health_matches_cli_status_field_for_field`, `test_mcp_library_health_converges_with_status_and_doctor`, `test_mcp_library_health_source_scope_converges_with_doctor_and_status_source`); empty/uninitialized / unknown source → the honest present-but-empty block (`score: null`/`100`, `attention: null`) |
+| `get_library_health(source=…)` | `scrolls status` / `doctor [--source]` (custody block) | the whole-library custody audit (H161): `run_doctor`'s custody block (`score`/`tiers`/`drift`+`coverage`/`by_source`/`enrichment`/`summaries`) plus the distilled weakest-source `attention` flag and one-line `headline` `status` adds. The optional `source` scopes the *whole* read to one source's held items (H167) — the MCP sibling of CLI `doctor --source`/`status --source`, reusing the same `run_doctor(source=)` pre-filter; `by_source` collapses to the singleton `{S: …}`, `attention` is `null` (single-source gate), and the scoped block equals a `doctor --source S` / `status --source S` over the same library. Read-only **posture** — the repairable structural-findings/exit-code axis stays a CLI concern (`doctor --fix`); network-free (drift read from the ledger). Converges with the CLI `status`/`doctor` by construction (`test_get_library_health_matches_cli_status_field_for_field`, `test_mcp_library_health_converges_with_status_and_doctor`, `test_mcp_library_health_source_scope_converges_with_doctor_and_status_source`); empty/uninitialized / unknown source → the honest present-but-empty block (`score: null`/`100`, `attention: null`). The per-source **refresh debt** rides here too, but **nested** (`enrichment.by_source`/`summaries.by_source`) rather than flattened like CLI `status`'s `enrichment_by_source`/`summary_by_source` (H180) — the MCP twin keeps the fuller re-derivability block; the flat CLI maps equal its `by_source` slices by construction (`test_get_library_health_refresh_debt_equals_cli_status_flat_maps`, `test_get_library_health_source_scopes_the_refresh_debt`) |
 | `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |
 | `verify_scroll(item_id)` | `scrolls verify <id>` | the custody event (`status` unchanged/drifted/rotted/error + hashes); records to the ledger, never clobbers the capture (ADR 0098; `test_verify_scroll_records_drift`) |
 | `follow_feed(url)` | `scrolls follow <url>` | the subscription plus `created` (ADR 0020) |

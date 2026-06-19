@@ -1162,6 +1162,77 @@ def test_get_works_item_lens_unknown_item_raises(scrolls_home):
         mcp_server.get_works(item="arxiv:nope")
 
 
+def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(scrolls_home):
+    # roadmap H163: the CLI `search`/`list --stats` envelope carries a per-source
+    # `stats.custody.by_source` split (H155), but the MCP `search_scrolls`/
+    # `list_scrolls`/`get_related_scrolls` twins are *array-only by design* — they
+    # return the bare hit list, no `--stats` envelope (custody-vision §6 surface
+    # parity; the bare array is the G1-locked browse contract, docs/cli.md G2). So
+    # the per-source custody *scope* an agent reads over MCP rides the
+    # object-returning twins instead — `get_link_graph`/`get_works`
+    # `stats.custody.by_source` (H150/H100/H155) — and the dedicated whole-library
+    # audit `get_library_health` `by_source` (H161). This pins the asymmetry so a
+    # later run does not silently grow a divergent MCP browse-stats envelope, and
+    # proves the per-source data is not lost over MCP, only relocated.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # Two sources that differ on every custody axis (non-vacuous): web holds a
+    # full body that has *drifted*; arxiv holds a full body left *unverified*.
+    # Shared concept so they relate; web links arxiv so the graph connects them.
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://example.org/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention survey",
+        raw_text="<raw>attention</raw>", extracted_text="attention is all you need",
+        content_hash="sha256:wf", concepts=("attention",), stage="rendered",
+        links=("https://arxiv.org/abs/1706.03762",)))
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        raw_text="<raw>attention</raw>", extracted_text="attention transformer model",
+        content_hash="sha256:af", concepts=("attention",), stage="rendered"))
+    record_events(db, [CustodyEvent(
+        "web:full", "2026-06-14T00:00:00+00:00", "drifted",
+        "sha256:wf", "sha256:new", None)])
+
+    # The three browse twins are array-only: a bare list of per-item hit dicts,
+    # never an envelope — there is no scope-level `stats`/`stats.custody.by_source`
+    # to read off them over MCP.
+    for hits in (
+        mcp_server.search_scrolls("attention"),
+        mcp_server.list_scrolls(),
+        mcp_server.get_related_scrolls("web:full"),
+    ):
+        assert isinstance(hits, list)
+        assert hits  # non-vacuous: every twin returns its result set
+        assert all(isinstance(hit, dict) for hit in hits)
+        # per-item custody axes ride each hit (H58), but never a scope aggregate
+        assert all("stats" not in hit for hit in hits)
+    # search/list span both sources, so the *absence* of a per-source envelope on
+    # a genuinely multi-source result set is meaningful, not vacuous; related is
+    # anchored on web:full and so reports its arxiv neighbour (anchor excluded).
+    assert {h["source"] for h in mcp_server.search_scrolls("attention")} == {"arxiv", "web"}
+    assert {h["source"] for h in mcp_server.list_scrolls()} == {"arxiv", "web"}
+    assert {h["source"] for h in mcp_server.get_related_scrolls("web:full")} == {"arxiv"}
+
+    # The per-source split *is* reachable over MCP — through the object-returning
+    # stats-bearing twin `get_link_graph` (H150) — and it genuinely distinguishes
+    # the two sources (web drifted, arxiv unverified), so the asymmetry costs the
+    # agent nothing: it reads the per-source picture off the object twin instead.
+    graph_by_source = mcp_server.get_link_graph()["stats"]["custody"]["by_source"]
+    assert set(graph_by_source) == {"arxiv", "web"}
+    assert graph_by_source["web"]["drift"]["drifted"] == 1
+    assert graph_by_source["arxiv"]["drift"]["unverified"] == 1
+
+    # ...and off the dedicated whole-library custody audit (H161), the scope-level
+    # custody read over MCP — the same per-source key set.
+    health_by_source = mcp_server.get_library_health()["by_source"]
+    assert set(health_by_source) == {"arxiv", "web"}
+
+
 def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     bundle = mcp_server.get_context_bundle("database engine")
@@ -1502,6 +1573,124 @@ def test_get_library_health_unknown_source_is_the_honest_empty_block(scrolls_hom
     assert health["by_source"] == {}
     assert health["attention"] is None
     assert health["headline"] == "_Custody: 0 scroll(s)._"
+
+
+def _seed_refresh_debt(paths):
+    """A two-source library carrying both stale-classification and stale-summary debt.
+
+    Mirrors tests/test_cli.py's `_seed_refresh_debt` (kept local — `tests/` is not a
+    package): stale classifications on arxiv (1) + web (2), each item one source so the
+    enrichment map sums to the whole; stale summaries over a web+arxiv Bm25 cluster
+    (attributes to BOTH) and a web-only Vector cluster — so `summary_by_source` is
+    {arxiv:1, web:2} though only 2 summaries are stale (the H171 double-attribution
+    asymmetry). Enough to make both per-source refresh-debt maps non-vacuous.
+    """
+    import dataclasses
+
+    from scrolls.db import init_db
+    from scrolls.items import ScrollItem, get_item, insert_item, make_item_id, update_item
+    from scrolls.kb import ConceptSummary, save_concept_summary
+    from scrolls.render import write_scroll
+
+    def _member(source, slug, concept):
+        return ScrollItem(
+            id=make_item_id(source, None, f"https://{source}.example.com/{slug}"),
+            source=source, source_id=None,
+            url=f"https://{source}.example.com/{slug}",
+            saved_at="2026-06-14T00:00:00+00:00", title=slug,
+            extracted_text="A note about the concept.",
+            content_hash="sha256:" + slug[-8:], concepts=(concept,), stage="rendered",
+            provenance={"adapter": source, "fetched_at": "2026-06-14T00:00:05+00:00"})
+
+    def _mark_stale(item_id):
+        persisted = get_item(paths.db_path, item_id)
+        update_item(paths.db_path, dataclasses.replace(persisted, provenance={
+            **persisted.provenance, "classified_by": "rules-v1",
+            "classified_basis": "title-pattern",
+            "classified_ruleset": "deadbeef0000"}))  # superseded by the live ruleset
+
+    def _store_stale_summary(slug, display):
+        save_concept_summary(paths.db_path, ConceptSummary(
+            slug=slug, display=display, summary="How it shows up.",
+            members_hash="stale-old-digest", engine="kb-llm-v1",
+            model="claude-opus-4-8", generated_at="2026-06-16T00:00:00+00:00"))
+
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    members = [
+        _member("web", "bm25-web", "Bm25"),
+        _member("arxiv", "bm25-arxiv", "Bm25"),
+        _member("web", "vector-1", "Vector"),
+        _member("web", "vector-2", "Vector"),
+    ]
+    for item in members:
+        insert_item(paths.db_path, write_scroll(paths, item))
+    assert main(["kb"]) == 0
+    _mark_stale(members[1].id)  # arxiv
+    _mark_stale(members[0].id)  # web
+    _mark_stale(members[2].id)  # web
+    _store_stale_summary("bm25", "Bm25")
+    _store_stale_summary("vector", "Vector")
+
+
+def test_get_library_health_refresh_debt_equals_cli_status_flat_maps(scrolls_home, capsys):
+    # roadmap H180: H177 hoisted the per-source refresh-debt maps to *flat* top-level
+    # members on CLI `status` (`enrichment_by_source`/`summary_by_source`); the MCP
+    # audit twin `get_library_health` deliberately carries the *fuller nested*
+    # re-derivability blocks (`custody.enrichment`/`custody.summaries`, of which
+    # `by_source` is one slice — beside `basis`/`stale`/`current`/`items`). This is the
+    # H163-style "the MCP twin keeps its richer natural shape" call — the audit twin is
+    # exactly `run_doctor`'s custody block, not a flattened projection. So the per-source
+    # refresh debt is not lost over MCP, only nested: the flat CLI maps equal the nested
+    # MCP maps by construction (both read `report["custody"][...]["by_source"]` off the
+    # one `run_doctor` audit). This pins that flat≡nested convergence.
+    import json
+
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health()
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+
+    # non-vacuous: the seed makes concrete per-source debt on both axes
+    assert status["enrichment_by_source"] == {"arxiv": 1, "web": 2}
+    assert status["summary_by_source"] == {"arxiv": 1, "web": 2}
+
+    # the flat CLI maps equal the nested MCP maps — same slice, one audit
+    assert status["enrichment_by_source"] == health["enrichment"]["by_source"]
+    assert status["summary_by_source"] == health["summaries"]["by_source"]
+
+    # ...and the MCP twin carries the *fuller* re-derivability block the flat CLI member
+    # is just one slice of — the richer nested shape the audit twin deliberately keeps
+    # (the whole-library `stale` scalar + the `basis` fingerprint the flat map drops).
+    assert health["enrichment"]["stale"] == 3  # sums to the whole (each item one source)
+    assert health["enrichment"]["basis"] == "ruleset_fingerprint"
+    assert health["summaries"]["basis"] == "members_hash"
+    # the flat CLI payload carries only the by_source slice, not the nested block
+    assert "enrichment" not in status
+    assert "summaries" not in status
+
+
+def test_get_library_health_source_scopes_the_refresh_debt(scrolls_home, capsys):
+    # roadmap H180, the scoped sibling: `get_library_health(source=S)` (H167) scopes the
+    # nested refresh-debt blocks to one source, equalling CLI `status --source S`'s flat
+    # maps over the same scope — so an agent triaging the weakest source's refresh debt
+    # over MCP reads the same per-source numbers the CLI does.
+    import json
+
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    health = mcp_server.get_library_health(source="web")
+    assert main(["status", "--source", "web"]) == 0
+    status = json.loads(capsys.readouterr().out)
+
+    assert status["enrichment_by_source"] == {"web": 2}
+    assert status["enrichment_by_source"] == health["enrichment"]["by_source"]
+    assert status["summary_by_source"] == health["summaries"]["by_source"]
 
 
 # --- feed subscriptions (ADR 0020) ---
