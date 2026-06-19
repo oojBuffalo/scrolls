@@ -256,7 +256,15 @@ same string and equals `render_custody_attention`/`render_custody_refresh` over 
 shared scope, so the one shared renderer is the sole source of the wording and no
 surface can drift in punctuation or phrasing (the honest-*absence* counterpart — a
 compiled page never fabricating an action line with no JSON basis — is pinned in the
-completeness contract, `tests/test_completeness.py`, roadmap H190).
+completeness contract, `tests/test_completeness.py`, roadmap H190). The **HTML
+bundle form** renders the same pointers as `<p class="custody-attention">`/`<p
+class="custody-refresh">`, so it cannot be *string*-identical to the Markdown — but
+its **content** must not diverge (roadmap H192): over the same `_seed_action_line_
+fixture` scope, the HTML attention line's parsed `{source, reason, command}` equals
+the Markdown line's and the canonical primitive, and the HTML refresh line's per-axis
+source list equals the Markdown's per axis — the action-line analogue of H151's
+`_html_by_source_bullets` content tie, mutation-checked so perturbing the data moves
+both forms together.
 
 The **act side of the per-source enrichment debt** is pinned the way the
 verify-selection section pins the drift act side. `classify --stale --source S`
@@ -3838,6 +3846,85 @@ def test_action_lines_are_byte_identical_across_readable_surfaces(scrolls_home, 
     for name, text in surfaces2.items():
         assert _action_line(text, _REFRESH_LINE) == refresh_line2, \
             f"{name} refresh line diverged after the data changed"
+
+
+def test_action_line_content_parity_on_the_html_bundle_form(scrolls_home, capsys):
+    # roadmap H192: H188 pins the two action lines (`_Attention:_` H159, `_Refresh:_`
+    # H178) byte-identical across the *Markdown* surfaces. The HTML bundle renders the
+    # same pointers as `<p class="custody-attention">`/`<p class="custody-refresh">`, so
+    # it can never be *string*-identical to the Markdown — but its *content* must not
+    # diverge. Over the same `_seed_action_line_fixture` scope, pin that the HTML form
+    # names the same source/reason/recheck-command on the attention axis and the same
+    # per-axis source list on the refresh axis as the Markdown form (and the canonical
+    # primitive) — the action-line analogue of H151's `_html_by_source_bullets` content
+    # tie. Non-vacuous (both axes present) and mutation-checked (perturbing the data
+    # moves both forms together).
+    from scrolls.bundle import build_bundle, build_bundle_html
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_line_fixture(db)  # web: drift + enrichment debt; Bm25: summary debt
+    capsys.readouterr()
+
+    # the canonical fields the shared renderers/audit produce over the whole library
+    report = run_doctor(get_paths())["custody"]
+    canonical_attention = _attention_fields(
+        render_custody_attention(report["by_source"])[0], _ATTENTION_MD)
+    enr_sources = sorted(report["enrichment"]["by_source"])
+    summ_sources = sorted(report["summaries"]["by_source"])
+    # non-vacuous: both action axes genuinely have a basis to render
+    assert canonical_attention == {
+        "source": "web", "reason": "1 drifted",
+        "command": "scrolls verify --source web",
+    }
+    assert enr_sources == ["web"]
+    assert summ_sources == ["arxiv", "web"]  # the H171 multi-source attribution
+
+    bundle_md = build_bundle(db, "topic")
+    bundle_html = build_bundle_html(db, "topic")
+
+    # 1. the attention line: the HTML form's parsed {source, reason, command} equals
+    #    the Markdown form's and the canonical primitive — same flag, two renderings
+    md_attention = _attention_fields(bundle_md, _ATTENTION_MD)
+    html_attention = _attention_fields(bundle_html, _ATTENTION_HTML)
+    assert html_attention is not None  # the HTML form genuinely carries the line
+    assert html_attention == md_attention == canonical_attention
+
+    # 2. the refresh line: the HTML form's per-axis source lists equal the Markdown's
+    #    and the doctor debt maps — the two forms name the same source(s) per axis
+    for axis, md_pat, html_pat, expected in (
+        ("classifications", _REFRESH_CLASS_MD, _REFRESH_CLASS_HTML, enr_sources),
+        ("summaries", _REFRESH_SUMM_MD, _REFRESH_SUMM_HTML, summ_sources),
+    ):
+        md_sources = _refresh_sources(bundle_md, md_pat)
+        html_sources = _refresh_sources(bundle_html, html_pat)
+        assert html_sources, f"{axis} clause absent on the HTML form"
+        assert html_sources == md_sources == expected, f"{axis} HTML diverged from Markdown"
+
+    # mutation check: re-classify web:fd under the live ruleset → the enrichment axis
+    # clears. Both forms drop the classifications clause together (the summary axis is
+    # untouched), proving the two renderings are genuinely derived from the same maps,
+    # not coincidentally equal over this one fixture.
+    import dataclasses
+
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.items import get_item, update_item
+    web_fd = get_item(db, "web:fd")
+    update_item(db, dataclasses.replace(web_fd, provenance={
+        "classified_by": "rules-v1", "classified_basis": "weak-source",
+        "classified_ruleset": RULESET_FINGERPRINT}))
+
+    bundle_md2 = build_bundle(db, "topic")
+    bundle_html2 = build_bundle_html(db, "topic")
+    # the classifications clause is gone on *both* forms (enrichment debt cleared)
+    assert _refresh_sources(bundle_md2, _REFRESH_CLASS_MD) == []
+    assert _refresh_sources(bundle_html2, _REFRESH_CLASS_HTML) == []
+    # the summaries axis is untouched and still agrees across the two forms
+    assert (_refresh_sources(bundle_html2, _REFRESH_SUMM_HTML)
+            == _refresh_sources(bundle_md2, _REFRESH_SUMM_MD) == summ_sources)
+    # the attention axis (drift, not enrichment) is untouched and still agrees too
+    assert (_attention_fields(bundle_html2, _ATTENTION_HTML)
+            == _attention_fields(bundle_md2, _ATTENTION_MD) == canonical_attention)
 
 
 def _parse_attention_reason(reason):
