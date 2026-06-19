@@ -2996,6 +2996,98 @@ def test_readable_refresh_line_converges_with_the_doctor_debt_maps(scrolls_home)
     assert _refresh_sources(build_bundle(db, "topic"), _REFRESH_CLASS_MD) == ["web"]
 
 
+def test_compiled_pages_carry_the_action_lines_converging_with_doctor(
+    scrolls_home, capsys
+):
+    # roadmap H184: the compiled `library/` index + group pages now carry the
+    # readable `_Attention:_` (H159) and `_Refresh:_` (H178) action-pointer lines
+    # beside the `_By source:_` map (H145/H152), through the SAME shared renderers.
+    # Fold the compiled surfaces into the cross-surface convergence beside the
+    # bundle/context ties above: over one multi-source seed (drift + a stale
+    # classification + a stale multi-source summary, every item rendered so the
+    # compiled pages cover it), the compiled `_Attention:_` line names
+    # `weakest_source(doctor.by_source)` == the JSON `status` flag, and the compiled
+    # `_Refresh:_` clauses name exactly doctor's `enrichment.by_source`/
+    # `summaries.by_source` keys. Non-vacuous (the two refresh axes name different
+    # source sets) and mutation-checked.
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only drift (the `_Attention:_` weakest source) and a stale
+    # classification (enrichment debt {web}); the web+arxiv concept `bm25` has a
+    # stale stored summary (summary debt {arxiv, web} — the H171 attribution). Every
+    # item is in category `ml` and rendered, so the index/group page scopes == the
+    # whole rendered library == doctor's scope.
+    insert_item(db, _item(
+        "web:fd", "ML full drifted", category="ml", stage="rendered",
+        concepts=("Bm25",), markdown_path="scrolls/web/fd.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:fd",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))
+    insert_item(db, _item(
+        "arxiv:b2", "ML arxiv two", source="arxiv", category="ml", stage="rendered",
+        concepts=("Bm25",), url="https://arxiv.org/abs/b2",
+        markdown_path="scrolls/arxiv/b2.md", extracted_text="body",
+        raw_text="<raw>body</raw>", content_hash="sha256:b2"))
+    record_events(db, [
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:fd", "sha256:x", None),
+        # arxiv:b2 left unverified — only web carries actionable loss
+    ])
+    save_concept_summary(db, ConceptSummary(
+        slug="bm25", display="Bm25", summary="Old synthesis.",
+        members_hash="stale-old", engine="kb-llm-v1", model="claude-opus-4-8",
+        generated_at="2026-06-16T00:00:00+00:00"))
+    capsys.readouterr()
+
+    report = run_doctor(get_paths())["custody"]
+    flagged = weakest_source(report["by_source"])
+    enr_sources = sorted(report["enrichment"]["by_source"])
+    summ_sources = sorted(report["summaries"]["by_source"])
+    # non-vacuous: attention names web; the two refresh axes name different sets
+    assert flagged is not None and flagged["source"] == "web"
+    assert enr_sources == ["web"]
+    assert summ_sources == ["arxiv", "web"]
+    expected_attention = {k: flagged[k] for k in ("source", "reason", "command")}
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+    index_header = (library / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    group_page = (library / "categories" / "ml.md").read_text(encoding="utf-8")
+
+    # both compiled surfaces carry all three lines, in order, converging with doctor
+    for surface in (index_header, group_page):
+        assert _attention_fields(surface, _ATTENTION_MD) == expected_attention
+        assert _refresh_sources(surface, _REFRESH_CLASS_MD) == enr_sources
+        assert _refresh_sources(surface, _REFRESH_SUMM_MD) == summ_sources
+        assert (surface.index("_Custody:") < surface.index("_Attention:")
+                < surface.index("_Refresh:") < surface.index("_By source:_"))
+
+    # == the JSON `status` flag — the compiled readable line and the flag agree
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] == flagged
+
+    # mutation check: re-classify web:fd under the live ruleset → the enrichment axis
+    # drops web; the compiled `_Refresh:_` line follows the map (the summary axis,
+    # untouched, still names both sources)
+    import dataclasses
+
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.items import get_item, update_item
+    web_fd = get_item(db, "web:fd")
+    update_item(db, dataclasses.replace(web_fd, provenance={
+        "classified_by": "rules-v1", "classified_basis": "weak-source",
+        "classified_ruleset": RULESET_FINGERPRINT}))
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    refreshed = (library / "categories" / "ml.md").read_text(encoding="utf-8")
+    assert _refresh_sources(refreshed, _REFRESH_CLASS_MD) == []  # enrichment cleared
+    assert _refresh_sources(refreshed, _REFRESH_SUMM_MD) == ["arxiv", "web"]
+
+
 def _parse_attention_reason(reason):
     """Decompose a `_Attention:_` line's reason into a `{drifted, rotted}` loss map.
 

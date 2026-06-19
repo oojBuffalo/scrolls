@@ -467,6 +467,26 @@ omitted entirely when no source carries refresh debt on either axis. The readabl
 line lives **outside** the lossless `@generated` JSONL fence, so it never touches
 the round-trip (`test_refresh_line_preserves_the_round_trip`).
 
+Both action lines also ride the **compiled `library/` pages** (roadmap H184) — the
+landing `index.md` and every multi-source group page (`categories/`/`concepts/`/
+`tags/`) carry `_Attention:_` then `_Refresh:_` between the scope custody headline
+and the `_By source:_` map, the human-browseable counterpart of the bundle/context
+briefings, through the *same* `custody.render_custody_attention` /
+`custody.render_custody_refresh` primitives. The refresh debt is computed over each
+page's **own** members (the scope-consistent posture above): a whole-library
+`index.md` over every rendered item, a group page over its members — so a
+single-source `sources/*.md` page (or a category narrowing a multi-source concept
+below `MIN_MEMBERS`) names exactly the debt its scope carries, and a single-source
+page shows `_Refresh:_` (no single-source gate) but never `_Attention:_`/`_By
+source:_`. On a compiled page the lines sit **inside** the page's `@generated`
+sentinel fence (ADR 0102) — they are regenerated content like `_By source:_`, so a
+recompile refreshes them while a hand annotation outside the fence survives. Pinned
+in the convergence spine beside the bundle/context ties: over one multi-source seed
+the compiled `_Attention:_` line equals `weakest_source(doctor.custody.by_source)`
+== the JSON `status` flag and the compiled `_Refresh:_` clauses name exactly
+`doctor`'s `enrichment.by_source`/`summaries.by_source` keys, mutation-checked
+(`test_compiled_pages_carry_the_action_lines_converging_with_doctor`).
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
 `drift_change`/`coverage_change`/`stale_change` (and the scalar `score.change`) by

@@ -27,6 +27,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.classify import stale_classification_counts_by_source
 from scrolls.custody import (
     CustodyEvent,
     custody_counts_by_source,
@@ -34,7 +35,9 @@ from scrolls.custody import (
     drift_posture,
     last_checked,
     latest_events,
+    render_custody_attention,
     render_custody_by_source,
+    render_custody_refresh,
 )
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
@@ -222,6 +225,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"sources/{slugify(source) or 'untitled'}.md",
             f"Source: {source}", members, note=lambda i: i.category, verdicts=verdicts,
+            summaries=summaries,
         )
         pages += 1
     for category, members in by_category.items():
@@ -232,6 +236,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"categories/{slugify(category) or 'untitled'}.md",
             f"Category: {category}", members, note=lambda i: i.source, verdicts=verdicts,
+            summaries=summaries,
             consolidate_works=items_by_id,
         )
         pages += 1
@@ -243,6 +248,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, written, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
             verdicts=verdicts,
+            summaries=summaries,
             lead=stored.summary if stored else None,
             trailer=_related_lines(
                 "Related Concepts", related.get(slug, []), lambda key: key
@@ -254,6 +260,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, written, f"tags/{tag_filenames[key]}.md",
             f"Tag: {entry['display']}", entry["items"], note=lambda i: i.source,
             verdicts=verdicts,
+            summaries=summaries,
             trailer=_related_lines(
                 "Related Tags", related_tag_map.get(key, []),
                 lambda other: tag_filenames[other],
@@ -266,7 +273,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     pages += 1
     _write_index(
         paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
-        components, works, verdicts,
+        components, works, verdicts, summaries,
     )
     _reconcile_generated(paths.library_dir, written)
 
@@ -283,9 +290,49 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     )
 
 
+def _custody_scope_block(
+    items: list[ScrollItem],
+    verdicts: dict[str, CustodyEvent],
+    summaries: dict[str, ConceptSummary],
+) -> list[str]:
+    """The readable scope-custody block under a compiled page's headline (roadmap H184).
+
+    The compiled-`library/`-page counterpart of the `export bundle`/`scrolls
+    context` briefing custody block: the readable weakest-source `_Attention:_`
+    pointer (H159), the per-source `_Refresh:_` pointer (H178), then the
+    `_By source:_` breakdown (H145/H152) — over this page's own member scope,
+    through the *same* shared `render_custody_attention`/`render_custody_refresh`/
+    `render_custody_by_source` primitives, so the lines read byte-identical across
+    surfaces and converge with the JSON `status`/`maintain` `attention` flag and
+    `doctor`'s `custody.enrichment.by_source`/`summaries.by_source` debt maps by
+    construction. Each renderer ends its present block with a trailing blank (or is
+    `[]` on honest absence), so a caller splices the block straight in.
+
+    The refresh debt is computed over this page's *own* members (the
+    scope-consistent posture H178 took): a whole-library `index.md` over every
+    rendered item, a group page over its members — so a single-source `sources/*`
+    page (or a category narrowing a multi-source concept below `MIN_MEMBERS`)
+    names exactly the debt its scope carries. `stale_summary_counts_by_source` is
+    imported lazily to avoid the `kb` ⇄ `kb_llm` import cycle (`kb_llm` imports
+    this module).
+    """
+    from scrolls.kb_llm import stale_summary_counts_by_source
+
+    by_source = custody_counts_by_source(items, verdicts)
+    return (
+        render_custody_attention(by_source)
+        + render_custody_refresh(
+            stale_classification_counts_by_source(items),
+            stale_summary_counts_by_source(items, summaries),
+        )
+        + render_custody_by_source(by_source)
+    )
+
+
 def _write_index(
     paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
     components, works, verdicts: dict[str, CustodyEvent],
+    summaries: dict[str, ConceptSummary],
 ) -> None:
     lines = [
         "# Scrolls Library",
@@ -302,18 +349,18 @@ def _write_index(
         # equals `status`/`doctor` when every held item is rendered.
         custody_headline(items, verdicts),
     ]
-    # the per-source custody breakdown under the headline (roadmap H145) — the
-    # compiled landing-page counterpart of the `export bundle` briefing (H141)
-    # and JSON `status` (H133), over the same shared `render_custody_by_source`
-    # so the `_By source:_` bullets read byte-identical across surfaces and sum
-    # to the headline by construction (every scroll lands in one source group).
-    # A single-source/empty library is the honest no-op (the helper returns []).
-    # The helper's trailing spacer is dropped: a breakdown is present only with
-    # ≥2 sources, so `## Sources` always follows and supplies the separator.
-    by_source_lines = render_custody_by_source(
-        custody_counts_by_source(items, verdicts))
-    if by_source_lines:
-        lines += [""] + by_source_lines[:-1]
+    # the readable scope-custody block under the headline (roadmap H184): the
+    # weakest-source `_Attention:_` pointer (H159), the per-source `_Refresh:_`
+    # pointer (H178), then the `_By source:_` breakdown (H145) — the compiled
+    # landing-page counterpart of the `export bundle`/`context` briefings, over the
+    # same shared renderers so the lines read byte-identical across surfaces and
+    # converge with JSON `status` (H133) + `doctor`'s debt maps by construction.
+    # An empty/single-source clean library is the honest no-op (the block is []).
+    # The block's trailing spacer is dropped: `## Sources` always follows when
+    # items exist and supplies the separator.
+    custody_block = _custody_scope_block(items, verdicts, summaries)
+    if custody_block:
+        lines += [""] + custody_block[:-1]
     if by_source:
         lines += ["", "## Sources", ""]
         for source in sorted(by_source):
@@ -355,6 +402,7 @@ def _write_index(
 
 def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: str,
                 members: list[ScrollItem], note, verdicts: dict[str, CustodyEvent],
+                summaries: dict[str, ConceptSummary],
                 lead: str | None = None, trailer: list[str] | None = None,
                 consolidate_works: dict[str, ScrollItem] | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
@@ -368,17 +416,18 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
     # across surfaces and its tier/posture totals equal this page's per-row markers
     # by construction (every scroll has one fidelity tier and one drift posture)
     lines += [custody_headline(members, verdicts), ""]
-    # the per-source custody breakdown under the headline (roadmap H152) — a
-    # multi-source group page (a category/concept/tag spanning sources) names
-    # *which* source is weakest, the compiled counterpart of the `export bundle`
-    # briefing (H141), the `context` bundle (H149), and `index.md` (H145), over the
-    # same shared `render_custody_by_source` so the `_By source:_` bullets read
-    # byte-identical and sum to the headline by construction. The helper's `<2`-source
-    # no-op omits the split on single-source pages — including every `sources/*.md`
-    # page (always one source) and any single-source category/tag — so the rule is
-    # uniform (≥2 sources ⟹ a split). The helper's trailing spacer separates the
-    # block from the first item bullet (the consolidated or singleton body follows).
-    lines += render_custody_by_source(custody_counts_by_source(members, verdicts))
+    # the readable scope-custody block under the headline (roadmap H184): the
+    # weakest-source `_Attention:_` pointer (H159), the per-source `_Refresh:_`
+    # pointer (H178), then the `_By source:_` breakdown (H152) — over this page's
+    # own members, the compiled counterpart of the `export bundle`/`context`
+    # briefings and `index.md`, through the same shared renderers so the lines read
+    # byte-identical and sum to the headline by construction. `_Attention:_` and
+    # `_By source:_` are `<2`-source no-ops (omitted on every single-source page —
+    # `sources/*.md` and any single-source category/tag); `_Refresh:_` has no
+    # single-source gate, so a single-source page still names its refresh debt. The
+    # block's trailing spacer separates it from the first item bullet (the
+    # consolidated or singleton body follows).
+    lines += _custody_scope_block(members, verdicts, summaries)
     if consolidate_works is not None:  # category pages collapse works (ADR 0071)
         lines += _consolidated_body(members, page_dir, note, consolidate_works, verdicts)
     else:

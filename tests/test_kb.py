@@ -22,7 +22,8 @@ def scrolls_home(monkeypatch, tmp_path):
 
 def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=(),
                   links=(), saved_at="2026-06-01T00:00:00+00:00", markdown_path=None,
-                  source_id=None, url=None, raw_text=None, content_hash=None):
+                  source_id=None, url=None, raw_text=None, content_hash=None,
+                  provenance=None):
     slug = title.lower().replace(" ", "-")
     return ScrollItem(
         id=item_id,
@@ -39,6 +40,7 @@ def make_rendered(item_id, source, title, *, category=None, concepts=(), tags=()
         stage="rendered",
         raw_text=raw_text,
         content_hash=content_hash,
+        provenance=provenance,
     )
 
 
@@ -808,12 +810,17 @@ def test_kb_multi_source_group_page_carries_a_per_source_breakdown(scrolls_home,
         " · drift verified 1, unverified 1 · coverage 1/1",
         "",
     ]
-    # the breakdown sits directly under the page headline, before the first bullet
+    # the breakdown sits under the page headline; the `_Attention:_` pointer
+    # (H184) — arxiv carries the drift — now sits between them, before `_By source:_`
     headline = "_Custody: 3 scroll(s) · fidelity full 2, reference 1" \
         " · drift verified 1, unverified 1, drifted 1._"
+    attention = (
+        "_Attention: source `arxiv` carries the most drift (1 drifted) — "
+        "recheck with `scrolls verify --source arxiv`._"
+    )
     body = page.split("3 scrolls.\n\n")[1]
-    assert body.startswith(headline + "\n\n_By source:_")
-    assert (headline + "\n\n" + "\n".join(expected)) in body
+    assert body.startswith(headline + "\n\n" + attention + "\n\n_By source:_")
+    assert (headline + "\n\n" + attention + "\n\n" + "\n".join(expected)) in body
 
 
 def test_kb_group_page_per_source_breakdown_sums_to_the_page_headline(scrolls_home, capsys):
@@ -898,6 +905,184 @@ def test_kb_group_page_per_source_breakdown_is_refresh_safe(scrolls_home, capsys
     # (arxiv is reference-only and never re-checked, so it stays unverified)
     assert "- `web` — 1 scroll(s) · fidelity full 1 · drift drifted 1" in refreshed
     assert "- `web` — 1 scroll(s) · fidelity full 1 · drift unverified 1" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
+# --- readable `_Attention:_` + `_Refresh:_` action-pointer lines on compiled
+# --- `library/` pages (roadmap H184) --------------------------------------------
+#
+# The compiled-page counterpart of the bundle/context briefing action lines: the
+# drift `_Attention:_` (H159) and refresh `_Refresh:_` (H178) pointers now ride the
+# index + group pages beside the `_By source:_` map (H145/H152), through the same
+# shared renderers so they read byte-identical and converge with the JSON
+# `status`/`maintain` flags + `doctor`'s debt maps. The refresh debt is computed
+# over each page's own member scope (the scope-consistent posture H178 took).
+
+
+def _seed_action_debt(db):
+    """A multi-source library that triggers all three action lines (H184).
+
+    `web:a` — full + drifted (the `_Attention:_` weakest source) + a stale-ruleset
+    classification (enrichment `_Refresh:_` debt {web}); `arxiv:1` — full. Both sit
+    in concept `Models` whose stored summary is stale → summary `_Refresh:_` debt
+    {arxiv, web} (the H171 multi-source attribution). Both in category `ml`.
+    """
+    from scrolls.classify import ENGINE
+    from scrolls.kb import save_concept_summary
+
+    stale_prov = {"classified_by": ENGINE, "classified_basis": "documentation-url",
+                  "classified_ruleset": "oldfingerprint"}
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="ml", concepts=("Models",),
+        raw_text="b", content_hash="h1", provenance=stale_prov))
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", concepts=("Models",),
+        raw_text="b", content_hash="h2"))
+    _drift(db, "web:a", "drifted")
+    save_concept_summary(db, make_summary("models", "Models", "Old synthesis."))
+
+
+def _action_block(items, db):
+    """The expected `_custody_scope_block` over `items` — the byte-identical oracle."""
+    from scrolls.classify import stale_classification_counts_by_source
+    from scrolls.custody import (
+        custody_counts_by_source,
+        latest_events,
+        render_custody_attention,
+        render_custody_by_source,
+        render_custody_refresh,
+    )
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import stale_summary_counts_by_source
+
+    by_source = custody_counts_by_source(items, latest_events(db))
+    return (
+        render_custody_attention(by_source)
+        + render_custody_refresh(
+            stale_classification_counts_by_source(items),
+            stale_summary_counts_by_source(items, load_concept_summaries(db)))
+        + render_custody_by_source(by_source)
+    )
+
+
+def test_kb_index_carries_attention_and_refresh_action_lines(scrolls_home, capsys):
+    """The whole-library index carries `_Attention:_`, `_Refresh:_`, then
+    `_By source:_` under the headline — byte-identical to the shared renderers, in
+    order, naming the same sources doctor's debt maps do (roadmap H184)."""
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_debt(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    rendered = [i for i in list_items(db) if i.markdown_path]
+    expected = _action_block(rendered, db)
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    # the whole block (minus its trailing spacer, which `## Sources` supplies) is
+    # contiguous under the headline
+    assert "\n".join(expected[:-1]) in header
+    assert (header.index("_Custody:") < header.index("_Attention:")
+            < header.index("_Refresh:") < header.index("_By source:_"))
+    # the readable lines name the same sources the audit maps do
+    assert "_Attention: source `web` carries the most drift" in header
+    assert "classifications stale in `web`" in header
+    assert "summaries stale in `arxiv`, `web`" in header
+
+
+def test_kb_group_page_carries_attention_and_refresh_action_lines(scrolls_home, capsys):
+    """A multi-source group page carries the same action block over its own members,
+    between the scope headline and the first item bullet (roadmap H184)."""
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_debt(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    members = [i for i in list_items(db) if i.category == "ml"]
+    expected = _action_block(members, db)
+    body = generated_body(
+        (scrolls_home / "library" / "categories" / "ml.md").read_text(encoding="utf-8"))
+    assert "\n".join(expected[:-1]) in body
+    assert (body.index("_Custody:") < body.index("_Attention:")
+            < body.index("_Refresh:") < body.index("_By source:_"))
+
+
+def test_kb_clean_multi_source_pages_omit_the_action_lines(scrolls_home, capsys):
+    """A multi-source library with no actionable drift and no stale debt keeps the
+    `_By source:_` split but shows neither action line — honest absence (H184)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Alpha", category="ml", raw_text="b", content_hash="h1"))
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper", category="ml", raw_text="b", content_hash="h2"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    for page in ("index.md", "categories/ml.md"):
+        text = (scrolls_home / "library" / page).read_text(encoding="utf-8")
+        assert "_By source:_" in text, page
+        assert "_Attention:" not in text, page  # no source carries actionable loss
+        assert "_Refresh:" not in text, page  # nothing stale to refresh
+
+
+def test_kb_single_source_page_shows_refresh_but_not_attention(scrolls_home, capsys):
+    """A single-source page shows `_Refresh:_` (per-source work, no single-source
+    gate) but never `_Attention:_`/`_By source:_` (both rank across sources) — and
+    its summary debt is scope-consistent: the multi-source concept drops below
+    `MIN_MEMBERS` over one source, so only the classification axis remains (H184)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_debt(db)  # web:a (stale class + drifted), arxiv:1; concept Models
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "sources" / "web.md").read_text(encoding="utf-8")
+    assert "_Custody:" in page
+    assert "_Attention:" not in page  # single source: nothing to rank across
+    assert "_By source:_" not in page  # single source: the headline says all
+    # the enrichment axis still fires (web:a is stale-classified)...
+    assert "_Refresh: classifications stale in `web`" in page
+    # ...but the summary axis does not: concept `Models` has one web member on this
+    # page (< MIN_MEMBERS), so it is not eligible here — scope-consistent debt
+    assert "summaries stale" not in page
+
+
+def test_kb_action_lines_are_refresh_safe(scrolls_home, capsys):
+    """The action lines live inside the `@generated` fence and refresh on recompile;
+    an annotation outside the fence survives (roadmap H184 × ADR 0102)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_debt(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index_path = scrolls_home / "library" / "index.md"
+    page = index_path.read_text(encoding="utf-8")
+    assert "_Attention: source `web`" in generated_body(page)  # inside the fence
+    assert "_Refresh: classifications stale in `web`" in generated_body(page)
+    index_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # clear the stale classification: web:a re-classified under the live ruleset
+    import dataclasses
+
+    from scrolls.classify import ENGINE, RULESET_FINGERPRINT
+    from scrolls.items import get_item, update_item
+    web_a = get_item(db, "web:a")
+    update_item(db, dataclasses.replace(web_a, provenance={
+        "classified_by": ENGINE, "classified_basis": "documentation-url",
+        "classified_ruleset": RULESET_FINGERPRINT}))
+    run_kb(capsys)
+
+    refreshed = index_path.read_text(encoding="utf-8")
+    # the enrichment clause is gone; the summary clause remains (still stale)
+    assert "classifications stale in `web`" not in refreshed
+    assert "summaries stale in `arxiv`, `web`" in refreshed
     assert "_My note._" in refreshed  # annotation outside the fence preserved
 
 
@@ -1469,6 +1654,13 @@ def test_kb_concept_page_combines_lead_summary_and_related_concepts(scrolls_home
         "2 scrolls.\n"
         "\n"
         "_Custody: 2 scroll(s) · fidelity reference 2 · drift unverified 2._\n"
+        "\n"
+        # the stored summary's members_hash (`abc123`) does not match the live
+        # members, so the concept's single-source summary debt names `web` (H184);
+        # single source ⟹ no `_Attention:_`/`_By source:_`, but `_Refresh:_` has no
+        # single-source gate
+        "_Refresh: summaries stale in `web` — refresh with "
+        "`scrolls kb --stale --source <S>`._\n"
         "\n"
         "- [A](../../scrolls/web/a.md) — web · reference · unverified · never checked\n"
         "- [B](../../scrolls/web/b.md) — web · reference · unverified · never checked\n"

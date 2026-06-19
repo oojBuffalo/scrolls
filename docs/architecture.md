@@ -1222,9 +1222,19 @@ choice (ADRs 0004, 0005).
   `concepts/`, or `tags/` page over several sources names which source on it is
   weakest, summing to that page's headline by construction; the rule is uniform
   (≥2 sources ⟹ a split), so every `sources/*.md` page (always one source) and any
-  single-source category/tag omits it via the same helper no-op. Both the headline
-  and the breakdown render inside the `@generated` fence, so a recompile refreshes
-  them after a re-verify. Concept pages merge spellings by
+  single-source category/tag omits it via the same helper no-op. Between that scope
+  headline and the `_By source:_` map, the index and group pages also carry the two
+  readable **action-pointer lines** (roadmap H184) the bundle/context briefings do
+  — the weakest-source `_Attention:_` pointer (`custody.render_custody_attention`,
+  H159) and the per-source `_Refresh:_` pointer (`custody.render_custody_refresh`,
+  H178) — over each page's own member scope (a shared `kb._custody_scope_block`),
+  so a compiled page hands a browser "this source needs a recheck / a refresh", not
+  just the breakdown. The refresh debt's stale-summary axis imports
+  `kb_llm.stale_summary_counts_by_source` lazily (the `kb` ⇄ `kb_llm` cycle); the
+  axes that omit a single-source gate (`_Refresh:_`) still fire on a one-source page
+  while the cross-source `_Attention:_`/`_By source:_` stay no-ops. The headline,
+  the breakdown, **and** both action lines render inside the `@generated` fence, so
+  a recompile refreshes them after a re-verify or a re-classify. Concept pages merge spellings by
   slug, and lead with a stored synthesized summary when the LLM concept
   engine has written one — the store (`concept_summaries`) lives on the
   compiler's side so a plain `scrolls kb` includes summaries with no model,
