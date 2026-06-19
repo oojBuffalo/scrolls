@@ -3506,7 +3506,15 @@ leaving the rest (`test_kb_stale_source_clears_only_that_sources_doctor_entry`,
 without `--stale` is a usage error (`test_kb_source_without_stale_is_a_usage_error`),
 and a source with no stale debt is the network-free no-op
 (`test_kb_stale_source_unknown_is_a_network_free_noop`). It implies the llm engine
-and composes with `--batch`, exactly like whole-library `--stale`.
+and composes with `--batch`, exactly like whole-library `--stale`. The
+act↔report convergence — the regenerated concept set equals
+`custody.summaries.by_source[<S>]`'s offenders and refreshing clears that source's
+entry (the multi-source cluster clearing all its sources) — is pinned in the
+cross-surface convergence suite beside its
+[`classify --stale --source`](#scrolls-classify-id) sibling
+(`test_kb_stale_source_refreshes_exactly_the_doctor_per_source_summaries` in
+`tests/test_custody_convergence.py`, roadmap H176), completing the per-source
+refresh convergence on both enrichment axes.
 
 ```console
 $ scrolls kb

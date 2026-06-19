@@ -258,6 +258,22 @@ surface can drift in punctuation or phrasing (the honest-*absence* counterpart �
 compiled page never fabricating an action line with no JSON basis — is pinned in the
 completeness contract, `tests/test_completeness.py`, roadmap H190).
 
+The **act side of the per-source enrichment debt** is pinned the way the
+verify-selection section pins the drift act side. `classify --stale --source S`
+(roadmap H154) and `kb --stale --source S` (roadmap H176) each regenerate exactly
+the offenders `doctor`'s `custody.enrichment.by_source[S]` / `custody.summaries.
+by_source[S]` report — the count refreshed equals doctor's per-source number (the
+shared `is_stale_classification` / `is_stale_summary` predicate the audit builds
+its map from), and refreshing clears that source's entry from the offenders-only
+map. The two axes differ in attribution: a classification belongs to one source, so
+a refresh clears exactly that source's entry; a summary spans a *cluster* whose
+members may come from several sources, so refreshing under one of a cluster's
+sources clears **all** of them (the H171 attribution) while an unrelated
+single-source concept is left whole. Both are mutation-checked non-vacuous
+(perturbing the refresh scope breaks the count tie), completing the per-source
+*refresh* convergence on both enrichment axes beside the per-source *report* ties
+above.
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
 first→last movement on `drift_change`/`coverage_change`/`stale_change` (and the
@@ -1137,6 +1153,26 @@ def _concept_member(item_id, concept, source, content_hash):
         content_hash=content_hash, concepts=(concept,))
 
 
+@pytest.fixture
+def fake_summary_llm(monkeypatch):
+    """Canned concept-summary completer, so `kb --stale` runs network-free.
+
+    The summary-axis refresh actually calls the model; a local copy of
+    `test_kb.py`'s fixture keeps the convergence test offline (mirrors the
+    `cli.live_recapture` seam every other custody flow scripts behind).
+    """
+    import scrolls.kb_llm as kb_llm
+
+    calls = []
+
+    def complete(system, user, model):
+        calls.append({"system": system, "user": user, "model": model})
+        return json.dumps({"summary": "How this concept shows up across scrolls."})
+
+    monkeypatch.setattr(kb_llm, "_anthropic_complete", complete)
+    return calls
+
+
 def test_summaries_by_source_converges_with_the_per_source_stale_summaries(
     scrolls_home, capsys
 ):
@@ -1215,6 +1251,89 @@ def test_summaries_by_source_converges_with_the_per_source_stale_summaries(
     assert maintain_summary_by_source == report_summary_by_source(
         run_doctor(get_paths())
     )
+
+
+def test_kb_stale_source_refreshes_exactly_the_doctor_per_source_summaries(
+    scrolls_home, fake_summary_llm, capsys
+):
+    # roadmap H176: `kb --stale --source <S>` regenerates exactly the stale concept
+    # summaries source <S> participates in — the offenders doctor reports in
+    # `custody.summaries.by_source[<S>]` (H171). The summary-axis sibling of H154's
+    # enrichment-axis `classify --stale --source` convergence above; together they
+    # complete the per-source *refresh* convergence on BOTH enrichment axes in this
+    # one suite (the per-source *report* ties live just above for both axes).
+    #
+    # The load-bearing summary-axis difference (vs the classification axis, where each
+    # item has one source): a summary spans a *cluster* whose members come from several
+    # sources and the stored fingerprint records only the digest, not which member
+    # moved — so a stale summary is "stale for" EVERY source it spans, and refreshing
+    # under one of a cluster's sources clears ALL of them (the H171 attribution).
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import (
+        _summary_targets,
+        eligible_concepts,
+        members_hash,
+    )
+
+    main(["init"])
+    db = get_paths().db_path
+
+    # Bm25: a stale summary over a web + arxiv cluster → attributes to BOTH.
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    # Vector: a stale summary over a wikipedia-only cluster → attributes to wikipedia
+    #   (a *different*, single-source concept, so refreshing Bm25 must leave it whole).
+    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
+    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
+    # Clean: a *current* summary over a reddit + web cluster → no stale debt.
+    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
+    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
+
+    _stored_summary(db, "bm25", "stale-old-1")
+    _stored_summary(db, "vector", "stale-old-2")
+    eligible = eligible_concepts(list_items(db))
+    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+    capsys.readouterr()
+
+    # the report side: doctor's per-source stale-summary offenders. Bm25 double-counts
+    # (web + arxiv), Vector counts wikipedia; the current Clean concept is omitted.
+    by_source = run_doctor(get_paths())["custody"]["summaries"]["by_source"]
+    assert by_source == {"arxiv": 1, "web": 1, "wikipedia": 1}
+
+    # 1. the act-side pool == the report-side count, per source. `_summary_targets`
+    #    (the `kb --stale --source S` selector) narrows the stale set to the concepts
+    #    S participates in; its size equals doctor's per-source number by construction
+    #    (the same `is_stale_summary` predicate, the H27/H154 signal-clears tie).
+    stored = load_concept_summaries(db)
+    targets_by_source = {
+        source: set(_summary_targets(eligible, stored, stale_only=True, source=source))
+        for source in by_source
+    }
+    for source, count in by_source.items():
+        assert len(targets_by_source[source]) == count
+    #    arxiv touches only the multi-source Bm25; web likewise (it shares that cluster);
+    #    wikipedia touches only its own single-source Vector.
+    assert targets_by_source == {
+        "arxiv": {"bm25"},
+        "web": {"bm25"},
+        "wikipedia": {"vector"},
+    }
+
+    # 2. the CLI regenerates exactly that source's offenders. `--source arxiv` touches
+    #    only Bm25 — NOT Vector, even though Vector is also stale: the scope genuinely
+    #    narrows the refresh (the mutation check — were the scope ignored, Vector would
+    #    refresh too and step 3's `wikipedia` entry would wrongly clear).
+    assert main(["kb", "--stale", "--source", "arxiv"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {result["slug"] for result in payload["results"]} == targets_by_source["arxiv"]
+    assert payload["generated"] == by_source["arxiv"] == 1
+
+    # 3. refreshing under arxiv clears arxiv's entry from the map AND — because Bm25 is
+    #    a multi-source cluster — its `web` attribution too (clears ALL the cluster's
+    #    sources, the H171/H172 attribution); the unrelated single-source `wikipedia`
+    #    concept (Vector) is left whole.
+    after = run_doctor(get_paths())["custody"]["summaries"]["by_source"]
+    assert after == {"wikipedia": 1}
 
 
 def test_classify_stale_source_refreshes_exactly_the_doctor_per_source_count(
