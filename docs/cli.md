@@ -382,6 +382,26 @@ scheduled worker's per-source picture and a fresh standalone audit read identica
 state — the per-source-maintenance counterpart of the `stats.custody` family (H101)
 and stale-recheck (H111) ties above.
 
+The **scoped read** is the read-side sibling of that per-source breakdown:
+`doctor --source S` (roadmap H162), `status --source S` (H166), `maintain --source
+S` (H165), and MCP `get_library_health(source=S)` (H167) each scope the *whole*
+custody read to one source's held items through the **same** `run_doctor(source=)`
+pre-filter, so a worker triaging the weakest source reads its full picture directly
+instead of slicing it out of the whole-library report. Each is pinned to its
+neighbour in its own test, and the consolidating property is pinned *once* (roadmap
+H169, the capstone — the scoped-read sibling of H157's whole-library JSON
+`by_source` consolidation): over the multi-source loss seed all four `--source S`
+reads agree (the snapshot-shaped pair `status`/`maintain` equals the distilled
+scoped `doctor` audit; the raw-block MCP read equals the scoped `doctor` block key
+for key), each lines up with the whole-library audit's `by_source[S]` slice,
+`by_source` collapses to the present-and-singleton `{S: …}`, the rendered headline
+is identical across the three that render one, and `attention` is honestly `null`
+on each (the single-source gate has nothing to rank across). Non-vacuous (the two
+sources differ on every axis) and mutation-checked
+(`test_per_source_scope_capstone_all_four_scoped_reads_agree`) — so the scoped
+custody picture is one number whichever surface a worker or agent reaches, and a
+future scoped surface has a single contract to satisfy.
+
 The **readable per-source breakdown** carries its own one-place tie (roadmap H151).
 The `_By source:_` bullets that follow a scope custody headline ride four readable
 surfaces — the `export bundle` briefing (H141) **and its HTML form**, the

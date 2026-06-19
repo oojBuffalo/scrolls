@@ -203,7 +203,16 @@ scheduled pass), and MCP `get_library_health(source=S)` (H167, the agent-over-MC
 read). Each is pinned to equal the others and the `by_source[S]` slice over the
 loss seed, with `attention` honestly `null` on every single-source scope (the
 `weakest_source` gate has nothing to rank across) — so the scoped custody picture
-is one number whichever of the four surfaces a worker or agent reaches.
+is one number whichever of the four surfaces a worker or agent reaches. Those
+ties are pinned scattered (the four scoped-read tests above); the consolidating
+property is pinned *once* (roadmap H169, the capstone — the scoped-read sibling of
+H157's whole-library JSON `by_source` consolidation): over the loss seed all four
+`--source S` reads agree key-for-key (the snapshot-shaped pair `status`/`maintain`
+== the distilled scoped audit; the raw-block MCP read == the scoped `doctor`
+block) and each lines up with the `by_source[S]` slice, the rendered headline is
+identical across the three that render one, and `attention` is `null` on each —
+mutation-checked non-vacuous, so a future scoped surface has one contract to
+satisfy.
 
 The **`status` surface** carries the same per-source breakdown (roadmap H133): a
 faithful read (`report_by_source`) of the `run_doctor` map `status` already makes
@@ -857,6 +866,103 @@ def test_mcp_library_health_source_scope_unknown_source_is_the_honest_empty_bloc
     scoped = run_doctor(get_paths(), source="ghost")["custody"]
     for key in scoped:
         assert health[key] == scoped[key]
+
+
+def test_per_source_scope_capstone_all_four_scoped_reads_agree(scrolls_home, capsys):
+    """roadmap H169 — the capstone of the per-source-scope triad.
+
+    `doctor --source S` (H162), `status --source S` (H166), `maintain --source S`
+    (H165), and MCP `get_library_health(source=S)` (H167) each scope the *whole*
+    custody read to one source's held items through the **same** `run_doctor(source=)`
+    pre-filter. The three CLI ties + the MCP tie are each pinned in their own test
+    above (and the maintain/MCP tests already fold in their neighbours); this folds
+    all four into one obvious place — the scoped-read sibling of H157's whole-library
+    JSON `by_source` consolidation — so a future scoped surface has a single contract
+    to satisfy. Over the multi-source loss seed every `--source S` read's custody view
+    equals every other's **and** the whole-library audit's `by_source[S]` slice, the
+    rendered headline is identical, and `attention` is honestly `null` on each (the
+    single-source gate has nothing to rank across). Non-vacuous (the two sources
+    differ on every axis) and mutation-checked (perturbing one surface's scope tally
+    breaks the four-way tie).
+    """
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_two_source_loss(db)
+    capsys.readouterr()
+
+    whole = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(whole) == {"web", "arxiv"}
+    # non-vacuous: the two sources genuinely differ on every axis a scope reads
+    assert whole["web"]["tiers"] != whole["arxiv"]["tiers"]
+    assert whole["web"]["drift"] != whole["arxiv"]["drift"]
+    assert whole["web"]["coverage"] != whole["arxiv"]["coverage"]
+
+    for source in ("web", "arxiv"):
+        slice_ = whole[source]
+
+        # the four scoped reads, all over the same pristine state
+        scoped_doctor = run_doctor(get_paths(), source=source)["custody"]
+        snap = custody_snapshot(run_doctor(get_paths(), source=source))
+        assert main(["status", "--source", source]) == 0
+        status = json.loads(capsys.readouterr().out)
+        assert main(["maintain", "--no-recheck", "--source", source]) == 0
+        report = json.loads(capsys.readouterr().out)
+        health = mcp_server.get_library_health(source=source)
+
+        # 1. the snapshot-shaped pair (status/maintain carry custody_snapshot(...))
+        #    are byte-identical to the distilled scoped audit and to each other.
+        assert status["custody"] == report["custody"] == snap
+
+        # 2. the raw-block MCP read equals the scoped doctor block key for key (the
+        #    tool *is* that block plus the two distilled members), so the snapshot
+        #    trio and the raw pair are two shapes of the one scoped audit.
+        for key in scoped_doctor:
+            assert health[key] == scoped_doctor[key]
+
+        # 3. every scoped read lines up with the whole-library by_source[S] slice on
+        #    the three custody axes (snapshot flattens coverage; the raw block nests
+        #    it under drift — both equal the slice).
+        assert snap["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(snap["drift"]) == slice_["drift"]
+        assert snap["coverage"] == slice_["coverage"]
+        assert health["tiers"] == slice_["tiers"]
+        assert _posture_from_ledger_counts(health["drift"]) == slice_["drift"]
+        assert health["drift"]["coverage"] == slice_["coverage"]
+
+        # 4. by_source collapses to the present-and-singleton on every surface.
+        assert (
+            scoped_doctor["by_source"]
+            == status["by_source"]
+            == report["by_source"]
+            == health["by_source"]
+            == {source: slice_}
+        )
+
+        # 5. the rendered headline is the one snapshot rendered, identical on every
+        #    surface that renders one (the raw doctor block carries no headline).
+        headline = snapshot_headline(snap)
+        assert status["headline"] == report["headline"] == health["headline"] == headline
+
+        # 6. attention is honestly null under a single-source scope (the
+        #    weakest_source gate has nothing to rank across).
+        assert status["attention"] is report["attention"] is health["attention"] is None
+
+    # teeth: the four-way equality is not vacuous — the cross-source slice never
+    # matches any scoped read, and a perturbed tally never matches either, so a real
+    # desync between a surface's scope and the by_source split fails here.
+    other = whole["arxiv"]["tiers"]
+    perturbed = {**whole["web"]["tiers"], "full": whole["web"]["tiers"]["full"] + 1}
+    web_doctor = custody_snapshot(run_doctor(get_paths(), source="web"))
+    web_health = mcp_server.get_library_health(source="web")
+    assert main(["status", "--source", "web"]) == 0
+    web_status = json.loads(capsys.readouterr().out)["custody"]
+    assert main(["maintain", "--no-recheck", "--source", "web"]) == 0
+    web_maintain = json.loads(capsys.readouterr().out)["custody"]
+    for view in (web_doctor, web_status, web_maintain, web_health):
+        assert view["tiers"] != other
+        assert view["tiers"] != perturbed
 
 
 def test_bundle_per_source_breakdown_converges_with_doctor_by_source(scrolls_home, capsys):
