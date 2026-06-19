@@ -247,6 +247,17 @@ tie). So the single weakest-source pointer reads one number across the readable 
 and both JSON surfaces — the `attention`-axis counterpart of H151's byte-identical
 readable `_By source:_` tie.
 
+Both the drift `_Attention:_` line **and** the refresh `_Refresh:_` line (H178) are
+then pinned **byte-identical across every readable surface** (roadmap H188) — the
+action-line extension of H151's byte-identical `_By source:_` invariant. Over a scope
+identical across the bundle query, the `scrolls context` query, the compiled
+`index.md` and a compiled group page, each rendered line is character-for-character the
+same string and equals `render_custody_attention`/`render_custody_refresh` over the
+shared scope, so the one shared renderer is the sole source of the wording and no
+surface can drift in punctuation or phrasing (the honest-*absence* counterpart — a
+compiled page never fabricating an action line with no JSON basis — is pinned in the
+completeness contract, `tests/test_completeness.py`, roadmap H190).
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
 first→last movement on `drift_change`/`coverage_change`/`stale_change` (and the
@@ -290,6 +301,7 @@ from scrolls.custody import (
     record_events,
     render_custody_attention,
     render_custody_by_source,
+    render_custody_refresh,
     tally_custody,
     tally_custody_by_source,
     unverified_items,
@@ -3192,6 +3204,144 @@ def test_compiled_pages_carry_the_action_lines_converging_with_doctor(
     refreshed = (library / "categories" / "ml.md").read_text(encoding="utf-8")
     assert _refresh_sources(refreshed, _REFRESH_CLASS_MD) == []  # enrichment cleared
     assert _refresh_sources(refreshed, _REFRESH_SUMM_MD) == ["arxiv", "web"]
+
+
+# --- the two action lines read byte-identical across the readable surfaces ----
+#
+# roadmap H188: H151 pins the `_By source:_` breakdown byte-identical across the
+# readable surfaces; this extends that posture to the two *action* lines H184 put
+# on the compiled pages beside the bundle/context briefings — the drift
+# `_Attention:_` (H159) and the refresh `_Refresh:_` (H178). The H159/H178 ties
+# above parse each line back to its primitive *per surface*; this pins the
+# consolidating property *once*: over a scope identical across every Markdown
+# surface, each action line is character-for-character the same string — so the
+# one shared `render_custody_attention`/`render_custody_refresh` is the only
+# source of the wording, and no surface can drift in punctuation or phrasing.
+
+_ATTENTION_LINE = re.compile(r"^_Attention: .*?\._$", re.MULTILINE)
+_REFRESH_LINE = re.compile(r"^_Refresh: .*?\._$", re.MULTILINE)
+
+
+def _action_line(text, pattern):
+    """The full `_Attention:_` / `_Refresh:_` line a surface renders, or None.
+
+    Unlike `_attention_fields`/`_refresh_sources` (which decompose a line into the
+    structured fields each axis tie compares), this returns the *whole* rendered
+    line verbatim, so two surfaces can be compared byte-for-byte.
+    """
+    match = pattern.search(text)
+    return match.group(0) if match else None
+
+
+def _seed_action_line_fixture(db):
+    """One multi-source scope carrying BOTH action-line bases over one shared scope.
+
+    `web` carries the only drift (so the `_Attention:_` weakest source is web) and a
+    rules classification under a superseded ruleset (enrichment debt {web}); the
+    web+arxiv concept `Bm25` has a stale stored summary (summary debt {arxiv, web} —
+    the H171 multi-source attribution). Every item is category `ml`, rendered, and
+    carries "topic", so the bundle/context query, the compiled `index.md` (whole
+    rendered library) and the compiled `categories/ml.md` group page all scope to the
+    *same* item set — the precondition for a byte-identical action line.
+    """
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    insert_item(db, _item(
+        "web:fd", "Topic web drifted", category="ml", stage="rendered",
+        concepts=("Bm25",), markdown_path="scrolls/web/fd.md",
+        extracted_text="topic body", raw_text="<raw>topic body</raw>",
+        content_hash="sha256:fd",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))
+    insert_item(db, _item(
+        "arxiv:b2", "Topic arxiv two", source="arxiv", category="ml",
+        stage="rendered", concepts=("Bm25",), url="https://arxiv.org/abs/b2",
+        markdown_path="scrolls/arxiv/b2.md", extracted_text="topic body",
+        raw_text="<raw>topic body</raw>", content_hash="sha256:b2"))
+    record_events(db, [
+        CustodyEvent("web:fd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:fd", "sha256:x", None),
+        # arxiv:b2 left unverified — only web carries actionable drift
+    ])
+    save_concept_summary(db, ConceptSummary(
+        slug="bm25", display="Bm25", summary="Old synthesis.",
+        members_hash="stale-old", engine="kb-llm-v1", model="claude-opus-4-8",
+        generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def test_action_lines_are_byte_identical_across_readable_surfaces(scrolls_home, capsys):
+    # roadmap H188: over one unified scope (identical across the bundle query, the
+    # context query, the compiled index, and a compiled group page) each action line
+    # reads character-for-character the same on every Markdown surface and equals
+    # render_custody_attention/render_custody_refresh over the shared scope. The
+    # action-line analogue of H151's byte-identical `_By source:_` invariant.
+    from scrolls.bundle import build_bundle
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_line_fixture(db)
+    capsys.readouterr()
+
+    report = run_doctor(get_paths())["custody"]
+    # the canonical lines the shared renderers produce over doctor's whole-library maps
+    canonical_attention = render_custody_attention(report["by_source"])
+    canonical_refresh = render_custody_refresh(
+        report["enrichment"]["by_source"], report["summaries"]["by_source"])
+    # non-vacuous: both action lines genuinely have a basis to render
+    assert canonical_attention and canonical_refresh
+    attention_line = canonical_attention[0]
+    refresh_line = canonical_refresh[0]
+    assert "`web`" in attention_line and "1 drifted" in attention_line
+    assert "classifications stale in `web`" in refresh_line
+    assert "summaries stale in `arxiv`, `web`" in refresh_line  # the H171 attribution
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+    surfaces = {
+        "bundle-markdown": build_bundle(db, "topic"),
+        "context": build_context(db, "topic", budget="connected"),
+        "compiled-index": (library / "index.md").read_text(encoding="utf-8"),
+        "compiled-group-page": (library / "categories" / "ml.md").read_text(
+            encoding="utf-8"),
+    }
+    for name, text in surfaces.items():
+        assert _action_line(text, _ATTENTION_LINE) == attention_line, \
+            f"{name} attention line diverged from the shared renderer"
+        assert _action_line(text, _REFRESH_LINE) == refresh_line, \
+            f"{name} refresh line diverged from the shared renderer"
+
+    # mutation check: re-classify web:fd under the live ruleset → the enrichment axis
+    # clears, so the `_Refresh:_` line drops its classifications clause. Every surface
+    # re-derives and stays byte-identical to the new canonical (the summary axis is
+    # untouched) — proving the lines are genuinely derived, not coincidentally equal.
+    import dataclasses
+
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.items import get_item, update_item
+    web_fd = get_item(db, "web:fd")
+    update_item(db, dataclasses.replace(web_fd, provenance={
+        "classified_by": "rules-v1", "classified_basis": "weak-source",
+        "classified_ruleset": RULESET_FINGERPRINT}))
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    report2 = run_doctor(get_paths())["custody"]
+    refresh_line2 = render_custody_refresh(
+        report2["enrichment"]["by_source"], report2["summaries"]["by_source"])[0]
+    assert "classifications stale in" not in refresh_line2  # enrichment cleared
+    assert "summaries stale in `arxiv`, `web`" in refresh_line2  # summary untouched
+    assert refresh_line2 != refresh_line  # the line genuinely changed
+    surfaces2 = {
+        "bundle-markdown": build_bundle(db, "topic"),
+        "context": build_context(db, "topic", budget="connected"),
+        "compiled-index": (library / "index.md").read_text(encoding="utf-8"),
+        "compiled-group-page": (library / "categories" / "ml.md").read_text(
+            encoding="utf-8"),
+    }
+    for name, text in surfaces2.items():
+        assert _action_line(text, _REFRESH_LINE) == refresh_line2, \
+            f"{name} refresh line diverged after the data changed"
 
 
 def _parse_attention_reason(reason):

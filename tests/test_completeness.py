@@ -21,6 +21,14 @@ reports ``score: null`` (honest "no library"), never a perfect ``100``, and a
 first run carries ``first_run: true`` with null deltas, never a fabricated
 "no change". That honesty is the same G1 invariant, pinned here as the contract.
 
+The compiled `library/` pages (roadmap H184) carry the same kind of derived
+read — the `_Attention:_` (drift) and `_Refresh:_` (enrichment/summary debt)
+action-pointer lines — so they obey G1 too: a clean / empty / single-source
+compiled library never emits an `_Attention:_` it has no JSON `attention` basis
+for, nor a `_Refresh:_` clause for an axis carrying no stale debt (roadmap H190,
+the compiled-surface counterpart of the bundle/context honest-absence pinned in
+`tests/test_custody_convergence.py`).
+
 These tests pin G1 — *honest absence, honest failure* — as a single
 cross-surface invariant rather than re-proving it per command, so the
 already-true half cannot regress while G2 (scope echo + truncation honesty,
@@ -35,6 +43,7 @@ import pytest
 
 from scrolls import mcp_server
 from scrolls.cli import main
+from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
 
@@ -304,3 +313,111 @@ def test_mcp_could_not_check_raises_not_emptily(populated, name):
     # framework reports a tool error — never a silent empty success.
     with pytest.raises(ValueError):
         MCP_COULD_NOT_CHECK[name]()
+
+
+# --- The compiled `library/` pages honor the same honest-absence contract -----
+#
+# The compiled `library/` index + group pages carry the readable `_Attention:_`
+# (drift, roadmap H159/H184) and `_Refresh:_` (enrichment/summary debt, roadmap
+# H178/H184) action-pointer lines. Those are *derived reads*, so they obey G1: a
+# compiled page never shows an `_Attention:_` it has no JSON `attention` basis for,
+# nor a `_Refresh:_` clause for an axis carrying no stale debt — the compiled-page
+# counterpart of the bundle/context honest-absence already pinned for the JSON flag
+# (`test_readable_attention_line_absent_together_with_the_json_flag`) and the
+# refresh line (`test_bundle_refresh_line_omitted_when_no_stale_debt`). Roadmap H190.
+
+
+def _stale_classified(item_id, **overrides):
+    """A rendered item whose rules category was stamped under a superseded ruleset.
+
+    The live ruleset would no longer reproduce it, so `doctor` reports enrichment
+    debt for its source — a real basis for a `_Refresh:_` classifications clause.
+    """
+    base = dict(
+        category="tutorial",
+        stage="rendered",
+        markdown_path=f"scrolls/{item_id.replace(':', '/')}.md",
+        raw_text="<raw>alpha</raw>",
+        content_hash=f"sha256:{item_id}",
+        provenance={
+            "classified_by": "rules-v1",
+            "classified_basis": "weak-source",
+            "classified_ruleset": "deadbeef0000",
+        },
+    )
+    base.update(overrides)
+    return _item(item_id, **base)
+
+
+def _rendered(item_id, **overrides):
+    """A clean, fully-held rendered item (full fidelity, no drift, no stale debt)."""
+    base = dict(
+        stage="rendered",
+        markdown_path=f"scrolls/{item_id.replace(':', '/')}.md",
+        raw_text="<raw>alpha</raw>",
+        content_hash=f"sha256:{item_id}",
+    )
+    base.update(overrides)
+    return _item(item_id, **base)
+
+
+def test_compiled_pages_omit_action_lines_with_no_basis(scrolls_home, capsys):
+    # An empty library and a clean multi-source library each compile pages that show
+    # the custody headline (and, multi-source, the `_By source:_` split) but never an
+    # `_Attention:_`/`_Refresh:_` pointer — tied to the JSON `attention` being null.
+    library = get_paths().library_dir
+
+    # phase 1: an empty initialized library compiles with no action lines anywhere
+    main(["init"])
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    index_md = (library / "index.md").read_text(encoding="utf-8")
+    assert "_Custody: 0 scroll(s)._" in index_md  # the honest empty headline
+    assert "_Attention:" not in index_md
+    assert "_Refresh:" not in index_md
+
+    # phase 2: a clean two-source library — held, verified, no stale enrichment/summary
+    db = get_paths().db_path
+    insert_item(db, _rendered("web:a"))
+    insert_item(
+        db, _rendered("arxiv:b", url="https://arxiv.org/abs/b")
+    )
+    capsys.readouterr()
+
+    # the JSON basis: doctor finds no cross-source loss and no stale debt, so the
+    # `status` attention flag is null and both debt maps are empty
+    custody = run_doctor(get_paths())["custody"]
+    assert set(custody["by_source"]) == {"web", "arxiv"}  # genuinely multi-source
+    assert custody["enrichment"]["by_source"] == {}
+    assert custody["summaries"]["by_source"] == {}
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] is None
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    index_md = (library / "index.md").read_text(encoding="utf-8")
+    assert "_By source:_" in index_md     # the multi-source split DID compute...
+    assert "_Attention:" not in index_md  # ...but no loss → no fabricated pointer
+    assert "_Refresh:" not in index_md    # no stale debt → no fabricated pointer
+
+
+def test_compiled_refresh_line_is_per_axis_honest(scrolls_home, capsys):
+    # The `_Refresh:_` line shows only the axes that carry stale debt: a library with
+    # a stale *classification* but no stale *summary* shows the classifications clause
+    # and never fabricates a summaries clause — axis-level honest absence, tied to
+    # doctor's empty summary map (the basis a fabricated clause would lack).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _stale_classified("web:stale"))
+    capsys.readouterr()
+
+    custody = run_doctor(get_paths())["custody"]
+    assert custody["enrichment"]["by_source"] == {"web": 1}  # a real refresh basis
+    assert custody["summaries"]["by_source"] == {}           # no summary basis
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    index_md = (get_paths().library_dir / "index.md").read_text(encoding="utf-8")
+    assert "classifications stale in" in index_md   # the axis that has a basis
+    assert "summaries stale in" not in index_md     # the axis that does not → omitted
+    assert "_Attention:" not in index_md            # single source, no drift → no pointer

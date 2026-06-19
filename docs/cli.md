@@ -126,6 +126,14 @@ shape rather than erroring, so the payload shape never varies between "no
 library yet" and "library, no matches"
 (`test_before_init_is_empty_in_shape_across_surfaces`).
 
+The contract reaches the **compiled `library/` pages** too: their derived
+`_Attention:_` / `_Refresh:_` action-pointer lines (roadmap H184) are honest
+about absence the same way the JSON flags are — a clean / empty / single-source
+compiled library never emits an `_Attention:_` it has no JSON `attention` basis
+for, nor a `_Refresh:_` clause for an enrichment/summary axis carrying no stale
+debt (roadmap H190; `test_compiled_pages_omit_action_lines_with_no_basis`,
+`test_compiled_refresh_line_is_per_axis_honest`).
+
 ### G2 — Honest scope, honest completeness *(enforced across every read surface — `search`/`list`/`related` via `--stats`, `works`/`context`/`doctor` always-on)*
 
 A scoped or `--limit`-capped result must let a reader that holds *only the
@@ -506,6 +514,22 @@ the compiled `_Attention:_` line equals `weakest_source(doctor.custody.by_source
 == the JSON `status` flag and the compiled `_Refresh:_` clauses name exactly
 `doctor`'s `enrichment.by_source`/`summaries.by_source` keys, mutation-checked
 (`test_compiled_pages_carry_the_action_lines_converging_with_doctor`).
+
+Beyond *converging with doctor*, both action lines are pinned **byte-identical
+across every readable surface** (roadmap H188) — the action-line counterpart of
+H151's byte-identical `_By source:_` invariant. Over a scope identical across the
+bundle query, the `scrolls context` query, the compiled `index.md`, and a compiled
+group page, each rendered `_Attention:_` / `_Refresh:_` line is character-for-character
+the same string and equals `render_custody_attention` / `render_custody_refresh`
+over the shared scope, so the one shared renderer is the only source of the wording
+and no surface can drift in punctuation or phrasing
+(`test_action_lines_are_byte_identical_across_readable_surfaces`). And their
+**honest absence** on the compiled pages is folded into the completeness contract
+(roadmap H190): a clean / empty / single-source compiled library never emits an
+`_Attention:_` it has no JSON `attention` basis for, nor a `_Refresh:_` clause for an
+enrichment/summary axis carrying no stale debt
+(`test_compiled_pages_omit_action_lines_with_no_basis`,
+`test_compiled_refresh_line_is_per_axis_honest`).
 
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
