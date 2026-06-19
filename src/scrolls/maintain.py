@@ -177,7 +177,9 @@ def _finding_present(report: dict[str, Any], category: str) -> bool:
     return bool(report.get(category))  # duplicates / missing_scrolls / missing_media
 
 
-def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
+def suggest_repairs(
+    report: dict[str, Any], source: str | None = None
+) -> list[dict[str, Any]]:
     """Name the explicit on-request command that closes each finding (roadmap H40).
 
     maintain audits and reports but never repairs (custody §2.4); this turns the
@@ -201,6 +203,14 @@ def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
     suggestion becomes one ``--source <S>`` command per offending source — the
     minimal act, never re-running the clean sources — instead of the whole-library
     sweep. See `_scoped_refresh`.
+
+    `source` is the scope a `maintain --source <S>` pass ran under (roadmap H182):
+    when set, the audit was already pre-filtered to <S> (its held-source universe
+    collapsed to ``{S}``, so the H181 strict-subset rule would emit the *whole-library*
+    sweep — wrong for a deliberately scoped pass). A scoped pass therefore always
+    names the scoped refresh ``<command> --source <S>`` when the finding is present,
+    honoring the operator's declared scope. The whole-library pass (`source` ``None``)
+    is unchanged.
     """
     # The held-source universe (every held source, clean or not) — `doctor`'s
     # `custody.by_source` (H104). A refresh finding's debt is "confined" when its
@@ -217,7 +227,9 @@ def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
         # category), so a confined one expands into per-source commands; the
         # grouped structural/media suggestions keep their whole-library shape.
         if len(addresses) == 1 and addresses[0] in _SCOPABLE_REFRESH:
-            suggestions += _scoped_refresh(command, addresses[0], report, held_sources)
+            suggestions += _scoped_refresh(
+                command, addresses[0], report, held_sources, source
+            )
         else:
             suggestions.append({"command": command, "addresses": addresses})
     return suggestions
@@ -228,8 +240,9 @@ def _scoped_refresh(
     category: str,
     report: dict[str, Any],
     held_sources: set[str],
+    source: str | None = None,
 ) -> list[dict[str, Any]]:
-    """The minimal scoped act(s) for one confined refresh finding (roadmap H181).
+    """The minimal scoped act(s) for one confined refresh finding (roadmap H181/H182).
 
     Refines `suggest_repairs`' two `--source`-scopable refreshes (`classify --stale`
     H154, `kb --stale` H172). The offending sources are this pass's audit map
@@ -250,7 +263,18 @@ def _scoped_refresh(
     *double-cover* a shared cluster — a harmless redundancy (regeneration is
     idempotent), the price of the minimal-per-source shape; their union still
     refreshes exactly the offenders set, missing nothing.
+
+    `source` short-circuits this for an explicitly scoped pass (roadmap H182): a
+    `maintain --source <S>` pass pre-filtered the audit to <S>, so `held_sources` has
+    collapsed to ``{S}`` and the offenders are ``{S}`` too — making the strict-subset
+    test above False, which would emit the whole-library sweep even though the operator
+    scoped to <S>. When `source` is set the finding is present *for <S>* (the scoped
+    audit attributes it to no one else), so the minimal act is exactly the scoped
+    ``<command> --source <S>`` — one command, named after the declared scope rather
+    than re-derived from the collapsed universe.
     """
+    if source is not None:
+        return [{"command": f"{command} --source {source}", "addresses": [category]}]
     reader = (
         report_enrichment_by_source
         if category == "enrichment_stale"

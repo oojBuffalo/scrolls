@@ -1335,7 +1335,12 @@ def _cmd_maintain(
                 # command for each repairable finding (custody §2.4). Derived
                 # fresh from this pass's audit, so it is not recorded in the
                 # snapshot/log — `--history` replays snapshots, never suggestions.
-                "suggested": suggest_repairs(report),
+                # The pass's `source` scope (roadmap H182) names the *scoped*
+                # refresh (`classify --stale --source <S>`) so a `maintain --source
+                # <S>` pass — whose pre-filtered audit collapsed the source universe
+                # to {S}, defeating H181's strict-subset rule — still suggests the
+                # scoped act the operator declared, not the whole-library sweep.
+                "suggested": suggest_repairs(report, source=source),
             }
         )
     )

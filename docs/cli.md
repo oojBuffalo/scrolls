@@ -1200,6 +1200,18 @@ spanning several sources is named under each, so each gets its own scoped `kb
 (H172), so the per-source commands harmlessly double-cover it while their union
 refreshes exactly the offenders.
 
+A **scoped pass** (`maintain --source <S>`, below) always suggests the *scoped*
+refresh (roadmap H182). Because the scoped pass pre-filters the audit through
+`run_doctor(source=<S>)`, its held-source universe collapses to `{<S>}` and the
+offenders are `{<S>}` too — making offenders == universe, so the strict-subset rule
+above would emit the whole-library `classify --stale` / `kb --stale` even though the
+operator explicitly scoped the pass to `<S>`. The pass's `--source <S>` scope is
+threaded through, so a scoped pass with stale debt suggests `classify --stale
+--source <S>` / `kb --stale --source <S>` to match its scope (a scoped pass with no
+debt suggests nothing — `--source` never fabricates a command for an absent finding).
+The whole-library pass is unchanged: with no scope declared, the strict-subset rule
+governs as above.
+
 The report also carries a **`by_source`** member — the per-source custody
 breakdown the audit already produces (`doctor`'s `custody.by_source`, the same
 `{tiers, drift, coverage}` aggregate split per source, including the per-source
@@ -1295,6 +1307,10 @@ pre-filter. The **recheck** narrows to that source's held, hash-bearing items (t
 **audit** is scoped, so `custody`, `headline`, `by_source` (the singleton `{S: …}`),
 and `enrichment_by_source` are the one-source view; `attention` is therefore `null`
 (a single source has nothing to flag *across* — the same gate as `status --source`).
+The **`suggested`** refreshes are scoped to match (roadmap H182): a scoped pass with
+stale debt suggests `classify --stale --source S` / `kb --stale --source S`, not the
+whole-library sweep the collapsed universe would otherwise yield (see the `suggested`
+block above).
 The scoped `custody`/`by_source`/`headline` **converge by construction** with a
 `doctor --source S` audit distilled and a `status --source S` payload, the third leg
 of the per-source-scope triad (pinned in `tests/test_custody_convergence.py`). Three

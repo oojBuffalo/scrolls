@@ -1432,8 +1432,17 @@ choice (ADRs 0004, 0005).
   the H171 multi-source attribution carries through (a stale concept spanning
   several sources is named under each, so each earns its own scoped `kb --stale
   --source <S>`, the per-source commands harmlessly double-covering the shared
-  cluster while their union refreshes exactly the offenders). The report also
-  surfaces the audit's
+  cluster while their union refreshes exactly the offenders). A
+  **`maintain --source <S>` pass** always suggests the *scoped* refresh
+  (`suggest_repairs(report, source=<S>)`, roadmap H182): the scoped pass pre-filters
+  the audit through `run_doctor(source=<S>)`, so the held-source universe collapses
+  to `{<S>}` and the offenders are `{<S>}` too — defeating the strict-subset rule,
+  which would emit the whole-library sweep even though the operator scoped to `<S>`.
+  Threading the pass's `--source` scope through makes a scoped pass with stale debt
+  suggest `classify --stale --source <S>` / `kb --stale --source <S>` to match (a
+  scoped pass with no debt suggests nothing — `--source` never fabricates a command
+  for an absent finding); the whole-library pass (no scope) keeps the strict-subset
+  rule. The report also surfaces the audit's
   per-source custody breakdown (`maintain.report_by_source` → `doctor`'s
   `custody.by_source`, roadmap H123 — including the per-source `coverage` the audit
   folds in, H121) so the log names which source's custody is weakest (or least

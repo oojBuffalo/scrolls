@@ -848,6 +848,129 @@ def test_suggest_repairs_scoping_leaves_the_structural_groups_unchanged():
     ]
 
 
+# --- a scoped pass suggests the scoped refresh (roadmap H182) ---------------
+#
+# A `maintain --source <S>` pass pre-filters the audit (`run_doctor(source=S)`), so
+# the held-source universe (`custody.by_source`) collapses to `{S}` and the offenders
+# are `{S}` too — making offenders == universe, so H181's strict-subset rule emits the
+# *whole-library* sweep even though the operator scoped the pass to S. Threading the
+# pass's `--source` scope into `suggest_repairs(report, source=S)` honors that scope:
+# the refresh suggestion always carries `--source S` when the finding is present.
+
+
+def test_suggest_repairs_scopes_to_the_pass_source_on_the_collapsed_universe():
+    # The H182 case: a scoped audit's universe is the singleton {web} and the
+    # offenders are {web} too (offenders == held, NOT a strict subset), so H181 alone
+    # would emit the whole-library `classify --stale`. The pass's `source=web` makes
+    # the suggestion the scoped `--source web` the operator declared.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=2,
+            held_sources=("web",),
+            enrichment_by_source={"web": 2},
+        ),
+        source="web",
+    )
+    assert suggested == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+
+
+def test_suggest_repairs_scopes_the_summary_axis_to_the_pass_source():
+    # The summary-axis sibling: `maintain --source web` with stale summaries → the
+    # scoped `kb --stale --source web`, not the whole-library sweep.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            summaries_stale=1,
+            held_sources=("web",),
+            summary_by_source={"web": 1},
+        ),
+        source="web",
+    )
+    assert suggested == [
+        {"command": "scrolls kb --stale --source web", "addresses": ["summaries_stale"]}
+    ]
+
+
+def test_suggest_repairs_scopes_to_source_even_without_a_known_universe():
+    # A scoped pass honors its declared scope even when the report carries no
+    # `by_source` universe (a degraded/pre-H104 audit): the operator scoped to web,
+    # so the refresh is `--source web`, never the whole-library command H181 would
+    # fall back to when the universe is unknown.
+    suggested = suggest_repairs(
+        _full_doctor_report(enrichment_stale=1), source="web"
+    )
+    assert suggested == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+
+
+def test_suggest_repairs_with_a_source_but_no_debt_suggests_nothing():
+    # G1 honest absence under a scope: a scoped pass over a source with no stale
+    # debt yields no refresh suggestion — `source` never fabricates a command for a
+    # finding that is absent.
+    assert suggest_repairs(_full_doctor_report(), source="web") == []
+
+
+def test_suggest_repairs_scoped_pass_leaves_structural_groups_whole_library():
+    # H182 touches only the two refresh axes, exactly like H181: a scoped pass still
+    # names the whole-library `doctor --fix` / `media` (those commands take no
+    # `--source`), with only the refresh scoped to the pass source.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            duplicates=1,
+            missing_media=1,
+            enrichment_stale=1,
+            held_sources=("web",),
+            enrichment_by_source={"web": 1},
+        ),
+        source="web",
+    )
+    assert suggested == [
+        {"command": "scrolls doctor --fix", "addresses": ["duplicates"]},
+        {"command": "scrolls media", "addresses": ["missing_media"]},
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        },
+    ]
+
+
+def test_suggest_repairs_without_a_source_keeps_the_h181_strict_subset_rule():
+    # The default `source=None` is the whole-library pass: the strict-subset rule
+    # still governs, so a confined debt scopes per offender and an all-stale universe
+    # stays whole-library — H182 changes nothing when no scope is declared.
+    confined = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=2,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"web": 2},
+        )
+    )
+    assert confined == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+    all_stale = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=3,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"arxiv": 1, "web": 2},
+        )
+    )
+    assert all_stale == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
+    ]
+
+
 # --- the command (offline, dogfood-style) ---------------------------------
 
 TOPIC = "transformer"
@@ -1679,6 +1802,51 @@ def test_maintain_suggests_whole_library_classify_stale_when_all_sources_stale(
     assert report["suggested"] == [
         {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
     ]
+
+
+def test_maintain_source_pass_suggests_the_scoped_refresh(
+    home, monkeypatch, capsys
+):
+    """The gap H181 surfaced (roadmap H182): a `maintain --source web` pass pre-filters
+    the audit, so its held-source universe collapses to `{web}` and the offenders are
+    `{web}` too — defeating H181's strict-subset rule, which would emit the whole-library
+    `classify --stale`. The pass's `--source web` scope is threaded through, so the
+    suggestion is the scoped `classify --stale --source web` the operator declared."""
+    items = _held_topic()  # 1 arxiv + 2 web
+    _build(items)
+    _mark_stale_classified(items[1].id)  # web
+    _mark_stale_classified(items[2].id)  # web
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the scoped audit sees only web — offenders == held == {web} (the collapse)
+    assert report["source"] == "web"
+    assert report["enrichment_by_source"] == {"web": 2}
+    assert report["suggested"] == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+
+
+def test_maintain_source_pass_with_no_debt_suggests_nothing(
+    home, monkeypatch, capsys
+):
+    """A scoped pass over a source with no stale debt names no refresh — `--source`
+    never fabricates a scoped command for an absent finding (the G1 honest-absence
+    posture under a scope)."""
+    _build(_held_topic())  # nothing marked stale → clean
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["source"] == "web"
+    assert report["enrichment_by_source"] == {}
+    assert report["suggested"] == []
 
 
 def test_maintain_history_does_not_carry_suggestions(home, monkeypatch, capsys):
