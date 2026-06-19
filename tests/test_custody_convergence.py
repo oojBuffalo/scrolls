@@ -1619,6 +1619,165 @@ def test_status_by_source_converges_with_maintain_and_doctor(scrolls_home, capsy
     assert summed_drift == whole["drift"]
 
 
+def test_status_refresh_debt_by_source_converges_with_maintain_and_doctor(
+    scrolls_home, capsys, fake_summary_llm
+):
+    # roadmap H179: `status` carries the per-source *refresh-debt* maps
+    # `enrichment_by_source` (stale classifications) and `summary_by_source` (stale
+    # concept summaries) — the read-surface counterpart (H177) of the `maintain`
+    # report members (H147/H175), each a faithful read of the same `run_doctor`
+    # audit via `report_enrichment_by_source` / `report_summary_by_source`. The drift
+    # `by_source` tie above (H133) pins the fidelity/posture axis across
+    # status≡maintain≡doctor; this folds in the **refresh-debt axes** beside it, so
+    # "which source to refresh" reads one number on every surface an agent/worker
+    # asks. Both the whole-library tie and the `--source`-scoped slice are pinned,
+    # carrying the two axes' opposite sum-to-whole postures (enrichment sums to the
+    # whole; a multi-source stale summary double-attributes, so summaries need not).
+    from scrolls.classify import RULESET_FINGERPRINT, is_stale_classification
+    from scrolls.kb import load_concept_summaries
+    from scrolls.kb_llm import eligible_concepts, is_stale_summary, members_hash
+
+    main(["init"])
+    db = get_paths().db_path
+
+    # Enrichment axis: stale classifications, each item exactly one source (so the
+    # map sums to the whole). web: two stale + one current; arxiv: one stale + one
+    # current; reddit: a current-only (clean) source → omitted from the offenders map.
+    def _classified(item_id, source, *, ruleset, **overrides):
+        overrides.setdefault("url", f"https://example.com/{item_id}")
+        return _item(
+            item_id, "Topic classified", source=source, category="tutorial",
+            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                        "classified_ruleset": ruleset},
+            **overrides,
+        )
+
+    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
+    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
+                                url="https://arxiv.org/abs/s1"))
+    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
+                                url="https://arxiv.org/abs/cur"))
+    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
+                                url="https://reddit.com/r/cur"))
+
+    # Summary axis: stale concept summaries over clusters (unclassified members, so
+    # the two axes stay independent). Bm25 spans web+arxiv → double-attributes; Vector
+    # is wikipedia-only (2 members ≥ MIN_MEMBERS, so it survives a `--source wikipedia`
+    # scope); Clean spans reddit+web but is current → omitted.
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
+    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
+    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
+    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
+    _stored_summary(db, "bm25", "stale-old-1")
+    _stored_summary(db, "vector", "stale-old-2")
+    eligible = eligible_concepts(list_items(db))
+    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+    capsys.readouterr()
+
+    # The three surfaces, each reading the same `run_doctor` audit. `maintain` may
+    # exit 1 on the concept fixture's `missing_scrolls` (markdown_paths with no files,
+    # a structural-axis artifact orthogonal to the refresh-debt maps below) but still
+    # prints its report; `status` always exits 0.
+    def status_maps(source=None):
+        scope = ["--source", source] if source else []
+        assert main(["status", *scope]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        return payload["enrichment_by_source"], payload["summary_by_source"]
+
+    def maintain_maps(source=None):
+        scope = ["--source", source] if source else []
+        main(["maintain", "--no-recheck", *scope])
+        report = json.loads(capsys.readouterr().out)
+        return report["enrichment_by_source"], report["summary_by_source"]
+
+    def doctor_maps(source=None):
+        custody = run_doctor(get_paths(), source=source)["custody"]
+        return custody["enrichment"]["by_source"], custody["summaries"]["by_source"]
+
+    # --- whole-library three-way tie ------------------------------------------
+    # An independent re-derivation of each map from its own selector, grouped by
+    # source — the canonical picture status/maintain/doctor must all reproduce.
+    items = list_items(db)
+    expected_enrichment: dict[str, int] = {}
+    for item in items:
+        if is_stale_classification(item):
+            expected_enrichment[item.source] = expected_enrichment.get(item.source, 0) + 1
+    expected_enrichment = {s: expected_enrichment[s] for s in sorted(expected_enrichment)}
+
+    stored = load_concept_summaries(db)
+    expected_summary: dict[str, int] = {}
+    for slug, entry in eligible_concepts(items).items():
+        if is_stale_summary(stored.get(slug), members_hash(entry["items"])):
+            for src in {member.source for member in entry["items"]}:
+                expected_summary[src] = expected_summary.get(src, 0) + 1
+    expected_summary = {s: expected_summary[s] for s in sorted(expected_summary)}
+
+    # non-vacuous: both axes name ≥2 sources, and the two axes differ (so the test
+    # cannot pass by conflating them).
+    assert expected_enrichment == {"arxiv": 1, "web": 2}
+    assert expected_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
+
+    status_enrichment, status_summary = status_maps()
+    maintain_enrichment, maintain_summary = maintain_maps()
+    doctor_enrichment, doctor_summary = doctor_maps()
+
+    # status ≡ maintain ≡ doctor ≡ the independent re-derivation, on BOTH axes.
+    assert status_enrichment == maintain_enrichment == doctor_enrichment == expected_enrichment
+    assert status_summary == maintain_summary == doctor_summary == expected_summary
+
+    # the opposite sum-to-whole postures (H171 asymmetry): enrichment sums to the
+    # whole-library stale count (each item one source); a multi-source stale summary
+    # double-attributes, so the summary map sums to MORE than its `stale` count.
+    enrichment_block = run_doctor(get_paths())["custody"]["enrichment"]
+    summaries_block = run_doctor(get_paths())["custody"]["summaries"]
+    assert sum(status_enrichment.values()) == enrichment_block["stale"] == 3
+    assert sum(status_summary.values()) == 3 > summaries_block["stale"] == 2
+
+    # --- per-source scoped three-way tie --------------------------------------
+    # Each `--source S` read scopes the *whole* audit to S's held items through the
+    # same `run_doctor(source=)` pre-filter, so the three scoped surfaces agree on
+    # both maps by construction — pinned here as a contract over a real seed.
+    for source in ("web", "arxiv", "reddit", "wikipedia"):
+        s_enrichment, s_summary = status_maps(source)
+        m_enrichment, m_summary = maintain_maps(source)
+        d_enrichment, d_summary = doctor_maps(source)
+        assert s_enrichment == m_enrichment == d_enrichment
+        assert s_summary == m_summary == d_summary
+        # the scoped enrichment map collapses cleanly to S's whole-library debt
+        # (each classified item has exactly one source — no cluster to fracture).
+        assert d_enrichment == (
+            {source: expected_enrichment[source]} if source in expected_enrichment else {}
+        )
+
+    # the non-vacuous scoped slices, and the load-bearing cluster subtlety: a
+    # single-source stale cluster survives its own `--source` scope, but a
+    # multi-source one fractures below MIN_MEMBERS and reads as the honest empty map.
+    assert status_maps("web")[0] == {"web": 2}            # enrichment slice, non-empty
+    assert status_maps("wikipedia")[1] == {"wikipedia": 1}  # Vector survives the scope
+    assert status_maps("web")[1] == {}                    # Bm25's lone web member < MIN_MEMBERS
+    assert status_maps("arxiv")[1] == {}                  # Bm25's lone arxiv member < MIN_MEMBERS
+
+    # --- mutation check: refreshing one source moves all three surfaces together --
+    # `kb --stale --source wikipedia` (the documented summary-axis refresh, H172/H176;
+    # offline via `fake_summary_llm`) regenerates the wikipedia-only Vector summary,
+    # clearing wikipedia's stale-summary debt. The refresh-debt maps on status,
+    # maintain, AND doctor must all drop wikipedia's `summary_by_source` entry in
+    # lockstep, while the *enrichment* axis is untouched (the summary refresh never
+    # re-classifies) — proving the convergence is causal, not a coincidence of the
+    # seed, and that the two refresh axes move independently.
+    assert main(["kb", "--stale", "--source", "wikipedia"]) == 0
+    capsys.readouterr()
+    after_status = status_maps()
+    after_maintain = maintain_maps()
+    after_doctor = doctor_maps()
+    assert after_status[1] == after_maintain[1] == after_doctor[1] == {"arxiv": 1, "web": 1}
+    assert after_status[0] == after_maintain[0] == after_doctor[0] == expected_enrichment
+
+
 def test_graph_by_source_converges_with_doctor_and_the_per_source_tally(scrolls_home, capsys):
     # roadmap H150: the `scrolls graph` stats block now carries the per-source
     # custody split (`stats.custody.by_source`) — the graph-surface counterpart of
