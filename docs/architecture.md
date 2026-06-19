@@ -1421,7 +1421,19 @@ choice (ADRs 0004, 0005).
   `scrolls doctor --fix` are exactly the ones `run_doctor(fix=True)` transitions to
   a repaired status (`merged`/`rewritten`/`rebuilt`), with the orphan in neither and
   missing media routed to `scrolls media` — so the suggestion can never silently
-  drift from what the command repairs. The report also surfaces the audit's
+  drift from what the command repairs. The two enrichment-axis refreshes are
+  **source-scoped when the debt is confined** (`maintain._scoped_refresh`, roadmap
+  H181): when the stale classifications / summaries sit in a *strict subset* of the
+  held-source universe (`custody.by_source`, H104), `suggest_repairs` names one
+  `classify --stale --source <S>` / `kb --stale --source <S>` (H154/H172) per
+  offending source — the minimal act, never re-running the clean sources — instead
+  of the whole-library sweep; when every held source is stale (or a pre-`by_source`
+  audit can't see the universe), the un-scoped command stands. On the summary axis
+  the H171 multi-source attribution carries through (a stale concept spanning
+  several sources is named under each, so each earns its own scoped `kb --stale
+  --source <S>`, the per-source commands harmlessly double-covering the shared
+  cluster while their union refreshes exactly the offenders). The report also
+  surfaces the audit's
   per-source custody breakdown (`maintain.report_by_source` → `doctor`'s
   `custody.by_source`, roadmap H123 — including the per-source `coverage` the audit
   folds in, H121) so the log names which source's custody is weakest (or least

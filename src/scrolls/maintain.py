@@ -70,6 +70,14 @@ _REPAIR_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("scrolls kb --stale", ("summaries_stale",)),
 )
 
+# The two refresh findings whose command takes a `--source <S>` scope
+# (`classify --stale --source` H154, `kb --stale --source` H172). When such a
+# finding's stale debt is confined to a *strict subset* of the library's held
+# sources, `suggest_repairs` names the minimal scoped act per offending source
+# instead of the whole-library sweep (roadmap H181) — consulting the same
+# per-source maps the report's `enrichment_by_source`/`summary_by_source` carry.
+_SCOPABLE_REFRESH = frozenset({"enrichment_stale", "summaries_stale"})
+
 SNAPSHOT_RELPATH = Path(".maintenance") / "last-run.json"
 LOG_RELPATH = Path(".maintenance") / "log.jsonl"
 
@@ -186,13 +194,75 @@ def suggest_repairs(report: dict[str, Any]) -> list[dict[str, Any]]:
 
     Each entry is ``{command, addresses}`` where `addresses` lists exactly the
     finding categories present that the command closes, in a fixed order.
+
+    The two enrichment-axis refreshes (`classify --stale`, `kb --stale`) are
+    further **source-scoped** when their debt is confined (roadmap H181): if the
+    stale items/summaries sit in a strict subset of the library's held sources, the
+    suggestion becomes one ``--source <S>`` command per offending source — the
+    minimal act, never re-running the clean sources — instead of the whole-library
+    sweep. See `_scoped_refresh`.
     """
+    # The held-source universe (every held source, clean or not) — `doctor`'s
+    # `custody.by_source` (H104). A refresh finding's debt is "confined" when its
+    # offending sources are a strict subset of this; an absent block (an empty or
+    # pre-H104 report) leaves it empty, so scoping degrades to the whole-library
+    # command rather than scoping over a universe it cannot see.
+    held_sources = set(report.get("custody", {}).get("by_source", {}))
     suggestions = []
     for command, categories in _REPAIR_COMMANDS:
         addresses = [c for c in categories if _finding_present(report, c)]
-        if addresses:
+        if not addresses:
+            continue
+        # The scopable refreshes each own their command group alone (a single
+        # category), so a confined one expands into per-source commands; the
+        # grouped structural/media suggestions keep their whole-library shape.
+        if len(addresses) == 1 and addresses[0] in _SCOPABLE_REFRESH:
+            suggestions += _scoped_refresh(command, addresses[0], report, held_sources)
+        else:
             suggestions.append({"command": command, "addresses": addresses})
     return suggestions
+
+
+def _scoped_refresh(
+    command: str,
+    category: str,
+    report: dict[str, Any],
+    held_sources: set[str],
+) -> list[dict[str, Any]]:
+    """The minimal scoped act(s) for one confined refresh finding (roadmap H181).
+
+    Refines `suggest_repairs`' two `--source`-scopable refreshes (`classify --stale`
+    H154, `kb --stale` H172). The offending sources are this pass's audit map
+    (`custody.enrichment.by_source` H135 / `custody.summaries.by_source` H171, the
+    same `enrichment_by_source`/`summary_by_source` the report carries); `held_sources`
+    is the whole-library universe (`custody.by_source` H104). When the offenders are a
+    **strict** subset — at least one held source is clean on this axis — a scoped
+    ``--source <S>`` command per offender is more targeted than the whole-library
+    sweep, which would re-run the clean sources too. When every held source is stale
+    (offenders == universe) *or* the universe is unknown (a pre-H104 report with no
+    `by_source`), scoping buys nothing, so the whole-library command — already the
+    minimal act — stands.
+
+    On the **summary axis** the H171 attribution carries through: a stale concept
+    spanning several sources is "stale for" each, so `summary_by_source` names them
+    all and each earns its own scoped `kb --stale --source <S>`. Refreshing under any
+    one of them regenerates the whole cluster (H172), so the per-offender commands
+    *double-cover* a shared cluster — a harmless redundancy (regeneration is
+    idempotent), the price of the minimal-per-source shape; their union still
+    refreshes exactly the offenders set, missing nothing.
+    """
+    reader = (
+        report_enrichment_by_source
+        if category == "enrichment_stale"
+        else report_summary_by_source
+    )
+    offenders = sorted(reader(report))
+    if offenders and set(offenders) < held_sources:
+        return [
+            {"command": f"{command} --source {s}", "addresses": [category]}
+            for s in offenders
+        ]
+    return [{"command": command, "addresses": [category]}]
 
 
 def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, int]]]:

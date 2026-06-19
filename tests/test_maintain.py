@@ -548,12 +548,34 @@ def _full_doctor_report(
     fts_in_sync=True,
     enrichment_stale=0,
     summaries_stale=0,
+    held_sources=(),
+    enrichment_by_source=None,
+    summary_by_source=None,
 ):
     """A doctor report shaped like `run_doctor`'s — the full surface
-    `suggest_repairs` reads, not just the distilled custody scalars."""
+    `suggest_repairs` reads, not just the distilled custody scalars.
+
+    `held_sources` seeds `custody.by_source` (the per-source universe H104 the
+    scoped-suggestion strict-subset check reads); `enrichment_by_source` /
+    `summary_by_source` seed the offenders maps (`custody.enrichment.by_source`
+    H135 / `custody.summaries.by_source` H171). Omitting them models a pre-H104
+    report with no per-source breakdown (scoping degrades to whole-library)."""
 
     def _found(n):
         return [{"status": "found"} for _ in range(n)]
+
+    custody = {
+        "enrichment": {"stale": enrichment_stale},
+        "summaries": {"stale": summaries_stale},
+    }
+    if held_sources:
+        # `custody.by_source` carries every held source (clean or not, H104) — the
+        # universe; the per-source tally's shape is irrelevant to scoping, only its keys.
+        custody["by_source"] = {s: {"tiers": {}, "drift": {}} for s in held_sources}
+    if enrichment_by_source is not None:
+        custody["enrichment"]["by_source"] = enrichment_by_source
+    if summary_by_source is not None:
+        custody["summaries"]["by_source"] = summary_by_source
 
     return {
         "issues": duplicates + missing_scrolls + missing_media + orphan_scrolls
@@ -563,10 +585,7 @@ def _full_doctor_report(
         "missing_media": _found(missing_media),
         "orphan_scrolls": _found(orphan_scrolls),
         "fts": {"in_sync": True if fts_in_sync else False, "status": "ok"},
-        "custody": {
-            "enrichment": {"stale": enrichment_stale},
-            "summaries": {"stale": summaries_stale},
-        },
+        "custody": custody,
     }
 
 
@@ -642,6 +661,190 @@ def test_suggest_repairs_is_ordered_command_first_then_the_custody_refreshes():
         "scrolls media",
         "scrolls classify --stale",
         "scrolls kb --stale",
+    ]
+
+
+# --- source-scoped refresh suggestions (roadmap H181) ----------------------
+#
+# When the stale-enrichment / stale-summary debt is confined to a *strict subset*
+# of the library's held sources, `suggest_repairs` names the minimal scoped act per
+# offending source (`classify --stale --source <S>` H154 / `kb --stale --source <S>`
+# H172) instead of the whole-library sweep. The held-source universe is `doctor`'s
+# `custody.by_source` (H104, every held source); the offenders are
+# `custody.enrichment.by_source` (H135) / `custody.summaries.by_source` (H171).
+
+
+def test_suggest_repairs_scopes_a_refresh_confined_to_one_source():
+    # web carries the only stale classifications in a 2-source library → the
+    # suggestion names the minimal act, not the whole-library sweep that would also
+    # re-run the clean arxiv source.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=2,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"web": 2},
+        )
+    )
+    assert suggested == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+
+
+def test_suggest_repairs_scopes_each_offending_source_in_sorted_order():
+    # 3 held sources, 2 stale → one scoped command per offending source, in sorted
+    # source order, the clean third source (wikipedia) left untouched.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=3,
+            held_sources=("arxiv", "web", "wikipedia"),
+            enrichment_by_source={"web": 2, "arxiv": 1},
+        )
+    )
+    assert suggested == [
+        {
+            "command": "scrolls classify --stale --source arxiv",
+            "addresses": ["enrichment_stale"],
+        },
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        },
+    ]
+
+
+def test_suggest_repairs_stays_whole_library_when_every_held_source_is_stale():
+    # Offenders == the universe → scoping buys nothing (it would just enumerate them
+    # all), so the whole-library command is already the minimal act.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=3,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"arxiv": 1, "web": 2},
+        )
+    )
+    assert suggested == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
+    ]
+
+
+def test_suggest_repairs_stays_whole_library_for_a_single_source_library():
+    # One held source → the whole-library command IS that source's command;
+    # `--source web` would buy nothing (offenders == held, not a strict subset).
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=1,
+            held_sources=("web",),
+            enrichment_by_source={"web": 1},
+        )
+    )
+    assert suggested == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
+    ]
+
+
+def test_suggest_repairs_falls_back_to_whole_library_without_a_source_universe():
+    # A report whose audit predates the per-source breakdown (no `custody.by_source`)
+    # cannot prove the debt is *confined* — without the held-source universe the
+    # honest, degrade-safe choice is the whole-library command, never a scoped one
+    # over a universe it cannot see.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=2,
+            enrichment_by_source={"web": 2},  # offenders known, universe unknown
+        )
+    )
+    assert suggested == [
+        {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
+    ]
+
+
+def test_suggest_repairs_scopes_the_summary_axis_per_offending_source():
+    # The summary-axis sibling: stale summaries confined to web → `kb --stale
+    # --source web`, the minimal summary refresh.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            summaries_stale=1,
+            held_sources=("arxiv", "web"),
+            summary_by_source={"web": 1},
+        )
+    )
+    assert suggested == [
+        {"command": "scrolls kb --stale --source web", "addresses": ["summaries_stale"]}
+    ]
+
+
+def test_suggest_repairs_scopes_a_multi_source_stale_cluster_under_each_member():
+    # The H171/H172 attribution carried through: a stale concept spanning arxiv+web
+    # is "stale for" both, so `summary_by_source` names both and each earns its own
+    # scoped `kb --stale --source <S>`. Refreshing under either regenerates the whole
+    # cluster (H172), so the two commands double-cover it — a known, harmless
+    # redundancy. wikipedia (clean) is the strict-subset gap that makes scoping
+    # worthwhile; the union of the two commands still refreshes exactly the offenders.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            summaries_stale=1,  # one cluster, attributed to both members (sum > stale)
+            held_sources=("arxiv", "web", "wikipedia"),
+            summary_by_source={"arxiv": 1, "web": 1},
+        )
+    )
+    assert suggested == [
+        {
+            "command": "scrolls kb --stale --source arxiv",
+            "addresses": ["summaries_stale"],
+        },
+        {
+            "command": "scrolls kb --stale --source web",
+            "addresses": ["summaries_stale"],
+        },
+    ]
+
+
+def test_suggest_repairs_scopes_the_two_axes_independently():
+    # enrichment confined to web, summaries confined to arxiv → each axis scopes to
+    # its own offender, the classify suggestion still ordered before the kb one.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            enrichment_stale=1,
+            summaries_stale=1,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"web": 1},
+            summary_by_source={"arxiv": 1},
+        )
+    )
+    assert suggested == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        },
+        {
+            "command": "scrolls kb --stale --source arxiv",
+            "addresses": ["summaries_stale"],
+        },
+    ]
+
+
+def test_suggest_repairs_scoping_leaves_the_structural_groups_unchanged():
+    # Scoping touches only the two refresh axes — the grouped `doctor --fix` and the
+    # `media` suggestions keep their whole-library shape beside the scoped refresh.
+    suggested = suggest_repairs(
+        _full_doctor_report(
+            duplicates=1,
+            missing_media=1,
+            enrichment_stale=1,
+            held_sources=("arxiv", "web"),
+            enrichment_by_source={"web": 1},
+        )
+    )
+    assert suggested == [
+        {"command": "scrolls doctor --fix", "addresses": ["duplicates"]},
+        {"command": "scrolls media", "addresses": ["missing_media"]},
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        },
     ]
 
 
@@ -1427,10 +1630,11 @@ def test_maintain_suggests_classify_stale_for_a_stale_classification(
     """A category produced under a superseded ruleset is report-only drift (no
     `issues`, exit 0), but maintain names the explicit refresh `classify --stale`
     that re-derives it — the enrichment-axis suggestion, wired through the real
-    doctor custody block."""
-    items = _held_topic()
+    doctor custody block. The single stale item is `web`, and `arxiv` is clean, so
+    the suggestion is **source-scoped** to web (roadmap H181) — the minimal act."""
+    items = _held_topic()  # 1 arxiv + 2 web
     _build(items)
-    persisted = get_item(home.db_path, items[1].id)
+    persisted = get_item(home.db_path, items[1].id)  # web
     stale = replace(
         persisted,
         provenance={
@@ -1447,6 +1651,31 @@ def test_maintain_suggests_classify_stale_for_a_stale_classification(
     assert main(["maintain"]) == 0  # stale enrichment is reported, never a failure
     report = json.loads(capsys.readouterr().out)
     assert report["custody"]["enrichment_stale"] == 1
+    assert report["enrichment_by_source"] == {"web": 1}  # arxiv clean → strict subset
+    assert report["suggested"] == [
+        {
+            "command": "scrolls classify --stale --source web",
+            "addresses": ["enrichment_stale"],
+        }
+    ]
+
+
+def test_maintain_suggests_whole_library_classify_stale_when_all_sources_stale(
+    home, monkeypatch, capsys
+):
+    """When *every* held source carries stale classifications, scoping buys nothing
+    (it would just enumerate every source), so the suggestion stays the whole-library
+    `classify --stale` — the H181 strict-subset rule, through the real audit."""
+    items = _held_topic()  # 1 arxiv + 2 web
+    _build(items)
+    for item in items:  # arxiv + both web → every source stale
+        _mark_stale_classified(item.id)
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["enrichment_by_source"] == {"arxiv": 1, "web": 2}
     assert report["suggested"] == [
         {"command": "scrolls classify --stale", "addresses": ["enrichment_stale"]}
     ]

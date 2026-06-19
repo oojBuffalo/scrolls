@@ -1184,6 +1184,22 @@ against doctor's *real* `fix=True` behavior (the categories routed to `doctor
 --fix` are exactly the ones it transitions to a repaired status), so a suggestion
 can never silently drift from what the command actually closes.
 
+The two enrichment-axis refreshes are further **source-scoped when the debt is
+confined** (roadmap H181). When the stale classifications / stale summaries sit in
+a *strict subset* of the library's held sources, maintain suggests the minimal act
+— one `scrolls classify --stale --source <S>` / `scrolls kb --stale --source <S>`
+per offending source ([H154](#scrolls-classify-id) / [H172](#scrolls-kb---engine----stale))
+instead of the whole-library sweep that would needlessly re-run the clean sources.
+The held-source universe is `doctor`'s `custody.by_source` (every held source); the
+offenders are `enrichment_by_source` / `summary_by_source`. When *every* held source
+carries the debt — or a pre-`by_source` audit can't see the universe — scoping buys
+nothing, so the whole-library `classify --stale` / `kb --stale` stands. On the
+summary axis the H171 multi-source attribution carries through: a stale concept
+spanning several sources is named under each, so each gets its own scoped `kb
+--stale --source <S>`; refreshing under any one regenerates the whole cluster
+(H172), so the per-source commands harmlessly double-cover it while their union
+refreshes exactly the offenders.
+
 The report also carries a **`by_source`** member — the per-source custody
 breakdown the audit already produces (`doctor`'s `custody.by_source`, the same
 `{tiers, drift, coverage}` aggregate split per source, including the per-source
