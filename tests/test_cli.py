@@ -7,7 +7,7 @@ import pytest
 
 import scrolls.sources.wikipedia as wikipedia
 import scrolls.sources.youtube as youtube
-from scrolls.classify import RULESET_FINGERPRINT
+from scrolls.classify import RULESET_FINGERPRINT, stale_classifications
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
@@ -4142,6 +4142,90 @@ def test_list_stale_before_malformed_beats_a_missing_store(scrolls_home, capsys)
     # before `init` — a usage error, not a checked-and-empty `[]`
     assert main(["list", "--stale-before", "not-a-date"]) == 2
     assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_list_stale_classification_selects_the_stale_enrichment_set(scrolls_home, capsys):
+    # H185: enumerate the items whose rules-classified category the live ruleset
+    # would no longer reproduce — the read-side companion of `classify --stale`.
+    # The `_seed_refresh_debt` fixture marks arxiv:1 + web:2 stale (3 total).
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-classification"])
+    stale = json.loads(capsys.readouterr().out)
+    stale_ids = {r["id"] for r in stale}
+
+    # exactly the items `classify.stale_classifications` selects over the library
+    expected = {item.id for item in stale_classifications(list_items(paths.db_path))}
+    assert stale_ids == expected
+    assert len(stale) == 3  # arxiv:1 + web:2
+
+
+def test_list_stale_classification_rows_total_the_doctor_aggregate(scrolls_home, capsys):
+    # drill-from-the-count convergence (H185): the rows `--stale-classification`
+    # returns total `doctor`'s custody.enrichment.stale, and the `--source`
+    # narrowing totals its enrichment.by_source[S].
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+    report = run_doctor(paths)
+    enrichment = report["custody"]["enrichment"]
+
+    main(["list", "--stale-classification"])
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == enrichment["stale"]  # whole-library tie
+
+    for source, count in enrichment["by_source"].items():
+        main(["list", "--stale-classification", "--source", source])
+        scoped = json.loads(capsys.readouterr().out)
+        assert len(scoped) == count, f"{source}: {len(scoped)} != aggregate {count}"
+        assert all(r["source"] == source for r in scoped)
+
+
+def test_list_stale_classification_ands_with_other_facets(scrolls_home, capsys):
+    # the filter composes with the stored facets (AND): web has 2 stale, arxiv 1
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-classification", "--source", "web"])
+    assert len({r["id"] for r in json.loads(capsys.readouterr().out)}) == 2
+
+    main(["list", "--stale-classification", "--source", "arxiv"])
+    arxiv = json.loads(capsys.readouterr().out)
+    assert len(arxiv) == 1 and arxiv[0]["source"] == "arxiv"
+
+
+def test_list_stale_classification_is_honestly_empty_when_nothing_stale(scrolls_home, capsys):
+    # a library with no stale classifications is [], never an error (completeness G1)
+    main(["init"])
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:fresh", source="web", url="https://ex.com/fresh",
+        saved_at="2026-06-12T00:00:00+00:00", title="A fresh post",
+        extracted_text="body", content_hash="sha256:fresh", stage="fetched"))
+    capsys.readouterr()
+
+    main(["list", "--stale-classification"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_stale_classification_is_echoed_in_the_stats_scope(scrolls_home, capsys):
+    # the --stats envelope names the filter it honored (only when honored — the
+    # boolean rides the None-is-pruned convention), and `matched` is the post-filter count
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    main(["list", "--stale-classification", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["stale_classification"] is True
+    assert payload["stats"]["matched"] == 3
+    assert len(payload["results"]) == 3
+
+    # absent when not requested: the scope names exactly the filters applied
+    main(["list", "--stats"])
+    assert "stale_classification" not in json.loads(capsys.readouterr().out)["scope"]
 
 
 def test_search_hit_echoes_the_drift_posture(scrolls_home, capsys):

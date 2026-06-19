@@ -669,6 +669,17 @@ def build_parser() -> argparse.ArgumentParser:
         "trivially stale, so it is included",
     )
     list_parser.add_argument(
+        "--stale-classification",
+        dest="stale_classification",
+        action="store_true",
+        help="Only items whose rules-classified category the live ruleset would "
+        "no longer reproduce — the stale-enrichment set; the read-side companion "
+        "of `scrolls classify --stale` (the rows it returns are exactly the items "
+        "that refresh acts on, and total `scrolls doctor`'s "
+        "custody.enrichment.stale). Composes with --source to drill one source's "
+        "refresh debt",
+    )
+    list_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -1039,6 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
             args.concept,
             args.drift,
             args.stale_before,
+            args.stale_classification,
             args.limit,
             args.stats,
         )
@@ -2461,6 +2473,7 @@ def _cmd_list(
     concept: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
+    stale_classification: bool = False,
     limit: int | None = None,
     stats: bool = False,
 ) -> int:
@@ -2473,6 +2486,9 @@ def _cmd_list(
         "concept": concept,
         "drift": drift,
         "stale_before": stale_before,
+        # a boolean filter rides the `None`-is-pruned convention (scope_envelope):
+        # echoed only when honored, so the scope names exactly the filters applied
+        "stale_classification": True if stale_classification else None,
         "limit": limit,
     }
     # A `--stale-before` boundary normalizes through the one `checked_at`
@@ -2513,6 +2529,7 @@ def _cmd_list(
         concept=concept,
         drift=drift,
         stale_before=boundary,
+        stale_classification=stale_classification,
     )
     matched = len(matched_items)
     items = matched_items[:limit] if limit is not None else matched_items

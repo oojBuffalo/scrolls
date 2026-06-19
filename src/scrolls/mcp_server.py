@@ -152,6 +152,7 @@ def list_scrolls(
     concept: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
+    stale_classification: bool = False,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """Browse library items by facet — the enumeration counterpart to search_scrolls.
@@ -167,7 +168,12 @@ def list_scrolls(
     the aggregate to the rows. `stale_before` (an ISO-8601 boundary) selects the
     items whose newest verify-ledger verdict predates it — the *stale* set, the
     read-side companion of `verify --stale-before` (a never-checked item is
-    trivially stale, so it is included); a malformed boundary raises. Items come
+    trivially stale, so it is included); a malformed boundary raises.
+    `stale_classification` (a flag) selects the items whose rules-classified
+    category the *live* ruleset would no longer reproduce — the stale-enrichment
+    set, the read-side companion of `scrolls classify --stale`; the rows returned
+    total `get_library_health`'s `custody.enrichment.stale`, and ANDed with
+    `source` they total its `enrichment.by_source[source]`. Items come
     oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
     summary (id, source, url, title, category, stage, saved_at, the custody
@@ -194,6 +200,7 @@ def list_scrolls(
         concept=concept,
         drift=drift,
         stale_before=boundary,
+        stale_classification=stale_classification,
     )[:limit]
     # Membership is a whole-library property (ADR 0101): cluster over every
     # item so a filtered/limited listing still reports an item's siblings, then

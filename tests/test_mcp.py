@@ -419,6 +419,66 @@ def test_list_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.list_scrolls() == []
 
 
+def _seed_stale_classified(db, item_id, source, ruleset):
+    """Insert an item rules-classified under `ruleset` — a superseded one reads stale."""
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id=item_id, source=source, url=f"https://{source}.example.com/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=item_id, category="reference",
+        extracted_text="body", content_hash=f"sha256:{item_id[-6:]}", stage="fetched",
+        provenance={"classified_by": "rules-v1", "classified_basis": "curated-source",
+                    "classified_ruleset": ruleset}))
+
+
+def test_list_scrolls_filters_by_stale_classification(scrolls_home):
+    # the MCP twin of `scrolls list --stale-classification` (H185): the items whose
+    # category the live ruleset would no longer reproduce — the stale-enrichment set.
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_classified(db, "web:stale", "web", "deadbeef0000")    # superseded → stale
+    _seed_stale_classified(db, "arxiv:stale", "arxiv", "deadbeef0000")  # superseded → stale
+    _seed_stale_classified(db, "web:current", "web", RULESET_FINGERPRINT)  # live → not stale
+
+    stale = {r["id"] for r in mcp_server.list_scrolls(stale_classification=True)}
+    assert stale == {"web:stale", "arxiv:stale"}
+
+    # ANDs with `source` to drill one source's refresh debt
+    web = mcp_server.list_scrolls(stale_classification=True, source="web")
+    assert [r["id"] for r in web] == ["web:stale"]
+
+
+def test_list_scrolls_stale_classification_totals_the_health_aggregate(scrolls_home):
+    # drill-from-the-count convergence (H185): the rows total `get_library_health`'s
+    # custody.enrichment.stale, and the `source` narrowing its enrichment.by_source[S].
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_classified(db, "web:stale", "web", "deadbeef0000")
+    _seed_stale_classified(db, "arxiv:stale", "arxiv", "deadbeef0000")
+    _seed_stale_classified(db, "web:current", "web", RULESET_FINGERPRINT)
+
+    enrichment = mcp_server.get_library_health()["enrichment"]
+    rows = mcp_server.list_scrolls(stale_classification=True)
+    assert len(rows) == enrichment["stale"]
+    for source, count in enrichment["by_source"].items():
+        scoped = mcp_server.list_scrolls(stale_classification=True, source=source)
+        assert len(scoped) == count
+
+
+def test_list_scrolls_stale_classification_is_empty_when_nothing_stale(scrolls_home):
+    # honest absence: a library with no stale classifications is [], never an error
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_stale_classified(db, "web:current", "web", RULESET_FINGERPRINT)
+    assert mcp_server.list_scrolls(stale_classification=True) == []
+
+
 def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
     # custody state travels with browse results (ADR 0097): an agent sees which
     # items it holds in full without a follow-up get_scroll

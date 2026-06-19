@@ -2578,7 +2578,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--limit N] [--stats]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--stale-classification] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -2660,6 +2660,29 @@ listing. It composes with the stored facets (window then scope) and `--drift`
 (both ledger filters over one read), and each returned row's own `last_checked`
 (H84) shows *why* it is stale (`test_list_stale_before_selects_the_stale_set`).
 
+`--stale-classification` is the **enrichment**-axis read enumeration — the
+counterpart of `--drift` on the *drift* axis (roadmap H185). It is a flag (not a
+ledger filter): it selects the held items whose rules-classified category the
+*live* ruleset would no longer reproduce — the **stale-enrichment set** — by
+reading each item's own `provenance`, via the same `classify.stale_classifications`
+selector `scrolls classify --stale` acts on and `scrolls doctor`'s
+`custody.enrichment.stale` counts. So the rows it returns are *exactly* the items
+that refresh acts on, and they **total** `doctor`'s `custody.enrichment.stale`
+(drill-from-the-count convergence, `test_list_stale_classification_rows_total_the_doctor_aggregate`):
+where `doctor` says *how many* categories are stale and which sources hold them,
+`list --stale-classification` says *which items* — the read-side sibling of the
+`classify --stale` act, exactly as `list --drift` is the read-side sibling of
+`verify --drift`. It ANDs with the stored facets, so `--stale-classification
+--source S` narrows to one source's refresh debt and totals `doctor`'s
+`enrichment.by_source[S]` (`test_list_stale_classification_ands_with_other_facets`).
+LLM classifications, unfingerprinted (pre-H20) classifications, and user-set
+categories are *not* stale (each is a different re-derivability axis or a user
+override that always wins — see `classify --stale`), so they are never returned.
+A library with nothing stale prints `[]` — honest absence, never an error
+(`test_list_stale_classification_is_honestly_empty_when_nothing_stale`); under
+`--stats` the flag is echoed in `scope` only when honored (the `None`-is-pruned
+convention), and `matched` is the post-filter count.
+
 By default the listing is uncapped — every item in scope, oldest saved
 first. `--limit N` caps it to the first `N`; `--stats` then wraps the
 array in the scope-honest `{scope, stats, results}` envelope (the
@@ -2696,6 +2719,14 @@ $ scrolls facets drift                      # the aggregate: how many at each po
 {"facets": {"drift": [{"value": "unverified", "count": 3}, {"value": "drifted", "count": 1}]}}
 $ scrolls list --drift drifted              # drill to the rows: which one drifted
 [{"id": "arxiv:1706.03762", "source": "arxiv", ..., "fidelity": "full", "works": []}]
+[exit 0]
+
+$ scrolls doctor | jq .custody.enrichment.stale   # the aggregate: how many categories are stale
+2
+$ scrolls list --stale-classification             # drill to the rows: which items to refresh
+[{"id": "x:1111", ...}, {"id": "arxiv:1706.03762", ...}]
+$ scrolls list --stale-classification --source x  # one source's refresh debt
+[{"id": "x:1111", ...}]
 [exit 0]
 ```
 
@@ -3449,7 +3480,7 @@ The tools wrap the same engines as the CLI commands
 | --- | --- | --- |
 | `get_context_bundle(query, limit=8, source=None, category=None, stage=None, tag=None, concept=None, budget="full")` | `scrolls context` | Markdown bundle, optionally faceted; `budget` (`index`/`connected`/`full`) bounds depth |
 | `search_scrolls(query, limit=20, source=None, category=None, stage=None, tag=None, concept=None)` | `scrolls search` | hit list with snippets, the per-item custody axes (`fidelity` + `drift` (H58) + `last_checked` (H84)), and `works` membership (ADR 0101), optionally faceted |
-| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, stale_before=None, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54), `stale_before` by staleness window (H85) |
+| `list_scrolls(source=None, stage=None, category=None, tag=None, concept=None, drift=None, stale_before=None, stale_classification=False, limit=50)` | `scrolls list` | item summaries by facet (with the per-item custody axes `fidelity` + `drift` (H58) + `last_checked` (H84) and `works` membership, ADR 0101), no query (ADR 0060); `drift` filters by posture (H54), `stale_before` by staleness window (H85), `stale_classification` by the stale-enrichment set (H185) — rows total `get_library_health`'s `enrichment.stale` |
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |

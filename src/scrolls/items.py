@@ -530,6 +530,7 @@ def list_items(
     concept: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
+    stale_classification: bool = False,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
@@ -562,6 +563,19 @@ def list_items(
     trivially stale, so it is included; the boundary itself is *fresh* (the
     `items_checked_before` `< boundary` semantics). The ledger is read only when
     `drift` or `stale_before` is requested.
+
+    `stale_classification` is the third post-SQL filter that is not a stored
+    column: when true it keeps only the held items whose rules-classified
+    category the *live* ruleset would no longer reproduce — the enrichment-axis
+    counterpart of `drift` (the *drift*-axis stale set). It reads each item's own
+    `provenance` (no ledger), via the same `classify.stale_classifications`
+    selector `scrolls classify --stale` acts on and `doctor`'s
+    `custody.enrichment.stale` counts, so the rows it returns total that
+    aggregate (drill-from-the-count convergence, roadmap H185). It ANDs with
+    every other facet — `--source` narrows it to one source's refresh debt,
+    equal to `doctor`'s `enrichment.by_source[S]` — because it filters the
+    already-filtered item set. A library with nothing stale is the honest empty
+    selection, never an error.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
@@ -594,6 +608,14 @@ def list_items(
             items = items_in_posture(items, verdicts, drift)
         if stale_before is not None:
             items = items_checked_before(items, verdicts, stale_before)
+    if stale_classification:
+        # lazy: classify imports items, so the reverse is import-time only here.
+        # Filter the already-filtered set, so it ANDs with every facet above and
+        # the per-source narrowing rides the SQL `source` clause (no source arg
+        # needed — `stale_classifications(items)` over the scoped rows).
+        from scrolls.classify import stale_classifications
+
+        items = stale_classifications(items)
     return items
 
 
