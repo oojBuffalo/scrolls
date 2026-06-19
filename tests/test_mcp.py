@@ -2301,6 +2301,108 @@ def test_run_maintenance_converges_with_cli_maintain_no_recheck(scrolls_home, ca
         assert report_mcp[key] == report_cli[key], f"diverged on {key}"
 
 
+# --- run_maintenance(source=): the source-scoped custody pass over MCP (H203) ---
+
+
+def test_run_maintenance_source_scopes_the_pass_to_one_source(scrolls_home):
+    # H203: an agent that has just read `get_library_health`'s `attention` flag
+    # (the weakest source) runs a scoped maintenance pass on *that* source via the
+    # `source=` arg — the MCP sibling of CLI `scrolls maintain --source <S>` (H165),
+    # threaded into the shipped source-aware `skipped_recheck_report`/`assemble_report`
+    # seams. Every reported block is the one-source view; offline like every MCP pass.
+    from scrolls.doctor import run_doctor
+    from scrolls.maintain import custody_snapshot, snapshot_headline
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+
+    report = mcp_server.run_maintenance(source="web")
+
+    # the shape is the whole-library report's; only the scope narrows
+    assert set(report) == {
+        "recorded_at", "source", "recheck", "compiled", "custody", "headline",
+        "by_source", "attention", "enrichment_by_source", "summary_by_source",
+        "delta", "issues", "suggested",
+    }
+    assert report["source"] == "web"
+    # offline, the H196 posture — an MCP pass never triggers an implicit re-capture
+    assert report["recheck"]["skipped"] is True
+    # the scoped custody view == the scoped doctor audit distilled (convergence by
+    # construction: the same `run_doctor(source=)` pre-filter the CLI scoped pass uses)
+    scoped = run_doctor(get_paths(), source="web")
+    assert report["custody"] == custody_snapshot(scoped)
+    assert report["headline"] == snapshot_headline(report["custody"])
+    # the one-source view: only web's items (full ×2 + the reference pointer),
+    # by_source collapses to the present-and-singleton (arxiv excluded)
+    assert set(report["by_source"]) == {"web"}
+    assert report["custody"]["tiers"] == {"full": 2, "partial": 0, "reference": 1}
+    assert report["custody"]["drift"]["drifted"] == 1
+    # attention is null under a single-source scope (nothing to flag across), the
+    # `get_library_health(source=)` H167 / weakest_source single-source gate
+    assert report["attention"] is None
+
+
+def test_run_maintenance_source_is_non_persisting(scrolls_home):
+    # H203 custody safety: a scoped pass must not clobber the single whole-library
+    # snapshot/log baseline with a one-source slice (no per-source storage shape,
+    # ADR 0082) — so its `delta` is honestly null and the recorded trend is untouched.
+    from scrolls.maintain import load_snapshot, log_path, read_log, snapshot_path
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+
+    # one whole-library MCP pass records the single baseline + first log entry
+    mcp_server.run_maintenance()
+    baseline = load_snapshot(snapshot_path(get_paths()))
+    assert baseline is not None
+    assert len(read_log(log_path(get_paths()))) == 1
+
+    # a scoped pass: delta null, and the baseline/log are untouched afterwards
+    report = mcp_server.run_maintenance(source="web")
+    assert report["delta"] is None
+    assert load_snapshot(snapshot_path(get_paths())) == baseline  # not clobbered
+    assert len(read_log(log_path(get_paths()))) == 1  # no scoped run appended
+
+
+def test_run_maintenance_source_converges_with_cli_maintain_source(scrolls_home, capsys):
+    # H203 MCP↔CLI parity: the scoped tool's report equals `scrolls maintain
+    # --source web --no-recheck` over the same seed, field for field (modulo the
+    # per-run `recorded_at` stamp). A scoped pass writes no snapshot, so unlike the
+    # whole-library convergence test there is nothing to drop between the two passes.
+    import json
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    capsys.readouterr()
+
+    report_mcp = mcp_server.run_maintenance(source="web")
+
+    assert main(["maintain", "--source", "web", "--no-recheck"]) == 0
+    report_cli = json.loads(capsys.readouterr().out)
+
+    assert set(report_mcp) == set(report_cli)
+    for key in report_cli:
+        if key == "recorded_at":
+            continue
+        assert report_mcp[key] == report_cli[key], f"diverged on {key}"
+
+
+def test_run_maintenance_unknown_source_is_an_honest_empty_pass(scrolls_home):
+    # H203 honest absence: an unknown source holds nothing → the honest empty pass
+    # (zero-scroll headline, null attention/delta, empty by_source), never an error
+    # — the `get_library_health(source=ghost)` H167 mirror, sources being open-ended.
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+
+    report = mcp_server.run_maintenance(source="ghost")
+    assert report["source"] == "ghost"
+    assert report["headline"] == "_Custody: 0 scroll(s)._"
+    assert report["by_source"] == {}
+    assert report["attention"] is None
+    assert report["delta"] is None
+    assert report["recheck"]["coverage"] == {"verified": 0, "total": 0}
+
+
 # --- get_maintenance_history: the custody trend over MCP, the read sibling of
 #     run_maintenance (H198) ---
 

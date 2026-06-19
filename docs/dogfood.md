@@ -180,6 +180,15 @@ reads the trajectory. Two passes that both carry the recorded drift read
 `holding`, not `regressing` — the recurring form of the custody point above:
 the drift is recorded and the integrity score never drops.
 
+When `get_library_health`'s `attention` flag names a single weakest source, the
+agent can run a **scoped** pass on just that source — `run_maintenance(source=S)`
+(H203), the MCP sibling of `scrolls maintain --source S` — instead of the whole
+library or re-composing the triage. A scoped pass narrows the audit/delta to
+`S`, regenerates the global views, and stays **non-persisting** (it writes no
+whole-library snapshot, so its `delta` is honestly `null` — the whole-library
+pass owns the trend baseline). It converges field-for-field with the CLI
+`maintain --source S --no-recheck`.
+
 The MCP twins are pinned to converge with the CLI commands they wrap per-tool in
 `tests/test_mcp.py` (`get_library_health` ≡ `status`/`doctor`, `run_maintenance`
 ≡ `maintain --no-recheck`, `get_maintenance_history` ≡ `maintain --history`); the

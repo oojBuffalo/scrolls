@@ -1531,7 +1531,7 @@ choice (ADRs 0004, 0005).
   read-only posture, the repairable `--fix` axis stays CLI, converges with
   `status`/`doctor` (scoped and whole) by construction and is pinned in
   `tests/test_custody_convergence.py`),
-  `run_maintenance()` (roadmap H196 — the *composed* scheduled custody pass over
+  `run_maintenance(source=…)` (roadmap H196 — the *composed* scheduled custody pass over
   MCP, the act-side sibling of the read-only `get_library_health`: regenerate the
   views, audit, compute the custody `delta` vs the last run, and record this run's
   snapshot + append it to the trend log, returning the same report shape the CLI
@@ -1539,9 +1539,16 @@ choice (ADRs 0004, 0005).
   is skipped: the MCP path always runs `--no-recheck`** so an MCP tool never
   triggers implicit re-captures, leaving targeted live rechecks to the explicit
   `verify_scroll` act (the same read/act boundary `get_library_health` draws against
-  `doctor --fix`). Report-only and idempotent — it records the snapshot/log
-  bookkeeping, never repairs rows; the CLI and MCP share `maintain.assemble_report`,
-  so the two converge field-for-field over the same library),
+  `doctor --fix`). The optional `source` scopes the pass to one source's held items
+  (roadmap H203 — the MCP sibling of CLI `maintain --source S`, for an agent
+  triaging the weakest source its own `attention` flag named): the audit/delta
+  narrow to `S`, view regeneration stays whole-library, and a scoped pass is
+  non-persisting (`delta` honestly `null`, the whole-library pass owns the trend —
+  threaded into the shipped source-aware `skipped_recheck_report`/`assemble_report`
+  seams). Report-only and idempotent — it records the snapshot/log
+  bookkeeping (whole-library only), never repairs rows; the CLI and MCP share
+  `maintain.assemble_report`, so the two converge field-for-field over the same
+  library, scoped and whole),
   `get_maintenance_history(limit=…, trend=…)` (roadmap H198 — the read sibling of
   `run_maintenance`: the recorded runs' custody trajectory over time, the MCP twin of
   CLI `scrolls maintain --history [--trend]`, running the same `read_log` +

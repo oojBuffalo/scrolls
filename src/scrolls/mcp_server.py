@@ -92,7 +92,8 @@ _INSTRUCTIONS = (
     "whole-library custody audit (score, fidelity tiers, drift, and which "
     "source needs attention), run_maintenance for a one-call scheduled custody "
     "pass (regenerate views, audit, and the custody delta vs the last run; "
-    "offline — it never re-captures), get_maintenance_history for the custody "
+    "offline — it never re-captures; pass source= to scope the pass to the "
+    "weakest source), get_maintenance_history for the custody "
     "trend over the recorded passes (is custody improving, holding, or "
     "regressing?), and ingest_url to save "
     "something new. verify_scroll re-captures a held scroll and reports "
@@ -605,7 +606,7 @@ def get_library_health(source: str | None = None) -> dict[str, Any]:
     }
 
 
-def run_maintenance() -> dict[str, Any]:
+def run_maintenance(source: str | None = None) -> dict[str, Any]:
     """Run one scheduled custody-maintenance pass over the library (no network).
 
     The MCP counterpart of the CLI worker's `scrolls maintain` (roadmap H196).
@@ -623,6 +624,23 @@ def run_maintenance() -> dict[str, Any]:
     loop reads the one-call delta/`suggested` block instead of re-composing it from
     primitives.
 
+    `source` scopes the pass to one source's held items (roadmap H203) — the MCP
+    sibling of CLI `scrolls maintain --source <S>` (H165/H182), threaded into the
+    shipped source-aware `skipped_recheck_report`/`assemble_report` seams. An agent
+    that has just read this library's `get_library_health` `attention` flag (the one
+    source carrying the most actionable loss) can run a scoped pass on *that* source
+    instead of re-composing it or falling back to the whole-library sweep. Under a
+    scope: view regeneration stays whole-library (`compile_kb` is a deterministic
+    global recompile, not a per-source one); the audit/delta narrow to <S> (every
+    reported block is the one-source view, `by_source` collapses to the
+    present-and-singleton ``{S: …}``, so `attention` is naturally ``null`` — a single
+    source has nothing to flag across); and the pass is **non-persisting** — it writes
+    no whole-library snapshot/log baseline (a scoped slice must not clobber the single
+    trend baseline, ADR 0082), so its `delta` is the honest ``null``. The whole-library
+    pass (``source`` ``None``) owns the cross-run trend. An unknown source holds
+    nothing, so it is the honest empty pass (zero-scroll headline, empty `by_source`),
+    never an error — the `get_library_health(source=ghost)` H167 mirror.
+
     **Offline by default — the recheck is skipped.** `maintain`'s recheck is its
     one live network edge (re-fetching each source to detect drift); an MCP tool
     must not trigger implicit network re-captures, so this MCP path always runs
@@ -635,17 +653,18 @@ def run_maintenance() -> dict[str, Any]:
     records the snapshot/log bookkeeping, but never repairs index rows,
     reclassifies, or re-summarizes — `doctor --fix` / `classify --stale` /
     `kb --stale` stay the explicit, on-request mutations. Converges field-for-field
-    with the CLI `scrolls maintain --no-recheck` over the same library. An
-    empty/uninitialized library is the honest-empty pass (`score: null`, the
+    with the CLI `scrolls maintain [--source S] --no-recheck` over the same library.
+    An empty/uninitialized library is the honest-empty pass (`score: null`, the
     `_Custody: 0 scroll(s)._` headline), never an error.
     """
     paths = get_paths()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     previous = load_snapshot(snapshot_path(paths))
     # --no-recheck over MCP: skip the live edge, report coverage from the ledger.
-    recheck_report = skipped_recheck_report(paths)
+    # `source` scopes the recheck-coverage read to that source (roadmap H165/H203).
+    recheck_report = skipped_recheck_report(paths, source=source)
     return assemble_report(
-        paths, recheck_report=recheck_report, previous=previous, source=None, now=now
+        paths, recheck_report=recheck_report, previous=previous, source=source, now=now
     )
 
 
