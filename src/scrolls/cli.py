@@ -2488,6 +2488,12 @@ def _cmd_list(
         if stats:
             empty_custody = tally_custody([])
             empty_custody["by_source"] = tally_custody_by_source(())
+            # the weakest-source flag is honestly `null` over an empty scope
+            # (the `weakest_source` empty-map gate), so the stats shape stays
+            # stable even at empty (roadmap H174).
+            empty_custody["attention"] = weakest_source(
+                empty_custody["by_source"], include_coverage=False
+            )
             empty = scope_envelope([], scope=scope, matched=0, custody=empty_custody)
         else:
             empty = []
@@ -2540,6 +2546,12 @@ def _cmd_list(
         (item.source, get_fidelity(item), drift_posture(verdicts.get(item.id)))
         for item in matched_items
     )
+    # `stats.custody.attention` (roadmap H174): the matched scope's single weakest
+    # source distilled from the `by_source` map beside it — the browse-surface
+    # counterpart of the `graph` flag (H164), via the same shared `weakest_source`.
+    # The browse `by_source` is the *lean* projection (no per-source coverage, H155),
+    # so `include_coverage=False` keeps the flag honest — no fabricated `0/0`.
+    custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
@@ -2649,6 +2661,10 @@ def _cmd_related(item_id: str, limit: int, stats: bool = False) -> int:
     custody["by_source"] = tally_custody_by_source(
         (hit.source, hit.fidelity, hit.drift) for hit in hits
     )
+    # `stats.custody.attention` (roadmap H174): the related neighbourhood's single
+    # weakest source distilled from the lean `by_source` beside it (no per-source
+    # coverage on the browse-stats projection, H155 — `include_coverage=False`).
+    custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
     return 0
 
@@ -2780,6 +2796,10 @@ def _cmd_search(
     custody["by_source"] = tally_custody_by_source(
         (hit.source, hit.fidelity, hit.drift) for hit in matched_hits
     )
+    # `stats.custody.attention` (roadmap H174): the query-matched scope's single
+    # weakest source distilled from the lean `by_source` beside it (no per-source
+    # coverage on the browse-stats projection, H155 — `include_coverage=False`).
+    custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
     scope = {
         "query": query,
         "source": source,

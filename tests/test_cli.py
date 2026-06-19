@@ -1277,11 +1277,13 @@ def test_list_stats_before_init_is_the_empty_envelope_not_an_error(scrolls_home,
     assert payload["scope"] == {"source": "web", "limit": 5}
     assert _core_stats(payload["stats"]) == {"returned": 0, "matched": 0, "truncated": False}
     # the custody member is present even at empty — a stable zeroed shape (H98)
-    # with the empty per-source split (roadmap H155)
+    # with the empty per-source split (roadmap H155) and the honest-null
+    # weakest-source flag (roadmap H174)
     assert payload["stats"]["custody"] == {
         "tiers": {"full": 0, "partial": 0, "reference": 0},
         "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
         "by_source": {},
+        "attention": None,
     }
 
 
@@ -1316,6 +1318,8 @@ _MIX_CUSTODY = {
     # the seed is single-source `web`, so the per-source split (roadmap H155) folds
     # to one `{web: {tiers, drift}}` entry re-stating the whole-scope tally
     "by_source": {"web": {"tiers": _MIX_TIERS, "drift": _MIX_DRIFT}},
+    # single source → the weakest-source flag is honestly `null` (roadmap H174)
+    "attention": None,
 }
 
 
@@ -1361,6 +1365,8 @@ _MIX_CUSTODY_SEARCH = {
     # both query-matched hits are `web`, so the per-source split (roadmap H155)
     # re-states the whole-scope tally under one key
     "by_source": {"web": {"tiers": _SEARCH_TIERS, "drift": _SEARCH_DRIFT}},
+    # single source → the weakest-source flag is honestly `null` (roadmap H174)
+    "attention": None,
 }
 
 
@@ -1522,6 +1528,80 @@ def test_search_stats_by_source_splits_the_matched_scope(scrolls_home, capsys):
     assert custody["by_source"] == _MULTI_BY_SOURCE  # all three match the query
     assert _sum_by_source(custody["by_source"]) == {
         "tiers": custody["tiers"], "drift": custody["drift"]}
+
+
+# --- H174: stats.custody.attention — the weakest-source flag on the browse envelopes -
+
+
+def test_list_stats_attention_names_the_weakest_source(scrolls_home, capsys):
+    # roadmap H174: `list --stats` distils its `by_source` map (H155) to a single
+    # weakest-source `attention` flag — the browse-surface counterpart of the graph
+    # flag (H164). The seed makes `arxiv` the only drifted source, so it is the
+    # unambiguous max-loss source the flag must name (a literal pick — `web` is clean).
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert attention is not None
+    assert attention["source"] == "arxiv"  # the only source with actionable loss
+    assert attention["drift"]["drifted"] == 1
+    assert attention["reason"] == "1 drifted"
+    # the recheck command bridges to the act (H137)
+    assert attention["command"] == "scrolls verify --source arxiv"
+
+
+def test_list_stats_attention_is_lean_no_coverage(scrolls_home, capsys):
+    # the load-bearing H174 decision: the browse `by_source` is the *lean* projection
+    # (no per-source coverage, H155), so the flag distilled from it carries no
+    # `coverage` member — never a fabricated `0/0` a reader would misread as "nothing
+    # checked". A lean flag for a lean map. (`status`/`graph` carry the heavier flag.)
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert set(attention) == {"source", "tiers", "drift", "reason", "command"}
+    assert "coverage" not in attention
+
+
+def test_search_stats_attention_names_the_weakest_source(scrolls_home, capsys):
+    # the `search` twin: the query-matched scope's weakest source, distilled from the
+    # same lean `by_source` the search envelope folds (H155/H174).
+    main(["init"])
+    _seed_multi_source_custody(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--stats"])
+    attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert attention is not None
+    assert attention["source"] == "arxiv"
+    assert "coverage" not in attention
+
+
+def test_browse_stats_attention_is_null_single_source(scrolls_home, capsys):
+    # the honest-null gate (H174/H139): a single-source matched scope flags nothing —
+    # `attention` only discriminates *across* sources. The `_seed_custody_mix` seed is
+    # single-source `web` (with drift), so the flag is `null` on `list` and `search`.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["list", "--stats"])
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+    main(["search", "alpha", "--stats"])
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+
+
+def test_list_stats_attention_empty_scope_is_null(scrolls_home, capsys):
+    # an empty matched scope → the honest `null` flag (the `weakest_source` empty-map
+    # gate), the stats shape stable even at empty (the H155 empty-envelope posture).
+    main(["init"])
+    capsys.readouterr()
+    main(["list", "--source", "arxiv", "--stats"])
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
 
 
 def test_show_prints_full_item_json(scrolls_home, fake_wikipedia_api, capsys):

@@ -971,6 +971,7 @@ _ZERO_WORKS_CUSTODY = {
     "drift": {p: 0 for p in
               ("verified", "unverified", "drifted", "rotted", "error")},
     "by_source": {},  # no reps → the empty per-source split (roadmap H155)
+    "attention": None,  # no sources → the honest-null weakest-source flag (roadmap H174)
 }
 
 
@@ -1096,7 +1097,7 @@ def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
     assert custody["drift"] == {
         "verified": 0, "unverified": 1, "drifted": 1, "rotted": 0, "error": 0}
     # the tally equals what the twin's own representation entries carry
-    from scrolls.custody import tally_custody_by_source
+    from scrolls.custody import tally_custody_by_source, weakest_source
     reps = [r for w in mcp_server.get_works()["works"][0:] for r in w["representations"]]
     expected = {"tiers": {"full": 0, "partial": 0, "reference": 0},
                 "drift": {p: 0 for p in
@@ -1109,7 +1110,11 @@ def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
     # `works.to_payload` — split over the same reps (this seed spans arxiv + crossref)
     expected["by_source"] = tally_custody_by_source(
         (rep["source"], rep["fidelity"], rep["drift"]) for rep in reps)
+    # the weakest-source flag (roadmap H174) rides the MCP twin too (shared
+    # `to_payload`): the lean flag (no fabricated coverage) names the drifted arxiv
+    expected["attention"] = weakest_source(expected["by_source"], include_coverage=False)
     assert custody == expected
+    assert expected["attention"]["source"] == "arxiv"
 
 
 def test_get_works_item_lens_reports_one_items_work(scrolls_home):

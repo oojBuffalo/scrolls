@@ -43,6 +43,7 @@ from scrolls.custody import (
     tally_custody_by_source,
     unverified_items,
     verify_item,
+    weakest_source,
 )
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, get_fidelity
@@ -570,6 +571,76 @@ def test_tally_custody_by_source_matches_custody_counts_by_source_on_tiers_drift
     for source in item_based:
         assert pairs_based[source]["tiers"] == item_based[source]["tiers"]
         assert pairs_based[source]["drift"] == item_based[source]["drift"]
+
+
+# --- weakest_source include_coverage (the lean browse-stats flag, roadmap H174) ---
+
+
+def _by_source_with_coverage():
+    """A coverage-bearing per-source map (the `custody_counts_by_source` shape) with
+    `web` the unambiguous max-loss source (2 drifted vs arxiv's 0)."""
+    return {
+        "arxiv": {
+            "tiers": {"full": 1, "partial": 0, "reference": 0},
+            "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
+            "coverage": {"verified": 1, "total": 1},
+        },
+        "web": {
+            "tiers": {"full": 2, "partial": 0, "reference": 0},
+            "drift": {"verified": 0, "unverified": 0, "drifted": 2, "rotted": 0, "error": 0},
+            "coverage": {"verified": 2, "total": 2},
+        },
+    }
+
+
+def test_weakest_source_default_keeps_coverage():
+    # the coverage-bearing surfaces (status/maintain/doctor/graph) feed a
+    # `custody_counts_by_source` map, so the flag rides the per-source coverage along
+    # (H153) — the default, unchanged.
+    flag = weakest_source(_by_source_with_coverage())
+    assert flag["source"] == "web"
+    assert flag["coverage"] == {"verified": 2, "total": 2}
+    assert set(flag) == {"source", "tiers", "drift", "coverage", "reason", "command"}
+
+
+def test_weakest_source_lean_omits_coverage():
+    # roadmap H174: the lean browse-stats family (search/list/related/works --stats)
+    # passes `include_coverage=False` so the flag *omits* coverage rather than emit a
+    # fabricated `0/0` — the honest lean projection for a lean (`tally_custody_by_
+    # source`) map. Every other field is identical to the coverage-bearing flag.
+    by_source = _by_source_with_coverage()
+    lean = weakest_source(by_source, include_coverage=False)
+    full = weakest_source(by_source)
+    assert set(lean) == {"source", "tiers", "drift", "reason", "command"}
+    assert "coverage" not in lean
+    # convergent on every shared field — same source, same tally, same command
+    assert {k: v for k, v in full.items() if k != "coverage"} == lean
+
+
+def test_weakest_source_lean_over_a_coverageless_map_does_not_fabricate_zero():
+    # the real browse case: a `tally_custody_by_source` map carries no `coverage` key
+    # at all. The lean flag omits coverage (no `0/0` masquerading as "nothing
+    # checked"); the gates (single-source/clean) are unchanged.
+    lean_map = tally_custody_by_source([
+        ("arxiv", "full", "verified"),
+        ("web", "full", "drifted"),
+        ("web", "full", "drifted"),
+    ])
+    assert all("coverage" not in entry for entry in lean_map.values())
+    flag = weakest_source(lean_map, include_coverage=False)
+    assert flag["source"] == "web"
+    assert "coverage" not in flag
+
+
+def test_weakest_source_lean_honest_absence_gates_unchanged():
+    # `include_coverage=False` only governs the coverage member — the three honest-
+    # absence gates (empty / single-source / fully-clean) are untouched.
+    assert weakest_source({}, include_coverage=False) is None  # empty
+    one = tally_custody_by_source([("web", "full", "drifted")])
+    assert weakest_source(one, include_coverage=False) is None  # single source
+    clean = tally_custody_by_source([
+        ("web", "full", "verified"), ("arxiv", "full", "unverified")])
+    assert weakest_source(clean, include_coverage=False) is None  # no actionable loss
 
 
 # --- custody_counts_by_source (the per-source split, roadmap H104) ---

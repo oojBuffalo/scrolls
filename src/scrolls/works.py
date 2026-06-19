@@ -51,6 +51,7 @@ from scrolls.custody import (
     last_checked,
     tally_custody,
     tally_custody_by_source,
+    weakest_source,
 )
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.sources.detect import detect_source
@@ -375,6 +376,12 @@ def to_payload(
         for work in works
         for rep in work.representations
     )
+    # `stats.custody.attention` (roadmap H174): the reported works' single weakest
+    # source distilled from the lean `by_source` beside it — the works-surface
+    # counterpart of the `graph` flag (H164), riding MCP `get_works` for free (the
+    # shared `to_payload`). The browse-stats `by_source` carries no per-source
+    # coverage (H155), so `include_coverage=False` keeps the flag honest.
+    custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
     return {
         "scope": {key: value for key, value in scope.items() if value is not None},
         "works": [

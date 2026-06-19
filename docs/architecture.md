@@ -456,7 +456,18 @@ each command moves items between stages or derives artifacts from them.
   on the tiers/drift axes for the whole-library scope; the lean browse family omits
   the per-source `coverage` the audit surfaces add (coverage needs `content_hash`
   presence, which a `(fidelity, drift)` pair cannot recover, so it stays a
-  `doctor`/`graph` axis). And
+  `doctor`/`graph` axis). Each of those browse `stats.custody` members also distils
+  its `by_source` map to the single weakest-source **`attention`** flag (roadmap
+  H174) — the browse-surface counterpart of the `graph` flag (H164), via the same
+  `custody.weakest_source` primitive, so `search`/`list`/`related`/`works --stats`
+  name the matched scope's weakest source (and the `scrolls verify --source <S>`
+  recheck command) without a reader scanning `by_source`. Because the browse
+  `by_source` is the lean projection (no per-source coverage), the flag is built with
+  `include_coverage=False` and carries **no `coverage` member** — never a fabricated
+  `0/0` — so it is the coverage-bearing `status`/`graph` flag projected to its shared
+  fields, honestly `null` on the same empty/single-source/clean gates and converging
+  with `status`/`graph`/`doctor` over a whole-library scope by construction (the
+  `works` flag rides MCP `get_works` for free via the shared `to_payload`). And
   `scrolls facets fidelity`/`drift` (H48) are the browse
   aggregates of the two axes — all reading `custody.custody_counts` (the
   shape-and-count core `custody.tally_custody`, which `custody_counts` and the

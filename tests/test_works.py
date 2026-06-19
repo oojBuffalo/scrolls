@@ -80,6 +80,8 @@ ZERO_CUSTODY = {
     },
     # no reported works → no representations → the empty per-source split (H155)
     "by_source": {},
+    # no sources → the weakest-source flag is honestly `null` (roadmap H174)
+    "attention": None,
 }
 
 
@@ -649,6 +651,7 @@ def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
         CustodyEvent,
         record_events,
         tally_custody_by_source,
+        weakest_source,
     )
 
     insert_item(db, make_item(
@@ -675,8 +678,37 @@ def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
     # seed spans two (`arxiv` preprint + `crossref` published record)
     expected["by_source"] = tally_custody_by_source(
         (rep["source"], rep["fidelity"], rep["drift"]) for rep in reps)
+    # the weakest-source flag (roadmap H174): distilled from the lean `by_source`,
+    # so it carries no per-source coverage (`include_coverage=False`) — the arxiv
+    # preprint drifted, so `arxiv` is the flagged source here
+    expected["attention"] = weakest_source(expected["by_source"], include_coverage=False)
     assert payload["stats"]["custody"] == expected
     assert set(expected["by_source"]) == {"arxiv", "crossref"}  # genuinely multi-source
+    # the flag names the drifted source and carries no fabricated coverage
+    assert expected["attention"]["source"] == "arxiv"
+    assert "coverage" not in expected["attention"]
+
+
+def test_stats_custody_attention_is_null_single_source():
+    # roadmap H174: the works `stats.custody.attention` flag is honestly `null` when
+    # the reported works span a single source — `attention` only discriminates across
+    # sources (the `weakest_source` single-source gate), even with drift in scope.
+    from scrolls.works import works_over
+
+    # two arxiv preprints sharing one DOI → a single-source two-rep work
+    items = [
+        make_item("arxiv:a", url="https://arxiv.org/abs/a",
+                  links=("https://doi.org/10.1000/x",),
+                  raw_text="<r>", content_hash="sha256:a", stage="rendered"),
+        make_item("arxiv:b", url="https://arxiv.org/abs/b",
+                  links=("https://doi.org/10.1000/x",),
+                  raw_text="<r>", content_hash="sha256:b", stage="rendered"),
+    ]
+    works = works_over(items)
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    custody = payload["stats"]["custody"]
+    assert set(custody["by_source"]) == {"arxiv"}  # single source
+    assert custody["attention"] is None
 
 
 # --- the scope echo: completeness contract G2 -----------------------------

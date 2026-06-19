@@ -527,6 +527,8 @@ _RELATED_MIX_CUSTODY = {
     # the neighbourhood is single-source `web`, so the per-source split (roadmap
     # H155) folds to one `{web: {tiers, drift}}` entry re-stating the whole tally
     "by_source": {"web": {"tiers": _RELATED_TIERS, "drift": _RELATED_DRIFT}},
+    # single source → the weakest-source flag is honestly `null` (roadmap H174)
+    "attention": None,
 }
 
 
@@ -583,6 +585,7 @@ def test_cli_related_stats_custody_present_even_when_empty(db, capsys):
         "tiers": {"full": 0, "partial": 0, "reference": 0},
         "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0},
         "by_source": {},  # no neighbours → the empty per-source split (roadmap H155)
+        "attention": None,  # no sources → the honest-null weakest-source flag (H174)
     }
 
 
@@ -652,3 +655,31 @@ def test_cli_related_stats_by_source_empty_when_isolated(db, capsys):
     main(["related", "web:lonely", "--stats"])
     custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
     assert custody["by_source"] == {}
+
+
+# --- H174: stats.custody.attention — the weakest-source flag on `related --stats` ---
+
+
+def test_cli_related_stats_attention_names_the_weakest_source(db, capsys):
+    # roadmap H174: `related --stats` distils its `by_source` map to the weakest-
+    # source `attention` flag (the browse-surface counterpart of the graph flag). The
+    # multi-source seed makes `arxiv` the only drifted neighbour, so it is flagged.
+    _related_multi_source_mix(db)
+    capsys.readouterr()
+
+    assert main(["related", "web:anchor", "--stats"]) == 0
+    attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert attention is not None
+    assert attention["source"] == "arxiv"  # the only neighbour with actionable loss
+    assert attention["command"] == "scrolls verify --source arxiv"
+    # lean flag for a lean map — no fabricated per-source coverage (H174)
+    assert "coverage" not in attention
+
+
+def test_cli_related_stats_attention_is_null_single_source(db, capsys):
+    # the honest-null gate: the single-source `web` neighbourhood flags nothing even
+    # with drift (`attention` only discriminates across sources).
+    _related_custody_mix(db)  # single-source web, one drifted neighbour
+    capsys.readouterr()
+    main(["related", "web:anchor", "--stats"])
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None

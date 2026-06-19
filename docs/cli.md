@@ -249,7 +249,22 @@ per-surface JSON `by_source` ties (`status` H133, the `graph` block H150, and th
 browse envelopes H155) are then pinned *together once* (roadmap H157) — the
 JSON-surface sibling of H151's byte-identical readable test — so every structured
 `by_source` map reads the same per-source picture in one obvious place
-(`test_every_json_by_source_surface_converges_on_one_map`). The
+(`test_every_json_by_source_surface_converges_on_one_map`). Beside that map each
+`stats.custody` member also distils it to a single weakest-source **`attention`**
+flag (roadmap H174) — `{source, tiers, drift, reason, command}`, the source with the
+most actionable `drifted + rotted` loss, its tally, a one-line reason, and the exact
+`scrolls verify --source <S>` recheck command — via the same `custody.weakest_source`
+primitive the `graph` block (H164) and JSON `status`/`maintain` (H139/H119) thread,
+so an agent paging results reads *which* matched source most needs action without
+scanning `by_source` itself. The browse flag is the **lean** projection: because the
+browse `by_source` carries no per-source `coverage` (above), the flag is built with
+`include_coverage=False` and carries **no `coverage` member** — never a fabricated
+`0/0` a reader would misread as "nothing checked" — so it equals the coverage-bearing
+`status`/`graph` flag on every shared field, projected to its lean shape. Honest
+`null` on the same three gates as the JSON flag (empty / single-source / fully-clean
+scope), so a single-source matched scope flags nothing even with drift; over an
+uncapped whole-library scope it names the same source `status`/`graph`/`doctor` do
+(`test_browse_stats_attention_converges_with_status_graph_and_doctor`). The
 **compiled human-readable**
 surface carries that scope picture too (roadmap H97): the KB compiler writes the
 same `custody_headline` under each compiled `library/` group list page's count

@@ -1569,6 +1569,93 @@ def test_graph_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys)
     assert weakest_source(by_source) is None
 
 
+def test_browse_stats_attention_converges_with_status_graph_and_doctor(scrolls_home, capsys):
+    # roadmap H174: the browse `search`/`list --stats` envelopes now carry the same
+    # weakest-source `attention` flag the `graph` (H164), JSON `status` (H139), and
+    # `maintain` (H119) surfaces do — distilled by the shared `weakest_source` over
+    # the matched scope's own `by_source`. For an uncapped whole-library `list`, that
+    # scope IS the whole library, so the flag names doctor's max-loss source. The one
+    # difference: the browse `by_source` is the *lean* projection (no per-source
+    # coverage, H155), so the browse flag carries no `coverage` — it is the coverage-
+    # bearing flag (`status`/`graph`) projected to its shared fields. Pin the leg
+    # beside the graph tie so the browse flag can never disagree with the others.
+    main(["init"])
+    db = get_paths().db_path
+    # web carries the only actionable loss (web:full2 drifted); arxiv is clean, so
+    # `web` is the unambiguous max-loss source the flag must name (the H139 seed).
+    _seed_mixed_custody(db)
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    # the browse-stats weakest-source flag — distilled from the matched scope's by_source
+    assert main(["list", "--stats"]) == 0
+    list_attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # sanity: the seed makes `web` the unambiguous max-loss source (1 drifted vs 0)
+    assert by_source["web"]["drift"]["drifted"] == 1
+    assert by_source["arxiv"]["drift"]["drifted"] == 0
+
+    # 1. names exactly doctor's max-loss source (a literal pick — least-loss is arxiv)
+    assert list_attention is not None
+    assert list_attention["source"] == _max_loss_source(by_source) == "web"
+    # 2. == the *lean* `weakest_source` over doctor's own per-source map: the browse
+    #    flag is the coverage-bearing flag projected to its shared fields (no coverage)
+    assert list_attention == weakest_source(by_source, include_coverage=False)
+    assert "coverage" not in list_attention  # the lean projection (H174)
+
+    # 3. == `status`'s and `graph`'s flags on every shared field — the coverage-
+    #    bearing flag minus its `coverage` member is exactly the browse flag, so the
+    #    four surfaces read one weak source (all distil the same map, same primitive)
+    assert main(["status"]) == 0
+    status_attention = json.loads(capsys.readouterr().out)["attention"]
+    assert main(["graph", "--all"]) == 0
+    graph_attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert {k: v for k, v in status_attention.items() if k != "coverage"} == list_attention
+    assert {k: v for k, v in graph_attention.items() if k != "coverage"} == list_attention
+
+    # 4. `search --stats` names the same weakest source (both web loss items are
+    #    full-content, so the query-matched scope still flags `web`)
+    assert main(["search", "topic", "--stats"]) == 0
+    search_attention = json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"]
+    assert search_attention is not None
+    assert search_attention["source"] == "web"
+    assert "coverage" not in search_attention
+
+    # 5. the recheck command names exactly that source (H137) — the bridge to the act
+    assert list_attention["command"] == "scrolls verify --source web"
+
+
+def test_browse_stats_attention_is_null_with_no_cross_source_loss(scrolls_home, capsys):
+    # the honest-null gate on the browse surface (H174/H139): with ≥2 sources but no
+    # `drifted`/`rotted` anywhere, `list`/`search --stats` `attention` is `null` —
+    # exactly when `status`/`graph` are and when doctor's per-source map carries zero
+    # actionable loss.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1"))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="a",
+                          raw_text="<raw>a</raw>", content_hash="sha256:a"))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+        # arxiv:1 left unverified — no source carries loss
+    ])
+    capsys.readouterr()
+
+    assert main(["list", "--stats"]) == 0
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+    assert main(["search", "topic", "--stats"]) == 0
+    assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"web", "arxiv"}  # ≥2 sources, so the gate is the loss
+    assert weakest_source(by_source, include_coverage=False) is None
+
+
 def test_mcp_library_health_converges_with_status_and_doctor(scrolls_home, capsys):
     # roadmap H161: the MCP-surface sibling of the JSON `by_source`/`attention`
     # convergence (H157/H139). `get_library_health` returns `run_doctor`'s custody
@@ -1679,6 +1766,8 @@ def test_list_stats_custody_member_converges_with_facets(scrolls_home, capsys):
     web_items = [item for item in list_items(db) if item.source == "web"]
     expected = custody_counts(web_items, latest_events(db))
     expected["by_source"] = {"web": {"tiers": expected["tiers"], "drift": expected["drift"]}}
+    # a single-source scope flags nothing — the honest-null weakest-source flag (H174)
+    expected["attention"] = None
     assert web_stats["custody"] == expected
 
 
@@ -1697,12 +1786,18 @@ def _tally_rows(rows):
     by each row's own `source`, so the per-source member rides along too — pinning
     that the browse-stats `stats.custody.by_source` is the per-item fold split per
     source (the `graph` block adds a heavier `coverage`-bearing `by_source`, so its
-    tie compares the tiers/drift axes this fold produces).
+    tie compares the tiers/drift axes this fold produces). The weakest-source
+    `attention` flag (roadmap H174) is the *lean* distillation of that per-source
+    fold (`include_coverage=False`, no fabricated coverage), so it rides along too —
+    pinning that the lean browse-stats `attention` is the lean flag over the per-item
+    fold (the `graph` block carries the heavier coverage-bearing flag, so its tie
+    again compares only the tiers/drift axes).
     """
     tally = tally_custody((row["fidelity"], row["drift"]) for row in rows)
     tally["by_source"] = tally_custody_by_source(
         (row["source"], row["fidelity"], row["drift"]) for row in rows
     )
+    tally["attention"] = weakest_source(tally["by_source"], include_coverage=False)
     return tally
 
 

@@ -804,18 +804,22 @@ def _attention_reason(tally: dict[str, dict[str, int]]) -> str:
 
 
 def weakest_source(
-    by_source: dict[str, dict[str, dict[str, int]]]
+    by_source: dict[str, dict[str, dict[str, int]]],
+    *,
+    include_coverage: bool = True,
 ) -> dict[str, Any] | None:
     """The single source carrying the most actionable custody loss (roadmap H119/H159).
 
     The shared distillation behind every weakest-source `attention` flag: JSON
     `scrolls status` (H139) and `scrolls maintain` (H119/H137) thread it over
-    `doctor`'s per-source breakdown, and the readable `export bundle`/`scrolls
-    context` briefings render it as an `_Attention:_` line (H159, via
-    `render_custody_attention`) over the bundle scope's own `custody_counts_by_source`
-    — so every surface's flag is *the same source, the same tally* by construction.
-    It lives here, beside `custody_counts_by_source`, so the readable surfaces no
-    longer reach into `maintain` for it (`maintain.weakest_source` re-exports this).
+    `doctor`'s per-source breakdown, the readable `export bundle`/`scrolls context`
+    briefings render it as an `_Attention:_` line (H159, via
+    `render_custody_attention`) over the bundle scope's own `custody_counts_by_source`,
+    and the `graph` (H164) + browse `search`/`list`/`related`/`works --stats` (H174)
+    `stats.custody` blocks carry it over their own `by_source` map — so every
+    surface's flag is *the same source, the same tally* by construction. It lives
+    here, beside `custody_counts_by_source`, so the readable surfaces no longer reach
+    into `maintain` for it (`maintain.weakest_source` re-exports this).
 
     Weakest = the most **actionable loss**: the most `drifted` + `rotted` items (the
     sources *confirmed* to have moved or gone — the set a follow-up
@@ -830,7 +834,20 @@ def weakest_source(
     (``scrolls verify --source <source>``, H125) — the bridge from naming the weakest
     source to the act.
 
-    Honest absence (`None`), the same three counts as the JSON flag — so a surface's
+    `include_coverage` (roadmap H174) governs the ``coverage`` member. The
+    coverage-bearing surfaces (`status`/`maintain`/`doctor`/`graph`) feed a
+    `custody_counts_by_source` map whose entries carry the per-source recheck
+    ``coverage`` (H121), so the flag rides it along (the default). The **lean**
+    browse-stats family (`search`/`list`/`related`/`works --stats`) folds a
+    `tally_custody_by_source` map carrying only ``{tiers, drift}`` — a `(fidelity,
+    drift)` pair cannot recover coverage (a raw-only capture is `full` yet hash-less),
+    exactly why coverage stays an audit axis there (H155) — so those surfaces pass
+    ``include_coverage=False`` to **omit** the member rather than emit a fabricated
+    ``0/0`` a reader would misread as "nothing checked". A lean flag for a lean map:
+    the honest projection, convergent with the coverage-bearing flag on every shared
+    field (`source`/`tiers`/`drift`/`reason`/`command`).
+
+    Honest absence (`None`), the same three gates as the JSON flag — so a surface's
     readable line is absent exactly when its JSON `attention` is:
 
     - an **empty** map — no library / no sources, nothing to flag;
@@ -849,21 +866,23 @@ def weakest_source(
     )
     if _source_loss(tally) == 0:
         return None
-    return {
+    flag: dict[str, Any] = {
         "source": source,
         "tiers": tally["tiers"],
         "drift": tally["drift"],
+    }
+    if include_coverage:
         # H153: the flagged source's recheck coverage (`{verified, total}`, H121)
         # rides along beside its tiers/drift — a pure read of the same tally (no
         # new ledger read), so it equals `doctor`'s per-source coverage by
         # construction. `.get` keeps the degrade-safe posture: an older/empty
         # schema without coverage reads the honest zero fraction, never a KeyError.
-        "coverage": tally.get("coverage", {"verified": 0, "total": 0}),
-        "reason": _attention_reason(tally),
-        # H137: the exact act to re-check this source — a recheck, not a repair.
-        # Source slugs are single tokens (no shell-quoting needed).
-        "command": f"scrolls verify --source {source}",
-    }
+        flag["coverage"] = tally.get("coverage", {"verified": 0, "total": 0})
+    # H137: the exact act to re-check this source — a recheck, not a repair.
+    # Source slugs are single tokens (no shell-quoting needed).
+    flag["reason"] = _attention_reason(tally)
+    flag["command"] = f"scrolls verify --source {source}"
+    return flag
 
 
 def custody_sections(
