@@ -223,6 +223,76 @@ def test_mcp_recurring_maintenance_trend_reads_holding(scrolls_home, monkeypatch
     assert trend["posture"] == "holding"
 
 
+def test_mcp_attention_flag_drives_a_scoped_triage_pass_on_the_weakest_source(
+    scrolls_home, monkeypatch, capsys
+):
+    """*triage* (H204): an agent reads *where* custody loss is and acts *only there*,
+    custody-safely. After hold → detect leaves one source drifted, the whole-library
+    `get_library_health` read's `attention` flag names that weakest source; the agent
+    runs `run_maintenance(source=attention["source"])` to triage just it — never the
+    whole library, never re-composing the triage. H201 tied the *whole-library*
+    maintenance pass into the flow; this ties in the *scoped* one (H203).
+
+    The two custody points the leg makes visible:
+
+    - **parity** — the scoped pass converges field-for-field with the CLI
+      `scrolls maintain --source <that source> --no-recheck` (the per-tool tie is
+      pinned in test_mcp.py; here it rides the agent-driven flow); and
+    - **custody-safety** — the scoped triage is *non-persisting*: the whole-library
+      trend baseline an earlier whole-library pass recorded is left byte-untouched
+      and the scoped `delta` is honestly `null` (ADR 0082 — a one-source slice must
+      never clobber the single trend baseline). The agent reads the same conclusion
+      without disturbing the trend.
+    """
+    import json
+
+    # hold + detect: one source (arxiv) drifts upstream, web comes back unchanged.
+    items, paths = _hold()
+    drifted = items[0]
+    _detect(items, paths, monkeypatch)
+
+    # the loop's whole-library pass records the single trend baseline it maintains.
+    mcp_server.run_maintenance()
+    baseline = load_snapshot(snapshot_path(paths))
+    assert baseline is not None
+    log_len = len(read_log(log_path(paths)))
+    assert log_len == 1
+
+    # the agent reads whole-library health and lets `attention` point it at the
+    # weakest source — here the one `detect` drifted, unambiguous across the two
+    # sources held (web verified `unchanged`, so it carries no actionable loss).
+    attention = mcp_server.get_library_health()["attention"]
+    assert attention is not None
+    assert attention["source"] == drifted.source
+    assert attention["reason"] == "1 drifted"
+    assert attention["command"] == f"scrolls verify --source {drifted.source}"
+
+    # it triages *only* that source — the scoped MCP pass the flag drives.
+    weakest = attention["source"]
+    report_mcp = mcp_server.run_maintenance(source=weakest)
+    assert report_mcp["source"] == weakest
+    assert set(report_mcp["by_source"]) == {weakest}
+    # a single-source scope has nothing to flag *across* → attention null (H167 gate),
+    # even though that one source is itself drifted — the loss is already the headline.
+    assert report_mcp["attention"] is None
+
+    # parity: field-for-field with the CLI scoped pass over the same source/state.
+    capsys.readouterr()
+    assert main(["maintain", "--source", weakest, "--no-recheck"]) == 0
+    report_cli = json.loads(capsys.readouterr().out)
+    assert set(report_mcp) == set(report_cli)
+    for key in report_cli:
+        if key == "recorded_at":
+            continue
+        assert report_mcp[key] == report_cli[key], f"scoped pass diverged on {key}"
+
+    # custody-safety: the scoped triage writes no whole-library snapshot/log — the
+    # trend baseline is byte-untouched and its delta is honestly null (ADR 0082).
+    assert report_mcp["delta"] is None
+    assert load_snapshot(snapshot_path(paths)) == baseline
+    assert len(read_log(log_path(paths))) == log_len
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 

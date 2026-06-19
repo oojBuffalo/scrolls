@@ -187,7 +187,12 @@ library or re-composing the triage. A scoped pass narrows the audit/delta to
 `S`, regenerates the global views, and stays **non-persisting** (it writes no
 whole-library snapshot, so its `delta` is honestly `null` — the whole-library
 pass owns the trend baseline). It converges field-for-field with the CLI
-`maintain --source S --no-recheck`.
+`maintain --source S --no-recheck`. The dogfood-MCP suite pins this as one
+agent-driven sequence — the `attention` flag names the weakest source, the agent
+runs the scoped pass on *exactly* that source, and the whole-library trend
+baseline an earlier pass recorded is left byte-untouched — so the agent reads
+*where* the loss is and acts *only there*, custody-safely (the scoped sibling of
+the whole-library pass H201 tied in).
 
 The MCP twins are pinned to converge with the CLI commands they wrap per-tool in
 `tests/test_mcp.py` (`get_library_health` ≡ `status`/`doctor`, `run_maintenance`
