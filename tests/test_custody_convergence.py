@@ -274,6 +274,25 @@ single-source concept is left whole. Both are mutation-checked non-vacuous
 *refresh* convergence on both enrichment axes beside the per-source *report* ties
 above.
 
+The **suggestion side** of that act is pinned the same way (roadmap H183). When a
+refresh axis's stale debt is confined to a strict subset of the held sources,
+`maintain`'s `suggested` block names the minimal scoped act per offending source
+(`classify --stale --source S` / `kb --stale --source S`, roadmap H181) rather than
+the whole-library sweep. The convergence: the *set of sources the scoped suggestions
+name* ≡ the keys of the very debt maps the same report carries
+(`enrichment_by_source` / `summary_by_source`), which the H179 tie above already pins
+≡ `doctor`'s `custody.{enrichment,summaries}.by_source` — so the act a worker is told
+to run targets exactly the sources the report says carry debt. The H171 attribution
+carries through to the suggestion: a multi-source stale cluster names each of its
+sources, so the summary suggestion can name more sources than there are stale clusters
+(every member earns its own scoped command). The boundary case is the complement —
+when **every** held source is stale the offenders are not a strict subset, so the
+suggestion collapses to the single un-scoped whole-library command per axis. Both are
+mutation-checked non-vacuous (a `kb --stale --source` refresh drops that source from
+the summary suggestions in lockstep with the debt map, while the enrichment-axis
+suggestions stay put); it is the action-pointer sibling of H179's read convergence,
+on the per-source axis.
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain.compute_trend` (H46/H115/H131) reports the net
 first→last movement on `drift_change`/`coverage_change`/`stale_change` (and the
@@ -340,6 +359,7 @@ from scrolls.maintain import (
     save_snapshot,
     snapshot_headline,
     snapshot_path,
+    suggest_repairs,
     weakest_source,
 )
 from scrolls.paths import get_paths
@@ -1776,6 +1796,204 @@ def test_status_refresh_debt_by_source_converges_with_maintain_and_doctor(
     after_doctor = doctor_maps()
     assert after_status[1] == after_maintain[1] == after_doctor[1] == {"arxiv": 1, "web": 1}
     assert after_status[0] == after_maintain[0] == after_doctor[0] == expected_enrichment
+
+
+def _scoped_refresh_sources(suggested, command):
+    """The sources named by the scoped ``<command> --source <S>`` suggestions (H181).
+
+    `suggest_repairs` emits one ``{command, addresses}`` entry per offending source
+    when a refresh axis's debt is confined; this pulls the ``<S>`` out of each scoped
+    command for the given base command, so a test can compare the *set of sources the
+    suggestion names* to the debt map's keys. The un-scoped whole-library command
+    (`<command>` with no trailing `` --source ``) is deliberately excluded.
+    """
+    prefix = f"{command} --source "
+    return {
+        entry["command"][len(prefix):]
+        for entry in suggested
+        if entry["command"].startswith(prefix)
+    }
+
+
+def _suggests_whole_library(suggested, command):
+    """Whether the un-scoped whole-library ``<command>`` suggestion is present."""
+    return any(entry["command"] == command for entry in suggested)
+
+
+def test_maintain_scoped_suggestions_name_exactly_the_refresh_debt_sources(
+    scrolls_home, capsys, fake_summary_llm
+):
+    # roadmap H183: when a refresh axis's stale debt is confined to a strict subset
+    # of the held sources, `maintain`'s `suggested` block names the minimal scoped
+    # act per offending source — `classify --stale --source <S>` (H154) /
+    # `kb --stale --source <S>` (H172) — instead of the whole-library sweep (H181).
+    # H181 pins that *behaviour* in test_maintain.py; this folds the **convergence**
+    # into the suite beside the H179 refresh-debt-map tie: the set of sources the
+    # scoped suggestions name ≡ the keys of the very debt maps the same report carries
+    # (`enrichment_by_source` / `summary_by_source`), which H179 already pins ≡
+    # `doctor`'s `custody.{enrichment,summaries}.by_source`. So the *act* a worker is
+    # told to run targets exactly the sources the *report* says carry debt — the
+    # action-pointer sibling of H179's read convergence, on the per-source axis.
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.kb_llm import eligible_concepts, members_hash
+
+    main(["init"])
+    db = get_paths().db_path
+
+    # The H179 seed: both refresh axes, with one held source (reddit) clean on BOTH
+    # so each axis's offenders are a *strict* subset of the held universe and the
+    # scoping rule fires. Enrichment — each item one source (web: 2 stale + 1 current;
+    # arxiv: 1 stale + 1 current; reddit: current-only).
+    def _classified(item_id, source, *, ruleset, **overrides):
+        overrides.setdefault("url", f"https://example.com/{item_id}")
+        return _item(
+            item_id, "Topic classified", source=source, category="tutorial",
+            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                        "classified_ruleset": ruleset},
+            **overrides,
+        )
+
+    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
+    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
+                                url="https://arxiv.org/abs/s1"))
+    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
+                                url="https://arxiv.org/abs/cur"))
+    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
+                                url="https://reddit.com/r/cur"))
+
+    # Summary — clusters whose stale debt double-attributes: Bm25 spans web+arxiv;
+    # Vector is wikipedia-only; Clean spans reddit+web but is current → omitted.
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
+    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
+    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
+    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
+    _stored_summary(db, "bm25", "stale-old-1")
+    _stored_summary(db, "vector", "stale-old-2")
+    eligible = eligible_concepts(list_items(db))
+    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+    capsys.readouterr()
+
+    # the whole-library maintain pass (`source=None` → H181 strict-subset rule). It
+    # may exit 1 on the concept fixture's `missing_scrolls` (markdown_paths with no
+    # files, a structural artifact orthogonal to the refresh-debt suggestions) but
+    # still prints its report.
+    main(["maintain", "--no-recheck"])
+    report = json.loads(capsys.readouterr().out)
+    suggested = report["suggested"]
+    enrichment_by_source = report["enrichment_by_source"]
+    summary_by_source = report["summary_by_source"]
+
+    # the debt maps name ≥2 sources each; reddit is held but clean on BOTH axes, so
+    # both offenders sets are strict subsets and scoping fires (non-vacuous).
+    assert enrichment_by_source == {"arxiv": 1, "web": 2}
+    assert summary_by_source == {"arxiv": 1, "web": 1, "wikipedia": 1}
+    held_sources = set(run_doctor(get_paths())["custody"]["by_source"])
+    assert held_sources == {"arxiv", "reddit", "web", "wikipedia"}
+    assert "reddit" not in enrichment_by_source
+    assert "reddit" not in summary_by_source
+
+    # THE TIE: the scoped suggestions name exactly the debt-map sources, per axis.
+    classify_sources = _scoped_refresh_sources(suggested, "scrolls classify --stale")
+    kb_sources = _scoped_refresh_sources(suggested, "scrolls kb --stale")
+    assert classify_sources == set(enrichment_by_source) == {"arxiv", "web"}
+    # the H171 attribution carries through: the Bm25 cluster spans web+arxiv, so the
+    # summary suggestion names BOTH (plus wikipedia for the Vector cluster) — every
+    # source of a stale cluster earns its own scoped `kb --stale --source <S>`.
+    assert kb_sources == set(summary_by_source) == {"arxiv", "web", "wikipedia"}
+
+    # because scoping fired, the un-scoped whole-library sweep is NOT suggested on
+    # either axis (it would needlessly re-run the clean reddit source).
+    assert not _suggests_whole_library(suggested, "scrolls classify --stale")
+    assert not _suggests_whole_library(suggested, "scrolls kb --stale")
+
+    # and the report's suggestions are a faithful read of the audit — equal to the
+    # pure `suggest_repairs` over a fresh whole-library `doctor`, whose scoped sources
+    # in turn are exactly doctor's debt-map keys. So the tie is the audit's, not
+    # maintain-specific, and closes the suggestion↔debt-map↔doctor triangle.
+    doctor_report = run_doctor(get_paths())
+    pure = suggest_repairs(doctor_report)
+    assert _scoped_refresh_sources(pure, "scrolls classify --stale") == classify_sources
+    assert _scoped_refresh_sources(pure, "scrolls kb --stale") == kb_sources
+    assert classify_sources == set(doctor_report["custody"]["enrichment"]["by_source"])
+    assert kb_sources == set(doctor_report["custody"]["summaries"]["by_source"])
+
+    # --- mutation: refreshing one source moves the suggestions in lockstep -------
+    # `kb --stale --source wikipedia` (offline via `fake_summary_llm`) clears the
+    # wikipedia-only Vector summary, dropping wikipedia from `summary_by_source`. The
+    # scoped `kb --stale --source <S>` suggestions must drop wikipedia too — in
+    # lockstep with the debt map — while the enrichment-axis suggestions stay put (a
+    # summary refresh never re-classifies). Proves the tie is causal, not a seed
+    # coincidence, and that the two axes move independently.
+    assert main(["kb", "--stale", "--source", "wikipedia"]) == 0
+    capsys.readouterr()
+    main(["maintain", "--no-recheck"])
+    after = json.loads(capsys.readouterr().out)
+    after_suggested = after["suggested"]
+    assert after["summary_by_source"] == {"arxiv": 1, "web": 1}
+    assert (
+        _scoped_refresh_sources(after_suggested, "scrolls kb --stale")
+        == set(after["summary_by_source"])
+        == {"arxiv", "web"}
+    )
+    assert after["enrichment_by_source"] == {"arxiv": 1, "web": 2}
+    assert (
+        _scoped_refresh_sources(after_suggested, "scrolls classify --stale")
+        == set(after["enrichment_by_source"])
+        == {"arxiv", "web"}
+    )
+
+
+def test_maintain_suggestions_fall_back_to_whole_library_when_every_source_is_stale(
+    scrolls_home, capsys
+):
+    # roadmap H183 (the boundary case): when EVERY held source carries an axis's
+    # stale debt, the offenders are not a *strict* subset of the held universe, so
+    # scoping buys nothing and `maintain` suggests the single whole-library sweep
+    # (`classify --stale` / `kb --stale`, no `--source`) — already the minimal act.
+    # The complement of the scoped tie above: the debt-map keys still name every
+    # source, but the suggestion collapses to one un-scoped command per axis. (The
+    # universe-unknown / single-source degradations are pinned pure in test_maintain.)
+    main(["init"])
+    db = get_paths().db_path
+
+    def _classified(item_id, source, ruleset):
+        return _item(
+            item_id, "Topic classified", source=source, category="tutorial",
+            url=f"https://{source}.example.com/{item_id}",
+            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                        "classified_ruleset": ruleset},
+        )
+
+    # two sources, BOTH stale on enrichment (no clean source) ...
+    insert_item(db, _classified("web:e1", "web", "deadbeef0000"))
+    insert_item(db, _classified("arxiv:e1", "arxiv", "cafe00000000"))
+    # ... and BOTH spanned by one stale concept-summary cluster (Bm25: web+arxiv),
+    # so the summary offenders also equal the held universe {web, arxiv}.
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    _stored_summary(db, "bm25", "stale-old-1")
+    capsys.readouterr()
+
+    main(["maintain", "--no-recheck"])  # may exit 1 on the concept fixture's missing_scrolls
+    report = json.loads(capsys.readouterr().out)
+    suggested = report["suggested"]
+
+    # every held source is stale on each axis → offenders == universe (not strict).
+    held_sources = set(run_doctor(get_paths())["custody"]["by_source"])
+    assert held_sources == {"arxiv", "web"}
+    assert set(report["enrichment_by_source"]) == held_sources == {"arxiv", "web"}
+    assert set(report["summary_by_source"]) == held_sources == {"arxiv", "web"}
+
+    # so the suggestion is the whole-library sweep, no `--source`, and no scoped
+    # per-source variant is emitted on either axis.
+    assert _suggests_whole_library(suggested, "scrolls classify --stale")
+    assert _suggests_whole_library(suggested, "scrolls kb --stale")
+    assert _scoped_refresh_sources(suggested, "scrolls classify --stale") == set()
+    assert _scoped_refresh_sources(suggested, "scrolls kb --stale") == set()
 
 
 def test_graph_by_source_converges_with_doctor_and_the_per_source_tally(scrolls_home, capsys):
