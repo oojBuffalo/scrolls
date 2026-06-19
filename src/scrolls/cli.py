@@ -3008,6 +3008,32 @@ def _cmd_status(source: str | None = None) -> int:
                 # Honest `null` on the same three gates `maintain` uses — empty /
                 # single-source / fully-clean (nothing stands out).
                 "attention": weakest_source(by_source),
+                # The per-source stale-classification debt (roadmap H177): doctor's
+                # `custody.enrichment.by_source` map (H135) — a flat `{source:
+                # stale_count}` of the offending sources only — read faithfully so an
+                # agent reading `status` (its *primary* read surface) names *which*
+                # source's `classify --stale` to run, at parity with the scheduled
+                # worker's `maintain` report (H147). A pure read of the audit `status`
+                # already makes (no new audit, no new ledger read), via the same
+                # `report_enrichment_by_source` primitive `maintain` uses — so the two
+                # surfaces report one number. Standalone member (not folded into the
+                # drift `by_source`, so its H104 sum-to-whole stays untouched); sums to
+                # `custody.enrichment_stale` by construction (each item one source).
+                # `--source` collapses it to that source's debt (the scoped audit's
+                # own map). Honest empty `{}` when no source carries stale debt or the
+                # library is empty/uninitialized (the offenders-only posture).
+                "enrichment_by_source": report_enrichment_by_source(report),
+                # The per-source stale-summary debt (roadmap H177): doctor's
+                # `custody.summaries.by_source` map (H171) — a flat `{source:
+                # stale_count}` of the offending sources only — read faithfully so an
+                # agent reading `status` names *which* source's `kb --stale` to run, at
+                # parity with `maintain` (H175). The summary-axis sibling of
+                # `enrichment_by_source`. Unlike that map it need **not** sum to
+                # `summaries_stale`: a concept spanning several sources counts toward
+                # each (the H171 asymmetry), so the status↔doctor tie is faithful-read
+                # equality, never a sum-to-whole check. Honest empty `{}` when no source
+                # carries stale-summary debt or the library is empty/uninitialized.
+                "summary_by_source": report_summary_by_source(report),
             }
         )
     )

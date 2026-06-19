@@ -524,6 +524,26 @@ source stands out; the whole-library `custody` block already says everything), o
 a **fully-clean** library (no source carries any drifted/rotted loss)
 (`test_status_attention_is_null_when_nothing_stands_out`).
 
+`enrichment_by_source` and `summary_by_source` are the **per-source refresh-debt
+maps** — flat `{source: stale_count}` maps of the offending sources only, naming
+*which* source's `classify --stale` / `kb --stale` to run (roadmap H177). They are
+faithful reads (`maintain.report_enrichment_by_source` / `report_summary_by_source`)
+of the **same** `run_doctor` audit `status` already makes — `doctor`'s
+`custody.enrichment.by_source` (H135) and `custody.summaries.by_source` (H171) — so
+the agent's primary read surface names per-source refresh debt at parity with the
+scheduled worker's `maintain` report (H147/H175), with **no new audit and no new
+ledger read** (`test_status_carries_per_source_refresh_debt_maps`). Source keys are
+sorted. The two maps differ in how they total: `enrichment_by_source` sums to the
+whole-library `custody.enrichment_stale` (every item has exactly one source), but
+`summary_by_source` need **not** — a concept summary spans a cluster whose members
+can come from several sources, so a stale summary is attributed to *each* of them
+and the values can exceed `summaries_stale` (the H171 double-attribution asymmetry);
+the `status`↔`doctor` tie is therefore faithful-read equality, never a sum-to-whole
+check (`test_status_refresh_debt_summary_need_not_sum_to_the_whole`). A clean,
+empty, or uninitialized library is the honest empty `{}` map on both axes
+(`test_status_refresh_debt_maps_are_empty_on_a_clean_library`,
+`test_status_refresh_debt_maps_are_empty_before_init`).
+
 | Key | Meaning |
 | --- | --- |
 | `initialized` / `schema_version` | `false`/`null` until `init` |
@@ -534,13 +554,20 @@ a **fully-clean** library (no source carries any drifted/rotted loss)
 | `headline` | the one-line `custody` block rendered (`_Custody: …_`), at parity with the `maintain` report's `headline` |
 | `by_source` | the per-source `{tiers, drift, coverage}` custody breakdown (sorted keys; sums to `custody`), the status-surface counterpart of `doctor`'s `custody.by_source` / `maintain`'s `by_source` |
 | `attention` | the single weakest source `{source, tiers, drift, coverage, reason, command}` (most drifted/rotted loss; `coverage` = how much of it is checked, H153) or `null` when nothing stands out, the status-surface counterpart of `maintain`'s `attention` |
+| `enrichment_by_source` | the per-source stale-classification debt `{source: stale_count}` (offenders only; sums to `enrichment_stale`) — which source's `classify --stale` to run, a faithful read of `doctor`'s `custody.enrichment.by_source`, at parity with `maintain` (H177) |
+| `summary_by_source` | the per-source stale-summary debt `{source: stale_count}` (offenders only; need **not** sum to `summaries_stale` — the H171 multi-source attribution) — which source's `kb --stale` to run, at parity with `maintain` (H177) |
 
 `--source <S>` scopes the whole status read to one source's held items (roadmap
 H166) — the status-surface counterpart of `doctor --source` (H162) and the
 read-side sibling of the per-source act commands (`verify --source` H125, `classify
 --stale --source` H154). Every block is then the one-source view: the `items` counts
 (narrowed through `library_counts(source=)`), the `custody` headline, the rendered
-`headline`, and `by_source` (which collapses to the present-and-singleton `{S: …}`).
+`headline`, `by_source` (which collapses to the present-and-singleton `{S: …}`), and
+the `enrichment_by_source`/`summary_by_source` refresh-debt maps (which collapse to
+that source's debt only, equal to a `doctor --source S` audit's own maps — note a
+multi-source concept that drops below `MIN_MEMBERS` under the scope is no longer
+eligible, so a scoped `summary_by_source` reflects the scoped cluster,
+`test_status_source_scopes_the_refresh_debt_maps`).
 The whole payload stays internally consistent — the counts and the custody block
 agree on scope — and the scoped `custody.tiers`/`drift`/`coverage` equals the
 whole-library `by_source[S]` slice and a `doctor --source S` audit's custody block
@@ -554,11 +581,11 @@ never an error (`test_status_source_scopes_the_whole_payload_to_one_source`,
 
 ```console
 $ scrolls status        # before init
-{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._", "by_source": {}, "attention": null}
+{"initialized": false, "root": "/tmp/scrolls-demo.BgrqMO/home-empty", "schema_version": null, "items": {"total": 0, "by_stage": {"detected": 0, "fetched": 0, "rendered": 0}, "by_source": {}, "unclassified": 0}, "subscriptions": 0, "custody": {"score": null, "tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"checked": 0, "unverified": 0, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 0 scroll(s)._", "by_source": {}, "attention": null, "enrichment_by_source": {}, "summary_by_source": {}}
 [exit 0]
 
 $ scrolls status        # after the imports and adds below
-{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 2}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null}
+{"initialized": true, "root": "/tmp/scrolls-demo.BgrqMO/home", "schema_version": 6, "items": {"total": 4, "by_stage": {"detected": 2, "fetched": 2, "rendered": 0}, "by_source": {"arxiv": 1, "x": 3}, "unclassified": 3}, "subscriptions": 0, "custody": {"score": 100, "tiers": {"full": 2, "partial": 0, "reference": 2}, "drift": {"checked": 0, "unverified": 4, "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}, "enrichment_stale": 0, "summaries_stale": 0}, "headline": "_Custody: 4 scroll(s) · fidelity full 2, reference 2 · drift unverified 4._", "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 2}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null, "enrichment_by_source": {}, "summary_by_source": {}}
 [exit 0]
 ```
 

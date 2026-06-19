@@ -619,17 +619,31 @@ each command moves items between stages or derives artifacts from them.
   single-source / fully-clean) — via the shared `maintain.weakest_source` primitive
   `maintain`'s own `attention` uses, so the status-surface flag names `doctor`'s
   max-loss source and equals `maintain`'s `attention` by construction (no new audit;
-  `tests/test_cli.py`, `tests/test_custody_convergence.py`, roadmap H139).
+  `tests/test_cli.py`, `tests/test_custody_convergence.py`, roadmap H139). It also
+  carries the two per-source **refresh-debt** maps `maintain` names
+  (`enrichment_by_source` / `summary_by_source`) — faithful reads
+  (`maintain.report_enrichment_by_source` / `report_summary_by_source`) of the *same*
+  audit's `doctor.custody.enrichment.by_source` (H135) / `custody.summaries.by_source`
+  (H171), flat `{source: stale_count}` maps of the offending sources only, so the
+  agent's *primary* read surface names which source's `classify --stale` / `kb --stale`
+  to run at parity with the worker (no new audit/ledger read; roadmap H177). As on
+  `maintain`, `enrichment_by_source` sums to `custody.enrichment_stale` but
+  `summary_by_source` need not — a multi-source concept is attributed to each member
+  source, so the status↔doctor tie is faithful-read equality, never a sum-to-whole
+  check (`tests/test_cli.py`).
   `--source <S>` scopes the whole status read to one source's held items (roadmap
   H166) — the status-surface counterpart of `doctor --source` (H162), reusing the
   same `run_doctor(source=)` pre-filter and narrowing the `items` counts through
   `library_counts(source=)`. Every block is then one-source (counts, custody
-  headline, rendered `headline`, `by_source` collapsed to the singleton `{S: …}`),
-  so the payload stays internally consistent and the scoped custody view equals the
-  whole-library `by_source[S]` slice and a `doctor --source S` audit by construction
-  (`tests/test_custody_convergence.py`). `attention` is `null` under `--source` (the
-  single-source `weakest_source` gate — nothing to flag across sources); an unknown
-  source is the honest empty headline, never an error.
+  headline, rendered `headline`, `by_source` collapsed to the singleton `{S: …}`, and
+  the refresh-debt maps collapsed to that source's debt — a multi-source concept that
+  drops below `MIN_MEMBERS` under the scope is no longer eligible, so a scoped
+  `summary_by_source` reflects the scoped cluster), so the payload stays internally
+  consistent and the scoped custody view equals the whole-library `by_source[S]` slice
+  and a `doctor --source S` audit by construction
+  (`tests/test_custody_convergence.py`, `tests/test_cli.py`). `attention` is `null`
+  under `--source` (the single-source `weakest_source` gate — nothing to flag across
+  sources); an unknown source is the honest empty headline, never an error.
 - `scrolls follow <url>` / `scrolls sync [id]` subscribe to RSS/Atom
   feeds and register their new entry URLs at stage `detected` through
   the same detection/dedupe as `add` — sync discovers URLs, adapters

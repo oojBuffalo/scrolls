@@ -22,6 +22,8 @@ from scrolls.feeds import Subscription, insert_subscription, list_subscriptions
 from scrolls.maintain import (
     custody_snapshot,
     report_by_source,
+    report_enrichment_by_source,
+    report_summary_by_source,
     snapshot_headline,
     weakest_source,
 )
@@ -164,6 +166,9 @@ def test_status_before_init(scrolls_home, capsys):
         "by_source": {},
         # the weakest-source flag (H139): nothing held → nothing stands out
         "attention": None,
+        # the per-source refresh-debt maps (H177): no store → the honest empty maps
+        "enrichment_by_source": {},
+        "summary_by_source": {},
     }
 
 
@@ -189,6 +194,9 @@ def test_status_after_init(scrolls_home, capsys):
         "by_source": {},
         # the weakest-source flag (H139): nothing held → nothing stands out
         "attention": None,
+        # the per-source refresh-debt maps (H177): empty library → honest empty maps
+        "enrichment_by_source": {},
+        "summary_by_source": {},
     }
 
 
@@ -622,6 +630,186 @@ def test_status_source_before_init_is_the_empty_payload(scrolls_home, capsys):
     assert payload["headline"] == "_Custody: 0 scroll(s)._"
     assert payload["by_source"] == {}
     assert payload["attention"] is None
+
+
+# --- per-source refresh-debt maps on `status` (roadmap H177) -----------------
+#
+# `maintain` names *which* source's `classify --stale`/`kb --stale` to run via
+# `enrichment_by_source` (H147) / `summary_by_source` (H175), but those refresh-debt
+# maps rode only the scheduled-worker report. `status` — the agent's *primary* read
+# surface — now carries the same two maps as faithful reads of the `run_doctor`
+# audit `_cmd_status` already makes (no new audit, no new ledger read), so the agent
+# reading `status` names per-source refresh debt at parity with the worker.
+
+
+def _mark_stale_classified(item_id):
+    """Stamp a persisted item rules-classified under a *superseded* ruleset, so the
+    live ruleset reads it stale (the `doctor`/`maintain` stale-classification fixture)."""
+    persisted = get_item(get_paths().db_path, item_id)
+    update_item(
+        get_paths().db_path,
+        dataclasses.replace(
+            persisted,
+            provenance={
+                **persisted.provenance,
+                "classified_by": "rules-v1",
+                "classified_basis": "title-pattern",
+                "classified_ruleset": "deadbeef0000",  # superseded by the live ruleset
+            },
+        ),
+    )
+
+
+def _concept_member(source, slug, concept) -> ScrollItem:
+    """A minimal rendered cluster member carrying one concept (stale-summary fixture)."""
+    return ScrollItem(
+        id=make_item_id(source, None, f"https://{source}.example.com/{slug}"),
+        source=source,
+        source_id=None,
+        url=f"https://{source}.example.com/{slug}",
+        saved_at="2026-06-14T00:00:00+00:00",
+        title=slug,
+        extracted_text="A note about the concept.",
+        content_hash="sha256:" + slug[-8:],
+        concepts=(concept,),
+        stage="rendered",
+        provenance={"adapter": source, "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+
+
+def _store_stale_summary(slug, display) -> None:
+    """Store a concept summary whose fingerprint no longer matches its live cluster,
+    so the live ruleset reads it stale (the summary-axis stale fixture)."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(get_paths().db_path, ConceptSummary(
+        slug=slug, display=display, summary="How it shows up.",
+        members_hash="stale-old-digest", engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def _seed_refresh_debt(paths):
+    """A two-source library carrying both stale-classification and stale-summary debt.
+
+    Stale classifications: arxiv:1, web:2 (each item one source → sums to whole).
+    Stale summaries: a Bm25 concept over a web+arxiv cluster (attributes to BOTH) and
+    a Vector concept over a web-only cluster — so `summary_by_source` is {arxiv:1, web:2}
+    while only 2 summaries are stale (the H171 double-attribution asymmetry)."""
+    from scrolls.db import init_db
+
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    members = [
+        _concept_member("web", "bm25-web", "Bm25"),
+        _concept_member("arxiv", "bm25-arxiv", "Bm25"),
+        _concept_member("web", "vector-1", "Vector"),
+        _concept_member("web", "vector-2", "Vector"),
+    ]
+    for item in members:
+        insert_item(paths.db_path, write_scroll(paths, item))
+    assert main(["kb"]) == 0
+    # stale classifications on arxiv (1) + web (2)
+    _mark_stale_classified(members[1].id)  # arxiv
+    _mark_stale_classified(members[0].id)  # web
+    _mark_stale_classified(members[2].id)  # web
+    # stale summaries spanning the clusters
+    _store_stale_summary("bm25", "Bm25")
+    _store_stale_summary("vector", "Vector")
+
+
+def test_status_carries_per_source_refresh_debt_maps(scrolls_home, capsys):
+    """`status` carries `enrichment_by_source` + `summary_by_source` (H177) — the
+    per-source stale-classification / stale-summary debt maps `maintain` names
+    (H147/H175), read faithfully from the same `run_doctor` audit `status` already
+    makes, so they equal `doctor`'s own maps and `maintain`'s. The agent's primary
+    read surface names which source's `classify --stale`/`kb --stale` to run."""
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    enrichment = payload["enrichment_by_source"]
+    summary = payload["summary_by_source"]
+
+    # offenders-only, sorted source keys; the concrete per-source debt this seed makes
+    assert enrichment == {"arxiv": 1, "web": 2}
+    assert summary == {"arxiv": 1, "web": 2}
+
+    # 1. == a faithful read of the audit `status` already makes (no new audit)
+    report = run_doctor(paths)
+    assert enrichment == report_enrichment_by_source(report)
+    assert summary == report_summary_by_source(report)
+    # 2. == doctor's own maps over the same library
+    assert enrichment == report["custody"]["enrichment"]["by_source"]
+    assert summary == report["custody"]["summaries"]["by_source"]
+
+
+def test_status_refresh_debt_summary_need_not_sum_to_the_whole(scrolls_home, capsys):
+    """The H171 asymmetry, carried faithfully onto `status`: the enrichment map sums
+    to the whole-library `enrichment_stale` (each item one source), but the summary
+    map can exceed `summaries_stale` because a multi-source concept is attributed to
+    every contributing source — so the status↔doctor tie is faithful-read equality,
+    never a sum-to-whole check."""
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    report = run_doctor(paths)
+
+    # enrichment: one source per item → sums to the whole scalar
+    assert sum(payload["enrichment_by_source"].values()) == 3
+    assert report["custody"]["enrichment"]["stale"] == 3
+    # summary: Bm25 double-attributed (web + arxiv) → exceeds the whole scalar
+    assert report["custody"]["summaries"]["stale"] == 2
+    assert sum(payload["summary_by_source"].values()) == 3 > 2
+
+
+def test_status_refresh_debt_maps_are_empty_on_a_clean_library(scrolls_home, capsys):
+    """No stale debt → the honest empty maps (offenders-only — a source with no stale
+    classifications/summaries is omitted, never a 0 entry)."""
+    paths = get_paths()
+    _status_custody_seed(paths)  # held items, categories never rules-stamped → not stale
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["enrichment_by_source"] == {}
+    assert payload["summary_by_source"] == {}
+
+
+def test_status_refresh_debt_maps_are_empty_before_init(scrolls_home, capsys):
+    """Before `init` the store holds nothing, so both refresh-debt maps are the honest
+    empty `{}` — the first-run honesty the rest of the payload already keeps, never a
+    KeyError on the absent audit block."""
+    assert main(["status"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["initialized"] is False
+    assert payload["enrichment_by_source"] == {}
+    assert payload["summary_by_source"] == {}
+
+
+def test_status_source_scopes_the_refresh_debt_maps(scrolls_home, capsys):
+    """`status --source <S>` (H166) scopes the refresh-debt maps to one source too —
+    the maps collapse to that source's debt only, equal to the *scoped* doctor audit's
+    maps, so the whole status payload reads one-source on the refresh axis as well.
+    Scoped to `web`: its two stale classifications, and the web-only Vector summary
+    (Bm25 drops below `MIN_MEMBERS` under the scope, so it is no longer eligible)."""
+    paths = get_paths()
+    _seed_refresh_debt(paths)
+    capsys.readouterr()
+
+    assert main(["status", "--source", "web"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    # web's slice only: its two stale classifications; its one eligible stale summary
+    assert payload["enrichment_by_source"] == {"web": 2}
+    assert payload["summary_by_source"] == {"web": 1}
+    # == the scoped doctor audit's own maps (convergence by construction)
+    scoped = run_doctor(paths, source="web")
+    assert payload["enrichment_by_source"] == report_enrichment_by_source(scoped)
+    assert payload["summary_by_source"] == report_summary_by_source(scoped)
 
 
 def test_status_counts_items_and_subscriptions(scrolls_home, capsys):
