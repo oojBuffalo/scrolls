@@ -2890,6 +2890,112 @@ def test_readable_attention_line_absent_together_with_the_json_flag(scrolls_home
     assert json.loads(capsys.readouterr().out)["attention"] is None
 
 
+# --- readable `_Refresh:_` line ≡ doctor's per-source debt maps (roadmap H178) -
+#
+# The enrichment/summary-axis sibling of the readable `_Attention:_` tie above:
+# the `_Refresh:_` line on the `export bundle`/`scrolls context` briefings names
+# the sources whose `classify --stale`/`kb --stale --source <S>` to run, over the
+# *same* `stale_*_counts_by_source` builders `doctor`'s `custody.enrichment
+# .by_source`/`custody.summaries.by_source` fold — so the readable pointer and the
+# structured maps can never name different sources. Pinned over a whole-library
+# bundle scope (the query matches every member, so scope == library and the
+# scope-consistent line equals the whole-library audit), mutation-checked.
+
+_REFRESH_CLASS_MD = re.compile(r"classifications stale in ([^—]+?) — refresh with")
+_REFRESH_SUMM_MD = re.compile(r"summaries stale in ([^—]+?) — refresh with")
+_REFRESH_CLASS_HTML = re.compile(r"classifications stale in (.+?) — refresh with")
+_REFRESH_SUMM_HTML = re.compile(r"summaries stale in (.+?) — refresh with")
+
+
+def _refresh_sources(text, pattern):
+    """The sorted source names a `_Refresh:_` clause lists, or [] when absent.
+
+    Parses the backtick (Markdown) / `<code>` (HTML) source tokens of one axis's
+    clause, so the readable surface is read back and compared to the audit map — the
+    refresh-axis counterpart of `_attention_fields`.
+    """
+    match = pattern.search(text)
+    if match is None:
+        return []
+    clause = match.group(1)
+    sources = re.findall(r"`([^`]+)`", clause) + re.findall(r"<code>([^<]+)</code>", clause)
+    return sorted(sources)
+
+
+def test_readable_refresh_line_converges_with_the_doctor_debt_maps(scrolls_home):
+    # roadmap H178: every readable briefing's `_Refresh:_` line names exactly the
+    # sources doctor's `custody.enrichment.by_source`/`custody.summaries.by_source`
+    # do — the readable refresh-axis sibling of the H159 attention tie. Non-vacuous
+    # (the enrichment axis names one source, the summary axis two — the H171
+    # multi-source attribution) and mutation-checked.
+    from scrolls.bundle import build_bundle, build_bundle_html
+    from scrolls.context import build_context
+    from scrolls.kb import ConceptSummary, save_concept_summary
+    from scrolls.kb_llm import eligible_concepts, members_hash
+
+    main(["init"])
+    db = get_paths().db_path
+
+    # enrichment debt on `web`: a rules classification under a superseded ruleset
+    insert_item(db, _item(
+        "web:stale", "Topic stale", source="web", category="tutorial",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"},
+        extracted_text="topic", raw_text="<raw>topic</raw>",
+        stage="rendered", markdown_path="scrolls/web/stale.md",
+        content_hash="sha256:ws"))
+    # summary debt on a web+arxiv cluster (attributes to BOTH — the H171 asymmetry).
+    # The members carry "topic" so they fall in the bundle's query scope — the
+    # briefing's per-source debt is scope-consistent, so the cluster must be in-scope
+    # for the whole-library doctor map to equal the scope-consistent line.
+    insert_item(db, _item(
+        "web:b1", "Topic bm25 one", source="web", concepts=("Bm25",),
+        url="https://web.example.com/b1", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/web/b1.md", content_hash="h1"))
+    insert_item(db, _item(
+        "arxiv:b2", "Topic bm25 two", source="arxiv", concepts=("Bm25",),
+        url="https://arxiv.org/abs/b2", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/arxiv/b2.md", content_hash="h2"))
+    save_concept_summary(db, ConceptSummary(
+        slug="bm25", display="Bm25", summary="Old synthesis.",
+        members_hash="stale-old", engine="kb-llm-v1", model="claude-opus-4-8",
+        generated_at="2026-06-16T00:00:00+00:00"))
+
+    report = run_doctor(get_paths())["custody"]
+    enr_sources = sorted(report["enrichment"]["by_source"])
+    summ_sources = sorted(report["summaries"]["by_source"])
+    # non-vacuous: the two axes name different source sets
+    assert enr_sources == ["web"]
+    assert summ_sources == ["arxiv", "web"]
+
+    bundle_md = build_bundle(db, "topic")
+    bundle_html = build_bundle_html(db, "topic")
+    context_md = build_context(db, "topic", budget="connected")
+
+    # every readable surface names exactly doctor's per-source debt sources
+    assert _refresh_sources(bundle_md, _REFRESH_CLASS_MD) == enr_sources
+    assert _refresh_sources(bundle_md, _REFRESH_SUMM_MD) == summ_sources
+    assert _refresh_sources(context_md, _REFRESH_CLASS_MD) == enr_sources
+    assert _refresh_sources(context_md, _REFRESH_SUMM_MD) == summ_sources
+    assert _refresh_sources(bundle_html, _REFRESH_CLASS_HTML) == enr_sources
+    assert _refresh_sources(bundle_html, _REFRESH_SUMM_HTML) == summ_sources
+
+    # mutation check: refresh arxiv's cluster (members_hash → live) so the summary
+    # is current; the summary axis then drops arxiv, and the line follows the map
+    eligible = eligible_concepts(list_items(db))
+    save_concept_summary(db, ConceptSummary(
+        slug="bm25", display="Bm25", summary="Fresh synthesis.",
+        members_hash=members_hash(eligible["bm25"]["items"]), engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-17T00:00:00+00:00"))
+    report2 = run_doctor(get_paths())["custody"]
+    assert report2["summaries"]["by_source"] == {}  # the cluster is current now
+    assert "summaries stale in" not in build_bundle(db, "topic")
+    # the enrichment axis is untouched — web's stale classification still shows
+    assert _refresh_sources(build_bundle(db, "topic"), _REFRESH_CLASS_MD) == ["web"]
+
+
 def _parse_attention_reason(reason):
     """Decompose a `_Attention:_` line's reason into a `{drifted, rotted}` loss map.
 

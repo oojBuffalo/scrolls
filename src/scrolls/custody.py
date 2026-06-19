@@ -1047,6 +1047,57 @@ def render_custody_attention(
     return [line, ""]
 
 
+def render_custody_refresh(
+    enrichment_by_source: dict[str, int],
+    summary_by_source: dict[str, int],
+) -> list[str]:
+    """The readable per-source `_Refresh:_` line for a briefing (roadmap H178).
+
+    The *enrichment/summary*-axis counterpart of the drift `_Attention:_` line
+    (H159): where `_Attention:_` names the source carrying the most drift and the
+    `verify --source <S>` recheck, this names the source(s) whose classifications or
+    summaries were produced under a superseded ruleset / changed membership, and the
+    `classify --stale --source <S>` / `kb --stale --source <S>` *refresh* to run — so
+    an agent skimming the `export bundle`/`scrolls context` briefing reads "this
+    source's enrichment needs refreshing" without re-running `doctor`:
+
+        ``_Refresh: classifications stale in `arxiv`, `web` — `scrolls classify
+        --stale --source <S>`; summaries stale in `web` — `scrolls kb --stale
+        --source <S>`._``
+
+    The two maps are offending-source → stale-count (`classify
+    .stale_classification_counts_by_source` / `kb_llm.stale_summary_counts_by_source`
+    — the *same* builders `doctor`'s `custody.enrichment.by_source`/
+    `custody.summaries.by_source` fold), so the sources this line names equal the
+    audit's maps by construction. Only the axes that carry debt appear; the command
+    is a ``--source <S>`` *template* (one run per named source).
+
+    Unlike `_Attention:_` and the `_By source:_` split, this line has **no
+    single-source gate**: refresh debt is per-source actionable work, not a
+    cross-source comparison, so a single-source scope with stale enrichment still
+    shows it (and the custody headline, which carries fidelity/drift but not
+    enrichment freshness, would otherwise hide it). Returns ``[line, ""]`` so a
+    caller splices it straight in; returns ``[]`` on honest absence — exactly when
+    *both* maps are empty (no source carries refresh debt on either axis).
+    """
+    clauses = []
+    if enrichment_by_source:
+        sources = ", ".join(f"`{s}`" for s in enrichment_by_source)
+        clauses.append(
+            f"classifications stale in {sources} — "
+            "refresh with `scrolls classify --stale --source <S>`"
+        )
+    if summary_by_source:
+        sources = ", ".join(f"`{s}`" for s in summary_by_source)
+        clauses.append(
+            f"summaries stale in {sources} — "
+            "refresh with `scrolls kb --stale --source <S>`"
+        )
+    if not clauses:
+        return []
+    return [f"_Refresh: {'; '.join(clauses)}._", ""]
+
+
 def custody_headline(
     items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
 ) -> str:

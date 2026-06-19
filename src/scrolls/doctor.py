@@ -18,7 +18,11 @@ import sqlite3
 from dataclasses import replace
 from typing import Any, Iterable
 
-from scrolls.classify import RULESET_FINGERPRINT, classification_freshness
+from scrolls.classify import (
+    RULESET_FINGERPRINT,
+    classification_freshness,
+    stale_classification_counts_by_source,
+)
 from scrolls.custody import (
     CUSTODY_STATUSES,
     custody_counts_by_source,
@@ -27,7 +31,12 @@ from scrolls.custody import (
     unverified_items,
 )
 from scrolls.kb import load_concept_summaries
-from scrolls.kb_llm import eligible_concepts, members_hash, summary_freshness
+from scrolls.kb_llm import (
+    eligible_concepts,
+    members_hash,
+    stale_summary_counts_by_source,
+    summary_freshness,
+)
 from scrolls.items import (
     ScrollItem,
     get_fidelity,
@@ -520,7 +529,6 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
     # pool (the H25/H27 convergence). `unknown` is doctor's `unfingerprinted`.
     bucket = {"current": "current", "stale": "stale", "unknown": "unfingerprinted"}
     stale = []
-    stale_by_source: dict[str, int] = {}
     for item in items:
         freshness = classification_freshness(item.provenance)
         if freshness is None:  # not a rules classification — a different axis
@@ -531,13 +539,13 @@ def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:
             stale.append(
                 {"id": item.id, "ruleset": item.provenance["classified_ruleset"]}
             )
-            stale_by_source[item.source] = stale_by_source.get(item.source, 0) + 1
     enrichment["items"] = sorted(stale, key=lambda entry: entry["id"])
     # Per-source stale-classification debt (roadmap H135, see the `by_source`
-    # docstring bullet): offending sources only, sorted; sums to `stale`.
-    enrichment["by_source"] = {
-        source: stale_by_source[source] for source in sorted(stale_by_source)
-    }
+    # docstring bullet): offending sources only, sorted; sums to `stale`. Built by
+    # the one shared `stale_classification_counts_by_source` the readable `_Refresh:_`
+    # briefing line (H178) also folds, so the audit map and the briefing's named
+    # sources can never disagree (convergence by construction).
+    enrichment["by_source"] = stale_classification_counts_by_source(items)
 
 
 def _check_summary_provenance(
@@ -611,7 +619,6 @@ def _check_summary_provenance(
     # share one derivation, so the count here can never disagree with the view or
     # the `kb --stale` pool (the H31 convergence the classification axis pins too).
     stale = []
-    stale_by_source: dict[str, int] = {}
     for slug in sorted(eligible):
         members = eligible[slug]["items"]
         live = members_hash(members)
@@ -625,14 +632,10 @@ def _check_summary_provenance(
             stale.append(
                 {"slug": slug, "members_hash": prior.members_hash, "live_hash": live}
             )
-            # Attribute the stale summary to every source among its live members
-            # (the H171 decision — see the `by_source` docstring bullet). A
-            # multi-source cluster lands in each contributing source, so this map
-            # need not sum to `stale`.
-            for source in {item.source for item in members}:
-                stale_by_source[source] = stale_by_source.get(source, 0) + 1
     summaries["items"] = stale  # already slug-ordered (sorted iteration)
-    # Per-source stale-summary debt (roadmap H171): offenders only, sorted keys.
-    summaries["by_source"] = {
-        source: stale_by_source[source] for source in sorted(stale_by_source)
-    }
+    # Per-source stale-summary debt (roadmap H171): offenders only, sorted keys; the
+    # multi-source attribution (a cluster counts toward each member source, so the
+    # map need not sum to the stale-concept count). Built by the one shared
+    # `stale_summary_counts_by_source` the readable `_Refresh:_` briefing line (H178)
+    # also folds, so the audit map and the briefing's named sources can never disagree.
+    summaries["by_source"] = stale_summary_counts_by_source(rendered, stored)

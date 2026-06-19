@@ -651,6 +651,138 @@ def test_bundle_html_attention_line_omitted_when_clean_or_single_source(scrolls_
     assert '<p class="custody-attention">' not in doc  # nothing actionable to flag
 
 
+# --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
+#
+# The enrichment/summary-axis counterpart of the drift `_Attention:_` line: it
+# names which source's classifications/summaries are stale and the exact
+# `classify --stale`/`kb --stale --source <S>` refresh, computed over the
+# bundle's own scope by the same builders doctor's `custody.enrichment.by_source`/
+# `summaries.by_source` fold (convergence by construction). Honest-absent when no
+# source carries refresh debt; no single-source gate (refresh debt is per-source
+# work, not a cross-source comparison).
+
+
+def _seed_refresh_debt(db):
+    """Stale classification on `web` + a stale summary spanning `web`+`arxiv`.
+
+    web:old-class is rules-classified under a superseded ruleset → enrichment debt
+    {web}. The `Databases` concept (web:db1 + arxiv:db2) has a stored summary under
+    an outdated members_hash → summary debt {arxiv, web} (the H171 multi-source
+    attribution). Every title carries "database" so a `database` query is the whole
+    scope.
+    """
+    insert_item(db, make_item(
+        "web:old-class", "Old database doc", "An old database doc.",
+        source="web", url="https://web.example/old", category="documentation",
+        provenance=_rules_provenance(ruleset="oldfingerprint")))
+    insert_item(db, make_item(
+        "web:db1", "Web database", "A web database.",
+        source="web", url="https://web.example/db1", concepts=("Databases",)))
+    insert_item(db, make_item(
+        "arxiv:db2", "Arxiv database", "An arxiv database.",
+        source="arxiv", url="https://arxiv.org/abs/db2", concepts=("Databases",)))
+    save_concept_summary(db, ConceptSummary(
+        slug="databases", display="Databases", summary="Old synthesis.",
+        members_hash="stalefingerprint", engine=SUMMARY_ENGINE,
+        model="claude-test", generated_at="2026-06-12T00:00:00+00:00"))
+
+
+def test_bundle_carries_a_refresh_line_for_both_axes(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_refresh_debt(db)
+    bundle = build_bundle(db, "database")
+    assert (
+        "_Refresh: classifications stale in `web` — refresh with "
+        "`scrolls classify --stale --source <S>`; summaries stale in `arxiv`, "
+        "`web` — refresh with `scrolls kb --stale --source <S>`._" in bundle
+    )
+    # an actionable pointer, sits above the per-source map like `_Attention:_`
+    assert bundle.index("_Refresh:") < bundle.index("_By source:_")
+
+
+def test_bundle_refresh_line_omitted_when_no_stale_debt(scrolls_home):
+    # a current-ruleset classification + no stored summary → no refresh debt
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:fresh", "Fresh database", "A current database.",
+        source="web", url="https://web.example/fresh",
+        category="documentation", provenance=_rules_provenance()))
+    bundle = build_bundle(db, "database")
+    assert "_Refresh:" not in bundle  # honest absence, nothing to refresh
+
+
+def test_bundle_refresh_line_shown_for_a_single_source(scrolls_home):
+    # no single-source gate: refresh debt is per-source actionable work, so a
+    # single-source bundle still names it — unlike `_Attention:_`/`_By source:_`
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:old-class", "Old database doc", "An old database doc.",
+        source="web", url="https://web.example/old", category="documentation",
+        provenance=_rules_provenance(ruleset="oldfingerprint")))
+    bundle = build_bundle(db, "database")
+    assert "_Refresh: classifications stale in `web`" in bundle
+    assert "_Attention:" not in bundle  # single source: nothing to rank across
+    assert "_By source:_" not in bundle  # single source: the headline says all
+
+
+def test_refresh_line_converges_with_the_doctor_maps(scrolls_home):
+    # the line names exactly the sources doctor's per-source debt maps do (same
+    # builders over the same whole-library scope — convergence by construction)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_refresh_debt(db)
+    report = run_doctor(get_paths())
+    enr = report["custody"]["enrichment"]["by_source"]
+    summ = report["custody"]["summaries"]["by_source"]
+    assert enr == {"web": 1} and summ == {"arxiv": 1, "web": 1}
+    bundle = build_bundle(db, "database")  # query matches all → scope == library
+    assert (
+        "classifications stale in "
+        + ", ".join(f"`{s}`" for s in enr) in bundle
+    )
+    assert "summaries stale in " + ", ".join(f"`{s}`" for s in summ) in bundle
+
+
+def test_refresh_line_preserves_the_round_trip(scrolls_home):
+    # the readable line is outside the lossless JSONL fence — the round-trip holds
+    main(["init"])
+    db = get_paths().db_path
+    _seed_refresh_debt(db)
+    bundle = build_bundle(db, "database")
+    assert "_Refresh:" in bundle
+    recovered = {i.id for i in parse_bundle(bundle)}
+    assert recovered == {"web:old-class", "web:db1", "arxiv:db2"}
+
+
+def test_bundle_html_carries_a_refresh_line(scrolls_home):
+    # the HTML briefing carries the same pointer over the same maps — no desync
+    main(["init"])
+    db = get_paths().db_path
+    _seed_refresh_debt(db)
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-refresh">Refresh: classifications stale in '
+        "<code>web</code> — refresh with <code>scrolls classify --stale "
+        "--source &lt;S&gt;</code>; summaries stale in <code>arxiv</code>, "
+        "<code>web</code> — refresh with <code>scrolls kb --stale "
+        "--source &lt;S&gt;</code>.</p>" in doc
+    )
+
+
+def test_bundle_html_refresh_omitted_when_clean(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:fresh", "Fresh database", "A current database.",
+        source="web", url="https://web.example/fresh",
+        category="documentation", provenance=_rules_provenance()))
+    doc = build_bundle_html(db, "database")
+    assert '<p class="custody-refresh">' not in doc
+
+
 def test_a_drifted_scroll_is_still_carried_losslessly(scrolls_home):
     # raw is sacred: a drifted scroll is a recorded posture, never dropped
     main(["init"])

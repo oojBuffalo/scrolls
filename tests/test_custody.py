@@ -39,6 +39,7 @@ from scrolls.custody import (
     record_events,
     render_custody_by_source,
     render_custody_headline,
+    render_custody_refresh,
     tally_custody,
     tally_custody_by_source,
     unverified_items,
@@ -890,6 +891,47 @@ def test_render_custody_headline_stays_coverage_free():
     assert "coverage" not in render_custody_headline(
         1, {"full": 1}, {"unverified": 1}
     )
+
+
+# --- render_custody_refresh: the readable per-source `_Refresh:_` line (H178) -
+
+
+def test_render_custody_refresh_carries_both_axes():
+    lines = render_custody_refresh({"arxiv": 1, "web": 2}, {"web": 1})
+    assert lines == [
+        "_Refresh: classifications stale in `arxiv`, `web` — refresh with "
+        "`scrolls classify --stale --source <S>`; summaries stale in `web` — "
+        "refresh with `scrolls kb --stale --source <S>`._",
+        "",
+    ]
+
+
+def test_render_custody_refresh_one_axis_only_emits_that_clause():
+    enr = render_custody_refresh({"web": 1}, {})
+    assert enr == [
+        "_Refresh: classifications stale in `web` — refresh with "
+        "`scrolls classify --stale --source <S>`._",
+        "",
+    ]
+    summ = render_custody_refresh({}, {"web": 1})
+    assert summ == [
+        "_Refresh: summaries stale in `web` — refresh with "
+        "`scrolls kb --stale --source <S>`._",
+        "",
+    ]
+
+
+def test_render_custody_refresh_empty_when_no_debt():
+    # honest absence: both maps empty → no line (the `_Attention:_`/`_By source:_`
+    # no-op posture)
+    assert render_custody_refresh({}, {}) == []
+
+
+def test_render_custody_refresh_has_no_single_source_gate():
+    # unlike `_Attention:_`/`_By source:_`, refresh debt is per-source actionable
+    # work, not a cross-source comparison — a single source with stale debt shows
+    line = render_custody_refresh({"web": 1}, {})
+    assert line and "`web`" in line[0]
 
 
 # --- unverified_items predicate (held − verdicts) ------------------------

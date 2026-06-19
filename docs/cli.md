@@ -424,6 +424,36 @@ is non-trivial) and mutation-checked — perturbing any one field of any surface
 distillation breaks the tie
 (`test_attention_flag_full_shape_converges_field_for_field`).
 
+Beside that drift `_Attention:_` line, the readable briefings also carry a
+**per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
+counterpart. Where `_Attention:_` names the source carrying the most drift and the
+`verify --source <S>` recheck, `_Refresh:_` names the source(s) whose
+classifications or summaries were produced under a superseded ruleset / changed
+membership, and the *refresh* to run —
+`_Refresh: classifications stale in `<S>`, … — refresh with `scrolls classify
+--stale --source <S>`; summaries stale in `<S>`, … — refresh with `scrolls kb
+--stale --source <S>`._` — so an agent skimming the `export bundle` briefing
+(Markdown **and** its HTML form, an amber `custody-refresh` paragraph) or the
+`scrolls context` bundle (`connected`+) reads "this source's enrichment needs
+refreshing" without re-running `doctor`. The two source maps are computed over the
+bundle's **own scope** items (the scope-consistent posture the `_Attention:_` line
+takes) by the *same* `classify.stale_classification_counts_by_source` /
+`kb_llm.stale_summary_counts_by_source` builders `doctor`'s
+`custody.enrichment.by_source` / `custody.summaries.by_source` fold — so the line
+names exactly the sources the audit maps do by construction
+(`test_readable_refresh_line_converges_with_the_doctor_debt_maps`). Only the axes
+that carry debt appear; the command is a `--source <S>` *template* (one run per
+named source). Two deliberate differences from `_Attention:_`: it carries the
+**summary axis** with the H171 multi-source attribution (a stale cluster's every
+member source is named, so the summary clause can list more sources than there are
+stale concepts), and it has **no single-source gate** — refresh debt is per-source
+actionable work, not a cross-source comparison, so a single-source bundle with a
+stale classification still shows it (the custody headline carries fidelity/drift,
+not enrichment freshness, so it would otherwise hide the debt). Honest absence —
+omitted entirely when no source carries refresh debt on either axis. The readable
+line lives **outside** the lossless `@generated` JSONL fence, so it never touches
+the round-trip (`test_refresh_line_preserves_the_round_trip`).
+
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
 `drift_change`/`coverage_change`/`stale_change` (and the scalar `score.change`) by

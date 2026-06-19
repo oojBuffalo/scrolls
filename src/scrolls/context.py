@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scrolls.classify import stale_classification_counts_by_source
 from scrolls.custody import (
     CustodyEvent,
     custody_counts_by_source,
@@ -53,6 +54,7 @@ from scrolls.custody import (
     latest_events,
     render_custody_attention,
     render_custody_by_source,
+    render_custody_refresh,
 )
 from scrolls.graph import build_graph
 from scrolls.items import (
@@ -61,6 +63,8 @@ from scrolls.items import (
     classification_provenance,
     get_item,
 )
+from scrolls.kb import load_concept_summaries
+from scrolls.kb_llm import stale_summary_counts_by_source
 from scrolls.search import SearchHit, count_matches, search_items
 
 _EXCERPT_CHARS = 700
@@ -208,6 +212,20 @@ def build_context(
         # honest no-op when no source carries actionable loss (single-source /
         # clean / empty scope — [] lines).
         lines += render_custody_attention(by_source)
+        # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
+        # line naming the source(s) whose classifications/summaries are stale and
+        # the exact `classify --stale`/`kb --stale --source <S>` refresh — the
+        # enrichment/summary-axis counterpart of the drift `_Attention:_` line above.
+        # Computed over the bundle's own scope items by the same
+        # `stale_*_counts_by_source` builders `doctor`'s `custody.enrichment
+        # .by_source`/`summaries.by_source` fold, so the named sources converge with
+        # the audit maps by construction. Gated to `connected`+ like the headline;
+        # honest no-op when no source carries refresh debt ([] lines).
+        enrichment_by_source = stale_classification_counts_by_source(items)
+        summary_by_source = stale_summary_counts_by_source(
+            items, load_concept_summaries(db_path)
+        )
+        lines += render_custody_refresh(enrichment_by_source, summary_by_source)
         # the per-source custody breakdown under the scope headline (roadmap
         # H149): a multi-source bundle names *which* source's custody is weakest
         # within the scope, so an agent gauges the weak source without

@@ -929,6 +929,101 @@ def test_context_attention_line_mcp_parity(scrolls_home):
     )
 
 
+# --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
+#
+# The enrichment/summary-axis counterpart of `_Attention:_` on the model-facing
+# context bundle: which source's classifications/summaries are stale and the
+# exact `classify --stale`/`kb --stale --source <S>` refresh. Gated to
+# `connected`+ like the headline; over the same builders doctor's per-source debt
+# maps fold.
+
+
+def _refresh_provenance(ruleset):
+    from scrolls.classify import ENGINE as RULES_ENGINE
+
+    return {
+        "fetched_at": "2026-06-12T00:00:00+00:00", "via": "test",
+        "classified_by": RULES_ENGINE, "classified_basis": "documentation-url",
+        "classified_ruleset": ruleset,
+    }
+
+
+def _seed_context_refresh_debt(db):
+    """Stale classification on `web` + a stale summary spanning `web`+`arxiv`."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+    from scrolls.kb_llm import ENGINE as SUMMARY_ENGINE
+
+    insert_item(db, make_item(
+        "web:old-class", "Old database doc", "An old database doc.", source="web",
+        url="https://web/old", category="documentation",
+        provenance=_refresh_provenance("oldfingerprint")))
+    insert_item(db, make_item(
+        "web:db1", "Web database", "A web database note.", source="web",
+        url="https://web/db1", concepts=("Databases",)))
+    insert_item(db, make_item(
+        "arxiv:db2", "Arxiv database", "An arxiv database note.", source="arxiv",
+        url="https://arxiv.org/abs/db2", concepts=("Databases",)))
+    save_concept_summary(db, ConceptSummary(
+        slug="databases", display="Databases", summary="Old synthesis.",
+        members_hash="stalefingerprint", engine=SUMMARY_ENGINE,
+        model="claude-test", generated_at="2026-06-12T00:00:00+00:00"))
+
+
+def test_context_carries_a_refresh_line(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_context_refresh_debt(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert (
+        "_Refresh: classifications stale in `web` — refresh with "
+        "`scrolls classify --stale --source <S>`; summaries stale in `arxiv`, "
+        "`web` — refresh with `scrolls kb --stale --source <S>`._" in out
+    )
+
+
+def test_context_refresh_line_gated_off_index(scrolls_home, capsys):
+    # gated to `connected`/`full` like the headline — the leanest tier stays bare
+    main(["init"])
+    db = get_paths().db_path
+    _seed_context_refresh_debt(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Refresh:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_refresh_line_omitted_when_clean(scrolls_home, capsys):
+    from scrolls.classify import RULESET_FINGERPRINT
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "web:fresh", "Fresh database", "A current database note.", source="web",
+        url="https://web/fresh", category="documentation",
+        provenance=_refresh_provenance(RULESET_FINGERPRINT)))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_Refresh:" not in out  # honest absence
+
+
+def test_context_refresh_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context — CLI ≡ MCP
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_context_refresh_debt(db)
+
+    bundle = get_context_bundle("database")
+    assert "_Refresh: classifications stale in `web`" in bundle
+    assert "summaries stale in `arxiv`, `web`" in bundle
+
+
 # --- per-excerpt provenance tags at the `full` budget (H44 + H62) ----------
 
 

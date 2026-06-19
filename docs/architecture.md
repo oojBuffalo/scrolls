@@ -420,7 +420,26 @@ each command moves items between stages or derives artifacts from them.
   per-source map, so the readable line names the same source/reason/command as the
   JSON flag by construction and is honestly absent (omitted) exactly when the flag
   is `null` (single-source, clean, or empty scope). The HTML form renders it as a
-  red `custody-attention` paragraph (`_attention_html`). The `scrolls graph` payload carries the same tally as a JSON
+  red `custody-attention` paragraph (`_attention_html`). Beside that drift pointer
+  the readable surfaces also carry a per-source **`_Refresh:_` line** (roadmap H178,
+  `custody.render_custody_refresh`) — the enrichment/summary-axis counterpart: it
+  names the source(s) whose classifications/summaries are stale and the exact
+  `scrolls classify --stale --source <S>` / `scrolls kb --stale --source <S>`
+  refresh. The two source maps are computed over the bundle's *own scope* items
+  (`bundle._refresh_debt_by_source`, shared by the Markdown and HTML `_refresh_html`
+  forms; `context` computes them inline) by the same
+  `classify.stale_classification_counts_by_source` /
+  `kb_llm.stale_summary_counts_by_source` builders `doctor`'s
+  `custody.enrichment.by_source` / `custody.summaries.by_source` now delegate to —
+  so the readable line names exactly the sources the audit maps do by construction,
+  and the briefing's refresh debt is scope-consistent with the drift line above it.
+  Two deliberate differences from `_Attention:_`: it carries the summary axis with
+  the H171 multi-source attribution (a stale cluster's every member source is named),
+  and it has **no single-source gate** (refresh debt is per-source work, not a
+  cross-source comparison). The renderer is a pure formatter taking the two maps, so
+  `custody.py` stays free of classification/summary coupling; the line is a derived
+  read view outside the `@generated` fence (round-trip untouched). The HTML form
+  renders it as an amber `custody-refresh` paragraph. The `scrolls graph` payload carries the same tally as a JSON
   `stats.custody` block (the count maps, not a rendered line, since graph emits
   JSON) over its whole `stats.items` scope (roadmap H52), and splits it per source
   in a `stats.custody.by_source` map (`custody.custody_counts_by_source` over the

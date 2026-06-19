@@ -9,6 +9,7 @@ from scrolls.classify import (
     classification_freshness,
     classify_item,
     is_stale_classification,
+    stale_classification_counts_by_source,
     stale_classifications,
 )
 from scrolls.items import ScrollItem, classification_view
@@ -696,6 +697,43 @@ def test_stale_classifications_excludes_current_unfingerprinted_llm_and_override
     ]
     assert stale_classifications(items) == []
     assert stale_classifications(items, source="web") == []
+
+
+# --- `stale_classification_counts_by_source`: the per-source debt map (H178) ---
+#
+# The one builder behind both doctor's `custody.enrichment.by_source` and the
+# readable `_Refresh:_` briefing line, so the audit count and the briefing's
+# named sources converge by construction. Offenders only, sorted; sums to the
+# stale set (each item has one source).
+
+
+def test_stale_classification_counts_by_source_is_offenders_only_sorted():
+    items = [
+        _stale("web:1", "web"),
+        _stale("web:2", "web"),
+        _stale("arxiv:1", "arxiv"),
+        _stale("web:cur", "web", ruleset=RULESET_FINGERPRINT),  # current — excluded
+        make_item(id="web:plain", source="web", provenance={"adapter": "web"}),
+    ]
+    counts = stale_classification_counts_by_source(items)
+    assert counts == {"arxiv": 1, "web": 2}  # offenders only, keys sorted
+    assert list(counts) == ["arxiv", "web"]
+
+
+def test_stale_classification_counts_by_source_sums_to_the_stale_set():
+    # every stale item has exactly one source, so the values sum to the whole
+    items = [_stale("web:1", "web"), _stale("web:2", "web"), _stale("arxiv:1", "arxiv")]
+    counts = stale_classification_counts_by_source(items)
+    assert sum(counts.values()) == len(stale_classifications(items))
+
+
+def test_stale_classification_counts_by_source_clean_scope_is_empty():
+    items = [
+        _stale("web:cur", "web", ruleset=RULESET_FINGERPRINT),
+        make_item(id="web:plain", source="web", provenance={"adapter": "web"}),
+    ]
+    assert stale_classification_counts_by_source(items) == {}
+    assert stale_classification_counts_by_source([]) == {}
 
 
 # --- the freshness primitive: one home behind doctor + the H21 marker ---------

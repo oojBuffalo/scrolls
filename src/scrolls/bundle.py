@@ -78,6 +78,7 @@ import html
 import json
 from pathlib import Path
 
+from scrolls.classify import stale_classification_counts_by_source
 from scrolls.custody import (
     CustodyEvent,
     custody_counts_by_source,
@@ -90,6 +91,7 @@ from scrolls.custody import (
     latest_events,
     render_custody_attention,
     render_custody_by_source,
+    render_custody_refresh,
     weakest_source,
 )
 from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
@@ -104,7 +106,11 @@ from scrolls.items import (
 )
 from scrolls.items_export import dump_items_export
 from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
-from scrolls.kb_llm import members_hash, summary_provenance
+from scrolls.kb_llm import (
+    members_hash,
+    stale_summary_counts_by_source,
+    summary_provenance,
+)
 from scrolls.render import slugify
 from scrolls.search import count_matches, search_items
 
@@ -135,6 +141,7 @@ code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px
        font-size: .9em; }
 .custody-headline { font-weight: 600; }
 .custody-attention { font-weight: 600; color: #b3261e; }
+.custody-refresh { font-weight: 600; color: #9a6700; }
 .note { color: #6a6a6a; font-size: .85rem; }
 .custody-facts { list-style: none; padding-left: 0; }
 .custody-facts li { margin: .15rem 0; }
@@ -195,6 +202,30 @@ def _gather_scope(
     return items, verdicts, events
 
 
+def _refresh_debt_by_source(
+    db_path: Path, items: list[ScrollItem]
+) -> tuple[dict[str, int], dict[str, int]]:
+    """The per-source stale-classification / stale-summary debt over the scope (H178).
+
+    The shared core behind the Markdown `_Refresh:_` line (`render_custody_refresh`)
+    and its HTML twin (`_refresh_html`), so the two forms name the same sources.
+    Both maps are computed over the bundle's *own* scope items by the one shared
+    builder each axis uses — `classify.stale_classification_counts_by_source` and
+    `kb_llm.stale_summary_counts_by_source` (the same builders `doctor`'s
+    `custody.enrichment.by_source`/`custody.summaries.by_source` fold) — so the
+    briefing's refresh debt converges with the audit's maps for the same scope by
+    construction. The summary axis needs the stored summaries (`load_concept_summaries`,
+    the one read the bundle would not otherwise make); an empty scope holds nothing
+    eligible, so both maps are the honest empty no-op. Returns
+    ``(enrichment_by_source, summary_by_source)``.
+    """
+    if not items:
+        return {}, {}
+    enrichment = stale_classification_counts_by_source(items)
+    summary = stale_summary_counts_by_source(items, load_concept_summaries(db_path))
+    return enrichment, summary
+
+
 def build_bundle(
     db_path: Path,
     query: str,
@@ -245,6 +276,16 @@ def build_bundle(
     # actionable loss (single-source / clean / empty scope — [] lines).
     by_source = custody_counts_by_source(items, verdicts)
     lines += render_custody_attention(by_source)
+    # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
+    # naming the source(s) whose classifications/summaries are stale and the exact
+    # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-
+    # axis counterpart of the drift `_Attention:_` line above. Computed over the
+    # bundle's own scope items by the same `stale_*_counts_by_source` builders
+    # `doctor`'s `custody.enrichment.by_source`/`summaries.by_source` fold, so the
+    # named sources converge with the audit maps by construction; honest no-op when
+    # no source carries refresh debt on either axis ([] lines).
+    enrichment_by_source, summary_by_source = _refresh_debt_by_source(db_path, items)
+    lines += render_custody_refresh(enrichment_by_source, summary_by_source)
     # the per-source custody breakdown under the scope headline (roadmap H141):
     # a multi-source shared briefing names *which* source's custody is weakest
     # within the scope. Folds the same `custody_counts_by_source` the per-scroll
@@ -344,6 +385,11 @@ def build_bundle_html(
     # the same per-source map, so the two forms (and the JSON `attention` flag)
     # cannot desync; honest no-op when no source carries actionable loss
     body += _attention_html(items, verdicts)
+    # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
+    # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
+    # the two forms name the same sources; honest no-op when no source carries
+    # refresh debt on either axis
+    body += _refresh_html(db_path, items)
     # the per-source custody breakdown (roadmap H141), from the *same* structured
     # `custody_source_breakdown` the Markdown form renders, so the two forms cannot
     # desync — a single-source/empty scope omits it (the [] no-op)
@@ -416,6 +462,39 @@ def _attention_html(
         f"({html.escape(flagged['reason'])}) — recheck with "
         f"<code>{html.escape(flagged['command'])}</code>.</p>"
     ]
+
+
+def _refresh_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
+    """The HTML twin of the Markdown weakest-source `_Refresh:_` line (roadmap H178).
+
+    Over the *same* `_refresh_debt_by_source` maps the Markdown
+    `render_custody_refresh` folds, so the two forms name the same source(s) and the
+    same refresh commands by construction. Returns [] on honest absence — exactly
+    when both maps are empty (no refresh debt on either axis) — like the Markdown
+    no-op. Source names are escaped; the command/axis strings are controlled tokens,
+    escaped for safety regardless.
+    """
+    enrichment_by_source, summary_by_source = _refresh_debt_by_source(db_path, items)
+    clauses = []
+    if enrichment_by_source:
+        sources = ", ".join(
+            f"<code>{html.escape(s)}</code>" for s in enrichment_by_source
+        )
+        clauses.append(
+            f"classifications stale in {sources} — refresh with "
+            "<code>scrolls classify --stale --source &lt;S&gt;</code>"
+        )
+    if summary_by_source:
+        sources = ", ".join(
+            f"<code>{html.escape(s)}</code>" for s in summary_by_source
+        )
+        clauses.append(
+            f"summaries stale in {sources} — refresh with "
+            "<code>scrolls kb --stale --source &lt;S&gt;</code>"
+        )
+    if not clauses:
+        return []
+    return [f'<p class="custody-refresh">Refresh: {"; ".join(clauses)}.</p>']
 
 
 def _by_source_html(

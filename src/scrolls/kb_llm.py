@@ -170,6 +170,47 @@ def is_stale_summary(stored: ConceptSummary | None, live_digest: str) -> bool:
     return summary_freshness(stored, live_digest) == "stale"
 
 
+def stale_summary_counts_by_source(
+    items: list[ScrollItem], stored: dict[str, ConceptSummary]
+) -> dict[str, int]:
+    """Per-source stale-summary debt over an item set: ``{source: count}``.
+
+    The one builder behind both `doctor`'s ``custody.summaries.by_source`` (roadmap
+    H171) and the readable ``_Refresh:_`` briefing line (roadmap H178), so the count
+    the audit reports and the sources the briefing names can never disagree — the
+    summary-axis counterpart of `classify.stale_classification_counts_by_source`.
+    Offending sources only (a source with nothing stale is omitted), keys sorted.
+
+    **The H171 attribution, carried through.** A concept summary spans a *cluster*
+    whose members may come from several sources, and the stored fingerprint records
+    only the members digest, not which member moved — so a stale summary is
+    attributed to **every source present among its live members** (a summary is
+    "stale for source S" if S participates in the concept), exactly the offenders
+    `kb --stale --source S` acts on. The consequence: one multi-source stale concept
+    counts toward >1 source, so this map **need not sum to the stale-concept count**
+    (``sum(values) >= stale`` concepts) — unlike the classification/drift maps where
+    each item has one source.
+
+    Pure over whatever item set it is given: `doctor` passes the whole-library (or
+    `--source`-scoped) held items; the briefing passes its query scope. Eligibility
+    is computed over the *given* rendered members (`eligible_concepts`), so a
+    multi-source concept dropping below `MIN_MEMBERS` under a narrow scope is no
+    longer eligible there — the briefing's per-source debt reflects exactly the scope
+    it covers (the scope-consistent posture the readable drift line takes). `stored`
+    is the `load_concept_summaries` map the caller already holds; nothing stored or
+    nothing eligible is the honest empty map — a network-free no-op.
+    """
+    rendered = [item for item in items if item.markdown_path]
+    eligible = eligible_concepts(rendered)
+    counts: dict[str, int] = {}
+    for slug, entry in eligible.items():
+        members = entry["items"]
+        if is_stale_summary(stored.get(slug), members_hash(members)):
+            for source in {item.source for item in members}:
+                counts[source] = counts.get(source, 0) + 1
+    return {source: counts[source] for source in sorted(counts)}
+
+
 def concept_card(display: str, items: list[ScrollItem]) -> str:
     """The compact concept description the model synthesizes from.
 

@@ -451,3 +451,28 @@ def stale_classifications(
         for item in items
         if is_stale_classification(item) and (source is None or item.source == source)
     ]
+
+
+def stale_classification_counts_by_source(items: Iterable[ScrollItem]) -> dict[str, int]:
+    """Per-source stale-classification debt over an item set: ``{source: count}``.
+
+    The one builder behind both `doctor`'s ``custody.enrichment.by_source`` (roadmap
+    H135) and the readable ``_Refresh:_`` briefing line (roadmap H178), so the count
+    the audit reports and the sources the briefing names can never disagree — the
+    enrichment-axis counterpart of how `custody_counts_by_source` is the one home for
+    the drift `by_source`. Offending sources only (a source with nothing stale is
+    omitted, the ``items``-list posture), keys in sorted order. Every stale item has
+    exactly one source, so the values sum to ``len(stale_classifications(items))`` by
+    construction (the H104/H121 sum-to-whole posture on the enrichment axis).
+
+    Pure over whatever item set it is given: `doctor` passes the whole-library (or
+    `--source`-scoped) held items; the briefing passes its query scope, so the
+    briefing's per-source debt is computed over exactly the scope it covers (the
+    scope-consistent posture the readable drift `_Attention:_` line takes). A source
+    with no stale debt is the honest empty map — a network-free no-op, never an error.
+    """
+    counts: dict[str, int] = {}
+    for item in items:
+        if is_stale_classification(item):
+            counts[item.source] = counts.get(item.source, 0) + 1
+    return {source: counts[source] for source in sorted(counts)}

@@ -25,6 +25,7 @@ from scrolls.kb_llm import (
     generate_concept_summaries_batch,
     is_stale_summary,
     members_hash,
+    stale_summary_counts_by_source,
     summarize_concept_llm,
     summary_freshness,
     summary_provenance,
@@ -798,3 +799,54 @@ def test_batch_stale_only_source_refreshes_only_that_sources_concepts(db_path):
     stored = load_concept_summaries(db_path)
     eligible = eligible_concepts([i for i in list_items(db_path) if i.markdown_path])
     assert is_stale_summary(stored.get("bm25"), members_hash(eligible["bm25"]["items"]))
+
+
+# --- `stale_summary_counts_by_source`: the per-source debt map (H178) -------
+#
+# The one builder behind both doctor's `custody.summaries.by_source` and the
+# readable `_Refresh:_` briefing line. Carries the H171 attribution: a stale
+# cluster counts toward every member source, so the map need not sum to the
+# stale-concept count.
+
+
+def test_stale_summary_counts_by_source_attributes_a_cluster_to_each_source(db_path):
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)  # BM25 → {web,wikipedia}, Graphs → {arxiv}
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+    counts = stale_summary_counts_by_source(items, stored)
+    # BM25 (web+wikipedia) and Graphs (arxiv) are both stale; the multi-source
+    # cluster lands in each of its sources, keys sorted.
+    assert counts == {"arxiv": 1, "web": 1, "wikipedia": 1}
+    assert list(counts) == ["arxiv", "web", "wikipedia"]
+    # need not sum to the stale-concept count (2): BM25 double-counts (H171).
+    assert sum(counts.values()) == 3
+
+
+def test_stale_summary_counts_by_source_clean_or_empty_is_empty(db_path):
+    complete = fake_completer()
+    seed_bm25_concept(db_path)
+    generate_concept_summaries(db_path, complete=complete)  # current, not stale
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+    assert stale_summary_counts_by_source(items, stored) == {}
+    assert stale_summary_counts_by_source([], {}) == {}
+
+
+def test_stale_summary_counts_by_source_matches_an_independent_re_derivation(db_path):
+    # the same attribution doctor's custody.summaries.by_source builds, re-derived
+    # independently via `is_stale_summary` per concept (the doctor↔briefing tie at
+    # the surface level lives in tests/test_custody_convergence.py)
+    complete = fake_completer()
+    _seed_two_source_stale(db_path, complete)
+    items = list_items(db_path)
+    stored = load_concept_summaries(db_path)
+    eligible = eligible_concepts([i for i in items if i.markdown_path])
+    expected: dict[str, int] = {}
+    for slug, entry in eligible.items():
+        members = entry["items"]
+        if is_stale_summary(stored.get(slug), members_hash(members)):
+            for source in {m.source for m in members}:
+                expected[source] = expected.get(source, 0) + 1
+    expected = {s: expected[s] for s in sorted(expected)}
+    assert stale_summary_counts_by_source(items, stored) == expected
