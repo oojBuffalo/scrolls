@@ -1542,6 +1542,15 @@ choice (ADRs 0004, 0005).
   `doctor --fix`). Report-only and idempotent — it records the snapshot/log
   bookkeeping, never repairs rows; the CLI and MCP share `maintain.assemble_report`,
   so the two converge field-for-field over the same library),
+  `get_maintenance_history(limit=…, trend=…)` (roadmap H198 — the read sibling of
+  `run_maintenance`: the recorded runs' custody trajectory over time, the MCP twin of
+  CLI `scrolls maintain --history [--trend]`, running the same `read_log` +
+  per-run `snapshot_headline` + `compute_trend` composition. Returns the bare runs
+  array by default and the opt-in `{trend, runs}` envelope when `trend=True` — the
+  envelope is a genuine read parameter (a distilled trajectory, a *content* axis,
+  not a per-item scope/custody flag), so it rides MCP unlike the browse twins'
+  `--stats` affordance; read-only, network-free, honest-empty `[]` when never
+  maintained),
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
   `compile_library`) registered

@@ -96,6 +96,7 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "list_sources",
         "get_library_health",
         "run_maintenance",
+        "get_maintenance_history",
         "ingest_url",
         "verify_scroll",
         "follow_feed",
@@ -2298,3 +2299,64 @@ def test_run_maintenance_converges_with_cli_maintain_no_recheck(scrolls_home, ca
         if key == "recorded_at":
             continue
         assert report_mcp[key] == report_cli[key], f"diverged on {key}"
+
+
+# --- get_maintenance_history: the custody trend over MCP, the read sibling of
+#     run_maintenance (H198) ---
+
+
+def test_get_maintenance_history_before_init_is_the_honest_empty_array(scrolls_home):
+    # H198 honest absence: a never-maintained / uninitialized library is the
+    # bare `[]` — never a fabricated run, never an error — the read sibling of
+    # run_maintenance's honest-empty pass and the MCP twin of `maintain --history`.
+    assert mcp_server.get_maintenance_history() == []
+    # the opt-in trend envelope's own honest absence: a window of <2 runs has no
+    # direction, so an empty runs array and the `insufficient-history` posture.
+    envelope = mcp_server.get_maintenance_history(trend=True)
+    assert envelope["runs"] == []
+    assert envelope["trend"]["posture"] == "insufficient-history"
+
+
+def test_get_maintenance_history_returns_the_recorded_runs(scrolls_home):
+    # H198: after maintenance passes the read returns the recorded runs oldest-first
+    # — the custody trajectory run_maintenance records and this reads back. Each run
+    # carries its `{recorded_at, snapshot, delta}` plus the one-line `headline`
+    # rendered fresh from its snapshot at read time (the H103 forward-compat posture).
+    from scrolls.maintain import snapshot_headline
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    mcp_server.run_maintenance()
+    mcp_server.run_maintenance()
+
+    runs = mcp_server.get_maintenance_history()
+    assert len(runs) == 2
+    assert all(
+        {"recorded_at", "snapshot", "delta", "headline"} <= set(run) for run in runs
+    )
+    assert runs[0]["headline"] == snapshot_headline(runs[0]["snapshot"])
+    # `limit` bounds the window to the most recent N (the CLI `--history N` parity);
+    # the default `limit=None` is the full history (read_log's own default).
+    assert mcp_server.get_maintenance_history(limit=1) == runs[-1:]
+
+
+def test_get_maintenance_history_matches_cli_maintain_history(scrolls_home, capsys):
+    # H198 MCP↔CLI parity: the tool returns `scrolls maintain --history` field for
+    # field (the same `read_log` + per-run `snapshot_headline` composition), and
+    # `trend=True` returns the `{trend, runs}` envelope `--history --trend` prints —
+    # the opt-in-envelope parity, so the bare-array completeness `[]` never regresses.
+    import json
+
+    main(["init"])
+    _seed_health_fixture(get_paths().db_path)
+    mcp_server.run_maintenance()
+    mcp_server.run_maintenance()
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    cli_runs = json.loads(capsys.readouterr().out)
+    assert mcp_server.get_maintenance_history() == cli_runs
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    cli_trend = json.loads(capsys.readouterr().out)
+    assert mcp_server.get_maintenance_history(trend=True) == cli_trend

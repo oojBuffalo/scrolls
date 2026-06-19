@@ -38,8 +38,11 @@ from scrolls.db import init_db
 from scrolls.doctor import run_doctor
 from scrolls.maintain import (
     assemble_report,
+    compute_trend,
     custody_snapshot,
     load_snapshot,
+    log_path,
+    read_log,
     skipped_recheck_report,
     snapshot_headline,
     snapshot_path,
@@ -89,7 +92,9 @@ _INSTRUCTIONS = (
     "whole-library custody audit (score, fidelity tiers, drift, and which "
     "source needs attention), run_maintenance for a one-call scheduled custody "
     "pass (regenerate views, audit, and the custody delta vs the last run; "
-    "offline — it never re-captures), and ingest_url to save "
+    "offline — it never re-captures), get_maintenance_history for the custody "
+    "trend over the recorded passes (is custody improving, holding, or "
+    "regressing?), and ingest_url to save "
     "something new. verify_scroll re-captures a held scroll and reports "
     "whether its source has drifted or rotted since it was saved. "
     "follow_feed subscribes the library to an RSS/Atom "
@@ -644,6 +649,49 @@ def run_maintenance() -> dict[str, Any]:
     )
 
 
+def get_maintenance_history(
+    limit: int | None = None, trend: bool = False
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """Read the recorded maintenance runs — the custody *trajectory* (roadmap H198).
+
+    The read sibling of `run_maintenance`: where that *runs* one scheduled pass and
+    records its `{recorded_at, snapshot, delta}`, this reads those records back so an
+    unattended agent answers "is custody improving, holding, or regressing?" over
+    time without diffing entries itself. The MCP counterpart of the CLI worker's
+    `scrolls maintain --history [--trend]` (roadmap H36/H46), running the same
+    composition (`read_log` + the per-run `snapshot_headline`, and `compute_trend`
+    when an envelope is asked for).
+
+    Returns the bare runs array oldest-first by default; `limit` bounds it to the
+    most recent N (`None`, the default, is the full history — `read_log`'s own
+    default; the CLI's bare ``--history`` instead defaults to the 10 most recent,
+    an interactive convenience). Each run carries the one-line custody `headline`
+    rendered fresh from its snapshot at read time (so a pre-headline log entry
+    renders one too — the H103 forward-compatible posture).
+
+    With ``trend=True`` the runs are wrapped in a ``{trend, runs}`` envelope whose
+    `trend` distils the window's net score/drift/coverage movement into one posture
+    — the opt-in-envelope shape parity with the CLI (like `search --stats`), so the
+    bare-array default is unchanged and the completeness contract's empty `[]` never
+    regresses. The opt-in `trend` arg is a genuine read parameter (a *content* axis,
+    a distilled trajectory — not a per-item scope/custody flag-affordance), so it
+    rides MCP as a real read argument: the H163 "object twins, never a CLI
+    `--stats`-style flag envelope" posture is about per-item *browse* twins and does
+    not apply to this read of recorded JSON.
+
+    Read-only and network-free; honest absence — a never-maintained or uninitialized
+    library is the empty `[]` (or, with `trend=True`, the `insufficient-history`
+    envelope), never an error.
+    """
+    runs = read_log(log_path(get_paths()), limit)
+    runs = [
+        {**run, "headline": snapshot_headline(run.get("snapshot", {}))} for run in runs
+    ]
+    if trend:
+        return {"trend": compute_trend(runs), "runs": runs}
+    return runs
+
+
 def ingest_url(url: str) -> dict[str, Any]:
     """Save a URL into the library: register, fetch, classify, render (network).
 
@@ -772,6 +820,7 @@ _TOOLS = (
     list_sources,
     get_library_health,
     run_maintenance,
+    get_maintenance_history,
     ingest_url,
     verify_scroll,
     follow_feed,

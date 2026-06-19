@@ -289,6 +289,9 @@ MCP_CHECKED_EMPTY = {
     "get_works_item": lambda: mcp_server.get_works(item="web:lonely")["works"] == [],
     "get_context_bundle": lambda: "No matching scrolls."
     in mcp_server.get_context_bundle("zzznotatoken"),
+    # a never-maintained library → an empty trend (honest absence), never a
+    # fabricated run; the MCP twin of `maintain --history`'s empty `[]` (H198)
+    "get_maintenance_history": lambda: mcp_server.get_maintenance_history() == [],
 }
 
 
