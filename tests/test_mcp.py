@@ -1858,6 +1858,90 @@ def test_get_context_bundle_index_fidelity_scope_is_honest_under_truncation(
     assert fidelity == cli_fidelity
 
 
+def test_get_context_bundle_index_fidelity_scope_honors_the_active_facet(
+    scrolls_home, capsys
+):
+    # roadmap H227 — the MCP twin of H223. The leanest `index` `_Fidelity:_` holdings
+    # count the *post-facet* kept set, so a scoped get_context_bundle(..., source=<S>)
+    # names only <S>'s fidelity tiers and `(of k)` scope — never the library-wide
+    # holdings of a multi-source library — on the read an agent actually reaches over
+    # MCP, byte-identical to the CLI's `context --budget index --source <S>` (just as
+    # H214 pins the untruncated line and H222 the truncated one). The *facet*-axis
+    # sibling of H222's *truncation*-axis `(of N)` scope-honesty.
+    from scrolls.cli import main
+    from scrolls.custody import custody_counts, custody_counts_by_source
+    from scrolls.items import ScrollItem, insert_item, list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # multi-source, mixed-fidelity *within* one source: web is full 1 + partial 1,
+    # arxiv is full 2. So web's holdings (full 1, partial 1, of 2) are provably a
+    # strict subset of — and a different tier split than — the library-wide holdings
+    # (full 3, partial 1, of 4). All titles carry "database" so one query covers all.
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://web.example/full",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full database",
+        extracted_text="A full database body.",
+        raw_text="<raw>A full database body.</raw>",
+        content_hash="deadbeef", stage="fetched",
+    ))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://web.example/partial",
+        saved_at="2026-06-12T00:00:00+00:00", title="Partial database",
+        extracted_text="A partial database body.", stage="fetched",
+    ))  # no hash/raw → partial
+    for index in range(2):
+        insert_item(db, ScrollItem(
+            id=f"arxiv:{index}", source="arxiv",
+            url=f"https://arxiv.org/abs/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Arxiv database {index}",
+            extracted_text="A database paper body.",
+            raw_text="<raw>A database paper body.</raw>",
+            content_hash=f"aa11bb2{index}", stage="fetched",
+        ))
+
+    # what web's holdings vs. the whole library's actually are, straight from the
+    # shared `custody_counts*` primitive (`{}` verdicts — fidelity is ledger-free),
+    # so the expectations are tied to the scoped subset, not independently hardcoded
+    items = list_items(db)
+    web_tiers = {t: n for t, n in custody_counts_by_source(items, {})["web"]["tiers"].items() if n}
+    web_n = sum(custody_counts_by_source(items, {})["web"]["tiers"].values())
+    whole_tiers = {t: n for t, n in custody_counts(items, {})["tiers"].items() if n}
+    whole_n = len(items)
+
+    def _fidelity_of(bundle):
+        line = next(l for l in bundle.splitlines() if l.startswith("_Fidelity:"))
+        counts = {t: int(n) for t, n in re.findall(r"(full|partial|reference) (\d+)", line)}
+        scope = int(re.search(r"\(of (\d+)\)", line).group(1))
+        return line, counts, scope
+
+    scoped_line, scoped_counts, scoped_scope = _fidelity_of(
+        mcp_server.get_context_bundle("database", budget="index", source="web"))
+    _, unscoped_counts, unscoped_scope = _fidelity_of(
+        mcp_server.get_context_bundle("database", budget="index"))
+
+    # the scoped line names only web's holdings and its `(of k)` scope
+    assert scoped_counts == web_tiers       # {full 1, partial 1}
+    assert scoped_scope == web_n            # (of 2)
+    # the unscoped line names the whole-library holdings
+    assert unscoped_counts == whole_tiers   # {full 3, partial 1}
+    assert unscoped_scope == whole_n        # (of 4)
+    # the scope honesty is non-vacuous: the two genuinely differ on both axes — the
+    # scoped read never silently reverts to the library-wide holdings it didn't see
+    assert web_tiers != whole_tiers
+    assert web_n != whole_n
+
+    # the distinguishing MCP-twin assertion: the scoped bundle's `_Fidelity:_` line is
+    # byte-identical to the CLI's scoped read (both are build_context, so the
+    # agent-facing bundle and the CLI never diverge on the facet-scoped holdings line,
+    # just as H214/H222 pin for the untruncated/truncated line).
+    capsys.readouterr()
+    assert main(["context", "database", "--budget", "index", "--source", "web"]) == 0
+    cli = capsys.readouterr().out
+    cli_fidelity = next(l for l in cli.splitlines() if l.startswith("_Fidelity:"))
+    assert scoped_line == cli_fidelity
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
