@@ -36,7 +36,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Collection, Iterable
 
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, get_fidelity, get_item
@@ -432,8 +432,47 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     return imported, skipped
 
 
-def partition_resolvable_events(
+def preview_import_events(
     db_path: Path, events: Iterable[CustodyEvent]
+) -> tuple[int, int]:
+    """Count how `import_events` would split `events` into ``(imported, skipped)``
+    *without writing* — the read-only sibling for `import bundle --dry-run` (H220).
+
+    Mirrors `import_events`' dedup exactly: an event is *skipped* when the ledger
+    already holds a content-identical row (`_EVENT_IDENTITY`) or an earlier event
+    in this same batch already claimed that identity; otherwise *imported*.
+    Because nothing is inserted, the within-batch dedup the writer gets for free
+    from its prior INSERT is tracked here in a local `seen` set instead. The H220
+    dry-run test pins these counts equal to a real import's, so the two never
+    drift apart.
+    """
+    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
+    imported = skipped = 0
+    seen: set[tuple[object, ...]] = set()
+    conn = sqlite3.connect(db_path)
+    try:
+        for e in sorted(events, key=lambda e: e.checked_at):
+            identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+            if identity in seen:
+                skipped += 1
+                continue
+            exists = conn.execute(
+                f"SELECT 1 FROM custody_events WHERE {where} LIMIT 1", identity
+            ).fetchone()
+            if exists is not None:
+                skipped += 1
+                continue
+            seen.add(identity)
+            imported += 1
+    finally:
+        conn.close()
+    return imported, skipped
+
+
+def partition_resolvable_events(
+    db_path: Path,
+    events: Iterable[CustodyEvent],
+    known_ids: Collection[str] | None = None,
 ) -> tuple[list[CustodyEvent], list[CustodyEvent]]:
     """Split custody events into those the library can anchor and *orphans*.
 
@@ -458,11 +497,22 @@ def partition_resolvable_events(
     that path tolerates events restored before their items (the ledger is keyed by
     the `item_id` string and order is the operator's), whereas a bundle is an
     atomic items+events unit whose events should always anchor.
+
+    `known_ids` names items the caller knows *will* be present even though the DB
+    does not hold them yet — the `import bundle --dry-run` preview (H220) passes
+    the bundle's own item ids, because a real import inserts those rows *before*
+    partitioning, so an event for a not-yet-written bundle item resolves in the
+    preview exactly as it would after the write. The live import path leaves it
+    empty: its items are already on disk, so `get_item` finds them.
     """
     resolvable: list[CustodyEvent] = []
     orphan: list[CustodyEvent] = []
+    known = set(known_ids) if known_ids else set()
     held: dict[str, bool] = {}
     for event in events:
+        if event.item_id in known:
+            resolvable.append(event)
+            continue
         anchored = held.get(event.item_id)
         if anchored is None:
             anchored = get_item(db_path, event.item_id) is not None

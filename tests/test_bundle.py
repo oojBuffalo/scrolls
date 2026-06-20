@@ -1172,6 +1172,129 @@ def test_import_bundle_reports_zero_orphans_when_every_event_resolves(
     assert captured.err == ""
 
 
+# --- import bundle --dry-run preview (roadmap H220) ------------------------
+
+
+def _export_bundle_to(tmp_path, capsys, name="briefing.md"):
+    """Capture `export bundle database` to a file; return its path."""
+    capsys.readouterr()
+    assert main(["export", "bundle", "database"]) == 0
+    bundle_path = tmp_path / name
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    return bundle_path
+
+
+def test_import_bundle_dry_run_previews_without_writing(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # H220: an agent handed a portable bundle can preview what a merge would add
+    # before committing to it — and the preview writes *nothing*. The events of a
+    # not-yet-held bundle item still resolve (the live import inserts the items
+    # first), so a fresh-library preview never mis-flags them as orphans.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    record_events(db_a, [_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")])
+    bundle_path = _export_bundle_to(tmp_path, capsys)
+
+    # a fresh, empty library B
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["dry_run"] is True
+    assert report["imported"] == 1 and report["skipped"] == 0
+    # the event resolves to the would-be-imported item, not an orphan
+    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 0}
+    # nothing was written — the preview is a pure read
+    assert get_item(db_b, "wikipedia:en:SQLite") is None
+    assert item_events(db_b, "wikipedia:en:SQLite") == []
+
+
+def test_import_bundle_dry_run_counts_match_a_real_import(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the strongest guarantee: the preview never lies — its summary equals what a
+    # real import would print (sans the `dry_run` flag), over a non-trivial mix of
+    # a freshly-imported item and an already-held one, with events for both.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    insert_item(db_a, make_item(
+        "arxiv:1706.03762", "Attention", "A database-adjacent attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+    record_events(db_a, [
+        _event("wikipedia:en:SQLite", "drifted", observed="cafe1234"),
+        _event("arxiv:1706.03762", "unchanged", observed="deadbeef"),
+    ])
+    bundle_path = _export_bundle_to(tmp_path, capsys)
+
+    # library B already holds one of the two scrolls (no events yet)
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    insert_item(db_b, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    capsys.readouterr()
+
+    # dry-run first: imported 1 (arxiv), skipped 1 (the held SQLite); both events
+    # resolve (SQLite is held, arxiv is a would-be import) and are new to B
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview == {
+        "dry_run": True,
+        "imported": 1,
+        "skipped": 1,
+        "items": 2,
+        "events": {"imported": 2, "skipped": 0, "orphaned": 0},
+    }
+
+    # the dry-run wrote nothing — B still holds only the one pre-seeded scroll
+    assert get_item(db_b, "arxiv:1706.03762") is None
+    assert item_events(db_b, "wikipedia:en:SQLite") == []
+
+    # now the real import, into the same B: its counts equal the preview's
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    real = json.loads(capsys.readouterr().out)
+    assert {k: v for k, v in preview.items() if k != "dry_run"} == real
+
+
+def test_import_bundle_dry_run_previews_orphan_events(
+    scrolls_home, tmp_path, capsys
+):
+    # the preview is honest about a corrupt bundle too (H217 ride-along): an orphan
+    # event is counted and warned in the preview exactly as the real import would —
+    # and, being a dry-run, nothing at all is written, not even the anchored item.
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    bundle = _spliced_bundle(
+        held,
+        anchored_events=[_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")],
+        orphan_events=[_event("wikipedia:en:Ghost", "drifted", observed="beef9999")],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["dry_run"] is True
+    # the anchored item would import; its event resolves; the ghost event orphans
+    assert report["imported"] == 1
+    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 1}
+    # the orphan is loud in the preview, just as in a real import
+    assert "orphan" in captured.err.lower()
+    # …but the preview wrote nothing — not the item, not its event
+    assert get_item(db, "wikipedia:en:SQLite") is None
+    assert item_events(db, "wikipedia:en:SQLite") == []
+    assert item_events(db, "wikipedia:en:Ghost") == []
+
+
 # --- scope, completeness, honesty ------------------------------------------
 
 

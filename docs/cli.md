@@ -2162,15 +2162,37 @@ inserted nor silently dropped
 does *not* skip orphans — that path tolerates events restored before their items;
 a bundle is an atomic items+events unit whose events should always anchor.)
 
+`--dry-run` (roadmap H220) **previews** the merge and writes nothing: an agent
+handed a shared bundle can see *exactly* what an import would add vs. skip — the
+same `{imported, skipped, items, events}` summary the real import prints, plus a
+`"dry_run": true` marker — before committing to it. It is the read-only sibling of
+the custody-safe import (ADR 0082): item counts are computed by `get_item`
+existence (the read-only twin of `INSERT OR IGNORE`), event counts by the same
+content-dedup the writer uses (`custody.preview_import_events`), and the orphan
+split by `partition_resolvable_events`. The bundle's own item ids anchor the event
+partition, because a real import inserts those rows *before* partitioning — so a
+preview into an *empty* library still resolves the bundle's events instead of
+mis-flagging every one as an orphan. Orphan events warn on stderr in the preview
+exactly as in a real import. The dry-run summary equals what the subsequent real
+import prints (sans `dry_run`), pinned so the preview never drifts from reality
+(`test_import_bundle_dry_run_counts_match_a_real_import`,
+`test_import_bundle_dry_run_previews_without_writing`,
+`test_import_bundle_dry_run_previews_orphan_events`).
+
 | Key | Meaning |
 | --- | --- |
-| `imported` | new scrolls inserted |
+| `imported` | new scrolls inserted (would-be-inserted under `--dry-run`) |
 | `skipped` | already present (id collision is the dedupe working) |
 | `items` | scroll records read from the custody block |
 | `events` | `{imported, skipped, orphaned}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217) |
+| `dry_run` | present and `true` only under `--dry-run`; the summary is a preview and nothing was written |
 
 ```console
 $ scrolls export bundle "database engine" > briefing.md
+
+$ scrolls import bundle briefing.md --dry-run
+{"dry_run": true, "imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
+[exit 0]
 
 $ scrolls import bundle briefing.md
 {"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0}}

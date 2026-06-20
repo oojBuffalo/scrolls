@@ -42,6 +42,7 @@ from scrolls.custody import (
     live_recapture,
     parse_since,
     partition_resolvable_events,
+    preview_import_events,
     recheck_coverage,
     recheck_order,
     record_events,
@@ -463,6 +464,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_bundle_parser.add_argument(
         "path",
         help="a custody bundle written by `scrolls export bundle`",
+    )
+    import_bundle_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="preview what an import would add vs. skip, writing nothing (JSON output)",
     )
     import_events_parser = import_sub.add_parser(
         "events",
@@ -1020,7 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.import_command == "items":
             return _cmd_import_items(args.path)
         if args.import_command == "bundle":
-            return _cmd_import_bundle(args.path)
+            return _cmd_import_bundle(args.path, dry_run=args.dry_run)
         if args.import_command == "events":
             return _cmd_import_events(args.path)
         return _cmd_import_fieldtheory(args.root)
@@ -1721,7 +1727,26 @@ def _cmd_export_bundle(
     return 0
 
 
-def _cmd_import_bundle(path: str) -> int:
+def _warn_orphan_events(orphan_events: list) -> None:
+    """Surface orphan custody events on stderr (roadmap H217), loud not silent.
+
+    Shared by the live import and the `--dry-run` preview so both report the same
+    warning for the same corrupt bundle — the preview faithfully shows what the
+    real import would flag.
+    """
+    if orphan_events:
+        print(
+            json.dumps({
+                "warning": (
+                    f"{len(orphan_events)} orphan custody event(s) reference items "
+                    "not in this bundle and were not imported"
+                )
+            }),
+            file=sys.stderr,
+        )
+
+
+def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     try:
         text = Path(path).expanduser().read_text(encoding="utf-8")
         imported_items = parse_bundle(text)
@@ -1735,6 +1760,10 @@ def _cmd_import_bundle(path: str) -> int:
 
     paths = get_paths()
     ensure_library(paths)
+
+    if dry_run:
+        return _preview_import_bundle(paths, imported_items, imported_events)
+
     counts = {"imported": 0, "skipped": 0}
     for item in imported_items:
         # INSERT OR IGNORE (ADR 0082): a scroll the target library already holds
@@ -1762,18 +1791,57 @@ def _cmd_import_bundle(path: str) -> int:
         paths.db_path, imported_events
     )
     ev_imported, ev_skipped = import_events(paths.db_path, resolvable_events)
-    if orphan_events:
-        print(
-            json.dumps({
-                "warning": (
-                    f"{len(orphan_events)} orphan custody event(s) reference items "
-                    "not in this bundle and were not imported"
-                )
-            }),
-            file=sys.stderr,
-        )
+    _warn_orphan_events(orphan_events)
     print(json.dumps({
         **counts,
+        "items": len(imported_items),
+        "events": {
+            "imported": ev_imported,
+            "skipped": ev_skipped,
+            "orphaned": len(orphan_events),
+        },
+    }))
+    return 0
+
+
+def _preview_import_bundle(paths, imported_items, imported_events) -> int:
+    """The read-only sibling of the bundle import (roadmap H220).
+
+    An agent handed a portable "take it with me" bundle should be able to see
+    *exactly* what a merge would add vs. skip — new items, already-held skips,
+    custody events added/deduped, and orphan events (H217) — **without writing**.
+    The same summary the live import prints, computed by diffing against the
+    library: item existence via `get_item` (the read-only twin of the import's
+    custody-safe INSERT OR IGNORE, ADR 0082), the event-dedup preview, and the
+    orphan-event split.
+
+    The bundle's own item ids anchor the event partition (`known_ids`): the live
+    import inserts those rows *before* partitioning, so an event for a not-yet-held
+    bundle item resolves in the preview exactly as it would after the write —
+    otherwise a fresh-library preview would mis-flag every event as an orphan.
+    """
+    bundle_item_ids = {item.id for item in imported_items}
+    # INSERT OR IGNORE imports an item iff the library does not already hold it,
+    # seeing its own prior inserts within a batch — so a within-bundle duplicate id
+    # (a corrupt bundle) lands once. `seen` mirrors that so the preview count is
+    # exact, not just `get_item`-based.
+    seen_item_ids: set[str] = set()
+    item_imported = 0
+    for item in imported_items:
+        if get_item(paths.db_path, item.id) is None and item.id not in seen_item_ids:
+            item_imported += 1
+            seen_item_ids.add(item.id)
+    item_skipped = len(imported_items) - item_imported
+
+    resolvable_events, orphan_events = partition_resolvable_events(
+        paths.db_path, imported_events, known_ids=bundle_item_ids
+    )
+    ev_imported, ev_skipped = preview_import_events(paths.db_path, resolvable_events)
+    _warn_orphan_events(orphan_events)
+    print(json.dumps({
+        "dry_run": True,
+        "imported": item_imported,
+        "skipped": item_skipped,
         "items": len(imported_items),
         "events": {
             "imported": ev_imported,
