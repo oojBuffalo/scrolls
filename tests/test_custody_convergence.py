@@ -593,6 +593,88 @@ def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):
     assert custody_headline(web_items, verdicts) in capsys.readouterr().out
 
 
+# --- cross-tier fidelity convergence (roadmap H213) ------------------------
+#
+# The budget/tier-honesty sibling of this module's spine. `scrolls context`
+# surfaces fidelity at *every* budget tier, but through two different lines: the
+# leanest `index` tier (which reads no custody ledger) carries the ledger-free
+# `_Fidelity:_` holdings line (H212), while `connected`/`full` carry the full
+# `_Custody:_` headline whose `fidelity` section folds the same counts. Both, and
+# `doctor`'s `custody.tiers`, are reads of one ledger-free fact (`get_fidelity`
+# per item) over one scope — so a tier may never disagree with another tier, or
+# with the audit, on *what fraction is held in full*. The spine ties the whole
+# *headline* across surfaces; this ties the *fidelity counts* across the context
+# budget tiers and the audit.
+
+_FIDELITY_TIER_TOKEN = re.compile(r"\b(full|partial|reference) (\d+)\b")
+
+
+def _rendered_fidelity_counts(line):
+    """Non-zero fidelity-tier counts parsed back from a rendered custody line.
+
+    Reads either the `index` tier's `_Fidelity: full 2, partial 1 (of N)._`
+    holdings line *or* the `connected`/`full` `_Custody:` headline's `fidelity
+    full 2, partial 1` section: the tier words (full/partial/reference) never
+    collide with the drift-posture words, so one parse reads either line and the
+    `N scroll(s)`/`(of N)` scalars are never mistaken for a tier count.
+    """
+    return {tier: int(n) for tier, n in _FIDELITY_TIER_TOKEN.findall(line)}
+
+
+def _line_with(out, prefix):
+    return next(line for line in out.splitlines() if line.startswith(prefix))
+
+
+def _context_out(capsys, *args):
+    assert main(["context", *args]) == 0
+    return capsys.readouterr().out
+
+
+def test_index_fidelity_line_ties_to_the_headline_and_doctor_tiers(scrolls_home, capsys):
+    # roadmap H213 — the cross-*tier* fidelity convergence. The `index` budget's
+    # `_Fidelity:_` holdings line, both the `connected` and `full` `_Custody:_`
+    # headlines' `fidelity` section, and `doctor`'s `custody.tiers` are four reads
+    # of one ledger-free fact over one scope; none may disagree on the fidelity mix.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # full 2, partial 1, reference 1 — ≥2 tiers, non-vacuous
+    capsys.readouterr()
+
+    def picture():
+        index = _rendered_fidelity_counts(
+            _line_with(_context_out(capsys, "topic", "--budget", "index"), "_Fidelity:")
+        )
+        connected = _rendered_fidelity_counts(
+            _line_with(_context_out(capsys, "topic", "--budget", "connected"), "_Custody:")
+        )
+        full = _rendered_fidelity_counts(
+            _line_with(_context_out(capsys, "topic", "--budget", "full"), "_Custody:")
+        )
+        tiers = _nonzero(run_doctor(get_paths())["custody"]["tiers"])
+        return index, connected, full, tiers
+
+    index, connected, full, tiers = picture()
+    # non-vacuous: a genuine multi-tier mix, not an all-`full` or empty scope
+    assert tiers == {"full": 2, "partial": 1, "reference": 1}
+    # the tie: the index holdings line ≡ both headlines' fidelity section ≡ the audit
+    assert index == connected == full == tiers
+
+    # mutation in lockstep — drop `web:full1`'s re-derivable body (raw_text + hash)
+    # so it falls `full` → `partial`. The shift must register identically on every
+    # surface, proving each recomputes `get_fidelity` rather than echoing a cached count.
+    import dataclasses
+
+    full1 = next(it for it in list_items(db) if it.id == "web:full1")
+    assert update_item(db, dataclasses.replace(full1, raw_text=None, content_hash=None))
+    mutated = next(it for it in list_items(db) if it.id == "web:full1")
+    assert get_fidelity(mutated) == "partial"  # the dropped body cost it a tier
+    capsys.readouterr()
+
+    index, connected, full, tiers = picture()
+    assert tiers == {"full": 1, "partial": 2, "reference": 1}  # the shift, on the audit
+    assert index == connected == full == tiers  # and in lockstep on every tier
+
+
 def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls_home, capsys):
     # roadmap H104: doctor's `custody.by_source` splits the whole-library custody
     # aggregate per source. Each per-source tally must equal `custody_counts` over
