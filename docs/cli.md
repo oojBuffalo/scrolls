@@ -2158,7 +2158,13 @@ and *not* imported**, with a `{"warning": …}` on stderr: a ledger row for an i
 `scrolls show` 404s on would be a dangling history, so it is neither silently
 inserted nor silently dropped
 (`test_import_bundle_skips_and_counts_orphan_custody_events`,
-`custody.partition_resolvable_events`). (The whole-library `import events` restore
+`custody.partition_resolvable_events`). The warning is **diagnosable** (roadmap
+H225): it leads with the orphan *event* count, then names the distinct `item_id`s
+those events dangle on (sorted, deduped, bounded with a `(+N more)` tail), so "2
+orphan events" becomes "… not in this bundle …: `arxiv:x`, `web:ghost`" — the
+operator can see *which* rows the items block is missing, not just that the bundle
+is corrupt (`test_import_bundle_warning_names_which_items_the_orphans_dangle_on`).
+(The whole-library `import events` restore
 does *not* skip orphans — that path tolerates events restored before their items;
 a bundle is an atomic items+events unit whose events should always anchor.)
 

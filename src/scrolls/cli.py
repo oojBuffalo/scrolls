@@ -1727,23 +1727,39 @@ def _cmd_export_bundle(
     return 0
 
 
+_MAX_ORPHAN_ITEM_IDS = 5
+
+
 def _warn_orphan_events(orphan_events: list) -> None:
-    """Surface orphan custody events on stderr (roadmap H217), loud not silent.
+    """Surface orphan custody events on stderr (roadmap H217/H225), loud not silent.
 
     Shared by the live import and the `--dry-run` preview so both report the same
     warning for the same corrupt bundle — the preview faithfully shows what the
     real import would flag.
+
+    The warning names the *event* count (how many ledger rows dangle) **and** the
+    distinct `item_id`s they point at (sorted, deduped, bounded with a `(+N more)`
+    tail, the readable-surface idiom), so "2 orphan events" becomes a diagnosable
+    "… not in this bundle …: `arxiv:x`, `web:ghost`" — the operator can see *which*
+    rows the items block is missing, not just that the bundle is corrupt (H225).
+    The leading count stays the event count; the id list is the distinct-item
+    count, so two events on the same missing item name it once.
     """
-    if orphan_events:
-        print(
-            json.dumps({
-                "warning": (
-                    f"{len(orphan_events)} orphan custody event(s) reference items "
-                    "not in this bundle and were not imported"
-                )
-            }),
-            file=sys.stderr,
-        )
+    if not orphan_events:
+        return
+    distinct_ids = sorted({event.item_id for event in orphan_events})
+    named = ", ".join(f"`{item_id}`" for item_id in distinct_ids[:_MAX_ORPHAN_ITEM_IDS])
+    if len(distinct_ids) > _MAX_ORPHAN_ITEM_IDS:
+        named += f" (+{len(distinct_ids) - _MAX_ORPHAN_ITEM_IDS} more)"
+    print(
+        json.dumps({
+            "warning": (
+                f"{len(orphan_events)} orphan custody event(s) reference items "
+                f"not in this bundle and were not imported: {named}"
+            )
+        }),
+        file=sys.stderr,
+    )
 
 
 def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:

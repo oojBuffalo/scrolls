@@ -1149,6 +1149,80 @@ def test_import_bundle_skips_and_counts_orphan_custody_events(
     assert "orphan" in captured.err.lower()
 
 
+def test_import_bundle_warning_names_which_items_the_orphans_dangle_on(
+    scrolls_home, tmp_path, capsys
+):
+    # H225: the orphan warning is *diagnosable*, not just a count — it names the
+    # distinct `item_id`s the orphan events point at, so "3 orphan events" becomes
+    # "… not in this bundle …: `arxiv:…`, `wikipedia:en:Ghost`" and the operator
+    # can see *which* rows the items block is missing, not just that it is corrupt.
+    # The count stays the event count; the id list is the distinct-item count, so
+    # two events naming the same missing item name it once.
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    bundle = _spliced_bundle(
+        held,
+        anchored_events=[_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")],
+        orphan_events=[
+            _event("wikipedia:en:Ghost", "drifted", observed="beef9999"),
+            _event("wikipedia:en:Ghost", "rotted", observed="beef0000"),
+            _event("arxiv:2401.00001", "drifted", observed="dead0001"),
+        ],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    capsys.readouterr()
+    rc = main(["import", "bundle", str(bundle_path)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    report = json.loads(captured.out)
+    # the summary's `orphaned` is the *event* count (3 orphan events)…
+    assert report["events"]["orphaned"] == 3
+    warning = json.loads(captured.err)["warning"]
+    # …and the warning leads with that same event count
+    assert warning.startswith("3 orphan custody event(s)")
+    # both distinct missing items are named
+    assert "arxiv:2401.00001" in warning
+    assert "wikipedia:en:Ghost" in warning
+    # the doubly-orphaned item is named exactly once — the id list is the
+    # *distinct-item* count (2), not the event count (3)
+    assert warning.count("wikipedia:en:Ghost") == 1
+    # no dangling ledger rows for either orphaned item
+    assert item_events(db, "wikipedia:en:Ghost") == []
+    assert item_events(db, "arxiv:2401.00001") == []
+
+
+def test_import_bundle_orphan_warning_bounds_the_id_list(scrolls_home, tmp_path, capsys):
+    # H225: the named-id list is bounded with a `(+N more)` tail (the readable-surface
+    # idiom) so a badly-spliced bundle naming many missing items can't blow up stderr.
+    from scrolls.cli import _MAX_ORPHAN_ITEM_IDS
+
+    main(["init"])
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    overflow = _MAX_ORPHAN_ITEM_IDS + 2
+    orphans = [
+        _event(f"web:orphan-{i}", "drifted", observed=f"dead{i:04d}")
+        for i in range(overflow)
+    ]
+    bundle = _spliced_bundle(held, anchored_events=[], orphan_events=orphans)
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    warning = json.loads(capsys.readouterr().err)["warning"]
+    # the leading count is the full event count, even though the list is capped
+    assert warning.startswith(f"{overflow} orphan custody event(s)")
+    # exactly `_MAX_ORPHAN_ITEM_IDS` ids are named, then a "(+2 more)" tail
+    assert warning.count("`web:orphan-") == _MAX_ORPHAN_ITEM_IDS
+    assert f"(+{overflow - _MAX_ORPHAN_ITEM_IDS} more)" in warning
+    # the named ids are the lexicographically-first ones; the tail covers the rest
+    assert "`web:orphan-0`" in warning
+    assert f"`web:orphan-{overflow - 1}`" not in warning
+
+
 def test_import_bundle_reports_zero_orphans_when_every_event_resolves(
     scrolls_home, tmp_path, capsys
 ):
