@@ -91,6 +91,23 @@ exactly the unrepresented item's, the honest scope difference, never a
 disagreement. Both are non-vacuous (≥2 sources, differing per-source mixes) and
 mutation-checked.
 
+The distilled **weakest-source `attention` flag** the two object-twins carry
+(`stats.custody.attention`, H164/H174) *inherits* that scope split, and the works
+twin's representation-only scope can make its flag **honestly disagree** with the
+whole-library audit (roadmap H211). The **graph** flag distils its whole-library
+`by_source` (the coverage-bearing `weakest_source`), so it equals
+`weakest_source(doctor.custody.by_source)` ≡ `status` ≡ `maintain` field-for-field
+and *sees the loss even on an isolated node* (the custody scope is whole-library, not
+the connected `nodes`). The **works** flag distils only the represented scope (the
+lean `weakest_source`, no coverage), so over a clean two-rep work plus an
+*unrepresented* drifted item it is honestly `null` — "all clear within the
+consolidatable scope" — while the whole-library flag names the drifted source: the
+scope boundary an agent relying on `get_works().stats.custody.attention` needs, never
+a silent disagreement. Mutation-checked: bringing the same loss *into* the represented
+scope (the drifted item gains the work's DOI link) makes the works flag fire and
+re-converge with the whole-library flag on every shared field (`source`/`tiers`/
+`drift`/`reason`/`command`), coverage staying the whole-library flag's alone.
+
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
 shared `custody.tally_custody` over its matched scope — the `search`/`list`/
@@ -383,7 +400,7 @@ from scrolls.custody import (
 )
 from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
-from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items
+from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items, update_item
 from scrolls.maintain import (
     append_log_entry,
     compute_delta,
@@ -2892,6 +2909,116 @@ def test_works_object_twin_by_source_subsets_doctor_by_representation(scrolls_ho
     }
     perturbed["arxiv"]["drift"]["drifted"] += 1
     assert perturbed != _lean(doctor_by_source, set(works_by_source))
+
+
+def test_object_twin_attention_inherits_the_by_source_scope_split(scrolls_home, capsys):
+    # roadmap H211: the distilled weakest-source `attention` flag the two MCP
+    # object-twins carry (`stats.custody.attention`, H164/H174) inherits the same
+    # scope split H195 pinned on their `by_source` content — and the works twin's
+    # representation-only scope can make its flag *honestly disagree* with the
+    # whole-library audit. Over a seed where the only actionable loss sits on an
+    # *unrepresented*, *isolated* item:
+    #   - the GRAPH flag is whole-library — it equals
+    #     `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain` field-for-field
+    #     (coverage included) and *sees the loss even though the item is no node*;
+    #   - the WORKS flag ranks only the represented scope, so it is honestly `null`
+    #     ("all clear within the consolidatable scope"), NOT because the scope is
+    #     single-source (it has two) but because that scope carries no loss.
+    # Mutation: bringing the same loss into the represented scope (the drifted item
+    # gains the work's DOI link) makes the works flag fire and re-converge with the
+    # whole-library flag on every shared field, coverage staying the graph flag's alone.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    doi_link = "https://doi.org/10.5555/3295222"
+    # a CLEAN two-rep work across two sources: a full+verified arxiv preprint and a
+    # reference+unverified crossref published record (the H100/H195 works seed). Both
+    # are representations, so the works scope is exactly {arxiv, crossref}.
+    insert_item(db, _item(
+        "arxiv:1706.03762", "Attention Is All You Need", source="arxiv",
+        source_id="1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=(doi_link,), stage="rendered",
+        raw_text="<raw>preprint</raw>", content_hash="sha256:a"))
+    insert_item(db, _item(
+        "crossref:10.5555/3295222", "Attention Is All You Need", source="crossref",
+        source_id="10.5555/3295222", url=doi_link, stage="rendered"))  # reference
+    # the ONLY actionable loss: a full web note that drifted — no DOI, no links, so it
+    # is both *unrepresented* (forms no multi-rep work) and *isolated* (no graph edge).
+    insert_item(db, _item(
+        "web:lone", "Topic lone web note",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:w"))
+    record_events(db, [
+        CustodyEvent("arxiv:1706.03762", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:a", "sha256:a", None),
+        CustodyEvent("web:lone", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:w", "sha256:x", None),
+        # crossref left unverified
+    ])
+    capsys.readouterr()
+
+    # the canonical whole-library flag — web is the unambiguous weakest source (the
+    # only one carrying loss), across ≥2 sources, with coverage riding along (H153).
+    by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(by_source) == {"arxiv", "crossref", "web"}
+    canonical = weakest_source(by_source)
+    assert canonical is not None
+    assert canonical["source"] == "web"
+    assert canonical["drift"]["drifted"] == 1
+    assert "coverage" in canonical                      # the coverage-bearing flag
+
+    # GRAPH leg: the graph flag is whole-library — it sees web's loss even though
+    # web:lone is isolated (no edge → no node), and equals the canonical flag
+    # field-for-field, coverage included (graph uses the coverage-bearing distillation).
+    graph = mcp_server.get_link_graph()
+    assert "web" not in {node["source"] for node in graph["nodes"]}   # isolate ≠ node
+    assert graph["stats"]["custody"]["attention"] == canonical
+
+    # ... and converges with the JSON status/maintain flags it shares the primitive
+    # with (the H129/H160 tie, re-pinned here at the object-twin entrypoint).
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] == canonical
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["attention"] == canonical
+
+    # WORKS leg: the works flag ranks only the represented scope ({arxiv, crossref},
+    # both clean) — so it is honestly `null`. The load-bearing subtlety: the null is
+    # the *fully-clean* gate, NOT the single-source gate — the works scope has TWO
+    # sources, neither carrying loss, so an agent reads "all clear within what I can
+    # consolidate" while the whole-library audit separately flags web's drift.
+    works = mcp_server.get_works()
+    works_by_source = works["stats"]["custody"]["by_source"]
+    assert set(works_by_source) == {"arxiv", "crossref"}   # ≥2 sources, web absent
+    assert "web" not in works_by_source                    # the loss is outside scope
+    works_attention = works["stats"]["custody"]["attention"]
+    assert works_attention is None                         # honest disagreement
+    # the null is genuinely the clean-scope distillation, not a too-few-sources artefact
+    assert weakest_source(works_by_source, include_coverage=False) is None
+
+    # MUTATION — move the SAME loss into the represented scope: give web:lone the
+    # work's doi.org link so it becomes a third representation (same item, same drift).
+    assert update_item(db, _item(
+        "web:lone", "Topic lone web note",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:w",
+        links=(doi_link,)))
+
+    # the whole-library audit is unchanged — web still carries the only loss.
+    by_source2 = run_doctor(get_paths())["custody"]["by_source"]
+    canonical2 = weakest_source(by_source2)
+    assert canonical2 is not None and canonical2["source"] == "web"
+
+    works2 = mcp_server.get_works()
+    works_by_source2 = works2["stats"]["custody"]["by_source"]
+    assert set(works_by_source2) == {"arxiv", "crossref", "web"}   # web now represented
+    works_attention2 = works2["stats"]["custody"]["attention"]
+    # the works flag now FIRES — and re-converges with the whole-library flag on every
+    # SHARED field; coverage stays the whole-library flag's alone (the lean projection,
+    # H174: a (fidelity, drift) pair cannot recover coverage).
+    assert works_attention2 is not None
+    shared = ("source", "tiers", "drift", "reason", "command")
+    assert {k: works_attention2[k] for k in shared} == {k: canonical2[k] for k in shared}
+    assert "coverage" not in works_attention2     # the lean flag omits it
+    assert "coverage" in canonical2               # the whole-library flag carries it
 
 
 # --- the per-item invariant (roadmap H59) ------------------------------------

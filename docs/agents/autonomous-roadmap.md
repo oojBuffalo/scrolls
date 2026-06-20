@@ -74,7 +74,6 @@ un-started **work** slices; the next checkpoint (H207) follows.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H211 | **Object-twin `stats.custody.attention` *scope* tie folded into `tests/test_custody_convergence.py` (cap 1 + cap 2).** Appended (maintenance rule, buffer top-up after H195 shipped — and surfaced *by* it). H195 pinned the two object-twins' `by_source` content tie and the honest scope fact that the **graph** twin is whole-library while the **works** twin is representation-only. The `attention` flag distilled from each (`weakest_source` over that same `by_source`, H164/H174) inherits the scope difference but it is **not** pinned through the object entrypoint: an agent reading `get_works()` `stats.custody.attention` sees the weakest source *among consolidatable works only*, which can honestly **disagree** with the whole-library audit — verified, e.g., a clean 2-rep work plus an *unrepresented* drifted item makes `run_doctor`/`get_link_graph()` attention name that source while `get_works()` attention is `null` ("all clear" within scope, drift outside it). Pin both legs over that seed: `get_link_graph().stats.custody.attention` ≡ `weakest_source(doctor.by_source)` ≡ `status`/`maintain`'s flag (whole-library, so it *sees* the loss even on an isolated node), and `get_works().stats.custody.attention` ranks only the represented scope (so it is honestly `null`/different when the whole-library weakest source is unrepresented) — the honest scope boundary an agent relying on the works twin's flag needs, never a silent disagreement. Non-vacuous (≥2 sources, the loss outside the works scope) and mutation-checked (moving the loss *into* the represented scope makes the works flag fire and re-converge). Test + docs only; no production change (composes shipped `weakest_source` folds). Precondition: H195 (the `by_source` scope tie, shipped); H164/H174 (the graph/works `attention` flags, shipped); H160 (the attention-flag convergence precedent, shipped). | → cap 1, cap 2 |
 | H206 | **CLI-side attention→scoped-maintenance triage folded into the shell dogfood flow (cap 11).** Appended (maintenance rule, buffer top-up after H204 shipped). H204 pinned the *MCP* attention→scoped-pass triage as one agent-driven flow (`tests/test_dogfood_mcp.py`); the symmetric **shell** flow — read `scrolls status`/`doctor` (the `attention` JSON flag names the weakest source) → run `scrolls maintain --source <that source>` to triage just it — is pinned per-command (H139/H165/H181) but not as one end-to-end dogfood sequence in `tests/test_dogfood.py` (the CLI dogfood home, where the whole-library `maintain` leg already lives). Add a test that drives that exact sequence over the CLI dogfood's drifted multi-source fixture: assert `status --json`'s `attention.source` names the weakest source, that `maintain --source <that source>` scopes to it (singleton `by_source`, null `attention`, `custody == doctor --source <S>`'s distilled), and that the scoped pass is **non-persisting** (the whole-library snapshot/log the dogfood's earlier whole-library `maintain` recorded is untouched, `delta` honestly absent) — the shell sibling of H204's MCP flow, so the triage-where-the-loss-is point is pinned over *both* surfaces. Non-vacuous (≥2 sources, one clean) and mutation-checked. Test + docs only (`docs/dogfood.md`'s CLI flow section gains the attention→`maintain --source` triage sentence beside the recurring `maintain` leg); no production change. Precondition: H204 (the MCP sibling, shipped); H139 (`status` JSON `attention`, shipped); H165/H181 (`maintain --source`, shipped); the CLI dogfood suite (shipped). | → cap 11 |
 | H208 | **MCP `get_library_health` refresh-debt maps ≡ `status` ≡ `doctor` folded into `tests/test_custody_convergence.py` (cap 2 + cap 8).** Appended (maintenance rule, buffer top-up after H179 shipped). H179 pinned the *flat* refresh-debt maps (`enrichment_by_source`/`summary_by_source`) tie across `status`≡`maintain`≡`doctor` (whole-library + scoped); the MCP read surface (`get_library_health`) keeps the *nested* form (`enrichment.by_source`/`summaries.by_source`, the H180 flat≡nested posture), so the cross-surface tie is unproven on the agent-facing read. Over the same combined stale-classification **and** stale-summary seed H179 uses, assert `get_library_health()["enrichment"]["by_source"]` ≡ `status`'s `enrichment_by_source` ≡ `doctor`'s `custody.enrichment.by_source`, and likewise the summaries axis (carrying the non-sum-to-whole asymmetry), with the `source=`-scoped read equal too (`get_library_health(source=S)` ≡ `status --source S` ≡ `doctor --source S`), and the single-source-cluster scope-collapse pinned positively (the wikipedia-only cluster survives its scope; a multi-source one fractures below `MIN_MEMBERS`). Non-vacuous (≥2 sources, both axes) and mutation-checked (a `kb --stale --source` refresh moves all three together). Test + docs only; no production change. Precondition: H179 (the CLI tie, shipped); H180 (the MCP flat≡nested refresh-debt block, shipped); H167 (the scoped MCP read, shipped). | → cap 2, cap 8 |
 | H209 | **MCP `run_maintenance` scoped `suggested` ↔ debt-map convergence folded into `tests/test_custody_convergence.py` (cap 1 + cap 11).** Appended (maintenance rule, buffer top-up after H183 shipped). H183 pinned, on the *CLI* `maintain` report, that the scoped `suggested` refresh commands name exactly the debt-map sources (`enrichment_by_source`/`summary_by_source` keys); the agent-facing MCP `run_maintenance` tool (H196/H203) returns the *same* assembled report shape (the `suggested` block + both debt maps), so the tie is unproven over MCP. Over the same H183/H179 combined stale-classification **and** stale-summary seed, assert the whole-library `run_maintenance()` tool's scoped `classify --stale --source <S>` suggestion sources ≡ its `enrichment_by_source` keys, the `kb --stale --source <S>` suggestion sources ≡ its `summary_by_source` keys (carrying the H171 multi-source attribution), and that the MCP report converges field-for-field with the CLI `maintain --no-recheck` (H183's surface) and the pure `suggest_repairs(run_doctor())` — the agent-facing sibling of H183, closing the suggestion↔debt-map tie over *both* the CLI and MCP surfaces. Also pin the H182 short-circuit over MCP: a *scoped* `run_maintenance(source=S)` names exactly `<command> --source S` for each present axis (the collapsed-universe path). Non-vacuous (≥2 sources, one clean so scoping fires) and mutation-checked (a `kb --stale --source` refresh moves the MCP suggestions in lockstep with the debt map). Test + docs only; no production change. Precondition: H183 (the CLI sibling, shipped); H196 (`run_maintenance` MCP tool, shipped); H203 (scoped `run_maintenance(source=)`, shipped). | → cap 1, cap 11 |
@@ -82,33 +81,35 @@ un-started **work** slices; the next checkpoint (H207) follows.
 | H207 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
 The current un-started theme is the **cross-surface convergence + dogfood tail** of
-the per-source custody work: three convergence invariants (H208, H209, H211) and two
+the per-source custody work: two convergence invariants (H208, H209) and two
 dogfood-symmetry slices (H206 drift-act, H210 refresh-act). All are test+docs slices
-over already-shipped production code — they pin contracts, not new behavior. (H195 —
-the MCP object-twin `by_source` *content* tie — shipped, and it **corrected its own
-slice framing**: the graph twin is whole-library by construction (≡ `doctor` incl.
-coverage, isolation-independent — *not* connected-only ⊂ doctor), while only the
-works twin is representation-scoped (⊂ doctor when an item is unrepresented). H211
-extends that to the distilled `attention` flag, where the works twin's
-representation-only scope can honestly disagree with the whole-library audit. H192/H193
-— the compiled/HTML readable-parity ties — shipped, closing that contract. H183
-shipped; H209 extends it to the MCP `run_maintenance` tool. H179 shipped; H208 extends
-it to the MCP read surface.)
+over already-shipped production code — they pin contracts, not new behavior. (H211 —
+the MCP object-twin `attention`-flag *scope* tie — shipped: the graph flag is
+whole-library (≡ `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain`, sees the
+loss even on an isolated node), while the works flag ranks only the represented scope
+and so is honestly `null` when the loss is unrepresented — never a silent
+disagreement, mutation-checked by moving the loss into scope. It built on H195 — the
+MCP object-twin `by_source` *content* tie, which **corrected its own slice framing**:
+the graph twin is whole-library by construction (≡ `doctor` incl. coverage,
+isolation-independent — *not* connected-only ⊂ doctor), while only the works twin is
+representation-scoped (⊂ doctor when an item is unrepresented). H192/H193 — the
+compiled/HTML readable-parity ties — shipped, closing that contract. H183 shipped;
+H209 extends it to the MCP `run_maintenance` tool. H179 shipped; H208 extends it to
+the MCP read surface.)
 
-**Buffer-health note (2026-06-19, H195 run).** The readable-parity tail stays
-**saturated** (H192/H193 closed it). H195 shipped the MCP object-twin `by_source`
-content tie and — usefully — surfaced one genuinely-new-ground micro-tie rather than
-a marginal one: the object-twins' distilled `attention` flag inherits the same
-graph=whole-library / works=representation-only scope split, and the works twin's
-flag can *honestly disagree* with the whole-library audit (clean within scope, drift
-outside it) — a custody-correctness boundary an agent relying on `get_works()`
-attention needs pinned, not churn. Appended as H211 (verified by construction before
-queuing). The queue now sits at 5 un-started work slots (H206, H208, H209, H210,
-H211) — one short of the maintenance-rule §1 ≥6 target, deliberately, since per §5
-(*no invented work*) the rest of the candidate-append space is marginal: the next
-full re-derivation (H207) should open a fresh custody-deepening horizon
-(portable-custody depth, progressive context bundles, or doctor/repair surfacing)
-rather than mint more convergence ties.
+**Buffer-health note (2026-06-19, H211 run).** The readable-parity tail stays
+**saturated** (H192/H193 closed it), and the object-twin convergence sub-theme is now
+**closed**: H195 (the `by_source` content tie) and H211 (the distilled `attention`-flag
+scope tie, the honest works=representation-only / graph=whole-library disagreement
+boundary) leave no non-marginal object-twin tie underived. The queue now sits at **4**
+un-started work slots (H206, H208, H209, H210) — below the maintenance-rule §1 ≥6
+target, *deliberately and per §5* (**no invented work**): the remaining candidate-append
+space in the per-source convergence/dogfood theme is marginal, and the legitimate §5
+outcome is to **defer the top-up to the imminent H207 checkpoint** (the lead non-work
+item) rather than mint filler ties. H207 should open a fresh custody-deepening horizon
+(portable-custody depth, progressive context bundles, or doctor/repair surfacing) and
+re-derive the buffer back above ≥6 from the MVP/PRD. The four remaining substantive
+slots plus the checkpoint still cover the next ~24h.
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -311,6 +312,7 @@ changelog (maintenance-rule §4).
 | H192 | Bundle-HTML action-line *content* parity ≡ the Markdown form ≡ the canonical primitive (the HTML counterpart of H188's byte-identical Markdown tie) | cap 5, cap 8 |
 | H193 | Single-source compiled `sources/<S>.md` `_Refresh:_` honest presence ≡ `doctor --source` debt, multi-source-cluster-narrowed-below-`MIN_MEMBERS` summary-absence pinned positively — the last compiled readable-parity tie | cap 7, cap 8 |
 | H195 | MCP object-twin `stats.custody.by_source` *content* ≡ `doctor` — graph twin whole-library (≡ doctor incl. coverage, isolation-independent; *not* connected-only ⊂ doctor, the slice-framing correction), works twin representation-only (≡ doctor lean projection; ⊂ doctor when an item is unrepresented) | cap 1, cap 2 |
+| H211 | MCP object-twin `stats.custody.attention` *scope* tie — graph flag whole-library (≡ `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain`, sees the loss on an isolated node), works flag representation-only (honestly `null` when the loss is unrepresented; fires + re-converges on shared fields when the loss enters scope, coverage staying the whole-library flag's alone) | cap 1, cap 2 |
 
 ---
 
@@ -322,13 +324,15 @@ committed, tested, clean stopping point; slips roll forward.
 - **Day 1 (2026-06-19):** The per-source custody **convergence-invariant**
   cluster. H179 (status `enrichment_by_source`/`summary_by_source` ≡ `maintain`
   ≡ `doctor`, refresh-debt axis), H183 (scoped `suggested` refresh commands name
-  exactly the debt-map sources), and H195 (the MCP object-twin
+  exactly the debt-map sources), H195 (the MCP object-twin
   `stats.custody.by_source` content tie — graph twin whole-library/isolation-
   independent, works twin representation-only/⊂-doctor — which corrected its own
-  "connected-only ⊂ doctor" framing) **shipped**; remaining: H208 (the MCP
-  `get_library_health` read-surface sibling of H179), H209 (the MCP
-  `run_maintenance` scoped-suggestion sibling of H183), and the H195-surfaced
-  H211 (the object-twin `attention`-flag scope tie). All fold into
+  "connected-only ⊂ doctor" framing), and H211 (the object-twin `attention`-flag
+  scope tie it surfaced — graph flag whole-library ≡ `weakest_source(doctor)` ≡
+  `status` ≡ `maintain`, works flag honestly `null` when the loss is unrepresented)
+  **shipped** — closing the object-twin convergence sub-theme; remaining: H208 (the
+  MCP `get_library_health` read-surface sibling of H179) and H209 (the MCP
+  `run_maintenance` scoped-suggestion sibling of H183). Both fold into
   `tests/test_custody_convergence.py`.
 - **Day 2 (2026-06-20):** The **readable / compiled-page parity** cluster — now
   **complete**. H192 (action-line *content* parity on the bundle HTML form vs
@@ -348,13 +352,13 @@ committed, tested, clean stopping point; slips roll forward.
 
 ## Week plan (more tentative) — through 2026-06-26
 
-- Close the remaining per-source custody **convergence invariants** (H208, H209,
-  and the H195-surfaced H211 — H179/H183/H195 shipped). The **compiled
-  readable-parity** tail is now closed (H192/H193 shipped — the action-line
-  contract is pinned across every readable surface): make "custody reads the same
-  everywhere" a tested contract on the per-source and action-line axes, including
-  the suggestion↔debt-map tie over both the CLI and MCP surfaces, and the MCP
-  object-twin `by_source`/`attention` scope ties (H195 shipped, H211 queued).
+- Close the remaining per-source custody **convergence invariants** (H208, H209
+  — H179/H183/H195/H211 shipped; the object-twin convergence sub-theme is closed).
+  The **compiled readable-parity** tail is now closed (H192/H193 shipped — the
+  action-line contract is pinned across every readable surface): make "custody reads
+  the same everywhere" a tested contract on the per-source and action-line axes,
+  including the suggestion↔debt-map tie over both the CLI and MCP surfaces, and the MCP
+  object-twin `by_source`/`attention` scope ties (H195/H211 shipped — sub-theme closed).
 - Pin the **dogfood symmetry** across both surfaces and both act axes: H206 (CLI
   attention → scoped-`maintain` *drift*-act triage, the sibling of H204's MCP flow)
   and H210 (the *refresh*-act sibling — read `_Refresh:_` → run the scoped
