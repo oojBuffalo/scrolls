@@ -328,3 +328,117 @@ def test_slug_collision_survives_the_round_trip(home, capsys):
 
     # both scrolls reappear at their original, distinct paths, byte-for-byte
     assert _read_tree(dst.scrolls_dir) == src_scrolls
+
+
+# --- the whole-library backup is *tier-lossless* too (H224) ------------------
+#
+# `_seed_items` (and every round-trip test above) is all-`full` — every item
+# carries raw_text + a content_hash at a rendered stage, so they only ever
+# exercise the `full` fidelity tier. H216 pinned that the *scoped bundle*
+# round-trip preserves each `get_fidelity` tier; this is the sibling guarantee
+# on the *other* portable surface: the whole-library `export items` →
+# `import items` → `doctor --fix` backup (ADR 0082). A library whose items span
+# all three tiers must rebuild with doctor's `custody.tiers` equal to the source
+# spread — no rebuild-side downgrade, because `import items` carries every
+# content field and `doctor --fix` rebuilds only derived artifacts (scroll
+# files, FTS), never the row fields fidelity reads from.
+
+
+def _mixed_fidelity_seed() -> list[ScrollItem]:
+    """A library spanning all three fidelity tiers. The tier is a pure function
+    of the stored content fields (`get_fidelity`): a re-derivable body (raw +
+    hash at a captured stage) → ``full``; a degraded-but-honest capture (text
+    survives but no body/hash to re-derive it) → ``partial``; a body-less
+    pointer → ``reference``. Spans ≥2 tiers so the spread is non-vacuous."""
+    return [
+        # full ×2: raw + extracted + hash at a rendered stage → body re-derivable
+        _rendered(
+            "arxiv", "1706.03762", "https://arxiv.org/abs/1706.03762",
+            title="Attention Is All You Need",
+            raw_text="<the raw Atom entry>",
+            extracted_text="The Transformer uses attention.",
+            category="paper", domain="machine learning",
+            provenance={"adapter": "arxiv", "extraction_method": "arxiv-atom"},
+        ),
+        _rendered(
+            "web", None, "https://example.com/sqlite-fts",
+            title="How SQLite FTS Works",
+            raw_text="<html>FTS5</html>",
+            extracted_text="SQLite FTS5 ranks results with BM25.",
+            category="technique", domain="databases",
+            provenance={"adapter": "web", "extraction_method": "readability"},
+        ),
+        # partial: extracted text survives but no raw body and no content_hash to
+        # fingerprint it → degraded-but-honest, not re-derivable to full
+        _rendered(
+            "web", None, "https://example.com/local-first",
+            title="Local-First Software",
+            raw_text=None, content_hash=None,
+            extracted_text="Local-first software keeps the index on-device.",
+            category="opinion", domain="software",
+            provenance={"adapter": "web", "extraction_method": "readability"},
+        ),
+        # reference: only the pointer + provenance are held, no content at all,
+        # and it never reached a rendered stage (a deliberate held-by-reference)
+        _rendered(
+            "web", None, "https://example.com/paywalled",
+            title="A Paywalled Article We Hold By Reference",
+            content_hash=None, stage="detected",
+            provenance={"adapter": "web"},
+        ),
+    ]
+
+
+def _build_mixed_library(items: list[ScrollItem]) -> None:
+    """Render the captured items and index every item at the active home, then
+    compile the KB. The reference item never reached a rendered stage, so it is
+    inserted as-is rather than rendered (rendering would mint a scroll and a
+    `markdown_path` it has no body to fill)."""
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    for item in items:
+        if item.stage == "rendered":
+            item = write_scroll(paths, item)
+        insert_item(paths.db_path, item)
+    assert main(["kb"]) == 0
+
+
+def test_whole_library_backup_is_tier_lossless(home, capsys):
+    """The whole-library JSONL backup preserves every fidelity tier, not only
+    `full`: a mixed-fidelity library rebuilt via the documented `import items`
+    → `doctor --fix` → `kb` backup has doctor's `custody.tiers` equal to the
+    source spread, with no rebuild-side downgrade — portability is tier-lossless
+    on the whole-library path too, the H216 guarantee's other portable surface."""
+    home("source")
+    _build_mixed_library(_mixed_fidelity_seed())
+    capsys.readouterr()  # drain the kb report
+
+    # the source spread is genuinely mixed (≥2 non-zero tiers — here all three),
+    # so "tier-lossless" is a non-vacuous claim and not just "all full survives"
+    assert main(["doctor"]) == 0
+    src_tiers = json.loads(capsys.readouterr().out)["custody"]["tiers"]
+    assert src_tiers == {"full": 2, "partial": 1, "reference": 1}
+    assert sum(1 for count in src_tiers.values() if count) >= 2
+
+    assert main(["export", "items"]) == 0
+    backup = get_paths().root.parent / "backup.jsonl"
+    backup.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    home("rebuilt")
+    assert main(["import", "items", str(backup)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == len(_mixed_fidelity_seed())
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()  # drain before the final doctor's report
+
+    # tier-lossless: the rebuilt library's fidelity spread equals the source's,
+    # with no downgrade — `import items` carried every content field and
+    # `doctor --fix` rebuilt only derived artifacts, never the row fields
+    # `get_fidelity` reads from (raw_text / extracted_text / content_hash / stage)
+    assert main(["doctor"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["custody"]["tiers"] == src_tiers
+    # and the rebuild is clean: an honest partial/reference is not a violation
+    assert report["custody"]["score"] == 100
+    assert report["issues"] == 0
