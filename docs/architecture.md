@@ -1586,7 +1586,12 @@ choice (ADRs 0004, 0005).
   by construction. Both asymmetries are pinned in `tests/test_mcp.py`
   (`test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins`,
   `test_get_library_health_refresh_debt_equals_cli_status_flat_maps`) so a later
-  run cannot silently grow a divergent MCP envelope. **MCP read-surface shape
+  run cannot silently grow a divergent MCP envelope. The nested MCP refresh-debt
+  read also joins the full three-way convergence tie ≡ CLI `status` ≡ `doctor` over
+  the combined stale-classification+stale-summary seed (roadmap H208,
+  `tests/test_custody_convergence.py::test_mcp_library_health_refresh_debt_by_source_converges_with_status_and_doctor`)
+  — whole-library and `--source`-scoped, so an agent reading refresh debt purely
+  over MCP gets the same per-source numbers the CLI surfaces carry. **MCP read-surface shape
   contract (the one pin, roadmap H186).** Those two decisions are consolidated
   into a single decision-grade invariant
   (`tests/test_mcp.py::test_mcp_read_surface_shape_contract`, the H157/H50

@@ -1230,6 +1230,64 @@ def _concept_member(item_id, concept, source, content_hash):
         content_hash=content_hash, concepts=(concept,))
 
 
+def _seed_refresh_debt_both_axes(db):
+    """The combined refresh-debt seed shared by the H179/H183/H208 ties.
+
+    Both refresh axes carry per-source stale debt over a held universe with one
+    source (reddit) clean on **both**, so each axis's offenders are a strict subset
+    of the held sources (the scoping rule fires) and the two axes name different
+    source sets (so a test cannot pass by conflating them).
+
+    Enrichment axis — stale classifications, each item exactly one source (so the
+    map sums to the whole): ``web`` two stale + one current, ``arxiv`` one stale +
+    one current, ``reddit`` a current-only (clean) source omitted from the offenders
+    map. Summary axis — stale concept summaries over clusters (unclassified members,
+    so the axes stay independent): ``Bm25`` spans web+arxiv (a stale Bm25 summary
+    double-attributes), ``Vector`` is wikipedia-only (2 members ≥ ``MIN_MEMBERS``, so
+    it survives a ``--source wikipedia`` scope), ``Clean`` spans reddit+web but is
+    current → omitted.
+
+    Returns the canonical whole-library debt maps every surface must reproduce:
+    ``({"arxiv": 1, "web": 2}, {"arxiv": 1, "web": 1, "wikipedia": 1})`` — the
+    ``(enrichment_by_source, summary_by_source)`` pair, carrying the H171
+    non-sum-to-whole asymmetry (the summary map double-attributes Bm25).
+    """
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.kb_llm import eligible_concepts, members_hash
+
+    def _classified(item_id, source, *, ruleset, **overrides):
+        overrides.setdefault("url", f"https://example.com/{item_id}")
+        return _item(
+            item_id, "Topic classified", source=source, category="tutorial",
+            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                        "classified_ruleset": ruleset},
+            **overrides,
+        )
+
+    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
+    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
+    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
+                                url="https://arxiv.org/abs/s1"))
+    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
+                                url="https://arxiv.org/abs/cur"))
+    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
+                                url="https://reddit.com/r/cur"))
+
+    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
+    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
+    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
+    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
+    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
+    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
+    _stored_summary(db, "bm25", "stale-old-1")
+    _stored_summary(db, "vector", "stale-old-2")
+    eligible = eligible_concepts(list_items(db))
+    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+
+    return {"arxiv": 1, "web": 2}, {"arxiv": 1, "web": 1, "wikipedia": 1}
+
+
 @pytest.fixture
 def fake_summary_llm(monkeypatch):
     """Canned concept-summary completer, so `kb --stale` runs network-free.
@@ -1710,49 +1768,13 @@ def test_status_refresh_debt_by_source_converges_with_maintain_and_doctor(
     # asks. Both the whole-library tie and the `--source`-scoped slice are pinned,
     # carrying the two axes' opposite sum-to-whole postures (enrichment sums to the
     # whole; a multi-source stale summary double-attributes, so summaries need not).
-    from scrolls.classify import RULESET_FINGERPRINT, is_stale_classification
+    from scrolls.classify import is_stale_classification
     from scrolls.kb import load_concept_summaries
     from scrolls.kb_llm import eligible_concepts, is_stale_summary, members_hash
 
     main(["init"])
     db = get_paths().db_path
-
-    # Enrichment axis: stale classifications, each item exactly one source (so the
-    # map sums to the whole). web: two stale + one current; arxiv: one stale + one
-    # current; reddit: a current-only (clean) source → omitted from the offenders map.
-    def _classified(item_id, source, *, ruleset, **overrides):
-        overrides.setdefault("url", f"https://example.com/{item_id}")
-        return _item(
-            item_id, "Topic classified", source=source, category="tutorial",
-            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
-                        "classified_ruleset": ruleset},
-            **overrides,
-        )
-
-    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
-    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
-    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
-    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
-                                url="https://arxiv.org/abs/s1"))
-    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
-                                url="https://arxiv.org/abs/cur"))
-    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
-                                url="https://reddit.com/r/cur"))
-
-    # Summary axis: stale concept summaries over clusters (unclassified members, so
-    # the two axes stay independent). Bm25 spans web+arxiv → double-attributes; Vector
-    # is wikipedia-only (2 members ≥ MIN_MEMBERS, so it survives a `--source wikipedia`
-    # scope); Clean spans reddit+web but is current → omitted.
-    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
-    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
-    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
-    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
-    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
-    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
-    _stored_summary(db, "bm25", "stale-old-1")
-    _stored_summary(db, "vector", "stale-old-2")
-    eligible = eligible_concepts(list_items(db))
-    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+    seed_enrichment, seed_summary = _seed_refresh_debt_both_axes(db)
     capsys.readouterr()
 
     # The three surfaces, each reading the same `run_doctor` audit. `maintain` may
@@ -1794,9 +1816,10 @@ def test_status_refresh_debt_by_source_converges_with_maintain_and_doctor(
     expected_summary = {s: expected_summary[s] for s in sorted(expected_summary)}
 
     # non-vacuous: both axes name ≥2 sources, and the two axes differ (so the test
-    # cannot pass by conflating them).
-    assert expected_enrichment == {"arxiv": 1, "web": 2}
-    assert expected_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
+    # cannot pass by conflating them). The independent re-derivation must also equal
+    # the canonical maps the shared seed helper promises (its return value).
+    assert expected_enrichment == seed_enrichment == {"arxiv": 1, "web": 2}
+    assert expected_summary == seed_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
 
     status_enrichment, status_summary = status_maps()
     maintain_enrichment, maintain_summary = maintain_maps()
@@ -1855,6 +1878,108 @@ def test_status_refresh_debt_by_source_converges_with_maintain_and_doctor(
     assert after_status[0] == after_maintain[0] == after_doctor[0] == expected_enrichment
 
 
+def test_mcp_library_health_refresh_debt_by_source_converges_with_status_and_doctor(
+    scrolls_home, capsys, fake_summary_llm
+):
+    # roadmap H208: the agent-facing MCP read joins the H179 refresh-debt-map tie.
+    # H179 pinned the *flat* maps (`enrichment_by_source`/`summary_by_source`) ≡
+    # across CLI `status`≡`maintain`≡`doctor`; `get_library_health` deliberately keeps
+    # the *nested* form (`enrichment.by_source`/`summaries.by_source`) — being exactly
+    # `run_doctor`'s custody block, not a flattened projection (the H180 flat≡nested
+    # posture). H180 already ties the MCP nested map ≡ CLI `status` flat map over a
+    # *simpler* seed (`test_get_library_health_refresh_debt_equals_cli_status_flat_maps`,
+    # `…_source_scopes_the_refresh_debt`); this folds the nested MCP read into the
+    # **full H179 picture** over the SAME combined seed — a three-way tie (MCP ≡
+    # `status` ≡ `doctor`) on BOTH axes, whole-library AND scoped, carrying the H171
+    # non-sum-to-whole asymmetry and the single-source-cluster scope-collapse subtlety,
+    # plus a causal mutation check. So "which source to refresh" reads one number on
+    # the agent's MCP read just as it does on every CLI surface.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    expected_enrichment, expected_summary = _seed_refresh_debt_both_axes(db)
+    capsys.readouterr()
+
+    # the three read surfaces, each a faithful read of the same `run_doctor` audit.
+    # `status` prints + reads capsys; the MCP tool and `run_doctor` return dicts and
+    # touch neither, so capsys carries only the `status` payload at read time.
+    def mcp_maps(source=None):
+        health = mcp_server.get_library_health(source=source)
+        return health["enrichment"]["by_source"], health["summaries"]["by_source"]
+
+    def status_maps(source=None):
+        scope = ["--source", source] if source else []
+        assert main(["status", *scope]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        return payload["enrichment_by_source"], payload["summary_by_source"]
+
+    def doctor_maps(source=None):
+        custody = run_doctor(get_paths(), source=source)["custody"]
+        return custody["enrichment"]["by_source"], custody["summaries"]["by_source"]
+
+    # --- whole-library three-way tie: MCP ≡ status ≡ doctor, BOTH axes ------------
+    # non-vacuous: both axes name ≥2 sources and the two axes differ, so the tie
+    # cannot pass by conflating the maps.
+    assert expected_enrichment == {"arxiv": 1, "web": 2}
+    assert expected_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
+
+    mcp_enrichment, mcp_summary = mcp_maps()
+    status_enrichment, status_summary = status_maps()
+    doctor_enrichment, doctor_summary = doctor_maps()
+    assert mcp_enrichment == status_enrichment == doctor_enrichment == expected_enrichment
+    assert mcp_summary == status_summary == doctor_summary == expected_summary
+
+    # the H171 non-sum-to-whole asymmetry survives on the nested MCP read: enrichment
+    # sums to the whole-library `stale` (each item one source); a multi-source stale
+    # summary (Bm25 spans web+arxiv) double-attributes, so the summary map sums to MORE
+    # than its `stale` count. The MCP twin carries the fuller block (the `stale` scalar
+    # the flat CLI map drops) — read it off the same audit and tie the asymmetry here.
+    health = mcp_server.get_library_health()
+    assert sum(mcp_enrichment.values()) == health["enrichment"]["stale"] == 3
+    assert sum(mcp_summary.values()) == 3 > health["summaries"]["stale"] == 2
+
+    # --- per-source scoped three-way tie -----------------------------------------
+    # `get_library_health(source=S)` scopes the *whole* read through the same
+    # `run_doctor(source=)` pre-filter `status --source`/`doctor --source` use, so the
+    # three scoped surfaces agree on both nested/flat maps by construction.
+    for source in ("web", "arxiv", "reddit", "wikipedia"):
+        m_enrichment, m_summary = mcp_maps(source)
+        s_enrichment, s_summary = status_maps(source)
+        d_enrichment, d_summary = doctor_maps(source)
+        assert m_enrichment == s_enrichment == d_enrichment
+        assert m_summary == s_summary == d_summary
+        # the scoped enrichment map collapses cleanly to S's whole-library debt
+        # (each classified item has exactly one source — no cluster to fracture).
+        assert m_enrichment == (
+            {source: expected_enrichment[source]} if source in expected_enrichment else {}
+        )
+
+    # the load-bearing cluster subtlety reads identically over MCP: a single-source
+    # stale cluster survives its own `--source` scope, but a multi-source one fractures
+    # below MIN_MEMBERS and reads as the honest empty map.
+    assert mcp_maps("web")[0] == {"web": 2}              # enrichment slice, non-empty
+    assert mcp_maps("wikipedia")[1] == {"wikipedia": 1}  # Vector (2 members) survives
+    assert mcp_maps("web")[1] == {}                      # Bm25's lone web member < MIN_MEMBERS
+    assert mcp_maps("arxiv")[1] == {}                    # Bm25's lone arxiv member < MIN_MEMBERS
+
+    # --- mutation check: refreshing one source moves all three surfaces together --
+    # `kb --stale --source wikipedia` (the documented summary-axis refresh, H172/H176;
+    # offline via `fake_summary_llm`) regenerates the wikipedia-only Vector summary,
+    # clearing wikipedia's stale-summary debt. The nested MCP map, status's flat map,
+    # AND doctor must all drop wikipedia's `summaries.by_source` entry in lockstep,
+    # while the *enrichment* axis stays put (a summary refresh never re-classifies) —
+    # proving the convergence is causal, not a seed coincidence, and that the two
+    # refresh axes move independently over MCP too.
+    assert main(["kb", "--stale", "--source", "wikipedia"]) == 0
+    capsys.readouterr()
+    after_mcp = mcp_maps()
+    after_status = status_maps()
+    after_doctor = doctor_maps()
+    assert after_mcp[1] == after_status[1] == after_doctor[1] == {"arxiv": 1, "web": 1}
+    assert after_mcp[0] == after_status[0] == after_doctor[0] == expected_enrichment
+
+
 def _scoped_refresh_sources(suggested, command):
     """The sources named by the scoped ``<command> --source <S>`` suggestions (H181).
 
@@ -1891,47 +2016,12 @@ def test_maintain_scoped_suggestions_name_exactly_the_refresh_debt_sources(
     # `doctor`'s `custody.{enrichment,summaries}.by_source`. So the *act* a worker is
     # told to run targets exactly the sources the *report* says carry debt — the
     # action-pointer sibling of H179's read convergence, on the per-source axis.
-    from scrolls.classify import RULESET_FINGERPRINT
-    from scrolls.kb_llm import eligible_concepts, members_hash
-
     main(["init"])
     db = get_paths().db_path
-
     # The H179 seed: both refresh axes, with one held source (reddit) clean on BOTH
     # so each axis's offenders are a *strict* subset of the held universe and the
-    # scoping rule fires. Enrichment — each item one source (web: 2 stale + 1 current;
-    # arxiv: 1 stale + 1 current; reddit: current-only).
-    def _classified(item_id, source, *, ruleset, **overrides):
-        overrides.setdefault("url", f"https://example.com/{item_id}")
-        return _item(
-            item_id, "Topic classified", source=source, category="tutorial",
-            provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
-                        "classified_ruleset": ruleset},
-            **overrides,
-        )
-
-    insert_item(db, _classified("web:s1", "web", ruleset="deadbeef0000"))
-    insert_item(db, _classified("web:s2", "web", ruleset="deadbeef0000"))
-    insert_item(db, _classified("web:cur", "web", ruleset=RULESET_FINGERPRINT))
-    insert_item(db, _classified("arxiv:s1", "arxiv", ruleset="cafe00000000",
-                                url="https://arxiv.org/abs/s1"))
-    insert_item(db, _classified("arxiv:cur", "arxiv", ruleset=RULESET_FINGERPRINT,
-                                url="https://arxiv.org/abs/cur"))
-    insert_item(db, _classified("reddit:cur", "reddit", ruleset=RULESET_FINGERPRINT,
-                                url="https://reddit.com/r/cur"))
-
-    # Summary — clusters whose stale debt double-attributes: Bm25 spans web+arxiv;
-    # Vector is wikipedia-only; Clean spans reddit+web but is current → omitted.
-    insert_item(db, _concept_member("b1", "Bm25", "web", "h1"))
-    insert_item(db, _concept_member("b2", "Bm25", "arxiv", "h2"))
-    insert_item(db, _concept_member("v1", "Vector", "wikipedia", "h3"))
-    insert_item(db, _concept_member("v2", "Vector", "wikipedia", "h4"))
-    insert_item(db, _concept_member("c1", "Clean", "reddit", "h5"))
-    insert_item(db, _concept_member("c2", "Clean", "web", "h6"))
-    _stored_summary(db, "bm25", "stale-old-1")
-    _stored_summary(db, "vector", "stale-old-2")
-    eligible = eligible_concepts(list_items(db))
-    _stored_summary(db, "clean", members_hash(eligible["clean"]["items"]))
+    # scoping rule fires.
+    expected_enrichment, expected_summary = _seed_refresh_debt_both_axes(db)
     capsys.readouterr()
 
     # the whole-library maintain pass (`source=None` → H181 strict-subset rule). It
@@ -1945,9 +2035,10 @@ def test_maintain_scoped_suggestions_name_exactly_the_refresh_debt_sources(
     summary_by_source = report["summary_by_source"]
 
     # the debt maps name ≥2 sources each; reddit is held but clean on BOTH axes, so
-    # both offenders sets are strict subsets and scoping fires (non-vacuous).
-    assert enrichment_by_source == {"arxiv": 1, "web": 2}
-    assert summary_by_source == {"arxiv": 1, "web": 1, "wikipedia": 1}
+    # both offenders sets are strict subsets and scoping fires (non-vacuous). They
+    # equal the canonical maps the shared seed promises.
+    assert enrichment_by_source == expected_enrichment == {"arxiv": 1, "web": 2}
+    assert summary_by_source == expected_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
     held_sources = set(run_doctor(get_paths())["custody"]["by_source"])
     assert held_sources == {"arxiv", "reddit", "web", "wikipedia"}
     assert "reddit" not in enrichment_by_source
