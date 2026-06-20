@@ -61,7 +61,12 @@ Two layers in one file:
    restores it with an idempotent, content-keyed dedup (`custody.import_events`)
    so a re-import is a custody no-op. The items block stays the first region and
    byte-identical to `export items`, so its round-trip is untouched; a pre-H67
-   bundle simply has no second region and imports items only.
+   bundle simply has no second region and imports items only. The restore is also
+   honest about **orphan** events (roadmap H217): every event must resolve to a
+   held-or-imported item; one whose `item_id` names no such item (a corrupt or
+   hand-edited bundle — a well-formed export never desyncs the blocks) is counted
+   (`orphaned`) and *not* inserted, never a dangling ledger row for an item the
+   library does not hold (`custody.partition_resolvable_events`).
 
 Completeness is honest (the M2 contract): the bundle carries *every* scroll in
 scope, never a truncated top-N — a take-it-with-you custody artifact must not

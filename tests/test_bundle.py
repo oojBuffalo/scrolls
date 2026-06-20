@@ -995,7 +995,7 @@ def test_custody_events_round_trip_into_a_fresh_library(scrolls_home, monkeypatc
     capsys.readouterr()
     main(["import", "bundle", str(bundle_path)])
     report = json.loads(capsys.readouterr().out)
-    assert report["events"] == {"imported": 2, "skipped": 0}
+    assert report["events"] == {"imported": 2, "skipped": 0, "orphaned": 0}
     # the full ledger landed in B, newest-first, and the latest posture is the
     # exporter's — drift travels, it is not frozen as prose
     assert [e["status"] for e in item_history(db_b, "wikipedia:en:SQLite")] == [
@@ -1022,7 +1022,7 @@ def test_re_importing_a_bundle_dedups_the_custody_events(scrolls_home, tmp_path,
     # first import is back into the same library: the event already exists → skipped
     main(["import", "bundle", str(bundle_path)])
     report = json.loads(capsys.readouterr().out)
-    assert report["events"] == {"imported": 0, "skipped": 1}
+    assert report["events"] == {"imported": 0, "skipped": 1, "orphaned": 0}
     # the ledger did not grow — still exactly the one original check
     assert len(item_events(db, "wikipedia:en:SQLite")) == 1
 
@@ -1060,7 +1060,7 @@ def test_a_pre_h67_bundle_without_an_events_block_imports_items_only(scrolls_hom
     assert main(["import", "bundle", str(legacy_path)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["items"] == 1
-    assert report["events"] == {"imported": 0, "skipped": 0}
+    assert report["events"] == {"imported": 0, "skipped": 0, "orphaned": 0}
 
 
 def test_a_corrupt_custody_events_block_is_reported(scrolls_home):
@@ -1075,6 +1075,101 @@ def test_a_corrupt_custody_events_block_is_reported(scrolls_home):
     )
     with pytest.raises(BundleError, match="custody-events block record 1"):
         parse_bundle_events(bad)
+
+
+# --- orphan custody events (roadmap H217) ----------------------------------
+
+
+def _spliced_bundle(item, *, anchored_events, orphan_events):
+    """A bundle whose events block names an item the items block omits.
+
+    A *well-formed* export never desyncs the two blocks — `events_for_items`
+    scopes the events to the in-scope items, every one of which also rides the
+    items block — so an orphan event only arises from corruption or a hand-edit.
+    We model exactly that here, splicing real block builders so the sentinels and
+    fences stay valid and only the items↔events *content* is desynced.
+    """
+    from scrolls.bundle import _events_block, _items_block
+
+    return (
+        "# Scrolls Custody Bundle: spliced\n\n"
+        + _items_block([item])
+        + "\n"
+        + _events_block(list(anchored_events) + list(orphan_events))
+        + "\n"
+    )
+
+
+def test_partition_resolvable_events_separates_held_from_orphan(scrolls_home):
+    # the H217 primitive: an event resolves iff its item is in the library
+    # (held-or-imported); otherwise it is an orphan — a ledger row with no item
+    from scrolls.custody import partition_resolvable_events
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    held = _event("wikipedia:en:SQLite", "drifted", observed="cafe1234")
+    orphan = _event("wikipedia:en:Ghost", "drifted", observed="beef9999")
+
+    resolvable, orphans = partition_resolvable_events(db, [held, orphan])
+    assert [e.item_id for e in resolvable] == ["wikipedia:en:SQLite"]
+    assert [e.item_id for e in orphans] == ["wikipedia:en:Ghost"]
+
+
+def test_import_bundle_skips_and_counts_orphan_custody_events(
+    scrolls_home, tmp_path, capsys
+):
+    # H217: a bundle's events must resolve to a held-or-imported item. A spliced
+    # bundle whose events name an item the items block omits is surfaced (counted +
+    # warned) and NOT inserted — a ledger row for an item `show` 404s on would be a
+    # dangling history, never silently retained nor silently dropped.
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    bundle = _spliced_bundle(
+        held,
+        anchored_events=[_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")],
+        orphan_events=[_event("wikipedia:en:Ghost", "drifted", observed="beef9999")],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    capsys.readouterr()
+    rc = main(["import", "bundle", str(bundle_path)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    report = json.loads(captured.out)
+    # the held item's event imported; the orphan one counted, not imported
+    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 1}
+    # the orphan left no dangling ledger row — custody stays coherent
+    assert item_events(db, "wikipedia:en:Ghost") == []
+    # the anchored event did land
+    assert [e.status for e in item_events(db, "wikipedia:en:SQLite")] == ["drifted"]
+    # the orphan is loud, not silent (a stderr warning names the orphan count)
+    assert "orphan" in captured.err.lower()
+
+
+def test_import_bundle_reports_zero_orphans_when_every_event_resolves(
+    scrolls_home, tmp_path, capsys
+):
+    # the honest-zero case: a normal bundle's events all resolve, so the summary
+    # affirmatively states `orphaned: 0` — absence stated, never silently omitted
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    record_events(db, [_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")])
+    capsys.readouterr()
+    main(["export", "bundle", "database"])
+    bundle_path = tmp_path / "clean.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    capsys.readouterr()
+    main(["import", "bundle", str(bundle_path)])
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["events"]["orphaned"] == 0
+    # no orphans → no warning noise on stderr
+    assert captured.err == ""
 
 
 # --- scope, completeness, honesty ------------------------------------------

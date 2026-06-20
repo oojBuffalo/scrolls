@@ -2149,18 +2149,31 @@ imports items only, never crashing
 restored ledger is the same one `scrolls history`/`doctor`/`facets drift` read,
 so an imported item's drift posture is its exporter's.
 
+The restore is honest about **orphan** events (roadmap H217): every custody event
+must resolve to a held-or-imported item. A well-formed export never desyncs the
+two blocks — its events ride only for in-scope items, all of which are also in the
+items block — so the orphan count is `0`. A corrupt or hand-edited bundle whose
+events name an item the items block omits has those events **counted (`orphaned`)
+and *not* imported**, with a `{"warning": …}` on stderr: a ledger row for an item
+`scrolls show` 404s on would be a dangling history, so it is neither silently
+inserted nor silently dropped
+(`test_import_bundle_skips_and_counts_orphan_custody_events`,
+`custody.partition_resolvable_events`). (The whole-library `import events` restore
+does *not* skip orphans — that path tolerates events restored before their items;
+a bundle is an atomic items+events unit whose events should always anchor.)
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new scrolls inserted |
 | `skipped` | already present (id collision is the dedupe working) |
 | `items` | scroll records read from the custody block |
-| `events` | `{imported, skipped}` custody events restored / deduped from the events block |
+| `events` | `{imported, skipped, orphaned}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217) |
 
 ```console
 $ scrolls export bundle "database engine" > briefing.md
 
 $ scrolls import bundle briefing.md
-{"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0}}
+{"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
 [exit 0]
 ```
 

@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from scrolls.dates import to_utc_iso
-from scrolls.items import ScrollItem, get_fidelity
+from scrolls.items import ScrollItem, get_fidelity, get_item
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 
 CUSTODY_STATUSES = ("unchanged", "drifted", "rotted", "error")
@@ -430,6 +430,45 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     finally:
         conn.close()
     return imported, skipped
+
+
+def partition_resolvable_events(
+    db_path: Path, events: Iterable[CustodyEvent]
+) -> tuple[list[CustodyEvent], list[CustodyEvent]]:
+    """Split custody events into those the library can anchor and *orphans*.
+
+    An event **resolves** when `get_item` finds its `item_id` in the library — a
+    held-or-imported item it can be a custody record *of*; otherwise it is an
+    **orphan**, a ledger row pointing at an item not in custody. Returns
+    ``(resolvable, orphan)``, each in input order.
+
+    The bundle-import honesty guard (roadmap H217): a bundle's custody-events
+    block carries events only for in-scope items (`events_for_items`), every one
+    of which also rides the items block, so a *well-formed* bundle yields no
+    orphans. A corrupt or hand-edited bundle whose events name a missing item must
+    be **surfaced** by the caller (an orphan count), never silently inserted as a
+    dangling history — the ledger would assert a custody record for an item
+    `scrolls show` 404s on (`history`/`facets drift` would read a phantom) — nor
+    silently dropped (a take-it-with-me artifact that quietly loses rows). The
+    caller decides what to do with the orphan list; this only classifies.
+
+    Membership is read **once per distinct `item_id`** (cached), so a large
+    in-scope ledger costs one `get_item` per item, not one per event. The
+    whole-library `import events` restore (H72) deliberately does *not* use this:
+    that path tolerates events restored before their items (the ledger is keyed by
+    the `item_id` string and order is the operator's), whereas a bundle is an
+    atomic items+events unit whose events should always anchor.
+    """
+    resolvable: list[CustodyEvent] = []
+    orphan: list[CustodyEvent] = []
+    held: dict[str, bool] = {}
+    for event in events:
+        anchored = held.get(event.item_id)
+        if anchored is None:
+            anchored = get_item(db_path, event.item_id) is not None
+            held[event.item_id] = anchored
+        (resolvable if anchored else orphan).append(event)
+    return resolvable, orphan
 
 
 def latest_events(db_path: Path) -> dict[str, CustodyEvent]:

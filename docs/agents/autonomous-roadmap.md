@@ -105,25 +105,27 @@ scope-honesty under truncation and facet scope.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H217 | **Bundle import is honest about orphan custody events.** A bundle carries items *and* their verify-ledger events (H67). Pin the round-trip-completeness contract: every imported custody event resolves to a held-or-imported item — an event whose `item_id` matches no item is surfaced (count/warning), never silently dropped or silently retained as a dangling history. Inspect `custody.import_events`/the bundle import path (`src/scrolls/bundle.py`, `src/scrolls/cli.py`) for whether this already holds; add the guard only if reported-but-not-enforced, plus the test (`tests/test_bundle.py`). The import summary today reports `{imported, skipped, items, events:{imported,skipped}}` (`cli.py:1752`) with no orphan accounting — so this is the read it is missing. Precondition: portable events (H67/H72, shipped). | → cap 9, cap 7 |
-| H220 | **`scrolls import bundle --dry-run` — preview a shared bundle before merging.** Custody review for "take it with me" (cap 9): an agent handed a portable bundle should be able to see *exactly* what an import would add vs. skip — new items, already-held skips, custody events added/deduped, and (on H217) orphan events — **without writing**. Add `--dry-run` to the import-bundle parser; in `_cmd_import_bundle` compute the same summary counts by diffing against the library (item existence via `get_item`, the event-dedup preview) and print them, writing nothing (the read-only sibling of the custody-safe `INSERT OR IGNORE` import, ADR 0082). Plus the test (`tests/test_bundle.py`). Precondition: H217 (orphan-event accounting in the summary). | → cap 9 |
+| H220 | **`scrolls import bundle --dry-run` — preview a shared bundle before merging.** Custody review for "take it with me" (cap 9): an agent handed a portable bundle should be able to see *exactly* what an import would add vs. skip — new items, already-held skips, custody events added/deduped, and (on H217) orphan events — **without writing**. Add `--dry-run` to the import-bundle parser; in `_cmd_import_bundle` compute the same summary counts by diffing against the library (item existence via `get_item`, the event-dedup preview, the `partition_resolvable_events` orphan split) and print them, writing nothing (the read-only sibling of the custody-safe `INSERT OR IGNORE` import, ADR 0082). Plus the test (`tests/test_bundle.py`). Precondition: H217 (orphan-event accounting in the summary, **shipped**). | → cap 9 |
 | H221 | **The `index` `_Fidelity:_` line's `(of N)` scope is honest under truncation.** The holdings line counts the *in-bundle* set (`len(items)`, the kept post-cap representations), not the library-wide matched total — so when the bundle is capped (`matched > returned`) the `(of N)` must equal the `_Coverage:` line's `returned`, never the full `matched`. Pin it: over a >`--limit` mixed-fidelity scope, `context --budget index --limit k` carries `_Fidelity: … (of k)._` and a `_Coverage: the top k of N_` line — the fidelity holdings never over-claim scope the bundle didn't see (the depth-axis sibling of H215's drift-absence honesty; the *fidelity* counterpart of the Coverage line's match-set honesty). Test only (`tests/test_context.py`). Precondition: H212; the Coverage line (G2, shipped). | → cap 7, cap 10 |
 | H222 | **MCP `get_context(budget="index")` `(of N)` scope-honesty under truncation — the MCP twin of H221.** Just as H219 is the MCP completeness twin of H215, the leanest tier's holdings-scope honesty under a cap must hold on the read an agent actually reaches over MCP: `get_context_bundle(query, budget="index", limit=k)` over a >`limit` mixed-fidelity scope carries `_Fidelity: … (of k)._` whose `(of k)` equals the `_Coverage:` line's `returned`, never the library-wide `matched` — and is *byte-identical to the CLI*'s `context --budget index --limit k` (the agent-facing bundle and the CLI never diverge on the leanest tier's holdings scope, just as H214 pinned for the untruncated line). Test only (`tests/test_mcp.py`, beside the H214 twin). Precondition: H214 (the MCP `_Fidelity:_` line, shipped), H221 (the CLI truncation honesty). | → cap 2, cap 10 |
 | H223 | **The `index` `_Fidelity:_` holdings honor the active facet scope.** The leanest tier's holdings line counts the post-facet `items` (the representations `build_context` keeps after the `source`/`category`/`stage`/`tag`/`concept` filter), so a scoped `context --budget index --source <S>` must name only `<S>`'s fidelity tiers and `(of k)` scope — never the library-wide holdings of a multi-source library. Pin it: over a mixed-fidelity, multi-source scope, `--source <S>` carries a `_Fidelity:_` line whose tier counts + `(of k)` equal the scoped subset, while the unscoped run names the whole-library holdings — the *facet*-axis sibling of H221's *truncation*-axis `(of N)` scope-honesty (the holdings fact never over-claims beyond the agent's chosen scope). Test only (`tests/test_context.py`). Precondition: H212; `context` facet scoping (shipped). | → cap 7, cap 10 |
+| H225 | **`import bundle` names *which* items the orphan events dangle on — the diagnosable half of H217.** H217 surfaces an orphan *count* (`events.orphaned`) and a generic stderr warning, which tells an agent a bundle is corrupt but not *what to fix*. Make the loss actionable: include the distinct orphan `item_id`s (sorted, deduped, bounded) in the stderr warning so "2 orphan events" becomes "2 orphan events reference `arxiv:x`, `web:ghost`" — the operator can see the bundle was spliced/truncated and which rows the items block is missing. Implementation path: `partition_resolvable_events` already groups by `item_id`, so collect the distinct orphan ids from the orphan list and render them in the warning (cap the list with an "(+N more)" tail like the other bounded readable surfaces). Test (`tests/test_bundle.py`): a spliced bundle with orphan events naming two missing items warns with both ids; the count stays the event count, the id list the distinct-item count. Precondition: H217 (the orphan partition + count, shipped). | → cap 9, cap 7 |
 | H224 | **The whole-library JSONL backup is tier-lossless too — the H216 sibling on the other portable surface.** H216 pinned that the scoped *bundle* round-trip preserves each `get_fidelity` tier; the whole-library `export items` → `import items` → `doctor --fix` backup (ADR 0082 — the migrate/merge/restore path) is the *other* portable surface and is only ever exercised all-`full` (`tests/test_roundtrip.py::_seed_items`; `test_rebuilt_library_passes_its_own_custody_audit` asserts `custody.tiers["full"] == len(seed)`). Pin it: a library whose items span all three fidelity tiers rebuilds via the documented backup commands with `doctor`'s `custody.tiers` equal to the source spread (≥2 tiers, non-vacuous), no rebuild-side downgrade — `import items` carries every content field (ADR 0082) and `doctor --fix` rebuilds only the derived artifacts, never the row fields fidelity reads from. So portability is *tier-lossless* on **both** the scoped-bundle (H216) and whole-library-backup paths. Test only (`tests/test_roundtrip.py`). Precondition: the lossless backup round-trip (ADR 0082, shipped); `get_fidelity` (shipped). | → cap 9, cap 4 |
 | H218 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H217** (bundle import honest about orphan custody
-events), now that **H216 shipped this run** — the mixed-fidelity bundle
-round-trip invariant: a bundle spanning `full`/`partial`/`reference` re-imports
-with each item's `get_fidelity` tier preserved, so portability is *tier-lossless*,
-not just full-lossless (`tests/test_bundle.py`). H217 is the orphan-event
-follow-on, H220 is the `import bundle --dry-run` preview built on H217's
-orphan-event accounting, H221–H222 are the leanest tier's `(of N)` scope-honesty
-under truncation on the CLI and its MCP twin, H223 is the *facet*-axis sibling of
-that truncation honesty, and H224 (appended this run) is the whole-library-backup
-sibling of H216 — *tier-lossless* on the `export items` → `import items` path too.
-Per-slice provenance for every *shipped* slot lives in git
+The next lead slot is **H220** (`import bundle --dry-run` preview), now that
+**H217 shipped this run** — bundle import is honest about orphan custody events:
+every imported event resolves to a held-or-imported item, and an event whose
+`item_id` matches no such item is counted (`events.orphaned`) and *not* inserted,
+with a stderr warning, never a dangling ledger row for an item `scrolls show`
+404s on (`custody.partition_resolvable_events`, `tests/test_bundle.py`). H220 is
+the `import bundle --dry-run` preview built on H217's orphan-event accounting,
+H221–H222 are the leanest tier's `(of N)` scope-honesty under truncation on the
+CLI and its MCP twin, H223 is the *facet*-axis sibling of that truncation honesty,
+H224 is the whole-library-backup sibling of H216 — *tier-lossless* on the
+`export items` → `import items` path too — and H225 (appended this run) makes
+H217's orphan loss *diagnosable* by naming which items the orphan events dangle
+on. Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line
 in-file index (maintenance-rule §4: *git is the changelog*).
 
@@ -200,6 +202,31 @@ dropped the work queue to 5, so per §1 this run **restored it to ~6** by append
 **H224** (the whole-library `export items`/`import items` backup sibling of H216 — the
 *other* portable surface, only ever exercised all-`full` in `test_roundtrip.py`). The
 queue now sits at **6** un-started work slots (H217 + H220–H224) + the H218 checkpoint.
+
+**This run shipped H217** — bundle import is honest about orphan custody events,
+opening the *event-complete* leg of the portable-bundle round-trip-depth horizon
+(`src/scrolls/custody.py`, `src/scrolls/cli.py`, `tests/test_bundle.py`). The new
+`custody.partition_resolvable_events` splits a bundle's parsed events into those that
+resolve to a held-or-imported item and *orphans* (an `item_id` matching no such item);
+`_cmd_import_bundle` imports only the resolvable ones, counts the orphans in the summary
+(`events.orphaned`, **always present** — `0` is the honest affirmative "we checked, none
+dangled"), and emits a `{"warning": …}` on stderr when non-zero. A well-formed export
+never produces orphans (its events ride only for in-scope items, all in the items block),
+so this guards the corrupt/hand-edited case: importing such an event would write a
+dangling ledger row for an item `scrolls show` 404s on — `history`/`facets drift` would
+read a phantom — so it is neither silently retained nor silently dropped (the M2
+anti-fabrication ethos, on the import-completeness axis; custody §2.4). The whole-library
+`import events` restore (H72) deliberately stays orphan-tolerant — that path restores
+events independently of items, order the operator's (cli.md) — so the asymmetry is
+principled, not accidental. Sabotage-verified non-vacuous: neutering the partition to
+treat every event as resolvable fails both the orphan-count test and the
+no-dangling-row test. Three existing exact-equality `events` assertions
+(`test_bundle.py` ×2, `test_custody_convergence.py` ×1) were updated to the new
+always-present `orphaned: 0` shape. Shipping one slice dropped the work queue to 5, so
+per maintenance-rule §1 this run **restored it to ~6** by appending **H225** (the
+*diagnosable* half of H217 — name *which* items the orphan events dangle on, so a
+corrupt bundle is fixable, not just flagged). The queue now sits at **6** un-started work
+slots (H220–H225) + the H218 checkpoint.
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -412,6 +439,7 @@ changelog (maintenance-rule §4).
 | H214 | MCP twin of H212 in `tests/test_mcp.py` — `get_context_bundle(budget="index")` carries the `_Fidelity:_` holdings line (non-vacuous full 1 + partial 1, `(of 2)`), honestly omits the drift verdict (no `_Custody:`/`drifted` token over the unread ledger), and its line is *byte-identical to the CLI*'s `scrolls context --budget index` (the agent-facing bundle and the CLI never diverge on the leanest tier's fidelity read); from `connected` up the dedicated line yields to the headline's `fidelity` section (the H212 no-duplication rule, here over MCP). Sabotage-verified non-vacuous (a post-processing divergence in `get_context_bundle` breaks the CLI≡MCP equality) | cap 2, cap 10 |
 | H215 | The `index` fidelity line folded into the M2 completeness/anti-fabrication invariant (`tests/test_completeness.py`) — the leanest `context --budget index` tier names its `_Fidelity: full N (of K)._` holdings (fidelity is a ledger-free fact, travels everywhere; vision principle 3) but carries no `_Custody:`/drift token, while the *same* query at `connected`+, over a **recorded** `drifted` verdict, carries the `_Custody:_` headline's `drift drifted 1` section — so the `index` absence is a genuine withholding of an unread ledger claim, not an empty scope (the budget/tier-honesty counterpart of H190's compiled-page action-line honest-absence; the per-excerpt drift block's honesty on the depth axis). Sabotage-verified non-vacuous (flipping the `index`-tier ledger gate makes the dedicated `_Fidelity:_` line vanish, failing the test). Closes the budget/tier-honesty sub-theme CLI-side | cap 7, M2 |
 | H219 | MCP twin of H215 in `tests/test_completeness.py` (`test_mcp_index_budget_names_fidelity_holdings_but_no_drift_verdict`), beside the CLI fold — the M2 anti-fabrication contract on the read an agent reaches over MCP. `get_context_bundle(query, budget="index")` names its `_Fidelity: full N (of K)._` holdings (ledger-free fact; fidelity travels, vision principle 3) and carries no `_Custody:`/drift token, while the *same* query at `connected`+, over a **recorded** `drifted` verdict, carries the `_Custody:_` headline's `drift drifted 1` section — so the `index` silence is a genuine withholding, not an empty scope. Where H214 pinned the MCP fidelity *line* + its CLI byte-identity, H219 adds the *completeness* framing (the honest absence proven against a verdict the deeper tiers surface). Sabotage-verified non-vacuous (flipping the `index`-tier ledger gate so the `_Custody:_` headline leaks suppresses the dedicated `_Fidelity:_` line). Closes the budget/tier-honesty *drift-withholding* contract on both surfaces (CLI H215 + MCP H219) | cap 2, cap 7, M2 |
+| H217 | Bundle import is honest about *orphan* custody events (`custody.partition_resolvable_events`, `src/scrolls/cli.py` `_cmd_import_bundle`, `tests/test_bundle.py`) — every imported event must resolve to a held-or-imported item; one whose `item_id` names no such item is split off, counted in the summary (`events.orphaned`, always present), warned on stderr, and *not* inserted (no dangling ledger row for an item `scrolls show` 404s on). A well-formed export never orphans (events ride only for in-scope items, all in the items block), so this guards the corrupt/hand-edited case — the M2 anti-fabrication ethos on the import-completeness axis (custody §2.4); the whole-library `import events` restore (H72) stays orphan-tolerant by design (events restore independently of items). Sabotage-verified non-vacuous (neutering the partition fails both the orphan-count and no-dangling-row tests). Opened the *event-complete* leg of the portable-bundle round-trip-depth horizon | cap 9, cap 7 |
 | H216 | Mixed-fidelity bundle round-trip invariant in `tests/test_bundle.py` (`test_mixed_fidelity_bundle_parse_preserves_each_tier` + `test_mixed_fidelity_bundle_round_trips_across_a_fresh_library`) — portability is *tier-lossless*, not just full-lossless. The other round-trip ties only exercise an all-`full` fixture; H216 builds a scope spanning all three tiers (a `full` body, an extracted-but-unhashed `partial`, a body-less `reference` pointer riding its query term in the title), `export bundle`s it, and re-imports into a fresh library, asserting each item's `get_fidelity` tier is identical across the boundary (exact-equality catches a downgrade *or* a spurious promotion). Test-only — the round-trip is lossless by construction (`item_to_dict`/`item_from_dict` carry every field; `insert_item` writes every column), so fidelity travels (vision principle 3). Sabotage-verified non-vacuous (dropping the body in `item_from_dict` falls `full`→`partial`, `partial`→`reference`; both tests fail). Opened the portable-bundle round-trip-depth horizon | cap 7, cap 9 |
 
 ---
@@ -443,13 +471,15 @@ committed, tested, clean stopping point; slips roll forward.
   the CLI and the read an agent reaches over MCP.
 - **Day 3 (2026-06-22 → 2026-06-23):** Portable-bundle round-trip depth. **H216**
   (the mixed-fidelity bundle round-trip invariant — `partial`/`reference` tiers
-  re-import tier-lossless, not just `full`) **shipped 2026-06-20** (`tests/test_bundle.py`),
-  opening this horizon ahead of schedule. Next: **H217** (bundle import honest about
-  orphan custody events), then **H220** (`import bundle --dry-run` preview on H217's
-  orphan accounting), and **H224** (the whole-library `export items`/`import items`
-  backup sibling of H216 — tier-lossless on the *other* portable surface too). The
-  remaining budget/tier truncation/facet scope-honesty pins (H221–H223) slot in
-  alongside. Re-derive at the H218 checkpoint.
+  re-import tier-lossless, not just `full`) and **H217** (bundle import honest about
+  orphan custody events — every imported event resolves to a held-or-imported item or
+  is counted-and-skipped, never a dangling ledger row) **both shipped 2026-06-20**
+  (`tests/test_bundle.py`), opening this horizon ahead of schedule. Next: **H220**
+  (`import bundle --dry-run` preview on H217's orphan accounting), **H224** (the
+  whole-library `export items`/`import items` backup sibling of H216 — tier-lossless on
+  the *other* portable surface too), and **H225** (the diagnosable half of H217 — name
+  which items the orphan events dangle on). The remaining budget/tier truncation/facet
+  scope-honesty pins (H221–H223) slot in alongside. Re-derive at the H218 checkpoint.
 
 ---
 
@@ -468,13 +498,15 @@ committed, tested, clean stopping point; slips roll forward.
   completeness fold), and H219 (its MCP twin) all shipped — the drift-withholding
   contract holds on both the CLI and the read an agent reaches over MCP. The
   truncation/facet scope-honesty pins (H221–H223) are the remaining depth-axis follow-ons.
-- Then **portable-bundle round-trip depth** — **H216 shipped 2026-06-20** (the
-  mixed-fidelity bundle round-trip: portability is *tier-lossless*, not just
-  full-lossless), opening this horizon; remaining are **H217** (event-complete —
-  no silently orphaned custody events on import), **H220** (`import bundle --dry-run`
-  preview, letting an agent review a shared bundle before merging it), and **H224**
-  (the whole-library `export items`/`import items` backup sibling of H216 —
-  tier-lossless on the *other* portable surface too).
+- Then **portable-bundle round-trip depth** — **H216 and H217 both shipped
+  2026-06-20** (H216 the mixed-fidelity bundle round-trip: portability is
+  *tier-lossless*, not just full-lossless; H217 the event-complete leg: no silently
+  orphaned custody events on import — every imported event resolves to a
+  held-or-imported item or is counted-and-skipped), opening this horizon; remaining
+  are **H220** (`import bundle --dry-run` preview, letting an agent review a shared
+  bundle before merging it), **H224** (the whole-library `export items`/`import items`
+  backup sibling of H216 — tier-lossless on the *other* portable surface too), and
+  **H225** (the diagnosable half of H217 — name which items the orphan events dangle on).
 - Consider a bi-temporal framing pass on drift events (captured-at vs
   source-changed-at) *only if* an agent workflow shows the event record is
   insufficient; otherwise keep deferred (MVP "out of scope").

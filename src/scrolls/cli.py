@@ -41,6 +41,7 @@ from scrolls.custody import (
     latest_events,
     live_recapture,
     parse_since,
+    partition_resolvable_events,
     recheck_coverage,
     recheck_order,
     record_events,
@@ -1748,11 +1749,37 @@ def _cmd_import_bundle(path: str) -> int:
     # INSERT OR IGNORE. Events ride for *every* in-scope item, whether its row was
     # freshly inserted or already held (custody history merges), since dedup
     # prevents double-counting.
-    ev_imported, ev_skipped = import_events(paths.db_path, imported_events)
+    #
+    # First split off any **orphan** events — events whose item is neither held
+    # nor imported (roadmap H217). A well-formed bundle has none (its events ride
+    # only for in-scope items, all of which are in the items block above), so this
+    # is the corrupt/hand-edited case: importing such an event would write a
+    # dangling ledger row for an item `scrolls show` 404s on. We count it
+    # (`orphaned`, always present, and a stderr warning when non-zero) and decline
+    # to insert it — the take-it-with-me artifact is honest about what didn't
+    # resolve, never silently retaining a phantom history nor silently dropping it.
+    resolvable_events, orphan_events = partition_resolvable_events(
+        paths.db_path, imported_events
+    )
+    ev_imported, ev_skipped = import_events(paths.db_path, resolvable_events)
+    if orphan_events:
+        print(
+            json.dumps({
+                "warning": (
+                    f"{len(orphan_events)} orphan custody event(s) reference items "
+                    "not in this bundle and were not imported"
+                )
+            }),
+            file=sys.stderr,
+        )
     print(json.dumps({
         **counts,
         "items": len(imported_items),
-        "events": {"imported": ev_imported, "skipped": ev_skipped},
+        "events": {
+            "imported": ev_imported,
+            "skipped": ev_skipped,
+            "orphaned": len(orphan_events),
+        },
     }))
     return 0
 
