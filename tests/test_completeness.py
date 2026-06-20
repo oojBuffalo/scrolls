@@ -43,6 +43,7 @@ import pytest
 
 from scrolls import mcp_server
 from scrolls.cli import main
+from scrolls.custody import CustodyEvent, record_events
 from scrolls.doctor import run_doctor
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
@@ -424,3 +425,72 @@ def test_compiled_refresh_line_is_per_axis_honest(scrolls_home, capsys):
     assert "classifications stale in" in index_md   # the axis that has a basis
     assert "summaries stale in" not in index_md     # the axis that does not → omitted
     assert "_Attention:" not in index_md            # single source, no drift → no pointer
+
+
+# --- The leanest `context` budget names fidelity holdings, never a drift verdict --
+#
+# The progressive `context --budget` tiers (MVP M3) bound bundle *depth*. The
+# leanest `index` tier reads no custody ledger at all (`context.py`: the
+# `latest_events` read is gated to `connected`+), so it must obey G1 the way the
+# compiled pages do (H190): it states what it *holds* — the `_Fidelity:_` holdings
+# line, fidelity being a ledger-free fact derived from stored fields (roadmap H212,
+# vision principle 3: *fidelity travels with every result*) — but it never asserts a
+# *drift* verdict it did not read. A `verified`/`unverified`/`drifted` claim over an
+# unread ledger would be the exact fabrication M2 forbids ("nothing checked" dressed
+# as a verdict). The same query at `connected`+ *does* read the ledger and carries
+# the `_Custody:_` headline with its drift section, so the `index` absence is a
+# genuine withholding, not an empty scope with nothing to report. This is the
+# budget/tier-honesty counterpart of the compiled-page action-line honest-absence
+# (H190) and the per-excerpt drift block's honesty (the `full` budget): the holdings
+# fact travels at every tier, the drift claim only where a ledger was read. Roadmap
+# H215; the MCP twin of this read-surface contract is H219.
+
+
+def _fidelity_line(out):
+    return next(line for line in out.splitlines() if line.startswith("_Fidelity:"))
+
+
+def test_index_budget_names_fidelity_holdings_but_no_drift_verdict(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    # a held item the query matches, carrying a *recorded* drift verdict in the
+    # ledger — so the `index` tier's silence below is the withholding of a real
+    # verdict it didn't read, not the emptiness of a scope with nothing to report.
+    # The id/title carry no "drift" substring, so the absence assertion below targets
+    # the rendered drift *verdict*, not the item's own name.
+    insert_item(db, _rendered("web:moved"))
+    record_events(
+        db,
+        [
+            CustodyEvent(
+                item_id="web:moved",
+                checked_at="2026-06-14T00:00:00+00:00",
+                status="drifted",
+                prior_hash="sha256:web:moved",
+                observed_hash="cafe1234",
+            )
+        ],
+    )
+    capsys.readouterr()
+
+    # the leanest tier states what it HOLDS — the fidelity holdings fact and its
+    # scope (`of K`) — so fidelity travels even where no ledger is read ...
+    assert main(["context", "alpha", "--budget", "index"]) == 0
+    index_out = capsys.readouterr().out
+    line = _fidelity_line(index_out)
+    assert "full 1" in line          # the holdings fact (the item is full-fidelity)
+    assert "(of 1)" in line          # ... named with its holdings scope
+    # ... but never a drift verdict it did not read (the M2 anti-fabrication half):
+    # no `_Custody:_` headline and no drift token of any posture.
+    assert "_Custody:" not in index_out
+    assert "drift" not in index_out
+
+    # the SAME query at `connected`+ DID read the ledger → the `_Custody:_` headline
+    # carries the recorded drift verdict, proving the `index` absence above is a
+    # genuine withholding (the tier could have read it; it honestly did not).
+    for tier in ("connected", "full"):
+        assert main(["context", "alpha", "--budget", tier]) == 0
+        deep_out = capsys.readouterr().out
+        assert "_Custody:" in deep_out
+        assert "drift drifted 1" in deep_out
+        assert "_Fidelity:" not in deep_out  # the headline carries fidelity above index
