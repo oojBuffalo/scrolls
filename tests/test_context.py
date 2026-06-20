@@ -796,6 +796,63 @@ def test_context_index_fidelity_scope_is_honest_under_truncation(scrolls_home, c
     assert counts.get("full") and counts.get("partial")
 
 
+def test_context_index_fidelity_scope_honors_the_active_facet(scrolls_home, capsys):
+    # roadmap H223: the leanest `index` `_Fidelity:_` holdings count the *post-facet*
+    # kept set (the representations `build_context` keeps after the
+    # source/category/stage/tag/concept filter), so a scoped `--source <S>` names only
+    # <S>'s fidelity tiers and `(of k)` scope — never the library-wide holdings of a
+    # multi-source library. The *facet*-axis sibling of H221's *truncation*-axis
+    # `(of N)` scope-honesty: the holdings fact never over-claims beyond the agent's
+    # chosen scope.
+    from scrolls.custody import custody_counts, custody_counts_by_source
+    from scrolls.items import list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # multi-source, mixed-fidelity *within* one source: web is full 1 + partial 1,
+    # arxiv is full 2. So web's holdings (full 1, partial 1, of 2) are provably a
+    # strict subset of — and a different tier split than — the library-wide holdings
+    # (full 3, partial 1, of 4). All titles carry "database" so one query covers all.
+    insert_item(db, make_item(
+        "web:full", "Full database", "A full database body.",
+        source="web", url="https://web.example/full",
+        content_hash="deadbeef", raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, make_item(
+        "web:partial", "Partial database", "A partial database body.",
+        source="web", url="https://web.example/partial"))  # no hash/raw → partial
+    for index in range(2):
+        insert_item(db, make_item(
+            f"arxiv:{index}", f"Arxiv database {index}", "A database paper body.",
+            source="arxiv", url=f"https://arxiv.org/abs/{index}",
+            content_hash=f"aa11bb2{index}",
+            raw_text="<raw>A database paper body.</raw>"))
+    capsys.readouterr()
+
+    # what web's holdings vs. the whole library's actually are, straight from the
+    # shared `custody_counts*` primitive (`{}` verdicts — fidelity is ledger-free),
+    # so the expectations are tied to the scoped subset, not independently hardcoded
+    items = list_items(db)
+    web_tiers = {t: n for t, n in custody_counts_by_source(items, {})["web"]["tiers"].items() if n}
+    web_n = sum(custody_counts_by_source(items, {})["web"]["tiers"].values())
+    whole_tiers = {t: n for t, n in custody_counts(items, {})["tiers"].items() if n}
+    whole_n = len(items)
+
+    scoped = _fidelity_line(
+        run_context(capsys, "database", "--budget", "index", "--source", "web"))
+    unscoped = _fidelity_line(run_context(capsys, "database", "--budget", "index"))
+
+    # the scoped line names only web's holdings and its `(of k)` scope
+    assert _fidelity_counts(scoped) == web_tiers       # {full 1, partial 1}
+    assert _fidelity_scope(scoped) == web_n            # (of 2)
+    # the unscoped line names the whole-library holdings
+    assert _fidelity_counts(unscoped) == whole_tiers   # {full 3, partial 1}
+    assert _fidelity_scope(unscoped) == whole_n        # (of 4)
+    # the scope honesty is non-vacuous: the two genuinely differ on both axes — the
+    # scoped read never silently reverts to the library-wide holdings it didn't see
+    assert web_tiers != whole_tiers
+    assert web_n != whole_n
+
+
 # --- per-source custody breakdown (roadmap H149) ---------------------------
 
 
