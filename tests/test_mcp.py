@@ -9,6 +9,7 @@ the real FastMCP server to lock the registered tool surface.
 import asyncio
 import dataclasses
 import json
+import re
 
 import pytest
 
@@ -1793,6 +1794,68 @@ def test_get_context_bundle_index_carries_the_fidelity_holdings_line(scrolls_hom
     assert "_Fidelity:" not in connected
     headline = next(line for line in connected.splitlines() if line.startswith("_Custody:"))
     assert "fidelity full 1, partial 1" in headline
+
+
+def test_get_context_bundle_index_fidelity_scope_is_honest_under_truncation(
+    scrolls_home, capsys
+):
+    # roadmap H222 — the MCP twin of H221. The leanest tier's `_Fidelity:_` line
+    # counts the *in-bundle* set (the kept post-cap representations), so when the
+    # bundle is capped its `(of N)` must equal the Coverage line's `returned`,
+    # never the library-wide matched total — on the read an agent actually reaches
+    # over MCP, byte-identical to the CLI (just as H214 pins the untruncated line).
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # 3 full + 3 partial, all matching "database" — a mixed-fidelity scope larger
+    # than the cap. With limit=4, pigeonhole forces the kept 4 to span *both*
+    # tiers (only 3 of either exist), so the in-bundle split (sums to 4) is
+    # provably not the library-wide `full 3, partial 3` (sums to 6).
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"wikipedia:en:Full_{index}", source="wikipedia",
+            url=f"https://en.wikipedia.org/wiki/Full_{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Full database {index}",
+            extracted_text="A fully held database body.",
+            raw_text="<raw>A full database body.</raw>",
+            content_hash=f"deadbeef0{index}", stage="fetched",
+        ))
+        insert_item(db, ScrollItem(
+            id=f"wikipedia:en:Partial_{index}", source="wikipedia",
+            url=f"https://en.wikipedia.org/wiki/Partial_{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Partial database {index}",
+            extracted_text="A partial database body.", stage="fetched",
+        ))  # no hash/raw → partial fidelity
+
+    index = mcp_server.get_context_bundle("database", budget="index", limit=4)
+    fidelity = next(line for line in index.splitlines() if line.startswith("_Fidelity:"))
+    coverage = next(line for line in index.splitlines() if line.startswith("_Coverage:"))
+
+    # the bundle is genuinely truncated: top 4 of 6
+    returned, matched = (int(n) for n in re.search(r"the top (\d+) of (\d+)", coverage).groups())
+    assert (returned, matched) == (4, 6)
+
+    # the holdings scope names only what the bundle saw, tied to Coverage's
+    # `returned` — never the library-wide matched total it never read
+    scope = int(re.search(r"\(of (\d+)\)", fidelity).group(1))
+    assert scope == returned        # (of 4), == Coverage's top
+    assert scope != matched         # never (of 6)
+    # and the tier counts sum to that in-bundle scope, not the whole library
+    counts = {tier: int(n) for tier, n in re.findall(r"(full|partial|reference) (\d+)", fidelity)}
+    assert sum(counts.values()) == returned     # sums to 4, not 6
+    # the kept set is provably mixed (pigeonhole), so the line isn't accidentally
+    # all-one-tier — a real holdings split over the truncated scope
+    assert counts.get("full") and counts.get("partial")
+
+    # the MCP twin never diverges from the CLI on the truncated line either (both
+    # are build_context) — the H214 byte-identity, here under truncation
+    capsys.readouterr()
+    assert main(["context", "database", "--budget", "index", "--limit", "4"]) == 0
+    cli = capsys.readouterr().out
+    cli_fidelity = next(line for line in cli.splitlines() if line.startswith("_Fidelity:"))
+    assert fidelity == cli_fidelity
 
 
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
