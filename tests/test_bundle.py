@@ -854,6 +854,100 @@ def test_import_bundle_never_overwrites_an_existing_scroll(scrolls_home, tmp_pat
     assert report["skipped"] == 1
 
 
+# --- mixed-fidelity round-trip: portability is *tier-lossless* (H216) --------
+
+
+def _mixed_fidelity_scope():
+    """Three scrolls spanning all three fidelity tiers, all in the "database"
+    query scope. The reference-only pointer holds no body to index, so "database"
+    rides in its title to stay in scope (the H45 reference-fixture pattern)."""
+    return [
+        # full: a re-derivable body (raw_text) + a content_hash at a captured stage
+        make_item("wikipedia:en:Full", "Full", "A full database engine."),
+        # partial: extracted text survives but no hash/raw body → a degraded-but-
+        # honest capture, not re-derivable to full
+        make_item(
+            "wikipedia:en:Partial", "Partial", "A partial database capture.",
+            raw_text=None, content_hash=None, summary=None,
+        ),
+        # reference: only the pointer + provenance are held, no content at all
+        make_item(
+            "wikipedia:en:Ref", "Reference database pointer", "",
+            raw_text=None, summary=None, content_hash=None,
+            markdown_path=None, stage="detected",
+        ),
+    ]
+
+
+def test_mixed_fidelity_bundle_parse_preserves_each_tier(scrolls_home):
+    # portability is *tier-lossless*, not just full-lossless: a bundle spanning
+    # full/partial/reference re-parses with each item's get_fidelity tier intact
+    # — the partial/reference tiers the other round-trip ties never exercise
+    from scrolls.items import get_fidelity
+
+    main(["init"])
+    db = get_paths().db_path
+    for item in _mixed_fidelity_scope():
+        insert_item(db, item)
+
+    expected = {
+        "wikipedia:en:Full": "full",
+        "wikipedia:en:Partial": "partial",
+        "wikipedia:en:Ref": "reference",
+    }
+    # non-vacuous: the fixture really spans all three tiers
+    assert set(expected.values()) == {"full", "partial", "reference"}
+
+    recovered = {
+        item.id: get_fidelity(item) for item in parse_bundle(build_bundle(db, "database"))
+    }
+    assert recovered == expected
+
+
+def test_mixed_fidelity_bundle_round_trips_across_a_fresh_library(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the end-to-end "take it with me" proof for the partial/reference tiers the
+    # all-full dogfood fixture never exercises: every tier survives
+    # `export bundle` → `import bundle` into an empty library with no import-side
+    # downgrade
+    from scrolls.items import get_fidelity
+
+    main(["init"])
+    db_a = get_paths().db_path
+    for item in _mixed_fidelity_scope():
+        insert_item(db_a, item)
+    # the tiers as the *stored* rows derive them (the path the bundle reads from)
+    tiers_a = {
+        item.id: get_fidelity(get_item(db_a, item.id)) for item in _mixed_fidelity_scope()
+    }
+    assert sorted(tiers_a.values()) == ["full", "partial", "reference"]
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    bundle_text = capsys.readouterr().out
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(bundle_text, encoding="utf-8")
+    # fidelity travels in the readable briefing too — every tier is named in prose
+    assert "fidelity `full`" in bundle_text
+    assert "fidelity `partial`" in bundle_text
+    assert "fidelity `reference`" in bundle_text
+
+    # a fresh, empty library B
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["imported"] == 3
+    # every item landed in B at the *same* fidelity tier — the round-trip never
+    # downgrades a held body to a reference, nor invents fidelity it didn't carry
+    tiers_b = {item_id: get_fidelity(get_item(db_b, item_id)) for item_id in tiers_a}
+    assert tiers_b == tiers_a
+
+
 # --- portable custody: the verify ledger travels in the bundle (H67) --------
 
 

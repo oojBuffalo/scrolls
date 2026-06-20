@@ -105,22 +105,24 @@ scope-honesty under truncation and facet scope.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H216 | **Mixed-fidelity bundle round-trip invariant.** The dogfood/round-trip ties prove a *full*-fidelity topic survives `export bundle`→`import bundle` byte-for-byte (`test_dogfood.py`, all-`full` fixture), but the `partial`/`reference` tiers are never exercised end-to-end. Pin it: a bundle whose items span all three fidelity tiers re-imports with each item's `get_fidelity` tier preserved (no import-side downgrade), folded into `tests/test_bundle.py`. Non-vacuous (≥2 tiers) and the proof that portability is *tier-lossless*, not just full-lossless. Test only. Precondition: lossless round-trip (ADR 0099/0103, shipped); `get_fidelity` (shipped). | → cap 7, cap 9 |
 | H217 | **Bundle import is honest about orphan custody events.** A bundle carries items *and* their verify-ledger events (H67). Pin the round-trip-completeness contract: every imported custody event resolves to a held-or-imported item — an event whose `item_id` matches no item is surfaced (count/warning), never silently dropped or silently retained as a dangling history. Inspect `custody.import_events`/the bundle import path (`src/scrolls/bundle.py`, `src/scrolls/cli.py`) for whether this already holds; add the guard only if reported-but-not-enforced, plus the test (`tests/test_bundle.py`). The import summary today reports `{imported, skipped, items, events:{imported,skipped}}` (`cli.py:1752`) with no orphan accounting — so this is the read it is missing. Precondition: portable events (H67/H72, shipped). | → cap 9, cap 7 |
 | H220 | **`scrolls import bundle --dry-run` — preview a shared bundle before merging.** Custody review for "take it with me" (cap 9): an agent handed a portable bundle should be able to see *exactly* what an import would add vs. skip — new items, already-held skips, custody events added/deduped, and (on H217) orphan events — **without writing**. Add `--dry-run` to the import-bundle parser; in `_cmd_import_bundle` compute the same summary counts by diffing against the library (item existence via `get_item`, the event-dedup preview) and print them, writing nothing (the read-only sibling of the custody-safe `INSERT OR IGNORE` import, ADR 0082). Plus the test (`tests/test_bundle.py`). Precondition: H217 (orphan-event accounting in the summary). | → cap 9 |
 | H221 | **The `index` `_Fidelity:_` line's `(of N)` scope is honest under truncation.** The holdings line counts the *in-bundle* set (`len(items)`, the kept post-cap representations), not the library-wide matched total — so when the bundle is capped (`matched > returned`) the `(of N)` must equal the `_Coverage:` line's `returned`, never the full `matched`. Pin it: over a >`--limit` mixed-fidelity scope, `context --budget index --limit k` carries `_Fidelity: … (of k)._` and a `_Coverage: the top k of N_` line — the fidelity holdings never over-claim scope the bundle didn't see (the depth-axis sibling of H215's drift-absence honesty; the *fidelity* counterpart of the Coverage line's match-set honesty). Test only (`tests/test_context.py`). Precondition: H212; the Coverage line (G2, shipped). | → cap 7, cap 10 |
 | H222 | **MCP `get_context(budget="index")` `(of N)` scope-honesty under truncation — the MCP twin of H221.** Just as H219 is the MCP completeness twin of H215, the leanest tier's holdings-scope honesty under a cap must hold on the read an agent actually reaches over MCP: `get_context_bundle(query, budget="index", limit=k)` over a >`limit` mixed-fidelity scope carries `_Fidelity: … (of k)._` whose `(of k)` equals the `_Coverage:` line's `returned`, never the library-wide `matched` — and is *byte-identical to the CLI*'s `context --budget index --limit k` (the agent-facing bundle and the CLI never diverge on the leanest tier's holdings scope, just as H214 pinned for the untruncated line). Test only (`tests/test_mcp.py`, beside the H214 twin). Precondition: H214 (the MCP `_Fidelity:_` line, shipped), H221 (the CLI truncation honesty). | → cap 2, cap 10 |
 | H223 | **The `index` `_Fidelity:_` holdings honor the active facet scope.** The leanest tier's holdings line counts the post-facet `items` (the representations `build_context` keeps after the `source`/`category`/`stage`/`tag`/`concept` filter), so a scoped `context --budget index --source <S>` must name only `<S>`'s fidelity tiers and `(of k)` scope — never the library-wide holdings of a multi-source library. Pin it: over a mixed-fidelity, multi-source scope, `--source <S>` carries a `_Fidelity:_` line whose tier counts + `(of k)` equal the scoped subset, while the unscoped run names the whole-library holdings — the *facet*-axis sibling of H221's *truncation*-axis `(of N)` scope-honesty (the holdings fact never over-claims beyond the agent's chosen scope). Test only (`tests/test_context.py`). Precondition: H212; `context` facet scoping (shipped). | → cap 7, cap 10 |
+| H224 | **The whole-library JSONL backup is tier-lossless too — the H216 sibling on the other portable surface.** H216 pinned that the scoped *bundle* round-trip preserves each `get_fidelity` tier; the whole-library `export items` → `import items` → `doctor --fix` backup (ADR 0082 — the migrate/merge/restore path) is the *other* portable surface and is only ever exercised all-`full` (`tests/test_roundtrip.py::_seed_items`; `test_rebuilt_library_passes_its_own_custody_audit` asserts `custody.tiers["full"] == len(seed)`). Pin it: a library whose items span all three fidelity tiers rebuilds via the documented backup commands with `doctor`'s `custody.tiers` equal to the source spread (≥2 tiers, non-vacuous), no rebuild-side downgrade — `import items` carries every content field (ADR 0082) and `doctor --fix` rebuilds only the derived artifacts, never the row fields fidelity reads from. So portability is *tier-lossless* on **both** the scoped-bundle (H216) and whole-library-backup paths. Test only (`tests/test_roundtrip.py`). Precondition: the lossless backup round-trip (ADR 0082, shipped); `get_fidelity` (shipped). | → cap 9, cap 4 |
 | H218 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H216** (the mixed-fidelity bundle round-trip invariant),
-now that the budget/tier-honesty sub-theme is closed on *both* surfaces — the
-`index` context bundle names its fidelity holdings and withholds the drift verdict
-it didn't read, on the CLI (H215) and over MCP (H219, this run). H216–H217 are the
-portable-bundle round-trip-depth follow-ons, H220 is the `import bundle --dry-run`
-preview built on H217's orphan-event accounting, H221–H222 are the leanest
-tier's `(of N)` scope-honesty under truncation on the CLI and its MCP twin, and
-H223 (appended this run) is the *facet*-axis sibling of that truncation honesty.
+The next lead slot is **H217** (bundle import honest about orphan custody
+events), now that **H216 shipped this run** — the mixed-fidelity bundle
+round-trip invariant: a bundle spanning `full`/`partial`/`reference` re-imports
+with each item's `get_fidelity` tier preserved, so portability is *tier-lossless*,
+not just full-lossless (`tests/test_bundle.py`). H217 is the orphan-event
+follow-on, H220 is the `import bundle --dry-run` preview built on H217's
+orphan-event accounting, H221–H222 are the leanest tier's `(of N)` scope-honesty
+under truncation on the CLI and its MCP twin, H223 is the *facet*-axis sibling of
+that truncation honesty, and H224 (appended this run) is the whole-library-backup
+sibling of H216 — *tier-lossless* on the `export items` → `import items` path too.
 Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line
 in-file index (maintenance-rule §4: *git is the changelog*).
@@ -175,6 +177,29 @@ the `index` fidelity holdings name only the agent's scoped subset, never the
 library-wide tiers). The queue now sits at **6** un-started work slots (H216–H217 +
 H220–H223) + the H218 checkpoint, which re-derives. The full §2 refresh already ran at
 today's H207 checkpoint, so this was the incremental §1 update.
+
+**This run shipped H216** — the mixed-fidelity bundle round-trip invariant, opening
+the *portable-bundle round-trip depth* horizon (`tests/test_bundle.py`,
+`test_mixed_fidelity_bundle_parse_preserves_each_tier` +
+`test_mixed_fidelity_bundle_round_trips_across_a_fresh_library`). The other
+round-trip ties only ever exercise an all-`full` fixture, so the `partial`/`reference`
+tiers were never proven portable end-to-end. The new tests build a scope spanning all
+three tiers (a `full` body, an extracted-but-unhashed `partial`, and a body-less
+`reference` pointer that rides its query term in the title), `export bundle` it, and
+re-import into a fresh library — asserting each item's `get_fidelity` tier is identical
+across the boundary (exact-equality, so it catches a downgrade *or* a spurious
+promotion). Sabotage-verified non-vacuous: dropping the body in `item_from_dict`
+falls `full`→`partial` and `partial`→`reference` and both tests fail. The work is
+*test-only* — the round-trip is lossless by construction (`item_to_dict`/`item_from_dict`
+carry every field; `insert_item` writes every column), so H216 pins that portability is
+*tier-lossless*, not just full-lossless (vision principle 3 — fidelity travels with every
+result). The fixture also surfaced a correctness fact now noted in the H224 entry:
+a `full` body backed by *both* `raw_text` and `extracted_text`+`content_hash` stays
+`full` if either survives — the tier rule is robust, not brittle. Shipping one slice
+dropped the work queue to 5, so per §1 this run **restored it to ~6** by appending
+**H224** (the whole-library `export items`/`import items` backup sibling of H216 — the
+*other* portable surface, only ever exercised all-`full` in `test_roundtrip.py`). The
+queue now sits at **6** un-started work slots (H217 + H220–H224) + the H218 checkpoint.
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -387,6 +412,7 @@ changelog (maintenance-rule §4).
 | H214 | MCP twin of H212 in `tests/test_mcp.py` — `get_context_bundle(budget="index")` carries the `_Fidelity:_` holdings line (non-vacuous full 1 + partial 1, `(of 2)`), honestly omits the drift verdict (no `_Custody:`/`drifted` token over the unread ledger), and its line is *byte-identical to the CLI*'s `scrolls context --budget index` (the agent-facing bundle and the CLI never diverge on the leanest tier's fidelity read); from `connected` up the dedicated line yields to the headline's `fidelity` section (the H212 no-duplication rule, here over MCP). Sabotage-verified non-vacuous (a post-processing divergence in `get_context_bundle` breaks the CLI≡MCP equality) | cap 2, cap 10 |
 | H215 | The `index` fidelity line folded into the M2 completeness/anti-fabrication invariant (`tests/test_completeness.py`) — the leanest `context --budget index` tier names its `_Fidelity: full N (of K)._` holdings (fidelity is a ledger-free fact, travels everywhere; vision principle 3) but carries no `_Custody:`/drift token, while the *same* query at `connected`+, over a **recorded** `drifted` verdict, carries the `_Custody:_` headline's `drift drifted 1` section — so the `index` absence is a genuine withholding of an unread ledger claim, not an empty scope (the budget/tier-honesty counterpart of H190's compiled-page action-line honest-absence; the per-excerpt drift block's honesty on the depth axis). Sabotage-verified non-vacuous (flipping the `index`-tier ledger gate makes the dedicated `_Fidelity:_` line vanish, failing the test). Closes the budget/tier-honesty sub-theme CLI-side | cap 7, M2 |
 | H219 | MCP twin of H215 in `tests/test_completeness.py` (`test_mcp_index_budget_names_fidelity_holdings_but_no_drift_verdict`), beside the CLI fold — the M2 anti-fabrication contract on the read an agent reaches over MCP. `get_context_bundle(query, budget="index")` names its `_Fidelity: full N (of K)._` holdings (ledger-free fact; fidelity travels, vision principle 3) and carries no `_Custody:`/drift token, while the *same* query at `connected`+, over a **recorded** `drifted` verdict, carries the `_Custody:_` headline's `drift drifted 1` section — so the `index` silence is a genuine withholding, not an empty scope. Where H214 pinned the MCP fidelity *line* + its CLI byte-identity, H219 adds the *completeness* framing (the honest absence proven against a verdict the deeper tiers surface). Sabotage-verified non-vacuous (flipping the `index`-tier ledger gate so the `_Custody:_` headline leaks suppresses the dedicated `_Fidelity:_` line). Closes the budget/tier-honesty *drift-withholding* contract on both surfaces (CLI H215 + MCP H219) | cap 2, cap 7, M2 |
+| H216 | Mixed-fidelity bundle round-trip invariant in `tests/test_bundle.py` (`test_mixed_fidelity_bundle_parse_preserves_each_tier` + `test_mixed_fidelity_bundle_round_trips_across_a_fresh_library`) — portability is *tier-lossless*, not just full-lossless. The other round-trip ties only exercise an all-`full` fixture; H216 builds a scope spanning all three tiers (a `full` body, an extracted-but-unhashed `partial`, a body-less `reference` pointer riding its query term in the title), `export bundle`s it, and re-imports into a fresh library, asserting each item's `get_fidelity` tier is identical across the boundary (exact-equality catches a downgrade *or* a spurious promotion). Test-only — the round-trip is lossless by construction (`item_to_dict`/`item_from_dict` carry every field; `insert_item` writes every column), so fidelity travels (vision principle 3). Sabotage-verified non-vacuous (dropping the body in `item_from_dict` falls `full`→`partial`, `partial`→`reference`; both tests fail). Opened the portable-bundle round-trip-depth horizon | cap 7, cap 9 |
 
 ---
 
@@ -417,10 +443,13 @@ committed, tested, clean stopping point; slips roll forward.
   the CLI and the read an agent reaches over MCP.
 - **Day 3 (2026-06-22 → 2026-06-23):** Portable-bundle round-trip depth. **H216**
   (the mixed-fidelity bundle round-trip invariant — `partial`/`reference` tiers
-  re-import tier-lossless, not just `full`) and **H217** (bundle import honest about
+  re-import tier-lossless, not just `full`) **shipped 2026-06-20** (`tests/test_bundle.py`),
+  opening this horizon ahead of schedule. Next: **H217** (bundle import honest about
   orphan custody events), then **H220** (`import bundle --dry-run` preview on H217's
-  orphan accounting). The remaining budget/tier truncation/facet scope-honesty pins
-  (H221–H223) slot in alongside. Re-derive at the H218 checkpoint.
+  orphan accounting), and **H224** (the whole-library `export items`/`import items`
+  backup sibling of H216 — tier-lossless on the *other* portable surface too). The
+  remaining budget/tier truncation/facet scope-honesty pins (H221–H223) slot in
+  alongside. Re-derive at the H218 checkpoint.
 
 ---
 
@@ -439,10 +468,13 @@ committed, tested, clean stopping point; slips roll forward.
   completeness fold), and H219 (its MCP twin) all shipped — the drift-withholding
   contract holds on both the CLI and the read an agent reaches over MCP. The
   truncation/facet scope-honesty pins (H221–H223) are the remaining depth-axis follow-ons.
-- Then **portable-bundle round-trip depth** (H216–H217, + the H220 `import bundle
-  --dry-run` preview): prove portability is *tier-lossless* (mixed-fidelity
-  round-trip) and *event-complete* (no silently orphaned custody events on import),
-  and let an agent review a shared bundle before merging it.
+- Then **portable-bundle round-trip depth** — **H216 shipped 2026-06-20** (the
+  mixed-fidelity bundle round-trip: portability is *tier-lossless*, not just
+  full-lossless), opening this horizon; remaining are **H217** (event-complete —
+  no silently orphaned custody events on import), **H220** (`import bundle --dry-run`
+  preview, letting an agent review a shared bundle before merging it), and **H224**
+  (the whole-library `export items`/`import items` backup sibling of H216 —
+  tier-lossless on the *other* portable surface too).
 - Consider a bi-temporal framing pass on drift events (captured-at vs
   source-changed-at) *only if* an agent workflow shows the event record is
   insufficient; otherwise keep deferred (MVP "out of scope").
