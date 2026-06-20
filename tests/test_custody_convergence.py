@@ -2144,6 +2144,153 @@ def test_maintain_suggestions_fall_back_to_whole_library_when_every_source_is_st
     assert _scoped_refresh_sources(suggested, "scrolls kb --stale") == set()
 
 
+def test_mcp_run_maintenance_scoped_suggestions_name_exactly_the_refresh_debt_sources(
+    scrolls_home, capsys, fake_summary_llm
+):
+    # roadmap H209: the agent-facing MCP `run_maintenance` tool (H196) returns the
+    # SAME assembled report shape the CLI `maintain` prints — `assemble_report`
+    # composed identically, the `suggested` block from the same `suggest_repairs`.
+    # H183 pinned, on the *CLI* surface, that the scoped `suggested` refresh commands
+    # name exactly the debt-map sources (`enrichment_by_source` / `summary_by_source`).
+    # This folds the *MCP* read into that tie, closing the suggestion↔debt-map
+    # convergence over BOTH surfaces. Over the same combined H179/H183 seed: the
+    # whole-library `run_maintenance()` tool's scoped `classify --stale --source <S>`
+    # suggestion sources ≡ its `enrichment_by_source` keys, the `kb --stale --source
+    # <S>` sources ≡ its `summary_by_source` keys (the H171 double-attribution
+    # carried), the MCP report converges field-for-field with CLI `maintain
+    # --no-recheck` (H183's surface) and the pure `suggest_repairs(run_doctor())`, and
+    # a *scoped* `run_maintenance(source=S)` short-circuits to `<command> --source S`
+    # per present axis (the H182 collapsed-universe path). Mutation-checked: a `kb
+    # --stale --source` refresh moves the MCP suggestions in lockstep with the debt map.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    # The H179 seed: both refresh axes, with one held source (reddit) clean on BOTH,
+    # so each axis's offenders are a *strict* subset of the held universe (scoping
+    # fires) and the two axes name different source sets.
+    expected_enrichment, expected_summary = _seed_refresh_debt_both_axes(db)
+    capsys.readouterr()  # drain the `init` output
+
+    def _audit_fields(report):
+        # Both surfaces compose `assemble_report` identically: only the trend-position
+        # bookkeeping differs by run order — `recorded_at` (the timestamp) and `delta`
+        # (a whole-library pass records a snapshot, so the second run sees the first's
+        # as its baseline; ADR 0082). Everything else is the deterministic audit.
+        return {k: v for k, v in report.items() if k not in ("recorded_at", "delta")}
+
+    # --- the whole-library MCP pass: its OWN suggestions ≡ its OWN debt maps -------
+    # The MCP tool returns a dict (no print/capsys), so capsys stays clean for the
+    # CLI comparison below. It records the whole-library snapshot/log baseline (H196).
+    mcp_report = mcp_server.run_maintenance()
+    mcp_suggested = mcp_report["suggested"]
+    mcp_enrichment = mcp_report["enrichment_by_source"]
+    mcp_summary = mcp_report["summary_by_source"]
+
+    # the debt maps are the canonical combined seed: ≥2 sources each, reddit held but
+    # clean on BOTH axes (a strict subset → scoping fires), the two axes differing.
+    assert mcp_enrichment == expected_enrichment == {"arxiv": 1, "web": 2}
+    assert mcp_summary == expected_summary == {"arxiv": 1, "web": 1, "wikipedia": 1}
+    held_sources = set(run_doctor(get_paths())["custody"]["by_source"])
+    assert held_sources == {"arxiv", "reddit", "web", "wikipedia"}
+    assert "reddit" not in mcp_enrichment and "reddit" not in mcp_summary
+
+    # THE TIE over MCP: the scoped suggestions name exactly the debt-map sources, per
+    # axis. The H171 attribution carries — Bm25 spans web+arxiv, so the summary
+    # suggestion names BOTH (plus wikipedia for the Vector cluster).
+    mcp_classify = _scoped_refresh_sources(mcp_suggested, "scrolls classify --stale")
+    mcp_kb = _scoped_refresh_sources(mcp_suggested, "scrolls kb --stale")
+    assert mcp_classify == set(mcp_enrichment) == {"arxiv", "web"}
+    assert mcp_kb == set(mcp_summary) == {"arxiv", "web", "wikipedia"}
+    # scoping fired on both axes, so the un-scoped whole-library sweep is NOT named.
+    assert not _suggests_whole_library(mcp_suggested, "scrolls classify --stale")
+    assert not _suggests_whole_library(mcp_suggested, "scrolls kb --stale")
+
+    # --- the MCP report converges field-for-field with the CLI `maintain` ----------
+    # Both pass a `skipped_recheck_report` (the MCP tool always, CLI on `--no-recheck`)
+    # into the same `assemble_report`, so every audit-derived field is byte-equal; only
+    # the run-position bookkeeping (`recorded_at`/`delta`) differs (see `_audit_fields`).
+    assert main(["maintain", "--no-recheck"]) in (0, 1)  # 1 on the fixture missing_scrolls
+    cli_report = json.loads(capsys.readouterr().out)
+    assert _audit_fields(mcp_report) == _audit_fields(cli_report)
+    # the suggestion↔debt-map fields specifically agree across the two surfaces.
+    assert cli_report["suggested"] == mcp_suggested
+    assert cli_report["enrichment_by_source"] == mcp_enrichment
+    assert cli_report["summary_by_source"] == mcp_summary
+
+    # ... and the MCP `suggested` is a faithful read of the pure audit: equal to
+    # `suggest_repairs` over a fresh whole-library `doctor`, whose scoped sources are
+    # exactly doctor's debt-map keys — so the tie is the audit's, not maintain- or
+    # transport-specific, closing the suggestion↔debt-map↔doctor triangle over MCP.
+    doctor_report = run_doctor(get_paths())
+    pure = suggest_repairs(doctor_report)
+    assert _scoped_refresh_sources(pure, "scrolls classify --stale") == mcp_classify
+    assert _scoped_refresh_sources(pure, "scrolls kb --stale") == mcp_kb
+    assert mcp_classify == set(doctor_report["custody"]["enrichment"]["by_source"])
+    assert mcp_kb == set(doctor_report["custody"]["summaries"]["by_source"])
+
+    # --- the H182 short-circuit over MCP: a scoped pass names `<command> --source S`
+    # per present axis (the collapsed-universe path) --------------------------------
+    # Under `source=S` the audit is pre-filtered to <S>, so its held universe collapses
+    # to {S} and the H181 strict-subset rule would (wrongly) emit the whole-library
+    # sweep; H182 short-circuits to the scoped `<command> --source S` for each axis S
+    # carries debt on. web carries ONLY enrichment debt under its own scope (Bm25's
+    # lone web member fractures below MIN_MEMBERS → no summary debt); wikipedia carries
+    # ONLY summary debt (its Vector cluster, 2 members, survives) and no classifications
+    # — so each scoped pass names exactly one axis. A scoped pass is non-persisting (ADR
+    # 0082), so it cannot clobber the whole-library baseline recorded above.
+    scoped_expect = {  # source -> (classify sources, kb sources)
+        "web": ({"web"}, set()),
+        "wikipedia": (set(), {"wikipedia"}),
+    }
+    for source, (want_classify, want_kb) in scoped_expect.items():
+        m = mcp_server.run_maintenance(source=source)
+        m_suggested = m["suggested"]
+        # the scoped pass's OWN debt maps (the audit pre-filtered to S): exactly the
+        # axis S carries under its own scope, the other axis the honest empty map.
+        assert set(m["enrichment_by_source"]) == want_classify
+        assert set(m["summary_by_source"]) == want_kb
+        # the short-circuit: each present axis names exactly `<command> --source S`,
+        # the absent axis names nothing — never the whole-library sweep.
+        assert _scoped_refresh_sources(m_suggested, "scrolls classify --stale") == want_classify
+        assert _scoped_refresh_sources(m_suggested, "scrolls kb --stale") == want_kb
+        assert not _suggests_whole_library(m_suggested, "scrolls classify --stale")
+        assert not _suggests_whole_library(m_suggested, "scrolls kb --stale")
+        # a scoped pass keeps no per-source baseline: null delta, null attention.
+        assert m["delta"] is None and m["attention"] is None
+        # field-for-field with CLI `maintain --source S` and the pure scoped audit.
+        assert main(["maintain", "--source", source, "--no-recheck"]) in (0, 1)
+        cli_scoped = json.loads(capsys.readouterr().out)
+        assert _audit_fields(m) == _audit_fields(cli_scoped)
+        assert cli_scoped["suggested"] == m_suggested
+        pure_scoped = suggest_repairs(run_doctor(get_paths(), source=source), source=source)
+        assert _scoped_refresh_sources(pure_scoped, "scrolls classify --stale") == want_classify
+        assert _scoped_refresh_sources(pure_scoped, "scrolls kb --stale") == want_kb
+
+    # --- mutation check: a scoped refresh moves the MCP suggestions in lockstep -----
+    # `kb --stale --source wikipedia` (offline via fake_summary_llm) regenerates the
+    # wikipedia-only Vector summary, clearing wikipedia's stale-summary debt. The next
+    # whole-library `run_maintenance()` must drop wikipedia from BOTH `summary_by_source`
+    # and the `kb --stale --source <S>` suggestion sources, in lockstep — while the
+    # enrichment axis stays put (a summary refresh never re-classifies). Proves the MCP
+    # tie is causal, not a seed coincidence, and that the two axes move independently.
+    assert main(["kb", "--stale", "--source", "wikipedia"]) == 0
+    capsys.readouterr()
+    after = mcp_server.run_maintenance()
+    assert after["summary_by_source"] == {"arxiv": 1, "web": 1}
+    assert (
+        _scoped_refresh_sources(after["suggested"], "scrolls kb --stale")
+        == set(after["summary_by_source"])
+        == {"arxiv", "web"}
+    )
+    assert after["enrichment_by_source"] == {"arxiv": 1, "web": 2}
+    assert (
+        _scoped_refresh_sources(after["suggested"], "scrolls classify --stale")
+        == set(after["enrichment_by_source"])
+        == {"arxiv", "web"}
+    )
+
+
 def test_graph_by_source_converges_with_doctor_and_the_per_source_tally(scrolls_home, capsys):
     # roadmap H150: the `scrolls graph` stats block now carries the per-source
     # custody split (`stats.custody.by_source`) — the graph-surface counterpart of
