@@ -675,6 +675,83 @@ def test_index_fidelity_line_ties_to_the_headline_and_doctor_tiers(scrolls_home,
     assert index == connected == full == tiers  # and in lockstep on every tier
 
 
+def test_scoped_index_fidelity_line_ties_to_doctor_source_tiers(scrolls_home, capsys):
+    # roadmap H229 — the *scoped* sibling of H213's cross-tier convergence. Where
+    # H213 ties the *unscoped* `index` `_Fidelity:_` line ≡ the `connected`/`full`
+    # `_Custody:_` headline ≡ `doctor`'s `custody.tiers`, this ties the *scoped*
+    # leanest tier to the canonical *scoped* audit: over a multi-source,
+    # mixed-fidelity library where one query matches all of <S>'s held items (no
+    # truncation), `context --budget index --source <S>`'s `_Fidelity:_` tier counts
+    # equal `doctor --source <S>`'s `custody.tiers` (non-zero entries) — both fold
+    # `get_fidelity` over the same scoped item set, so the leanest tier an agent
+    # boots on and the deep custody audit never disagree on what fraction of one
+    # source is held in full. The scoped completion of H213's convergence loop.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls: full 2, partial 1, reference 1
+    # one out-of-scope `arxiv` `full` item, so web's scope is a strict subset of —
+    # and a different tier split than — the whole library (scoping is non-vacuous).
+    # Its title carries "topic" so the *unscoped* query matches it too.
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    paths = get_paths()
+
+    def scoped_picture():
+        # the leanest-tier holdings line for the web scope and the canonical scoped
+        # audit's tiers. No truncation: web holds 4 < DEFAULT_LIMIT (8), and every
+        # web title carries "topic", so the query matches all of web's held items —
+        # the bundle's post-facet set *is* the whole web scope the audit folds over.
+        line = _line_with(
+            _context_out(capsys, "topic", "--budget", "index", "--source", "web"),
+            "_Fidelity:",
+        )
+        index = _rendered_fidelity_counts(line)
+        scope_n = int(re.search(r"\(of (\d+)\)", line).group(1))
+        tiers = _nonzero(run_doctor(paths, source="web")["custody"]["tiers"])
+        return index, scope_n, tiers
+
+    index, scope_n, tiers = scoped_picture()
+    # non-vacuous: web's scope is a genuine multi-tier mix (≥2 non-zero tiers)
+    assert tiers == {"full": 2, "partial": 1, "reference": 1}
+    # the precondition holds: the query matched all of web's held items, so `(of N)`
+    # names the whole scoped held set — the line was never truncated (the H229 tie is
+    # a count-equality only when the bundle saw the whole source; H234 is the boundary)
+    assert scope_n == sum(tiers.values()) == 4
+    # the tie: the scoped leanest-tier holdings ≡ the scoped audit's tiers
+    assert index == tiers
+    # tied to the shared per-source primitive too, not independently hardcoded — both
+    # the line and the audit fold `get_fidelity` over the same scoped held subset
+    web_tiers = _nonzero(custody_counts_by_source(list_items(db), {})["web"]["tiers"])
+    assert index == web_tiers
+
+    # the scope genuinely narrows: the *unscoped* audit names the whole library
+    # (arxiv's `full` lifts it to {full 3, …}), so the scoped read never silently
+    # reverts to the library-wide holdings it didn't see
+    whole = _nonzero(run_doctor(paths)["custody"]["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert tiers != whole
+
+    # mutation in lockstep — drop `web:full1`'s re-derivable body (raw_text + hash)
+    # so it falls `full` → `partial`. The shift must register identically on the
+    # scoped `_Fidelity:_` line and the scoped `doctor --source web` audit, proving
+    # each recomputes `get_fidelity` over the scoped set rather than echoing a cache.
+    import dataclasses
+
+    full1 = next(it for it in list_items(db) if it.id == "web:full1")
+    assert update_item(db, dataclasses.replace(full1, raw_text=None, content_hash=None))
+    mutated = next(it for it in list_items(db) if it.id == "web:full1")
+    assert get_fidelity(mutated) == "partial"  # the dropped body cost it a tier
+    capsys.readouterr()
+
+    index, scope_n, tiers = scoped_picture()
+    assert tiers == {"full": 1, "partial": 2, "reference": 1}  # the shift, on the audit
+    assert scope_n == 4                                        # still the whole web scope
+    assert index == tiers                                      # and in lockstep on the line
+
+
 def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls_home, capsys):
     # roadmap H104: doctor's `custody.by_source` splits the whole-library custody
     # aggregate per source. Each per-source tally must equal `custody_counts` over
