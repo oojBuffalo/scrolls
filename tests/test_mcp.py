@@ -1942,6 +1942,109 @@ def test_get_context_bundle_index_fidelity_scope_honors_the_active_facet(
     assert scoped_line == cli_fidelity
 
 
+def test_get_context_bundle_index_fidelity_scope_is_honest_under_facet_and_truncation(
+    scrolls_home, capsys
+):
+    # roadmap H232 — the MCP twin of H228 (the *composition* of H222's truncation
+    # axis and H227's facet axis). The leanest `index` `_Fidelity:_` `(of N)` must
+    # stay honest when BOTH scope-narrowing filters apply at once on the read an
+    # agent actually reaches over MCP — neither silently reverting to a pre-filter
+    # count when the other is active — and stay byte-identical to the CLI (just as
+    # H222 pins the truncated line and H227 the facet-scoped line).
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # web: 3 full + 3 partial (6 matching) — a mixed-fidelity scope larger than the
+    # cap (4). arxiv: 2 full — so the library-wide match total (8) strictly exceeds
+    # web's scoped total (6), and both exceed the cap. Every title carries "database"
+    # so one query covers the whole library.
+    for index in range(3):
+        insert_item(db, ScrollItem(
+            id=f"web:full_{index}", source="web",
+            url=f"https://web.example/full/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Full database {index}",
+            extracted_text="A full database body.",
+            raw_text="<raw>A full database body.</raw>",
+            content_hash=f"deadbeef0{index}", stage="fetched",
+        ))
+        insert_item(db, ScrollItem(
+            id=f"web:partial_{index}", source="web",
+            url=f"https://web.example/partial/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Partial database {index}",
+            extracted_text="A partial database body.", stage="fetched",
+        ))  # no hash/raw → partial fidelity
+    for index in range(2):
+        insert_item(db, ScrollItem(
+            id=f"arxiv:{index}", source="arxiv",
+            url=f"https://arxiv.org/abs/{index}",
+            saved_at="2026-06-12T00:00:00+00:00", title=f"Arxiv database {index}",
+            extracted_text="A database paper body.",
+            raw_text="<raw>A database paper body.</raw>",
+            content_hash=f"aa11bb2{index}", stage="fetched",
+        ))
+
+    # the scoped-and-truncated read an agent reaches over MCP: source="web" AND
+    # limit=4, both filters live at once
+    scoped = mcp_server.get_context_bundle(
+        "database", budget="index", source="web", limit=4)
+    fidelity = next(l for l in scoped.splitlines() if l.startswith("_Fidelity:"))
+    coverage = next(l for l in scoped.splitlines() if l.startswith("_Coverage:"))
+
+    # the Coverage line proves BOTH filters compose: the cap truncates web's 6 to 4
+    # (`returned`), and the facet narrows the denominator to web's 6 (`matched`) —
+    # never the library-wide 8 an unscoped read would show under the same cap
+    returned, matched = (int(n) for n in re.search(r"the top (\d+) of (\d+)", coverage).groups())
+    assert (returned, matched) == (4, 6)
+
+    # the fidelity scope names only the post-facet, post-cap kept set, tied to the
+    # scoped-and-truncated Coverage `returned` (parsed from both rendered lines, so
+    # the two numbers are tied, not independently hardcoded)
+    scope = int(re.search(r"\(of (\d+)\)", fidelity).group(1))
+    assert scope == returned          # (of 4)
+    assert scope != matched           # never the scoped-untruncated 6
+    # the tier counts sum to that kept set, not any pre-filter count
+    counts = {tier: int(n) for tier, n in re.findall(r"(full|partial|reference) (\d+)", fidelity)}
+    assert sum(counts.values()) == returned   # sums to 4, not 6 or 8
+    # the kept 4 of web's {3 full, 3 partial} must span both tiers (pigeonhole: only
+    # 3 of either exist), so the line is a real holdings split over the
+    # scoped-and-truncated scope, not accidentally all-one-tier
+    assert counts.get("full") and counts.get("partial")
+
+    # non-vacuous on the FACET axis under truncation: the *unscoped* read at the same
+    # cap sees the whole library's 8 matches (top 4 of 8), so the scoped read
+    # genuinely narrowed the denominator — never reverting to the unscoped-but-
+    # truncated set (whose `(of 4)` shares the number but not the scope)
+    unscoped = mcp_server.get_context_bundle("database", budget="index", limit=4)
+    unscoped_cov = next(l for l in unscoped.splitlines() if l.startswith("_Coverage:"))
+    unscoped_matched = int(re.search(r"the top \d+ of (\d+)", unscoped_cov).group(1))
+    assert unscoped_matched == 8
+    assert matched != unscoped_matched        # 6 (web) ≠ 8 (library)
+
+    # non-vacuous on the TRUNCATION axis under facet scope: the *untruncated* scoped
+    # read names web's full 6 (of 6), so the cap genuinely truncated — never
+    # reverting to the scoped-but-untruncated set
+    scoped_untruncated = mcp_server.get_context_bundle(
+        "database", budget="index", source="web")
+    su_fidelity = next(l for l in scoped_untruncated.splitlines() if l.startswith("_Fidelity:"))
+    su_scope = int(re.search(r"\(of (\d+)\)", su_fidelity).group(1))
+    assert su_scope == 6
+    assert scope != su_scope                   # 4 ≠ 6
+
+    # the distinguishing MCP-twin assertion: the scoped-and-truncated bundle's
+    # `_Fidelity:_` line is byte-identical to the CLI's read under both filters (both
+    # are build_context, so the agent-facing bundle and the CLI never diverge on the
+    # composed holdings line either, just as H222/H227 pin each filter alone).
+    capsys.readouterr()
+    assert main([
+        "context", "database", "--budget", "index", "--source", "web", "--limit", "4"
+    ]) == 0
+    cli = capsys.readouterr().out
+    cli_fidelity = next(l for l in cli.splitlines() if l.startswith("_Fidelity:"))
+    assert fidelity == cli_fidelity
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
