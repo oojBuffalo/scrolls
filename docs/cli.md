@@ -2180,16 +2180,26 @@ partition, because a real import inserts those rows *before* partitioning — so
 preview into an *empty* library still resolves the bundle's events instead of
 mis-flagging every one as an orphan. Orphan events warn on stderr in the preview
 exactly as in a real import. The dry-run summary equals what the subsequent real
-import prints (sans `dry_run`), pinned so the preview never drifts from reality
-(`test_import_bundle_dry_run_counts_match_a_real_import`,
+import prints (sans the dry-run-only fields), pinned so the preview never drifts
+from reality (`test_import_bundle_dry_run_counts_match_a_real_import`,
 `test_import_bundle_dry_run_previews_without_writing`,
 `test_import_bundle_dry_run_previews_orphan_events`).
+
+The dry-run also names *which* scrolls are new vs. already held (roadmap H226), so
+the counts ("2 new") become reviewable ("`new`: which two") — an operator can
+confirm the bundle adds what they expect before committing. The `new` and `held`
+lists are sorted, deduped, and **uncapped** (the structured channel carries the
+complete sets, unlike the bounded human orphan warning). They are dry-run-only;
+the real import stays terse
+(`test_import_bundle_dry_run_names_which_items_are_new_vs_held`).
 
 | Key | Meaning |
 | --- | --- |
 | `imported` | new scrolls inserted (would-be-inserted under `--dry-run`) |
 | `skipped` | already present (id collision is the dedupe working) |
 | `items` | scroll records read from the custody block |
+| `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
+| `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |
 | `events` | `{imported, skipped, orphaned}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217) |
 | `dry_run` | present and `true` only under `--dry-run`; the summary is a preview and nothing was written |
 
@@ -2197,7 +2207,7 @@ import prints (sans `dry_run`), pinned so the preview never drifts from reality
 $ scrolls export bundle "database engine" > briefing.md
 
 $ scrolls import bundle briefing.md --dry-run
-{"dry_run": true, "imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
+{"dry_run": true, "imported": 2, "skipped": 0, "items": 2, "new": ["arxiv:1706.03762", "wikipedia:en:SQLite"], "held": [], "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
 [exit 0]
 
 $ scrolls import bundle briefing.md

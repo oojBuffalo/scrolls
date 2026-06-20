@@ -1839,14 +1839,25 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
     bundle_item_ids = {item.id for item in imported_items}
     # INSERT OR IGNORE imports an item iff the library does not already hold it,
     # seeing its own prior inserts within a batch — so a within-bundle duplicate id
-    # (a corrupt bundle) lands once. `seen` mirrors that so the preview count is
-    # exact, not just `get_item`-based.
-    seen_item_ids: set[str] = set()
-    item_imported = 0
+    # (a corrupt bundle) lands once. `new_ids` mirrors that so the preview count is
+    # exact, not just `get_item`-based; `held_ids` names the already-in-library set.
+    #
+    # `new`/`held` are the *reviewable* half of the preview (roadmap H226): the
+    # counts say how much a merge would change, these name *what* — the distinct
+    # ids an operator can confirm before committing. Sorted + deduped (sets), and
+    # **uncapped** (the structured channel carries the complete sets; only the human
+    # orphan warning bounds its tail — M2: structured completeness vs. human
+    # readability). A within-bundle repeat of a new id lands once in `new`; a repeat
+    # of a held id once in `held`; so over a well-formed bundle (no repeats)
+    # `len(new) == imported` and `len(held) == skipped`.
+    new_ids: set[str] = set()
+    held_ids: set[str] = set()
     for item in imported_items:
-        if get_item(paths.db_path, item.id) is None and item.id not in seen_item_ids:
-            item_imported += 1
-            seen_item_ids.add(item.id)
+        if get_item(paths.db_path, item.id) is not None:
+            held_ids.add(item.id)
+        else:
+            new_ids.add(item.id)
+    item_imported = len(new_ids)
     item_skipped = len(imported_items) - item_imported
 
     resolvable_events, orphan_events = partition_resolvable_events(
@@ -1859,6 +1870,8 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
         "imported": item_imported,
         "skipped": item_skipped,
         "items": len(imported_items),
+        "new": sorted(new_ids),
+        "held": sorted(held_ids),
         "events": {
             "imported": ev_imported,
             "skipped": ev_skipped,

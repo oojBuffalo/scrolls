@@ -1323,6 +1323,9 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         "imported": 1,
         "skipped": 1,
         "items": 2,
+        # the reviewable id lists (H226) — dry-run-only, alongside `dry_run`
+        "new": ["arxiv:1706.03762"],
+        "held": ["wikipedia:en:SQLite"],
         "events": {"imported": 2, "skipped": 0, "orphaned": 0},
     }
 
@@ -1330,10 +1333,15 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
     assert get_item(db_b, "arxiv:1706.03762") is None
     assert item_events(db_b, "wikipedia:en:SQLite") == []
 
-    # now the real import, into the same B: its counts equal the preview's
+    # now the real import, into the same B: its counts equal the preview's. The
+    # `new`/`held` review lists are dry-run-only (H226), stripped alongside
+    # `dry_run` — the *counts* byte-identity guarantee (H220) is what's pinned here.
+    _DRY_RUN_ONLY = {"dry_run", "new", "held"}
     assert main(["import", "bundle", str(bundle_path)]) == 0
     real = json.loads(capsys.readouterr().out)
-    assert {k: v for k, v in preview.items() if k != "dry_run"} == real
+    assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == real
+    # the real import stays terse — no reviewable id lists
+    assert "new" not in real and "held" not in real
 
 
 def test_import_bundle_dry_run_previews_orphan_events(
@@ -1367,6 +1375,46 @@ def test_import_bundle_dry_run_previews_orphan_events(
     assert get_item(db, "wikipedia:en:SQLite") is None
     assert item_events(db, "wikipedia:en:SQLite") == []
     assert item_events(db, "wikipedia:en:Ghost") == []
+
+
+def test_import_bundle_dry_run_names_which_items_are_new_vs_held(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # H226: the *reviewable* half of H220. The preview's counts say how much a merge
+    # would change (`imported: 1, skipped: 1`); the operator also needs to know
+    # *what* — which scrolls are new vs. already held — to confirm the bundle adds
+    # what they expect before committing. The dry-run summary names the would-be-
+    # imported ids under `new` and the already-held ids under `held` (each sorted +
+    # deduped); the real import stays terse.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:SQLite", "SQLite", "A database engine."))
+    insert_item(db_a, make_item(
+        "arxiv:1706.03762", "Attention", "A database-adjacent attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+    bundle_path = _export_bundle_to(tmp_path, capsys)
+
+    # library B already holds the SQLite scroll; the arxiv paper would be new
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    insert_item(
+        get_paths().db_path,
+        make_item("wikipedia:en:SQLite", "SQLite", "A database engine."),
+    )
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the new id is named under `new`, the already-held under `held`
+    assert report["new"] == ["arxiv:1706.03762"]
+    assert report["held"] == ["wikipedia:en:SQLite"]
+    # each reviewable list's length equals its count (no within-bundle dups here)
+    assert len(report["new"]) == report["imported"]
+    assert len(report["held"]) == report["skipped"]
+    # the lists are sorted (the deduped, ordered review surface)
+    assert report["new"] == sorted(report["new"])
+    assert report["held"] == sorted(report["held"])
 
 
 # --- scope, completeness, honesty ------------------------------------------
