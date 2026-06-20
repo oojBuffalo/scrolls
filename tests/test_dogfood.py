@@ -32,6 +32,7 @@ not the integrity score, which holds at 100 throughout.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 
 import pytest
@@ -330,6 +331,205 @@ def test_attention_flag_drives_a_scoped_maintenance_triage_on_the_weakest_source
     assert scoped["delta"] is None
     assert load_snapshot(snapshot_path(src)) == baseline
     assert len(read_log(log_path(src))) == log_len
+
+
+# --- the refresh-act leg (H210) -------------------------------------------
+
+
+def _held_topic_with_refresh_debt() -> list[ScrollItem]:
+    """The held topic, seeded with both refresh-debt axes for the refresh-act leg.
+
+    Two enrichment-freshness axes carry stale debt over *different* source sets, so
+    the `_Refresh:_` pointer can't pass by conflating them and each scoped act clears
+    exactly its own axis:
+
+    - **enrichment** (a stale *classification*), confined to one source: the `web`
+      explainer's rules category was produced under a *superseded* ruleset, so a
+      re-classify would no longer reproduce it — the enrichment axis names ``{web}``.
+      Its "guide" title matches the rules engine's ``tutorial`` pattern, so the
+      refresh act re-derives a category and restamps the live ruleset (the debt
+      actually clears, rather than a content-less item falling to an untouched
+      ``unmatched``).
+    - **summary** (a stale *concept summary*), spanning two sources: the
+      ``Transformer`` cluster (an arxiv paper + two web scrolls) has a stored summary
+      whose membership fingerprint no longer matches its live members — the summary
+      axis names ``{arxiv, web}`` (the H171 multi-source attribution: a cluster is
+      stale for *every* source it spans, so it counts toward each).
+    """
+    return [
+        # arxiv paper — a `Transformer`-cluster member. Its category is
+        # platform-curated (not rules-derived), so it carries no enrichment debt:
+        # the enrichment axis stays web-only.
+        _rendered(
+            "arxiv", "1706.03762", "https://arxiv.org/abs/1706.03762",
+            title="Attention Is All You Need",
+            extracted_text="The Transformer uses attention to model sequences.",
+            summary="We propose the Transformer.",
+            category="paper",
+            domain="machine learning",
+            concepts=("Transformer",),
+            tags=("cs.CL",),
+        ),
+        # web explainer — rules-classified under a SUPERSEDED ruleset (the
+        # enrichment debt, confined to `web`). The "guide" title matches the rules
+        # engine's tutorial pattern, so `classify --stale --source web` re-derives
+        # the category and restamps the live ruleset. Also a cluster member.
+        _rendered(
+            "web", None, "https://example.com/transformer-guide",
+            title="A Guide to the Transformer",
+            extracted_text="A transformer stacks self-attention and feed-forward "
+            "layers.",
+            category="tutorial",
+            domain="machine learning",
+            concepts=("Transformer",),
+            tags=("explainer",),
+            provenance={
+                "adapter": "web",
+                "fetched_at": "2026-06-14T00:00:05+00:00",
+                "classified_by": "rules-v1",
+                "classified_basis": "title-pattern",
+                "classified_ruleset": "deadbeef0000",  # superseded → stale
+            },
+        ),
+        # a second web scroll, so the `Transformer` cluster spans arxiv + web with
+        # ≥ MIN_MEMBERS members and the summary axis names two sources.
+        _rendered(
+            "web", None, "https://example.com/scaling-transformers",
+            title="Scaling Transformers",
+            extracted_text="Larger transformer models keep improving with scale.",
+            category="opinion",
+            domain="machine learning",
+            concepts=("Transformer",),
+            tags=("scaling",),
+        ),
+    ]
+
+
+def _store_stale_summary(db_path, slug, display) -> None:
+    """Save a concept summary whose membership fingerprint is already out of date,
+    so `doctor` flags the cluster stale and `kb --stale` regenerates it — the
+    summary-axis seed the convergence suite scripts behind, brought into the dogfood
+    home (the `cli.live_recapture`-style deterministic stand-in for a prior synthesis
+    that the library has since outgrown)."""
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    save_concept_summary(db_path, ConceptSummary(
+        slug=slug, display=display, summary="An older synthesis of the cluster.",
+        members_hash="stale-old-fingerprint", engine="kb-llm-v1",
+        model="claude-opus-4-8", generated_at="2026-06-14T00:00:00+00:00"))
+
+
+_REFRESH_CLASS = re.compile(r"classifications stale in ([^—]+?) — refresh with")
+_REFRESH_SUMM = re.compile(r"summaries stale in ([^—]+?) — refresh with")
+
+
+def _refresh_sources(briefing: str, pattern) -> list[str]:
+    """The sorted source names a briefing's `_Refresh:_` clause lists, or [] when the
+    clause is absent — the readable pointer read back the way an agent skims it (the
+    refresh-axis counterpart of the H206 leg's `attention` read)."""
+    match = pattern.search(briefing)
+    if match is None:
+        return []
+    return sorted(re.findall(r"`([^`]+)`", match.group(1)))
+
+
+def test_refresh_pointer_drives_scoped_enrichment_then_summary_refresh(
+    home, monkeypatch, capsys
+):
+    """*refresh* (H210): the enrichment/summary sibling of H206's drift-act triage.
+    After hold leaves one source's classification stale and a two-source concept
+    summary stale, an agent reads the `scrolls context` briefing — whose `_Refresh:_`
+    line names exactly which sources to refresh on each axis (≡ doctor's
+    `custody.enrichment.by_source`/`custody.summaries.by_source`) — and runs the
+    scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names. Each
+    act clears *exactly* its own axis/source while the untouched axis persists, and
+    the refresh act itself *is* the mutation (no scripted state change) — the
+    refresh-act half of the dogfood's self-healing custody story.
+
+    The per-command pieces are pinned elsewhere (H178 the `_Refresh:_` line, H154/H172
+    the scoped acts, H183 the suggestion↔debt-map tie); this ties them into one
+    end-to-end shell sequence in the CLI dogfood home, the refresh-axis twin of H206's
+    drift triage — so the act-where-the-debt-is point is pinned on *both* the drift
+    and the enrichment/summary axes.
+
+    The two custody points the leg makes visible, the refresh-axis twins of H206's:
+
+    - **act where the debt is** — the `_Refresh:_` line names exactly the sources
+      doctor flags (enrichment ``{web}``, summary ``{arxiv, web}`` — different sets, so
+      the two axes can't be conflated), and running the enrichment act drops *only*
+      the enrichment clause while the summary clause stays, then running the summary
+      act clears it too (honest absence: the whole line vanishes); and
+    - **the H171 attribution** — a two-source stale cluster is refreshed under *any*
+      one of its sources, so `kb --stale --source web` clears both `arxiv` and `web`
+      from the summary map in lockstep, even though the act named only `web`.
+    """
+    # the summary refresh's one live edge (the model call) scripted offline at the
+    # same seam the convergence/kb suites use — the `cli.live_recapture` of the
+    # summary axis, so the refresh act runs network-free.
+    import scrolls.kb_llm as kb_llm
+    monkeypatch.setattr(
+        kb_llm, "_anthropic_complete",
+        lambda system, user, model: json.dumps(
+            {"summary": "How the Transformer shows up across the held scrolls."}),
+    )
+
+    # hold + accrue both refresh-debt axes.
+    home("library")
+    items = _held_topic_with_refresh_debt()
+    _build(items)
+    _store_stale_summary(get_paths().db_path, "transformer", "Transformer")
+    capsys.readouterr()  # drain the kb report
+
+    # doctor's per-source debt maps — the canonical sources the pointer must name.
+    assert main(["doctor"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    enr_map = custody["enrichment"]["by_source"]
+    summ_map = custody["summaries"]["by_source"]
+    # non-vacuous: both axes carry debt, over DIFFERENT source sets.
+    assert enr_map == {"web": 1}
+    assert summ_map == {"arxiv": 1, "web": 1}
+
+    # the agent reads `scrolls context <topic>`; its `_Refresh:_` line names exactly
+    # those sources per axis — the bridge from "what's stale where" to the act.
+    assert main(["context", TOPIC]) == 0
+    briefing = capsys.readouterr().out
+    assert _refresh_sources(briefing, _REFRESH_CLASS) == sorted(enr_map)  # ["web"]
+    assert _refresh_sources(briefing, _REFRESH_SUMM) == sorted(summ_map)  # arxiv,web
+
+    # ACT 1 — the enrichment axis: run exactly the scoped command the line named.
+    assert main(["classify", "--stale", "--source", "web"]) == 0
+    enrichment_run = json.loads(capsys.readouterr().out)
+    assert enrichment_run["classified"] == 1  # the one stale web class'n, restamped
+
+    # re-read: the enrichment clause is GONE, the summary clause UNCHANGED — the act
+    # cleared its own axis and nothing else (≡ doctor: enrichment map now empty).
+    assert main(["context", TOPIC]) == 0
+    after_enrichment = capsys.readouterr().out
+    assert _refresh_sources(after_enrichment, _REFRESH_CLASS) == []
+    assert _refresh_sources(after_enrichment, _REFRESH_SUMM) == ["arxiv", "web"]
+    assert main(["doctor"]) == 0
+    mid = json.loads(capsys.readouterr().out)["custody"]
+    assert mid["enrichment"]["by_source"] == {}
+    assert mid["summaries"]["by_source"] == summ_map  # untouched
+
+    # ACT 2 — the summary axis: run the scoped `kb --stale --source web` the line
+    # named. web participates in the two-source cluster, so its refresh clears the
+    # whole cluster — the H171 attribution: arxiv and web drop in lockstep.
+    assert main(["kb", "--stale", "--source", "web"]) == 0
+    summary_run = json.loads(capsys.readouterr().out)
+    assert summary_run["generated"] == 1  # the one stale cluster, re-synthesized
+
+    # re-read: the summary clause is GONE too — the whole `_Refresh:_` line vanishes
+    # (honest absence: no source carries refresh debt on either axis).
+    assert main(["context", TOPIC]) == 0
+    assert "_Refresh:" not in capsys.readouterr().out
+
+    # doctor: both maps empty — the debt fully cleared by exactly the acts the
+    # pointer named, the refresh-act self-healing the drift triage (H206) mirrors.
+    assert main(["doctor"]) == 0
+    final = json.loads(capsys.readouterr().out)["custody"]
+    assert final["enrichment"]["by_source"] == {}
+    assert final["summaries"]["by_source"] == {}
 
 
 # --- the whole flow, unattended, in order ---------------------------------
