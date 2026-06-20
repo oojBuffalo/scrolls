@@ -853,6 +853,83 @@ def test_context_index_fidelity_scope_honors_the_active_facet(scrolls_home, caps
     assert web_n != whole_n
 
 
+def test_context_index_fidelity_scope_is_honest_under_facet_and_truncation(
+    scrolls_home, capsys
+):
+    # roadmap H228: the *composition* of H221 (truncation) and H223 (facet). The
+    # leanest `index` `_Fidelity:_` `(of N)` must stay honest when BOTH scope-
+    # narrowing filters apply at once — neither silently reverting to a pre-filter
+    # count when the other is active. Over a mixed-fidelity, multi-source library
+    # where one source's matching scope exceeds the cap, the scoped-and-truncated
+    # holdings name only the post-facet, post-cap kept set: `(of k)` equals the
+    # scoped Coverage `returned`, and the tier counts sum to it — never the
+    # library-wide holdings, the unscoped-but-truncated set, or the
+    # scoped-but-untruncated set.
+    main(["init"])
+    db = get_paths().db_path
+    # web: 3 full + 3 partial (6 matching) — a mixed-fidelity scope larger than the
+    # cap (4). arxiv: 2 full — so the library-wide match total (8) strictly exceeds
+    # web's scoped total (6), and both exceed the cap. Every title carries "database"
+    # so one query covers the whole library.
+    for index in range(3):
+        insert_item(db, make_item(
+            f"web:full_{index}", f"Full database {index}", "A full database body.",
+            source="web", url=f"https://web.example/full/{index}",
+            content_hash=f"deadbeef0{index}",
+            raw_text="<raw>A full database body.</raw>"))
+        insert_item(db, make_item(
+            f"web:partial_{index}", f"Partial database {index}",
+            "A partial database body.",
+            source="web", url=f"https://web.example/partial/{index}"))  # → partial
+    for index in range(2):
+        insert_item(db, make_item(
+            f"arxiv:{index}", f"Arxiv database {index}", "A database paper body.",
+            source="arxiv", url=f"https://arxiv.org/abs/{index}",
+            content_hash=f"aa11bb2{index}",
+            raw_text="<raw>A database paper body.</raw>"))
+    capsys.readouterr()
+
+    # the scoped-and-truncated read: `--source web` AND `--limit 4`, both filters live
+    scoped = run_context(
+        capsys, "database", "--budget", "index", "--source", "web", "--limit", "4")
+    fidelity = _fidelity_line(scoped)
+    returned, matched = _coverage_top_of(scoped)
+
+    # the Coverage line proves BOTH filters compose: the cap truncates web's 6 to 4
+    # (`returned`), and the facet narrows the denominator to web's 6 (`matched`) —
+    # never the library-wide 8 an unscoped read would show under the same cap
+    assert (returned, matched) == (4, 6)
+    # the fidelity scope names only the post-facet, post-cap kept set, tied to the
+    # scoped-and-truncated Coverage `returned` (parsed from both rendered lines, so
+    # the two numbers are tied, not independently hardcoded)
+    assert _fidelity_scope(fidelity) == returned          # (of 4)
+    assert _fidelity_scope(fidelity) != matched           # never the scoped-untruncated 6
+    # the tier counts sum to that kept set, not any pre-filter count
+    counts = _fidelity_counts(fidelity)
+    assert sum(counts.values()) == returned               # sums to 4, not 6 or 8
+    # the kept 4 of web's {3 full, 3 partial} must span both tiers (pigeonhole: only
+    # 3 of either exist), so the line is a real holdings split over the
+    # scoped-and-truncated scope, not accidentally all-one-tier
+    assert counts.get("full") and counts.get("partial")
+
+    # non-vacuous on the FACET axis under truncation: the *unscoped* read at the same
+    # cap sees the whole library's 8 matches (top 4 of 8), so the scoped read
+    # genuinely narrowed the denominator — it never reverted to the
+    # unscoped-but-truncated set (whose `(of 4)` shares the number but not the scope)
+    unscoped = run_context(capsys, "database", "--budget", "index", "--limit", "4")
+    _, unscoped_matched = _coverage_top_of(unscoped)
+    assert unscoped_matched == 8
+    assert matched != unscoped_matched                    # 6 (web) ≠ 8 (library)
+
+    # non-vacuous on the TRUNCATION axis under facet scope: the *untruncated* scoped
+    # read names web's full 6 (of 6), so the cap genuinely truncated — it never
+    # reverted to the scoped-but-untruncated set
+    scoped_untruncated = _fidelity_line(
+        run_context(capsys, "database", "--budget", "index", "--source", "web"))
+    assert _fidelity_scope(scoped_untruncated) == 6
+    assert _fidelity_scope(fidelity) != _fidelity_scope(scoped_untruncated)  # 4 ≠ 6
+
+
 # --- per-source custody breakdown (roadmap H149) ---------------------------
 
 
