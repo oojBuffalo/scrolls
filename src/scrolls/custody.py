@@ -885,6 +885,21 @@ def weakest_source(
     return flag
 
 
+def _fidelity_tokens(tiers: dict[str, int]) -> str:
+    """The non-zero fidelity-tier counts in canonical order: ``full <a>, partial <b>``.
+
+    The one fidelity-rendering primitive shared by the scope custody headline's
+    ``fidelity`` section (`custody_sections`) and the standalone `_Fidelity:_`
+    holdings line (`render_fidelity_holdings`, roadmap H212), so the leanest
+    `index` budget tier and the `connected`+ headline emit byte-identical fidelity
+    tokens — they cannot disagree on what fraction is held in full. Absent counts
+    read as zero; an all-zero map is the empty string (no scope to report).
+    """
+    return ", ".join(
+        f"{tier} {tiers.get(tier, 0)}" for tier in FIDELITY_TIERS if tiers.get(tier)
+    )
+
+
 def custody_sections(
     tiers: dict[str, int],
     drift: dict[str, int],
@@ -912,9 +927,7 @@ def custody_sections(
     H113/H103 boundary that kept coverage off `status`'s headline).
     """
     parts = []
-    fidelity = ", ".join(
-        f"{tier} {tiers.get(tier, 0)}" for tier in FIDELITY_TIERS if tiers.get(tier)
-    )
+    fidelity = _fidelity_tokens(tiers)
     if fidelity:
         parts.append(f"fidelity {fidelity}")
     drift_str = ", ".join(
@@ -948,6 +961,30 @@ def render_custody_headline(
     """
     parts = [f"{n} scroll(s)"] + custody_sections(tiers, drift)
     return "_Custody: " + " · ".join(parts) + "._"
+
+
+def render_fidelity_holdings(tiers: dict[str, int], n: int) -> str:
+    """Render the ledger-free `_Fidelity:_` holdings line for the leanest budget tier.
+
+    ``_Fidelity: full <a>, partial <b>, reference <c> (of N)._`` — the fidelity-only
+    counterpart of `render_custody_headline`, for the `scrolls context` `index` tier
+    (roadmap H212), which reads no custody ledger at all. Fidelity is a *holdings*
+    fact (`get_fidelity`, derived from stored fields), so it travels even at the
+    leanest tier — *fidelity travels with every result* (vision principle 3). *Drift*
+    is a ledger *claim*, so it is deliberately absent here: claiming a `verified` /
+    `unverified` verdict over a ledger the tier never read would be the exact M2
+    anti-fabrication violation (the leanest tier honestly states what it *holds*,
+    never what it hasn't *checked*). The counts are the non-zero tiers in canonical
+    order (`_fidelity_tokens`), exactly the tokens `render_custody_headline`'s
+    ``fidelity`` section emits, so the `index` line and the `connected`+ headline
+    converge by construction (roadmap H213). `n` is the scope size the counts sum to.
+    An empty scope is the honest ``_Fidelity: 0 scroll(s)._`` — the defensive form;
+    the context bundle returns early on no matches, so it is never reached there.
+    """
+    tokens = _fidelity_tokens(tiers)
+    if not tokens:
+        return "_Fidelity: 0 scroll(s)._"
+    return f"_Fidelity: {tokens} (of {n})._"
 
 
 def custody_source_breakdown(

@@ -47,6 +47,7 @@ from pathlib import Path
 from scrolls.classify import stale_classification_counts_by_source
 from scrolls.custody import (
     CustodyEvent,
+    custody_counts,
     custody_counts_by_source,
     custody_headline,
     drift_posture,
@@ -55,6 +56,7 @@ from scrolls.custody import (
     render_custody_attention,
     render_custody_by_source,
     render_custody_refresh,
+    render_fidelity_holdings,
 )
 from scrolls.graph import build_graph
 from scrolls.items import (
@@ -235,6 +237,19 @@ def build_context(
         # scope. The renderer's `<2`-source no-op omits the split for a
         # single-source bundle ([] lines), where the headline says everything.
         lines += render_custody_by_source(by_source)
+    else:
+        # The leanest `index` tier reads no ledger, so it carries no *drift* claim
+        # (a `verified`/`unverified` verdict over an unread ledger would be the M2
+        # anti-fabrication violation the headline gate above avoids). But fidelity
+        # is a ledger-free *holdings* fact (`get_fidelity` over stored fields), so it
+        # still travels even here — *fidelity travels with every result* (vision
+        # principle 3, roadmap H212): one `_Fidelity:_` line names how much of the
+        # matched set the agent holds in full before it spends budget on a deeper
+        # tier. The counts fold the same `custody_counts` the `connected`+ headline
+        # does (with `{}` verdicts — no ledger read), so the tier counts converge
+        # with the headline's `fidelity` section by construction (H213).
+        tiers = custody_counts(items, {})["tiers"]
+        lines += [render_fidelity_holdings(tiers, len(items)), ""]
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):

@@ -90,40 +90,44 @@ and provenance travel with every result*). The fix is honest *and* ledger-free:
 **fidelity is a holdings fact** (`items.fidelity_tier`, computed from item fields),
 so it can ride the leanest tier; **drift is a ledger claim**, so it honestly stays
 gated to `connected`+ (rendering "unverified" at `index`, where no ledger was read,
-would be the exact M2 anti-fabrication violation we forbid). Slots H212–H215 open
-and close that sub-theme; H216–H217 deepen portable-bundle round-trip custody.
+would be the exact M2 anti-fabrication violation we forbid). **H212 shipped this
+run** (the production `_Fidelity:_` line); slots H213–H215 close the sub-theme into
+a tested cross-tier / cross-surface / completeness contract, and H216–H217 deepen
+portable-bundle round-trip custody.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H212 | **`_Fidelity:_` holdings line at `index` budget on `scrolls context`.** The leanest `index` tier (`context.py`) renders Best Matches + the coverage line + the budget note, but *no* custody signal (the `_Custody:_` headline and per-source map are gated to `connected`+ at `context.py:203`). Surface a one-line `_Fidelity:_` holdings note over the in-bundle representations — `_Fidelity: full N, partial M, reference O (of K)._` — at `index` (it already rides `connected`+ inside the `custody_headline`). The point and the design decision: **fidelity travels even at the leanest tier** (a ledger-free holdings fact via `items.fidelity_tier`/`custody.custody_counts`), but the line carries *only* fidelity — never a drift verdict, because `index` reads no ledger and claiming `unverified`/`verified` there would be the M2 anti-fabrication violation (the leanest tier honestly states what it holds, never what it hasn't checked). Production (`src/scrolls/context.py`) + test (`tests/test_context.py`): assert the `index` bundle carries the fidelity counts and *no* `_Custody:`/drift token, and that `connected`+ still carries the full headline. Precondition: fidelity tiers (ADR 0100, shipped); the budget tiers (M3, shipped); `custody_counts` (shipped). | → cap 2, cap 7, cap 10 |
-| H213 | **Cross-tier fidelity convergence invariant.** The `index` `_Fidelity:_` counts (H212) ≡ the `connected`/`full` `_Custody:_` headline's fidelity counts ≡ `doctor`'s `custody.tiers` over the same scope — a tier never disagrees with another tier or with the audit on *what fraction is held in full*. Fold into `tests/test_custody_convergence.py` (or `test_context.py`) over a mixed-fidelity scope (≥2 tiers present, non-vacuous), mutation-checked (drop a body → the tier shifts on every surface in lockstep). Test only; pins H212's contract. Precondition: H212. | → cap 7 |
+| H213 | **Cross-tier fidelity convergence invariant.** The `index` `_Fidelity:_` counts (H212, shipped) ≡ the `connected`/`full` `_Custody:_` headline's fidelity counts ≡ `doctor`'s `custody.tiers` over the same scope — a tier never disagrees with another tier or with the audit on *what fraction is held in full*. The `index`↔`connected` leg is seeded (`test_context_index_fidelity_counts_match_the_connected_headline`); extend it to a full three-way tie incl. `doctor`, folded into `tests/test_custody_convergence.py`, over a mixed-fidelity scope (≥2 tiers present, non-vacuous), mutation-checked (drop a body → the tier shifts on every surface in lockstep). Test only; pins H212's contract. Precondition: H212 (shipped). | → cap 7 |
 | H214 | **MCP `get_context(budget="index")` carries the same `_Fidelity:_` line.** The MCP twin of H212: `get_context_bundle` (`src/scrolls/mcp_server.py:463`) is a read-through of `build_context`, so the line rides it for free — pin it (`tests/test_mcp.py`) so the agent-facing context bundle and the CLI never diverge on the leanest tier's fidelity read. Test only. Precondition: H212; the MCP context tool (shipped). | → cap 2, cap 10 |
 | H215 | **Fold the `index` fidelity line into the M2 completeness/anti-fabrication invariant.** The leanest tier states its holdings scope (`of K`) and *never* implies a drift verdict it didn't read — the honest-absence-of-the-drift-claim counterpart of H190's compiled-page action-line absence. Add to `tests/test_completeness.py`: an `index` bundle names its fidelity holdings but carries no `_Custody:`/`drift` token, while the same query at `connected`+ does. Test only. Precondition: H212; the M2 suite (shipped). | → cap 7, M2 |
 | H216 | **Mixed-fidelity bundle round-trip invariant.** The dogfood/round-trip ties prove a *full*-fidelity topic survives `export bundle`→`import bundle` byte-for-byte (`test_dogfood.py`, all-`full` fixture), but the `partial`/`reference` tiers are never exercised end-to-end. Pin it: a bundle whose items span all three fidelity tiers re-imports with each item's `get_fidelity` tier preserved (no import-side downgrade), folded into `tests/test_bundle.py`. Non-vacuous (≥2 tiers) and the proof that portability is *tier-lossless*, not just full-lossless. Test only. Precondition: lossless round-trip (ADR 0099/0103, shipped); `get_fidelity` (shipped). | → cap 7, cap 9 |
 | H217 | **Bundle import is honest about orphan custody events.** A bundle carries items *and* their verify-ledger events (H67). Pin the round-trip-completeness contract: every imported custody event resolves to a held-or-imported item — an event whose `item_id` matches no item is surfaced (count/warning), never silently dropped or silently retained as a dangling history. Inspect `custody.import_events`/the bundle import path (`src/scrolls/bundle.py`, `src/scrolls/cli.py`) for whether this already holds; add the guard only if reported-but-not-enforced, plus the test (`tests/test_bundle.py`). Precondition: portable events (H67/H72, shipped). | → cap 9, cap 7 |
 | H218 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The lead slot is **H212** (the `index`-budget `_Fidelity:_` line), a small,
-decision-grade production slice; H213–H215 close it into a tested cross-tier /
-cross-surface / completeness contract, and H216–H217 are the portable-bundle
-round-trip-depth follow-ons. Per-slice provenance for every *shipped* slot lives in
-git (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the
-one-line in-file index (maintenance-rule §4: *git is the changelog*).
+The next lead slot is **H213** (the cross-tier fidelity convergence test);
+H214–H215 finish closing the budget/tier-honesty sub-theme H212 opened, and
+H216–H217 are the portable-bundle round-trip-depth follow-ons. Per-slice provenance
+for every *shipped* slot lives in git (`git log --oneline | grep '(H<NN>)'`); the
+**Shipped ledger** below is the one-line in-file index (maintenance-rule §4: *git is
+the changelog*).
 
-**Buffer-health note (2026-06-20, H207 checkpoint).** This run shipped **H210** (the
-CLI refresh-debt *act* dogfood — read the `context` `_Refresh:_` pointer → run the
+**Buffer-health note (2026-06-20, H207 checkpoint + H212).** This run shipped **H210**
+(the CLI refresh-debt *act* dogfood — read the `context` `_Refresh:_` pointer → run the
 scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names → the named
 axis/source clears while the untouched axis persists; the refresh-axis twin of H206's
 drift-act triage), which **closed the per-source custody convergence theme**: every read
 *and* act surface, on both the drift and enrichment/summary axes, over both the CLI and
 MCP, now ties to the `doctor` audit, and the self-healing dogfood is pinned across both
-surfaces and both act axes (H204/H206/H210). With that theme exhausted, this H207
-checkpoint **opens a fresh horizon** — *budget/tier custody honesty* (H212–H215), backed
-by a verified gap (the `index` tier hides fidelity, `context.py:203`) and vision
-principle 3 — plus two portable-bundle round-trip-depth slices (H216–H217). The queue is
-re-derived to **6** un-started work slots + the H218 checkpoint, back above the
-maintenance-rule §1 ≥6 target. The `verify --drift error` recovery path already makes the
-recheck-error tail actionable (a candidate dropped at this checkpoint per §5 — no filler).
+surfaces and both act axes (H204/H206/H210). With that theme exhausted, the H207
+checkpoint **opened a fresh horizon** — *budget/tier custody honesty* — backed by a
+verified gap (the `index` tier hid fidelity, `context.py:203`) and vision principle 3,
+and this run also **shipped its lead slice H212** (the `index`-budget `_Fidelity:_`
+holdings line — fidelity travels even at the leanest tier, drift honestly does not). The
+queue now sits at **5** un-started work slots (H213–H217: the cross-tier/cross-surface/
+completeness ties for H212, then portable-bundle round-trip depth) + the H218 checkpoint
+— at the maintenance-rule §1 ~6 target without padding (§5: no invented work), and H218
+re-derives. The `verify --drift error` recovery path already makes the recheck-error tail
+actionable (a candidate dropped at the checkpoint per §5 — no filler).
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -331,6 +335,7 @@ changelog (maintenance-rule §4).
 | H208 | MCP `get_library_health` nested refresh-debt read (`enrichment.by_source`/`summaries.by_source`) folded into the H179 three-way tie ≡ `status` flat maps ≡ `doctor`, whole-library + `--source`-scoped, over the combined stale-classification+stale-summary seed — carrying the H171 double-attribution asymmetry and the single-source-cluster scope-collapse, mutation-checked; H179/H183/H208 seed triplication factored into one `_seed_refresh_debt_both_axes` helper | cap 2, cap 8 |
 | H209 | MCP `run_maintenance` scoped `suggested` ↔ debt-map convergence folded into the suite — the agent-facing sibling of H183: the whole-library `run_maintenance()` tool's scoped `classify --stale --source <S>` / `kb --stale --source <S>` suggestion sources ≡ its own `enrichment_by_source` / `summary_by_source` keys (H171 double-attribution carried), the MCP report converges field-for-field with CLI `maintain --no-recheck` and the pure `suggest_repairs(run_doctor())`, the H182 short-circuit pinned over MCP (a scoped `run_maintenance(source=S)` names exactly `<command> --source S` per present axis — web enrichment-only, wikipedia summary-only under their own scopes), mutation-checked by a `kb --stale --source wikipedia` refresh moving the suggestions in lockstep with the debt map | cap 1, cap 11 |
 | H210 | CLI refresh-debt *act* dogfood in `tests/test_dogfood.py` — the refresh-axis twin of H206's drift-act triage: an agent reads the `context` `_Refresh:_` line (== `doctor`'s `enrichment.by_source`/`summaries.by_source`, enrichment `{web}` ≠ summary `{arxiv, web}`, non-vacuous), runs the scoped `classify --stale --source web` (drops only the enrichment clause), then `kb --stale --source web` (clears the whole two-source cluster in lockstep — the H171 attribution: a cluster is refreshed under any of its sources) and the `_Refresh:_` line vanishes (honest absence); the refresh act *is* the mutation, the model call scripted offline at `kb_llm._anthropic_complete`. Closed the per-source convergence theme | cap 8, cap 11 |
+| H212 | `_Fidelity: full <a>, partial <b>, reference <c> (of N)._` holdings line at the `index` budget on `scrolls context` — the leanest tier reads no ledger (no `_Custody:_` drift claim, the M2 honesty gate) but *fidelity travels with every result* (vision principle 3): a ledger-free holdings fact via the new shared `custody.render_fidelity_holdings`/`_fidelity_tokens`, byte-identical to the `connected`+ headline's `fidelity` section (converge by construction), an `index`-only lever never duplicated above it. Opened the budget/tier custody-honesty horizon | cap 2, cap 7, cap 10 |
 
 ---
 
@@ -346,14 +351,15 @@ committed, tested, clean stopping point; slips roll forward.
   untouched axis persists; the refresh-axis twin of H206's drift triage)
   **shipped** in `tests/test_dogfood.py`, exhausting the per-source theme: every
   read *and* act surface, both axes, both the CLI and MCP, now ties to `doctor`.
-  The **H207 checkpoint** (this refresh) opens the *budget/tier custody honesty*
-  horizon.
-- **Day 2 (2026-06-21):** The **budget/tier custody honesty** sub-theme. **H212**
-  (the `_Fidelity:_` holdings line at `index` budget — fidelity travels even at the
-  leanest tier, drift honestly does not; `src/scrolls/context.py` + test) is the
-  decision-grade production lead; **H213** (cross-tier fidelity convergence ≡
-  `doctor.tiers`) and **H214** (the MCP `get_context(budget="index")` twin) close it
-  as a tested contract.
+  The **H207 checkpoint** (this refresh) opened the *budget/tier custody honesty*
+  horizon, and the same run **shipped its lead slice H212** (the `_Fidelity:_`
+  holdings line at `index` budget — fidelity travels even at the leanest tier via the
+  new shared `custody.render_fidelity_holdings`, drift honestly does not;
+  `src/scrolls/context.py` + `tests/test_context.py` + `docs/cli.md`).
+- **Day 2 (2026-06-21):** Close the **budget/tier custody honesty** sub-theme around
+  the shipped H212 line. **H213** (cross-tier fidelity convergence ≡ `doctor.tiers`)
+  and **H214** (the MCP `get_context(budget="index")` twin) pin it as a tested
+  cross-tier / cross-surface contract.
 - **Day 3 (2026-06-22 → 2026-06-23):** Finish the sub-theme and start
   portable-bundle depth. **H215** (fold the `index` fidelity line into the M2
   completeness/anti-fabrication invariant — names its holdings, never a drift verdict

@@ -3282,6 +3282,25 @@ aggregate (`test_context_custody_headline_converges_with_doctor`). Gated to
 `connected`/`full` (like the depth-bearing sections) so the leanest `index`
 tier stays a bare catalog (`test_context_custody_headline_gated_off_index`).
 
+The `index` tier reads no custody ledger, so it carries no `_Custody:_`
+headline (a `verified`/`unverified` drift verdict over a ledger it never read
+would be the M2 anti-fabrication violation the gate above avoids). But fidelity
+is a ledger-free *holdings* fact (`get_fidelity`, derived from stored fields),
+so it travels even there — *fidelity travels with every result* (vision
+principle 3, roadmap H212): the `index` bundle carries a one-line
+`_Fidelity: full <a>, partial <b>, reference <c> (of N)._` holdings note so an
+agent reading the leanest catalog learns how much of the matched set it holds in
+full *before* spending budget on a deeper tier. The line carries **only**
+fidelity — never a drift claim. Its tier counts are the same `custody_counts`
+the `connected`+ `_Custody:_` headline folds (the `_fidelity_tokens` primitive
+is shared), so the `index` line and the headline's `fidelity` section are
+byte-identical and cannot disagree on what fraction is held in full
+(`test_context_index_budget_carries_fidelity_holdings`,
+`test_context_index_fidelity_counts_match_the_connected_headline`); from
+`connected` up the headline already carries fidelity, so the dedicated line is an
+`index`-only lever, never duplicated above it
+(`test_context_fidelity_line_only_at_index_headline_carries_it_above`).
+
 A *multi-source* bundle follows that headline with a **`_By source:_`
 breakdown** — one bullet per source naming that source's fidelity tiers, drift
 postures, and recheck coverage (`· coverage V/T`, roadmap H158 — of that

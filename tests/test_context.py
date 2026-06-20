@@ -647,6 +647,90 @@ def test_context_custody_headline_converges_with_doctor(scrolls_home, capsys):
     assert custody["drift"]["unverified"] == 1
 
 
+# --- `_Fidelity:_` holdings line at the `index` budget (roadmap H212) -------
+#
+# The leanest `index` tier stays a bare catalog for *depth* (no bodies, no graph)
+# and a bare *ledger* (no drift read), but fidelity is a ledger-free holdings fact
+# (`get_fidelity`), so it travels even there (vision principle 3): an agent reading
+# an `index` catalog learns how much of the matched set it holds in full *before*
+# spending budget on a deeper tier. The line carries **only** fidelity — never a
+# drift verdict, because the leanest tier reads no ledger and claiming
+# `verified`/`unverified` there would be the M2 anti-fabrication violation.
+
+
+def _fidelity_line(out):
+    return next(line for line in out.splitlines() if line.startswith("_Fidelity:"))
+
+
+def test_context_index_budget_carries_fidelity_holdings(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Full", "Full database", "A fully held database body.",
+        content_hash="deadbeef", raw_text="<raw>A fully held database body.</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Partial", "Partial database", "A partial database body.",
+    ))  # no hash/raw → partial fidelity — a second tier, so the line is non-vacuous
+    # a drift event the leanest tier must NOT read or claim
+    record_events(db, [_drift_event("wikipedia:en:Full", "drifted", observed="cafe")])
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    # fidelity travels even at the leanest tier — the holdings fact, with scope
+    line = _fidelity_line(out)
+    assert "full 1, partial 1" in line
+    assert "(of 2)" in line
+    # but the leanest tier reads no ledger: no drift verdict, no `_Custody:` headline
+    assert "_Custody:" not in out
+    assert "drift" not in line and "drifted" not in out
+    # and the catalog itself is still there (depth honesty unchanged)
+    assert "## Best Matches" in out
+
+
+def test_context_fidelity_line_only_at_index_headline_carries_it_above(
+    scrolls_home, capsys
+):
+    # from `connected` up the full `_Custody:_` headline already carries fidelity,
+    # so the dedicated `_Fidelity:_` line is an `index`-only lever (no duplication)
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
+        content_hash="deadbeef", raw_text="<raw>SQLite is a database engine.</raw>",
+    ))
+    capsys.readouterr()
+
+    for tier in ("connected", "full"):
+        out = run_context(capsys, "database", "--budget", tier)
+        assert "_Fidelity:" not in out          # not duplicated above index
+        assert "fidelity full 1" in _custody_line(out)  # the headline carries it
+
+
+def test_context_index_fidelity_counts_match_the_connected_headline(
+    scrolls_home, capsys
+):
+    # cross-tier convergence (the H213 seed): the `index` `_Fidelity:_` counts are
+    # the *same* tier counts the `connected` `_Custody:_` headline renders — both
+    # fold `get_fidelity` through `custody_counts`, so a tier never disagrees with
+    # another tier on what fraction is held in full.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Full", "Full database", "A fully held database body.",
+        content_hash="deadbeef", raw_text="<raw>A fully held database body.</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Partial", "Partial database", "A partial database body.",
+    ))
+    capsys.readouterr()
+
+    index_line = _fidelity_line(run_context(capsys, "database", "--budget", "index"))
+    headline = _custody_line(run_context(capsys, "database", "--budget", "connected"))
+    # the headline's `fidelity <counts>` section == the index line's counts
+    assert "full 1, partial 1" in index_line
+    assert "fidelity full 1, partial 1" in headline
+
+
 # --- per-source custody breakdown (roadmap H149) ---------------------------
 
 
