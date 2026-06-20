@@ -72,6 +72,25 @@ tiers/drift axes the lean browse family carries, coverage tied where present), a
 each surface sums to its own whole block — so the per-source split reads as one
 number across every JSON surface, mutation-checked non-vacuous.
 
+The two **MCP object-twins** that carry `stats.custody.by_source` — `get_link_graph`
+and `get_works` — close the same `by_source` content tie on the agent-facing read,
+reached through the object entrypoint rather than the CLI (roadmap H195). They tie
+to `doctor` differently because their custody *scopes* differ, and the tests pin
+each honestly rather than asserting a uniform "⊂ doctor". The **graph** twin folds
+its tally over the *whole* `stats.items` scope (`graph.items`, not the connected
+`nodes` — H52/H150), so its `by_source` equals `doctor`'s full map field-for-field
+(coverage included) *independent of `include_isolated`*: excluding an isolated item
+from the rendered `nodes` does **not** drop it from the custody tally (nodes ≠
+custody scope), so the graph twin is never a *subset* of doctor — pinned positively
+over a connected ring plus an added isolate. The **works** twin is the genuinely
+scope-restricted one: its lean `{tiers, drift}` tally folds over the reported works'
+*representations* (H100/H155), so it equals `doctor`'s tiers/drift projection
+*exactly when* every item is a representation, and over a seed with an
+*unrepresented* item it is a strict subset of doctor's — the dropped source is
+exactly the unrepresented item's, the honest scope difference, never a
+disagreement. Both are non-vacuous (≥2 sources, differing per-source mixes) and
+mutation-checked.
+
 The **`stats.custody` family** (roadmap H101) is pinned the same way. Every
 browse-surface envelope carries a `stats.custody` member built by folding the
 shared `custody.tally_custody` over its matched scope — the `search`/`list`/
@@ -2712,6 +2731,167 @@ def test_every_json_by_source_surface_converges_on_one_map(scrolls_home, capsys)
     }
     perturbed["web"]["tiers"]["full"] += 1
     assert perturbed != expected_lean
+
+
+def test_graph_object_twin_by_source_is_whole_library_not_a_subset(scrolls_home):
+    # roadmap H195 (graph leg): the MCP object-twin `get_link_graph` carries
+    # `stats.custody.by_source` (the H150/H186 shape). This pins its *content* tie to
+    # `run_doctor` — and corrects the slice's "connected-only ⊂ doctor" framing with
+    # the honest scope fact the code actually holds: the graph's custody tally is
+    # folded over the *whole* `stats.items` scope (`graph.items`, graph.to_payload —
+    # roadmap H52/H150), **not** the connected `nodes`. So the object-twin's
+    # `by_source` equals `doctor`'s full `custody.by_source` field-for-field (coverage
+    # included) *independent of* `include_isolated` — excluding an isolated item from
+    # the rendered `nodes` does **not** drop it from the custody tally (nodes ≠ custody
+    # scope). The load-bearing subtlety, pinned positively: the graph object-twin is
+    # never a *subset* of doctor; an isolate is still counted. The MCP-twin sibling of
+    # the CLI `graph --all` tie (H150/H157), reached through the object entrypoint at
+    # its non-isolating default.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    # the whole-connected case: a multi-source ring web:1 → web:2 → arxiv:1 → web:1, so
+    # every item takes part in an edge and is a node (≥2 sources, differing per-source
+    # mixes). web:1 verified, web:2 full+drifted, arxiv:1 partial+unverified.
+    insert_item(db, _item("web:1", "Topic one", extracted_text="b1",
+                          raw_text="<raw>1</raw>", content_hash="sha256:1",
+                          links=("https://example.com/web:2",)))
+    insert_item(db, _item("web:2", "Topic two", extracted_text="b2",
+                          raw_text="<raw>2</raw>", content_hash="sha256:2",
+                          links=("https://example.com/arxiv:1",)))
+    insert_item(db, _item("arxiv:1", "Topic arxiv", source="arxiv",
+                          extracted_text="a",  # no hash → partial
+                          links=("https://example.com/web:1",)))
+    record_events(db, [
+        CustodyEvent("web:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:1", "sha256:1", None),
+        CustodyEvent("web:2", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:2", "sha256:changed", None),
+        # arxiv:1 left unverified
+    ])
+
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # non-vacuous: ≥2 sources, and the two per-source pictures differ (a fold that
+    # merged/mislabeled sources would break the field-for-field tie)
+    assert set(doctor_by_source) == {"arxiv", "web"}
+    assert doctor_by_source["web"]["tiers"] != doctor_by_source["arxiv"]["tiers"]
+
+    # the whole-connected case: every item is a node, and the object-twin's by_source
+    # equals doctor's full map (coverage included) — node set == custody scope.
+    graph = mcp_server.get_link_graph()
+    assert {node["id"] for node in graph["nodes"]} == {"web:1", "web:2", "arxiv:1"}
+    assert graph["stats"]["nodes"] == graph["stats"]["items"] == 3
+    graph_by_source = graph["stats"]["custody"]["by_source"]
+    assert graph_by_source == doctor_by_source            # field-for-field, incl coverage
+    assert "coverage" in graph_by_source["web"]           # the full {tiers,drift,coverage}
+
+    # the isolated-item case: add a third source that links to nothing. It is excluded
+    # from the default graph's `nodes` ...
+    insert_item(db, _item("wikipedia:1", "Topic wiki", source="wikipedia",
+                          stage="detected"))  # no content → reference; no links → isolated
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(doctor_by_source) == {"arxiv", "web", "wikipedia"}
+
+    graph = mcp_server.get_link_graph()  # default include_isolated=False
+    assert "wikipedia" not in {node["source"] for node in graph["nodes"]}  # isolate ≠ node
+    assert graph["stats"]["items"] == 4                   # but it is in the scope
+    # ... yet `by_source` STILL carries wikipedia and equals doctor's full map — the
+    # object-twin is NOT a subset of doctor; the honest correction to the slice framing.
+    graph_by_source = graph["stats"]["custody"]["by_source"]
+    assert set(graph_by_source) == {"arxiv", "web", "wikipedia"}   # not a subset
+    assert graph_by_source == doctor_by_source
+
+    # independent of `include_isolated`: widening only changes which items become
+    # `nodes`, not the custody scope — by_source is byte-identical.
+    graph_all = mcp_server.get_link_graph(include_isolated=True)
+    assert {node["source"] for node in graph_all["nodes"]} == {"arxiv", "web", "wikipedia"}
+    assert graph_all["stats"]["custody"]["by_source"] == graph_by_source == doctor_by_source
+
+    # mutation-check: the field-for-field equality has teeth — perturbing one
+    # per-source count breaks the tie to doctor's map.
+    perturbed = {
+        source: {"tiers": dict(entry["tiers"]), "drift": dict(entry["drift"]),
+                 "coverage": dict(entry["coverage"])}
+        for source, entry in graph_by_source.items()
+    }
+    perturbed["web"]["tiers"]["full"] += 1
+    assert perturbed != doctor_by_source
+
+
+def test_works_object_twin_by_source_subsets_doctor_by_representation(scrolls_home):
+    # roadmap H195 (works leg): the MCP object-twin `get_works` carries
+    # `stats.custody.by_source` (the H155/H186 lean shape). Unlike the graph twin
+    # (whole-library by construction, the test above), the works tally is genuinely
+    # *scope-restricted* — folded over the reported works' **representations**
+    # (works.to_payload, H100/H155), lean `{tiers, drift}` (no per-source coverage).
+    # So the object-twin's `by_source` equals `doctor`'s `by_source` projected to
+    # tiers/drift *exactly when* every item is a representation of a reported work;
+    # over a seed with an *unrepresented* item the twin is a strict **subset** of
+    # doctor's — the dropped source is exactly the unrepresented item's. The honest
+    # scope difference H195 names, pinned on the surface where it actually holds.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    # the whole-represented case: a DOI-shared work with two representations across two
+    # sources — a full+drifted arxiv preprint and a reference+unverified crossref
+    # published record (the H100 works seed). Both items are representations, so the
+    # works scope == the whole library.
+    insert_item(db, _item(
+        "arxiv:1706.03762", "Attention Is All You Need", source="arxiv",
+        source_id="1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="<raw>preprint body</raw>", content_hash="sha256:a"))
+    insert_item(db, _item(
+        "crossref:10.5555/3295222", "Attention Is All You Need", source="crossref",
+        source_id="10.5555/3295222", url="https://doi.org/10.5555/3295222",
+        stage="rendered"))  # no raw_text/hash → reference
+    record_events(db, [
+        CustodyEvent("arxiv:1706.03762", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:a", "sha256:x", None),
+        # crossref left unverified
+    ])
+
+    def _lean(by_source, keys=None):
+        return {source: {"tiers": entry["tiers"], "drift": entry["drift"]}
+                for source, entry in by_source.items() if keys is None or source in keys}
+
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    # non-vacuous: ≥2 sources with differing per-source pictures
+    assert set(doctor_by_source) == {"arxiv", "crossref"}
+    assert doctor_by_source["arxiv"]["tiers"] != doctor_by_source["crossref"]["tiers"]
+
+    works_by_source = mcp_server.get_works()["stats"]["custody"]["by_source"]
+    # the whole-represented case: every item is a rep, so the works scope == doctor's
+    assert set(works_by_source) == {"arxiv", "crossref"}
+    assert works_by_source == _lean(doctor_by_source)     # field-for-field (lean axes)
+    assert "coverage" not in works_by_source["arxiv"]     # the lean shape (H155)
+
+    # the unrepresented-item case: add a wikipedia item with no shared DOI — it forms
+    # no multi-representation work, so it is absent from the works scope ...
+    insert_item(db, _item("wikipedia:1", "Topic wiki", source="wikipedia",
+                          extracted_text="t", raw_text="<raw>t</raw>",
+                          content_hash="sha256:w"))
+    doctor_by_source = run_doctor(get_paths())["custody"]["by_source"]
+    assert set(doctor_by_source) == {"arxiv", "crossref", "wikipedia"}
+
+    works_by_source = mcp_server.get_works()["stats"]["custody"]["by_source"]
+    # ... so the twin is a strict subset of doctor's, dropping exactly that source —
+    # the honest scope difference, never a disagreement.
+    assert set(works_by_source) < set(doctor_by_source)
+    assert set(doctor_by_source) - set(works_by_source) == {"wikipedia"}
+    # over the shared sources the twin still equals doctor's lean projection
+    assert works_by_source == _lean(doctor_by_source, set(works_by_source))
+
+    # mutation-check: the subset equality has teeth — perturbing a shared per-source
+    # count breaks the tie to doctor's lean projection.
+    perturbed = {
+        source: {"tiers": dict(entry["tiers"]), "drift": dict(entry["drift"])}
+        for source, entry in works_by_source.items()
+    }
+    perturbed["arxiv"]["drift"]["drifted"] += 1
+    assert perturbed != _lean(doctor_by_source, set(works_by_source))
 
 
 # --- the per-item invariant (roadmap H59) ------------------------------------
