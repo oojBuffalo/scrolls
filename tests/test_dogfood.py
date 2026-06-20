@@ -47,6 +47,13 @@ from scrolls.items import (
     list_items,
     make_item_id,
 )
+from scrolls.maintain import (
+    custody_snapshot,
+    load_snapshot,
+    log_path,
+    read_log,
+    snapshot_path,
+)
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
 
@@ -236,6 +243,93 @@ def test_take_it_with_me_bundle_round_trips_into_a_fresh_library(home, capsys):
     assert main(["import", "bundle", str(bundle_path)]) == 0
     again = json.loads(capsys.readouterr().out)
     assert again["imported"] == 0 and again["skipped"] == len(items)
+
+
+# --- the scoped-triage leg (H206) -----------------------------------------
+
+
+def test_attention_flag_drives_a_scoped_maintenance_triage_on_the_weakest_source(
+    home, monkeypatch, capsys
+):
+    """*triage* (H206): the shell sibling of the MCP attention→scoped-pass flow
+    (H204). After hold → detect leaves one source drifted, an agent reads
+    `scrolls status` — whose `attention` flag names the single weakest source —
+    and runs `scrolls maintain --source <that source>` to triage *only* it, never
+    the whole library, never re-deriving the triage. The per-command pieces are
+    pinned elsewhere (H139 status `attention`, H165 `maintain --source`, H182 the
+    scoped suggestion); this ties them into one end-to-end shell sequence in the
+    CLI dogfood home, the symmetric twin of H204's MCP flow — so the
+    triage-where-the-loss-is point is pinned over *both* surfaces.
+
+    The two custody points the leg makes visible, the CLI twins of H204's:
+
+    - **triage where the loss is** — `status`'s `attention` names exactly the
+      source `detect` drifted (arxiv; the two web scrolls verified `unchanged`, so
+      that source carries no actionable loss), with the exact `scrolls verify
+      --source <S>` recheck command — and the scoped `maintain --source <S>`
+      collapses to that one source (singleton `by_source`, `attention` null: a
+      single source has nothing to flag *across*), its `custody` ≡ `doctor
+      --source <S>`'s distilled snapshot; and
+    - **custody-safety** — the scoped triage is *non-persisting*: the whole-library
+      trend baseline the dogfood's earlier whole-library `maintain` recorded is
+      left byte-untouched and the scoped `delta` is honestly `null` (ADR 0082 — a
+      one-source slice must never clobber the single trend baseline).
+    """
+    # hold + detect: arxiv drifts upstream, the two web scrolls come back unchanged.
+    src = home("library")
+    items = _held_topic()
+    _build(items)
+    drifted = items[0]
+    assert drifted.source == "arxiv"
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
+    assert main(["verify", "--all"]) == 0
+    capsys.readouterr()  # drain the kb + verify output
+
+    # the dogfood's whole-library maintenance leg records the single trend baseline.
+    assert main(["maintain", "--no-recheck"]) == 0
+    whole = json.loads(capsys.readouterr().out)
+    # non-vacuous: ≥2 sources held, exactly one (arxiv) carries the loss — so the
+    # scoped singleton/null below is a genuine narrowing, not a one-source library.
+    assert set(whole["by_source"]) == {"arxiv", "web"}
+    assert whole["attention"]["source"] == "arxiv"
+    baseline = load_snapshot(snapshot_path(src))
+    assert baseline is not None
+    log_len = len(read_log(log_path(src)))
+    assert log_len == 1
+
+    # the agent reads `scrolls status`; its `attention` flag names the weakest
+    # source and the exact recheck command — the bridge from "where" to the act.
+    assert main(["status"]) == 0
+    attention = json.loads(capsys.readouterr().out)["attention"]
+    assert attention is not None
+    assert attention["source"] == drifted.source
+    assert attention["reason"] == "1 drifted"
+    assert attention["command"] == f"scrolls verify --source {drifted.source}"
+    # status and the whole-library maintain pass name one source by construction
+    # (both distil `weakest_source` from the same audit) — the cross-surface tie.
+    assert attention == whole["attention"]
+
+    # it triages *only* that source — the scoped CLI pass the flag drives.
+    weakest = attention["source"]
+    assert main(["maintain", "--source", weakest, "--no-recheck"]) == 0
+    scoped = json.loads(capsys.readouterr().out)
+    assert scoped["source"] == weakest
+    assert set(scoped["by_source"]) == {weakest}  # collapsed to the one source
+    # a single-source scope has nothing to flag *across* → attention null (the
+    # documented H139/H119 gate), even though that one source is itself drifted.
+    assert scoped["attention"] is None
+
+    # parity: the scoped pass's custody ≡ `doctor --source <S>`'s distilled snapshot
+    # (the scoped audit both surfaces run over the same unchanged ledger).
+    assert main(["doctor", "--source", weakest]) == 0
+    doctor_report = json.loads(capsys.readouterr().out)
+    assert scoped["custody"] == custody_snapshot(doctor_report)
+
+    # custody-safety: the scoped triage writes no whole-library snapshot/log — the
+    # trend baseline is byte-untouched and its delta is honestly null (ADR 0082).
+    assert scoped["delta"] is None
+    assert load_snapshot(snapshot_path(src)) == baseline
+    assert len(read_log(log_path(src))) == log_len
 
 
 # --- the whole flow, unattended, in order ---------------------------------

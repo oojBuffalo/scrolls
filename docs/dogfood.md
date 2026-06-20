@@ -157,6 +157,22 @@ Each pass also appends its `{recorded_at, snapshot, delta}` to an append-only
 last N runs back as the custody **trend** — the score/drift *trajectory* an
 unattended worker watches over time, not just the single most recent diff.
 
+When custody loss is confined to one source, an agent reads `scrolls status`
+(or `scrolls doctor`) — whose `attention` flag names the single weakest source
+and the exact `scrolls verify --source <S>` recheck command — and runs a
+**scoped** pass, `scrolls maintain --source <S> --no-recheck`, to triage *only*
+that source instead of the whole library. A scoped pass narrows the audit/delta
+to `<S>` (`by_source` collapses to the singleton `{S: …}`, `attention` is null —
+one source has nothing to flag *across*), regenerates the global views, and stays
+**non-persisting**: it writes no whole-library snapshot, so its `delta` is
+honestly `null` and the whole-library trend baseline an earlier pass recorded is
+left byte-untouched (ADR 0082 — the whole-library pass owns the single trend
+baseline). Its `custody` ≡ `doctor --source <S>`'s distilled snapshot. The
+dogfood suite pins this as one shell sequence — `status`'s `attention` names the
+weakest source, the agent runs the scoped pass on *exactly* that source, the
+trend baseline is untouched — the symmetric shell twin of the MCP triage below,
+so the agent reads *where* the loss is and acts *only there*, custody-safely.
+
 ## The same loop over MCP
 
 The flow above is how an agent drives custody from the **shell**. An agent that

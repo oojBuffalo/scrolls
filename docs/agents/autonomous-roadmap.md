@@ -74,16 +74,22 @@ un-started **work** slices; the next checkpoint (H207) follows.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H206 | **CLI-side attention→scoped-maintenance triage folded into the shell dogfood flow (cap 11).** Appended (maintenance rule, buffer top-up after H204 shipped). H204 pinned the *MCP* attention→scoped-pass triage as one agent-driven flow (`tests/test_dogfood_mcp.py`); the symmetric **shell** flow — read `scrolls status`/`doctor` (the `attention` JSON flag names the weakest source) → run `scrolls maintain --source <that source>` to triage just it — is pinned per-command (H139/H165/H181) but not as one end-to-end dogfood sequence in `tests/test_dogfood.py` (the CLI dogfood home, where the whole-library `maintain` leg already lives). Add a test that drives that exact sequence over the CLI dogfood's drifted multi-source fixture: assert `status --json`'s `attention.source` names the weakest source, that `maintain --source <that source>` scopes to it (singleton `by_source`, null `attention`, `custody == doctor --source <S>`'s distilled), and that the scoped pass is **non-persisting** (the whole-library snapshot/log the dogfood's earlier whole-library `maintain` recorded is untouched, `delta` honestly absent) — the shell sibling of H204's MCP flow, so the triage-where-the-loss-is point is pinned over *both* surfaces. Non-vacuous (≥2 sources, one clean) and mutation-checked. Test + docs only (`docs/dogfood.md`'s CLI flow section gains the attention→`maintain --source` triage sentence beside the recurring `maintain` leg); no production change. Precondition: H204 (the MCP sibling, shipped); H139 (`status` JSON `attention`, shipped); H165/H181 (`maintain --source`, shipped); the CLI dogfood suite (shipped). | → cap 11 |
 | H208 | **MCP `get_library_health` refresh-debt maps ≡ `status` ≡ `doctor` folded into `tests/test_custody_convergence.py` (cap 2 + cap 8).** Appended (maintenance rule, buffer top-up after H179 shipped). H179 pinned the *flat* refresh-debt maps (`enrichment_by_source`/`summary_by_source`) tie across `status`≡`maintain`≡`doctor` (whole-library + scoped); the MCP read surface (`get_library_health`) keeps the *nested* form (`enrichment.by_source`/`summaries.by_source`, the H180 flat≡nested posture), so the cross-surface tie is unproven on the agent-facing read. Over the same combined stale-classification **and** stale-summary seed H179 uses, assert `get_library_health()["enrichment"]["by_source"]` ≡ `status`'s `enrichment_by_source` ≡ `doctor`'s `custody.enrichment.by_source`, and likewise the summaries axis (carrying the non-sum-to-whole asymmetry), with the `source=`-scoped read equal too (`get_library_health(source=S)` ≡ `status --source S` ≡ `doctor --source S`), and the single-source-cluster scope-collapse pinned positively (the wikipedia-only cluster survives its scope; a multi-source one fractures below `MIN_MEMBERS`). Non-vacuous (≥2 sources, both axes) and mutation-checked (a `kb --stale --source` refresh moves all three together). Test + docs only; no production change. Precondition: H179 (the CLI tie, shipped); H180 (the MCP flat≡nested refresh-debt block, shipped); H167 (the scoped MCP read, shipped). | → cap 2, cap 8 |
 | H209 | **MCP `run_maintenance` scoped `suggested` ↔ debt-map convergence folded into `tests/test_custody_convergence.py` (cap 1 + cap 11).** Appended (maintenance rule, buffer top-up after H183 shipped). H183 pinned, on the *CLI* `maintain` report, that the scoped `suggested` refresh commands name exactly the debt-map sources (`enrichment_by_source`/`summary_by_source` keys); the agent-facing MCP `run_maintenance` tool (H196/H203) returns the *same* assembled report shape (the `suggested` block + both debt maps), so the tie is unproven over MCP. Over the same H183/H179 combined stale-classification **and** stale-summary seed, assert the whole-library `run_maintenance()` tool's scoped `classify --stale --source <S>` suggestion sources ≡ its `enrichment_by_source` keys, the `kb --stale --source <S>` suggestion sources ≡ its `summary_by_source` keys (carrying the H171 multi-source attribution), and that the MCP report converges field-for-field with the CLI `maintain --no-recheck` (H183's surface) and the pure `suggest_repairs(run_doctor())` — the agent-facing sibling of H183, closing the suggestion↔debt-map tie over *both* the CLI and MCP surfaces. Also pin the H182 short-circuit over MCP: a *scoped* `run_maintenance(source=S)` names exactly `<command> --source S` for each present axis (the collapsed-universe path). Non-vacuous (≥2 sources, one clean so scoping fires) and mutation-checked (a `kb --stale --source` refresh moves the MCP suggestions in lockstep with the debt map). Test + docs only; no production change. Precondition: H183 (the CLI sibling, shipped); H196 (`run_maintenance` MCP tool, shipped); H203 (scoped `run_maintenance(source=)`, shipped). | → cap 1, cap 11 |
 | H210 | **Refresh-debt *act* dogfood: read the `_Refresh:_` pointer → run the scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names → the debt clears (cap 8 + cap 11).** Appended (maintenance rule, buffer top-up after H192 shipped). The CLI/MCP dogfood flows (M5, H204, the queued H206) triage *drift* — read `attention` → run `verify`/`maintain --source`. The symmetric *enrichment/summary refresh* act has no end-to-end dogfood narrative: an agent reads the `context`/bundle `_Refresh:_` line (H178), runs **exactly** the scoped `classify --stale --source <S>` / `kb --stale --source <S>` commands it names, and re-reads to confirm the pointer clears that axis/source — pinned per-command (H154/H172/H176/H183) but never as one flow. Add it to `tests/test_dogfood.py` (the CLI dogfood home) over a multi-source fixture carrying **both** a stale classification (one source) and a stale summary cluster (two sources): assert the `context` `_Refresh:_` line names the debt sources per axis (≡ `doctor`'s `enrichment.by_source`/`summaries.by_source`), run the named scoped refresh acts, and assert the line drops exactly that axis/source while the untouched axis stays — the refresh-act sibling of H204/H206's drift-act triage. Non-vacuous (both axes present) and the refresh act *is* the mutation. Test + docs only; no production change (composes shipped acts). Precondition: H178 (`_Refresh:_` line, shipped); H154/H172 (the scoped refresh acts, shipped); H183 (the suggestion↔debt-map tie, shipped); the CLI dogfood suite (shipped). | → cap 8, cap 11 |
 | H207 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
 The current un-started theme is the **cross-surface convergence + dogfood tail** of
-the per-source custody work: two convergence invariants (H208, H209) and two
-dogfood-symmetry slices (H206 drift-act, H210 refresh-act). All are test+docs slices
-over already-shipped production code — they pin contracts, not new behavior. (H211 —
+the per-source custody work: two convergence invariants (H208, H209) and one
+remaining dogfood-symmetry slice (H210 refresh-act). All are test+docs slices over
+already-shipped production code — they pin contracts, not new behavior. (H206 — the
+CLI attention→scoped-`maintain` *drift*-act triage as one shell sequence in
+`tests/test_dogfood.py` — shipped: the symmetric shell twin of H204's MCP flow, so the
+triage-where-the-loss-is point is now pinned over *both* surfaces — `status`'s
+`attention` names the weakest source + the exact recheck command, `maintain --source
+<S>` collapses to that one source (singleton `by_source`, null `attention`, `custody`
+≡ `doctor --source <S>` distilled), and the scoped triage is non-persisting (the
+whole-library trend baseline byte-untouched, `delta` null, ADR 0082). H211 —
 the MCP object-twin `attention`-flag *scope* tie — shipped: the graph flag is
 whole-library (≡ `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain`, sees the
 loss even on an isolated node), while the works flag ranks only the represented scope
@@ -97,19 +103,18 @@ compiled/HTML readable-parity ties — shipped, closing that contract. H183 ship
 H209 extends it to the MCP `run_maintenance` tool. H179 shipped; H208 extends it to
 the MCP read surface.)
 
-**Buffer-health note (2026-06-19, H211 run).** The readable-parity tail stays
-**saturated** (H192/H193 closed it), and the object-twin convergence sub-theme is now
-**closed**: H195 (the `by_source` content tie) and H211 (the distilled `attention`-flag
-scope tie, the honest works=representation-only / graph=whole-library disagreement
-boundary) leave no non-marginal object-twin tie underived. The queue now sits at **4**
-un-started work slots (H206, H208, H209, H210) — below the maintenance-rule §1 ≥6
-target, *deliberately and per §5* (**no invented work**): the remaining candidate-append
-space in the per-source convergence/dogfood theme is marginal, and the legitimate §5
-outcome is to **defer the top-up to the imminent H207 checkpoint** (the lead non-work
-item) rather than mint filler ties. H207 should open a fresh custody-deepening horizon
-(portable-custody depth, progressive context bundles, or doctor/repair surfacing) and
-re-derive the buffer back above ≥6 from the MVP/PRD. The four remaining substantive
-slots plus the checkpoint still cover the next ~24h.
+**Buffer-health note (2026-06-19, H206 run).** The readable-parity tail stays
+**saturated** (H192/H193 closed it), the object-twin convergence sub-theme is
+**closed** (H195/H211), and the **CLI dogfood drift-act triage** is now pinned (H206 —
+the shell twin of H204's MCP flow). The queue sits at **3** un-started work slots
+(H208, H209, H210) — below the maintenance-rule §1 ≥6 target, *deliberately and per §5*
+(**no invented work**): the remaining candidate-append space in the per-source
+convergence/dogfood theme is marginal, and the legitimate §5 outcome is to **defer the
+top-up to the now-imminent H207 checkpoint** (the lead non-work item) rather than mint
+filler ties. H207 should open a fresh custody-deepening horizon (portable-custody depth,
+progressive context bundles, or doctor/repair surfacing) and re-derive the buffer back
+above ≥6 from the MVP/PRD. The three remaining substantive slots plus the checkpoint
+still cover the next ~24h.
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -313,6 +318,7 @@ changelog (maintenance-rule §4).
 | H193 | Single-source compiled `sources/<S>.md` `_Refresh:_` honest presence ≡ `doctor --source` debt, multi-source-cluster-narrowed-below-`MIN_MEMBERS` summary-absence pinned positively — the last compiled readable-parity tie | cap 7, cap 8 |
 | H195 | MCP object-twin `stats.custody.by_source` *content* ≡ `doctor` — graph twin whole-library (≡ doctor incl. coverage, isolation-independent; *not* connected-only ⊂ doctor, the slice-framing correction), works twin representation-only (≡ doctor lean projection; ⊂ doctor when an item is unrepresented) | cap 1, cap 2 |
 | H211 | MCP object-twin `stats.custody.attention` *scope* tie — graph flag whole-library (≡ `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain`, sees the loss on an isolated node), works flag representation-only (honestly `null` when the loss is unrepresented; fires + re-converges on shared fields when the loss enters scope, coverage staying the whole-library flag's alone) | cap 1, cap 2 |
+| H206 | CLI attention→scoped-`maintain` *drift*-act triage as one shell sequence in `tests/test_dogfood.py` — the shell twin of H204's MCP flow: `status`'s `attention` names the weakest source + the exact recheck command, `maintain --source <S>` collapses to it (singleton `by_source`, null `attention`, `custody` ≡ `doctor --source <S>` distilled), the scoped triage non-persisting (whole-library trend baseline byte-untouched, `delta` null, ADR 0082) | cap 11 |
 
 ---
 
@@ -343,10 +349,10 @@ committed, tested, clean stopping point; slips roll forward.
   + the HTML form). Day 2 work rolls forward into the Day 1/Day 3 clusters.
 - **Day 3 (2026-06-21 → 2026-06-22):** The **dogfood symmetry** — H206 (CLI
   attention → `maintain --source` *drift*-act triage as one shell flow in
-  `tests/test_dogfood.py`, the sibling of H204's MCP flow) and H210 (the
-  *refresh*-act sibling: read `_Refresh:_` → run the scoped `classify/kb --stale
-  --source` it names → the debt clears), then re-derive the next custody-deepening
-  horizon at the H207 checkpoint.
+  `tests/test_dogfood.py`, the sibling of H204's MCP flow) **shipped**; remaining is
+  H210 (the *refresh*-act sibling: read `_Refresh:_` → run the scoped `classify/kb
+  --stale --source` it names → the debt clears), then re-derive the next
+  custody-deepening horizon at the H207 checkpoint.
 
 ---
 
@@ -361,8 +367,8 @@ committed, tested, clean stopping point; slips roll forward.
   object-twin `by_source`/`attention` scope ties (H195/H211 shipped — sub-theme closed).
 - Pin the **dogfood symmetry** across both surfaces and both act axes: H206 (CLI
   attention → scoped-`maintain` *drift*-act triage, the sibling of H204's MCP flow)
-  and H210 (the *refresh*-act sibling — read `_Refresh:_` → run the scoped
-  `classify/kb --stale --source`).
+  **shipped**; remaining is H210 (the *refresh*-act sibling — read `_Refresh:_` → run
+  the scoped `classify/kb --stale --source`).
 - Re-derive the next post-MVP horizon at the next full checkpoint. Candidate
   directions stay custody-deepening (no new adapters): portable-custody depth,
   progressive context bundles, doctor/repair surfacing.
