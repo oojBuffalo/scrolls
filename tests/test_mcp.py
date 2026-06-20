@@ -1739,6 +1739,62 @@ def test_get_context_bundle_honors_budget(scrolls_home):
     assert "Budget: index" in index
 
 
+def test_get_context_bundle_index_carries_the_fidelity_holdings_line(scrolls_home, capsys):
+    # roadmap H214 — the MCP twin of H212. get_context_bundle is a read-through of
+    # build_context, so the leanest `index` tier carries the same ledger-free
+    # `_Fidelity:_` holdings line the CLI emits (fidelity travels with every result,
+    # vision principle 3) and the same honest *absence* of any drift verdict — it
+    # reads no ledger, so claiming `verified`/`unverified` there would be the M2
+    # anti-fabrication violation. Pin that the agent-facing bundle and the CLI never
+    # diverge on the leanest tier's fidelity read.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:Full", source="wikipedia",
+        url="https://en.wikipedia.org/wiki/Full",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full database",
+        extracted_text="A fully held database body.",
+        raw_text="<raw>A fully held database body.</raw>",
+        content_hash="deadbeef", stage="fetched",
+    ))
+    insert_item(db, ScrollItem(
+        id="wikipedia:en:Partial", source="wikipedia",
+        url="https://en.wikipedia.org/wiki/Partial",
+        saved_at="2026-06-12T00:00:00+00:00", title="Partial database",
+        extracted_text="A partial database body.", stage="fetched",
+    ))  # no hash/raw → partial — a second tier, so the line is non-vacuous
+    # a drift event the leanest tier must NOT read or claim
+    record_events(db, [CustodyEvent(
+        "wikipedia:en:Full", "2026-06-14T00:00:00+00:00", "drifted",
+        "deadbeef", "cafe", None)])
+
+    index = mcp_server.get_context_bundle("database", budget="index")
+    fidelity = next(line for line in index.splitlines() if line.startswith("_Fidelity:"))
+    assert "full 1, partial 1" in fidelity and "(of 2)" in fidelity
+    # the leanest tier reads no ledger: no drift verdict, no `_Custody:` headline
+    assert "_Custody:" not in index
+    assert "drifted" not in index
+
+    # the MCP twin never diverges from the CLI on that line (both are build_context)
+    capsys.readouterr()
+    assert main(["context", "database", "--budget", "index"]) == 0
+    cli = capsys.readouterr().out
+    cli_fidelity = next(line for line in cli.splitlines() if line.startswith("_Fidelity:"))
+    assert fidelity == cli_fidelity
+
+    # from `connected` up the full headline carries fidelity, so the dedicated
+    # `_Fidelity:_` line is an index-only lever — not duplicated above, exactly
+    # as on the CLI (the H212 no-duplication rule, here over MCP).
+    connected = mcp_server.get_context_bundle("database", budget="connected")
+    assert "_Fidelity:" not in connected
+    headline = next(line for line in connected.splitlines() if line.startswith("_Custody:"))
+    assert "fidelity full 1, partial 1" in headline
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
