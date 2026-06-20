@@ -494,3 +494,55 @@ def test_index_budget_names_fidelity_holdings_but_no_drift_verdict(scrolls_home,
         assert "_Custody:" in deep_out
         assert "drift drifted 1" in deep_out
         assert "_Fidelity:" not in deep_out  # the headline carries fidelity above index
+
+
+def test_mcp_index_budget_names_fidelity_holdings_but_no_drift_verdict(scrolls_home):
+    # roadmap H219 — the MCP twin of the CLI fold above (H215). `get_context_bundle`
+    # is the agent-facing read-through of `build_context`, so the leanest `index`
+    # bundle an agent actually reaches over MCP obeys the same G1 honesty: it names
+    # its `_Fidelity:_` holdings (a ledger-free fact; fidelity travels with every
+    # result, vision principle 3) but withholds any drift verdict it read no ledger
+    # for. The *same* query at `connected`+ — over a **recorded** `drifted` verdict —
+    # does carry the `_Custody:_` headline's drift section, so the `index` silence is
+    # a genuine withholding of an unread claim, not an empty scope (the M2
+    # anti-fabrication half). H214 already pinned the MCP fidelity line and its
+    # byte-identity with the CLI; this fold adds the *completeness* framing — the
+    # honest absence is proven against a verdict the deeper tiers surface.
+    main(["init"])
+    db = get_paths().db_path
+    # a held item the query matches, carrying a recorded drift verdict (same fixture
+    # shape as the CLI fold). The id/title carry no "drift" substring, so the absence
+    # assertion below targets the rendered drift *verdict*, not the item's own name.
+    insert_item(db, _rendered("web:moved"))
+    record_events(
+        db,
+        [
+            CustodyEvent(
+                item_id="web:moved",
+                checked_at="2026-06-14T00:00:00+00:00",
+                status="drifted",
+                prior_hash="sha256:web:moved",
+                observed_hash="cafe1234",
+            )
+        ],
+    )
+
+    # the leanest tier states what it HOLDS — the fidelity holdings fact and its
+    # scope (`of K`) — so fidelity travels even where no ledger is read ...
+    index_out = mcp_server.get_context_bundle("alpha", budget="index")
+    line = _fidelity_line(index_out)
+    assert "full 1" in line          # the holdings fact (the item is full-fidelity)
+    assert "(of 1)" in line          # ... named with its holdings scope
+    # ... but never a drift verdict it did not read (the M2 anti-fabrication half):
+    # no `_Custody:_` headline and no drift token of any posture.
+    assert "_Custody:" not in index_out
+    assert "drift" not in index_out
+
+    # the SAME query at `connected`+ DID read the ledger → the `_Custody:_` headline
+    # carries the recorded drift verdict, proving the `index` absence above is a
+    # genuine withholding (the tier could have read it; it honestly did not).
+    for tier in ("connected", "full"):
+        deep_out = mcp_server.get_context_bundle("alpha", budget=tier)
+        assert "_Custody:" in deep_out
+        assert "drift drifted 1" in deep_out
+        assert "_Fidelity:" not in deep_out  # the headline carries fidelity above index
