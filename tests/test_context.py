@@ -1,6 +1,7 @@
 """Tests for context bundles (IDEAS.md §11, §14 Pass 5)."""
 
 import json
+import re
 
 import pytest
 
@@ -729,6 +730,70 @@ def test_context_index_fidelity_counts_match_the_connected_headline(
     # the headline's `fidelity <counts>` section == the index line's counts
     assert "full 1, partial 1" in index_line
     assert "fidelity full 1, partial 1" in headline
+
+
+def _fidelity_scope(line):
+    """The `N` from a `_Fidelity: … (of N)._` line's scope suffix."""
+    return int(re.search(r"\(of (\d+)\)", line).group(1))
+
+
+def _fidelity_counts(line):
+    """The `{tier: count}` map parsed from a `_Fidelity:` line's tier tokens."""
+    return {
+        tier: int(n) for tier, n in re.findall(r"(full|partial|reference) (\d+)", line)
+    }
+
+
+def _coverage_top_of(out):
+    """The `(returned, matched)` from a truncated `_Coverage: the top R of M` line."""
+    line = next(line for line in out.splitlines() if line.startswith("_Coverage:"))
+    match = re.search(r"the top (\d+) of (\d+)", line)
+    return int(match.group(1)), int(match.group(2))
+
+
+def test_context_index_fidelity_scope_is_honest_under_truncation(scrolls_home, capsys):
+    # roadmap H221: the `index` `_Fidelity:_` line counts the *in-bundle* set (the
+    # kept post-cap representations, `len(items)`), never the library-wide matched
+    # total. When the bundle is capped (`matched > returned`) its `(of N)` must
+    # equal the Coverage line's `returned`, and its tier counts must sum to that
+    # returned — the fidelity holdings never over-claim scope the bundle didn't see
+    # (the depth-axis sibling of the Coverage line's match-set honesty; the
+    # *fidelity* counterpart of that line's truncation honesty).
+    main(["init"])
+    db = get_paths().db_path
+    # 3 full + 3 partial, all matching "database" — a mixed-fidelity scope larger
+    # than the cap. With `--limit 4`, pigeonhole forces the kept 4 to span *both*
+    # tiers (only 3 of either exist), so the in-bundle split (sums to 4) is
+    # provably not the library-wide `full 3, partial 3` (sums to 6).
+    for index in range(3):
+        insert_item(db, make_item(
+            f"wikipedia:en:Full_{index}", f"Full database {index}",
+            "A fully held database body.",
+            content_hash=f"deadbeef0{index}",
+            raw_text="<raw>A full database body.</raw>",
+        ))
+        insert_item(db, make_item(
+            f"wikipedia:en:Partial_{index}", f"Partial database {index}",
+            "A partial database body.",
+        ))  # no hash/raw → partial fidelity
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index", "--limit", "4")
+    fidelity = _fidelity_line(out)
+    returned, matched = _coverage_top_of(out)
+
+    # the bundle is genuinely truncated: top 4 of 6
+    assert (returned, matched) == (4, 6)
+    # the holdings scope names only what the bundle saw, tied to Coverage's
+    # `returned` — never the library-wide matched total it never read
+    assert _fidelity_scope(fidelity) == returned   # (of 4), == Coverage's top
+    assert _fidelity_scope(fidelity) != matched    # never (of 6)
+    # and the tier counts sum to that in-bundle scope, not the whole library
+    counts = _fidelity_counts(fidelity)
+    assert sum(counts.values()) == returned        # sums to 4, not 6
+    # the kept set is provably mixed (pigeonhole), so the line isn't accidentally
+    # all-one-tier — a real holdings split over the truncated scope
+    assert counts.get("full") and counts.get("partial")
 
 
 # --- per-source custody breakdown (roadmap H149) ---------------------------
