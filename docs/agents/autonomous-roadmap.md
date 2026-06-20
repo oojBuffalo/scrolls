@@ -21,7 +21,7 @@ half-done slice from the previous run first."
 
 ---
 
-## Status snapshot — 2026-06-19
+## Status snapshot — 2026-06-20
 
 **MVP M1–M5 complete** (custody-first): refresh-safe sentinel-fenced
 regeneration (M1, ADR 0102), the anti-fabrication/completeness invariant (M2),
@@ -56,6 +56,14 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   (`tests/test_dogfood_mcp.py`).
 - **Readable action lines.** `_Attention:_`/`_Refresh:_` pointers render
   byte-identical across the Markdown surfaces and converge with `doctor`.
+- **Self-healing dogfood, both surfaces, both act axes.** The
+  *act-where-the-loss-is* flow — read the pointer → run exactly the scoped act it
+  names → the debt clears — is now pinned on the **drift** axis over MCP (H204) and
+  the CLI shell (H206), and on the **enrichment/summary refresh** axis over the CLI
+  shell (H210, `tests/test_dogfood.py`). The drift triage reads `status`'s
+  `attention` → runs `maintain --source <S>`; the refresh triage reads the
+  `context` `_Refresh:_` line → runs the scoped `classify --stale --source <S>` /
+  `kb --stale --source <S>`.
 
 **Per-slice provenance is in git** — every shipped slice's commit subject carries
 its `(H<NN>)` tag, so `git log --oneline | grep '(H183)'` resolves any slice to
@@ -69,74 +77,53 @@ index that keeps `H<NN>` cross-references resolvable.
 
 Ordered. Take the next slice whose preconditions are met (all listed
 preconditions are shipped), finish it to a committed/tested/clean stopping
-point, and stop. `→ capN` marks the PRD capability. These are the only
-un-started **work** slices; the next checkpoint (H207) follows.
+point, and stop. `→ capN` marks the PRD capability. These are the un-started
+**work** slices; the next checkpoint (H218) follows.
+
+The new horizon, re-derived at this H207 checkpoint, is **budget/tier custody
+honesty** (cap 2/7/10): the `scrolls context` budgeted boot sequence currently
+hides *all* custody signal at its leanest `index` tier (the headline/per-source
+map are gated to `connected`+, `src/scrolls/context.py:203`), so an agent reading
+an `index` catalog can't tell whether the top matches are full-fidelity,
+reference-only, or anything between — a gap against vision principle 3 (*fidelity
+and provenance travel with every result*). The fix is honest *and* ledger-free:
+**fidelity is a holdings fact** (`items.fidelity_tier`, computed from item fields),
+so it can ride the leanest tier; **drift is a ledger claim**, so it honestly stays
+gated to `connected`+ (rendering "unverified" at `index`, where no ledger was read,
+would be the exact M2 anti-fabrication violation we forbid). Slots H212–H215 open
+and close that sub-theme; H216–H217 deepen portable-bundle round-trip custody.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H210 | **Refresh-debt *act* dogfood: read the `_Refresh:_` pointer → run the scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names → the debt clears (cap 8 + cap 11).** Appended (maintenance rule, buffer top-up after H192 shipped). The CLI/MCP dogfood flows (M5, H204, the queued H206) triage *drift* — read `attention` → run `verify`/`maintain --source`. The symmetric *enrichment/summary refresh* act has no end-to-end dogfood narrative: an agent reads the `context`/bundle `_Refresh:_` line (H178), runs **exactly** the scoped `classify --stale --source <S>` / `kb --stale --source <S>` commands it names, and re-reads to confirm the pointer clears that axis/source — pinned per-command (H154/H172/H176/H183) but never as one flow. Add it to `tests/test_dogfood.py` (the CLI dogfood home) over a multi-source fixture carrying **both** a stale classification (one source) and a stale summary cluster (two sources): assert the `context` `_Refresh:_` line names the debt sources per axis (≡ `doctor`'s `enrichment.by_source`/`summaries.by_source`), run the named scoped refresh acts, and assert the line drops exactly that axis/source while the untouched axis stays — the refresh-act sibling of H204/H206's drift-act triage. Non-vacuous (both axes present) and the refresh act *is* the mutation. Test + docs only; no production change (composes shipped acts). Precondition: H178 (`_Refresh:_` line, shipped); H154/H172 (the scoped refresh acts, shipped); H183 (the suggestion↔debt-map tie, shipped); the CLI dogfood suite (shipped). | → cap 8, cap 11 |
-| H207 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
+| H212 | **`_Fidelity:_` holdings line at `index` budget on `scrolls context`.** The leanest `index` tier (`context.py`) renders Best Matches + the coverage line + the budget note, but *no* custody signal (the `_Custody:_` headline and per-source map are gated to `connected`+ at `context.py:203`). Surface a one-line `_Fidelity:_` holdings note over the in-bundle representations — `_Fidelity: full N, partial M, reference O (of K)._` — at `index` (it already rides `connected`+ inside the `custody_headline`). The point and the design decision: **fidelity travels even at the leanest tier** (a ledger-free holdings fact via `items.fidelity_tier`/`custody.custody_counts`), but the line carries *only* fidelity — never a drift verdict, because `index` reads no ledger and claiming `unverified`/`verified` there would be the M2 anti-fabrication violation (the leanest tier honestly states what it holds, never what it hasn't checked). Production (`src/scrolls/context.py`) + test (`tests/test_context.py`): assert the `index` bundle carries the fidelity counts and *no* `_Custody:`/drift token, and that `connected`+ still carries the full headline. Precondition: fidelity tiers (ADR 0100, shipped); the budget tiers (M3, shipped); `custody_counts` (shipped). | → cap 2, cap 7, cap 10 |
+| H213 | **Cross-tier fidelity convergence invariant.** The `index` `_Fidelity:_` counts (H212) ≡ the `connected`/`full` `_Custody:_` headline's fidelity counts ≡ `doctor`'s `custody.tiers` over the same scope — a tier never disagrees with another tier or with the audit on *what fraction is held in full*. Fold into `tests/test_custody_convergence.py` (or `test_context.py`) over a mixed-fidelity scope (≥2 tiers present, non-vacuous), mutation-checked (drop a body → the tier shifts on every surface in lockstep). Test only; pins H212's contract. Precondition: H212. | → cap 7 |
+| H214 | **MCP `get_context(budget="index")` carries the same `_Fidelity:_` line.** The MCP twin of H212: `get_context_bundle` (`src/scrolls/mcp_server.py:463`) is a read-through of `build_context`, so the line rides it for free — pin it (`tests/test_mcp.py`) so the agent-facing context bundle and the CLI never diverge on the leanest tier's fidelity read. Test only. Precondition: H212; the MCP context tool (shipped). | → cap 2, cap 10 |
+| H215 | **Fold the `index` fidelity line into the M2 completeness/anti-fabrication invariant.** The leanest tier states its holdings scope (`of K`) and *never* implies a drift verdict it didn't read — the honest-absence-of-the-drift-claim counterpart of H190's compiled-page action-line absence. Add to `tests/test_completeness.py`: an `index` bundle names its fidelity holdings but carries no `_Custody:`/`drift` token, while the same query at `connected`+ does. Test only. Precondition: H212; the M2 suite (shipped). | → cap 7, M2 |
+| H216 | **Mixed-fidelity bundle round-trip invariant.** The dogfood/round-trip ties prove a *full*-fidelity topic survives `export bundle`→`import bundle` byte-for-byte (`test_dogfood.py`, all-`full` fixture), but the `partial`/`reference` tiers are never exercised end-to-end. Pin it: a bundle whose items span all three fidelity tiers re-imports with each item's `get_fidelity` tier preserved (no import-side downgrade), folded into `tests/test_bundle.py`. Non-vacuous (≥2 tiers) and the proof that portability is *tier-lossless*, not just full-lossless. Test only. Precondition: lossless round-trip (ADR 0099/0103, shipped); `get_fidelity` (shipped). | → cap 7, cap 9 |
+| H217 | **Bundle import is honest about orphan custody events.** A bundle carries items *and* their verify-ledger events (H67). Pin the round-trip-completeness contract: every imported custody event resolves to a held-or-imported item — an event whose `item_id` matches no item is surfaced (count/warning), never silently dropped or silently retained as a dangling history. Inspect `custody.import_events`/the bundle import path (`src/scrolls/bundle.py`, `src/scrolls/cli.py`) for whether this already holds; add the guard only if reported-but-not-enforced, plus the test (`tests/test_bundle.py`). Precondition: portable events (H67/H72, shipped). | → cap 9, cap 7 |
+| H218 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The current un-started theme is the **dogfood tail** of the per-source custody work:
-one remaining dogfood-symmetry slice (H210 refresh-act), then the H207 checkpoint.
-It is a test+docs slice over already-shipped production code — it pins a contract, not
-new behavior. (H209 — the MCP `run_maintenance` scoped `suggested` ↔ debt-map
-convergence — shipped: the agent-facing `run_maintenance()` tool's scoped `classify
---stale --source <S>` / `kb --stale --source <S>` suggestion sources now tie ≡ its own
-`enrichment_by_source` / `summary_by_source` debt-map keys (carrying the H171
-double-attribution), the MCP report converges field-for-field with CLI `maintain
---no-recheck` and the pure `suggest_repairs(run_doctor())`, and the H182 short-circuit
-is pinned over MCP (a *scoped* `run_maintenance(source=S)` names exactly `<command>
---source S` per present axis — web enrichment-only, wikipedia summary-only under their
-own scopes), mutation-checked by a `kb --stale --source wikipedia` refresh that drops
-wikipedia from the summary map and the kb suggestions in lockstep while enrichment
-stays — closing the suggestion↔debt-map tie over *both* the CLI (H183) and MCP
-surfaces. H208 — the
-MCP `get_library_health` refresh-debt read folded into the H179 three-way tie —
-shipped: the nested `enrichment.by_source`/`summaries.by_source` map an agent reads
-purely over MCP now ties ≡ `status`'s flat `enrichment_by_source`/`summary_by_source`
-≡ `doctor`'s `custody.{enrichment,summaries}.by_source` over the same combined
-stale-classification+stale-summary seed, whole-library and `--source`-scoped, carrying
-the H171 double-attribution asymmetry and the single-source-cluster scope-collapse
-(wikipedia's Vector survives its scope; a multi-source Bm25 fractures below
-`MIN_MEMBERS`), mutation-checked by a `kb --stale --source wikipedia` refresh that drops
-wikipedia from all three in lockstep — and folded out the H179/H183/H208 seed
-triplication into one shared `_seed_refresh_debt_both_axes` helper. H206 — the
-CLI attention→scoped-`maintain` *drift*-act triage as one shell sequence in
-`tests/test_dogfood.py` — shipped: the symmetric shell twin of H204's MCP flow, so the
-triage-where-the-loss-is point is now pinned over *both* surfaces — `status`'s
-`attention` names the weakest source + the exact recheck command, `maintain --source
-<S>` collapses to that one source (singleton `by_source`, null `attention`, `custody`
-≡ `doctor --source <S>` distilled), and the scoped triage is non-persisting (the
-whole-library trend baseline byte-untouched, `delta` null, ADR 0082). H211 —
-the MCP object-twin `attention`-flag *scope* tie — shipped: the graph flag is
-whole-library (≡ `weakest_source(doctor.by_source)` ≡ `status` ≡ `maintain`, sees the
-loss even on an isolated node), while the works flag ranks only the represented scope
-and so is honestly `null` when the loss is unrepresented — never a silent
-disagreement, mutation-checked by moving the loss into scope. It built on H195 — the
-MCP object-twin `by_source` *content* tie, which **corrected its own slice framing**:
-the graph twin is whole-library by construction (≡ `doctor` incl. coverage,
-isolation-independent — *not* connected-only ⊂ doctor), while only the works twin is
-representation-scoped (⊂ doctor when an item is unrepresented). H192/H193 — the
-compiled/HTML readable-parity ties — shipped, closing that contract. H183 shipped, and
-H209 extended it to the MCP `run_maintenance` tool (above), closing the suggestion↔debt-map
-tie over both surfaces. H179 shipped, and H208 extended it to the MCP read surface (above).)
+The lead slot is **H212** (the `index`-budget `_Fidelity:_` line), a small,
+decision-grade production slice; H213–H215 close it into a tested cross-tier /
+cross-surface / completeness contract, and H216–H217 are the portable-bundle
+round-trip-depth follow-ons. Per-slice provenance for every *shipped* slot lives in
+git (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the
+one-line in-file index (maintenance-rule §4: *git is the changelog*).
 
-**Buffer-health note (2026-06-20, H209 run).** The readable-parity tail stays
-**saturated** (H192/H193 closed it), the object-twin convergence sub-theme is
-**closed** (H195/H211), the **CLI dogfood drift-act triage** is pinned (H206 — the
-shell twin of H204's MCP flow), the **MCP `get_library_health` refresh-debt read**
-joins the H179 three-way tie (H208), and the **suggestion↔debt-map tie is now closed over
-both the CLI and MCP surfaces** (H209 — the MCP `run_maintenance` sibling of H183). The
-queue sits at **1** un-started work slot (H210, the last refresh-act dogfood symmetry) +
-the imminent H207 checkpoint — below the maintenance-rule §1 ≥6 target, *deliberately and
-per §5* (**no invented work**): the per-source convergence sub-theme is now exhausted
-(every read and act surface ties to the audit), so the only legitimate remaining work
-slice is H210, and the correct §5 outcome is to **do H210, then re-derive the buffer at
-the H207 checkpoint** rather than mint filler ties. H207 should open a fresh
-custody-deepening horizon (portable-custody depth, progressive context bundles, or
-doctor/repair surfacing) and re-derive the buffer back above ≥6 from the MVP/PRD. The one
-remaining substantive slot plus the checkpoint still cover the next ~24h.
+**Buffer-health note (2026-06-20, H207 checkpoint).** This run shipped **H210** (the
+CLI refresh-debt *act* dogfood — read the `context` `_Refresh:_` pointer → run the
+scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names → the named
+axis/source clears while the untouched axis persists; the refresh-axis twin of H206's
+drift-act triage), which **closed the per-source custody convergence theme**: every read
+*and* act surface, on both the drift and enrichment/summary axes, over both the CLI and
+MCP, now ties to the `doctor` audit, and the self-healing dogfood is pinned across both
+surfaces and both act axes (H204/H206/H210). With that theme exhausted, this H207
+checkpoint **opens a fresh horizon** — *budget/tier custody honesty* (H212–H215), backed
+by a verified gap (the `index` tier hides fidelity, `context.py:203`) and vision
+principle 3 — plus two portable-bundle round-trip-depth slices (H216–H217). The queue is
+re-derived to **6** un-started work slots + the H218 checkpoint, back above the
+maintenance-rule §1 ≥6 target. The `verify --drift error` recovery path already makes the
+recheck-error tail actionable (a candidate dropped at this checkpoint per §5 — no filler).
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -343,64 +330,54 @@ changelog (maintenance-rule §4).
 | H206 | CLI attention→scoped-`maintain` *drift*-act triage as one shell sequence in `tests/test_dogfood.py` — the shell twin of H204's MCP flow: `status`'s `attention` names the weakest source + the exact recheck command, `maintain --source <S>` collapses to it (singleton `by_source`, null `attention`, `custody` ≡ `doctor --source <S>` distilled), the scoped triage non-persisting (whole-library trend baseline byte-untouched, `delta` null, ADR 0082) | cap 11 |
 | H208 | MCP `get_library_health` nested refresh-debt read (`enrichment.by_source`/`summaries.by_source`) folded into the H179 three-way tie ≡ `status` flat maps ≡ `doctor`, whole-library + `--source`-scoped, over the combined stale-classification+stale-summary seed — carrying the H171 double-attribution asymmetry and the single-source-cluster scope-collapse, mutation-checked; H179/H183/H208 seed triplication factored into one `_seed_refresh_debt_both_axes` helper | cap 2, cap 8 |
 | H209 | MCP `run_maintenance` scoped `suggested` ↔ debt-map convergence folded into the suite — the agent-facing sibling of H183: the whole-library `run_maintenance()` tool's scoped `classify --stale --source <S>` / `kb --stale --source <S>` suggestion sources ≡ its own `enrichment_by_source` / `summary_by_source` keys (H171 double-attribution carried), the MCP report converges field-for-field with CLI `maintain --no-recheck` and the pure `suggest_repairs(run_doctor())`, the H182 short-circuit pinned over MCP (a scoped `run_maintenance(source=S)` names exactly `<command> --source S` per present axis — web enrichment-only, wikipedia summary-only under their own scopes), mutation-checked by a `kb --stale --source wikipedia` refresh moving the suggestions in lockstep with the debt map | cap 1, cap 11 |
+| H210 | CLI refresh-debt *act* dogfood in `tests/test_dogfood.py` — the refresh-axis twin of H206's drift-act triage: an agent reads the `context` `_Refresh:_` line (== `doctor`'s `enrichment.by_source`/`summaries.by_source`, enrichment `{web}` ≠ summary `{arxiv, web}`, non-vacuous), runs the scoped `classify --stale --source web` (drops only the enrichment clause), then `kb --stale --source web` (clears the whole two-source cluster in lockstep — the H171 attribution: a cluster is refreshed under any of its sources) and the `_Refresh:_` line vanishes (honest absence); the refresh act *is* the mutation, the model call scripted offline at `kb_llm._anthropic_complete`. Closed the per-source convergence theme | cap 8, cap 11 |
 
 ---
 
-## 3-day plan — 2026-06-19 → 2026-06-22
+## 3-day plan — 2026-06-20 → 2026-06-23
 
-Forward-looking (re-derived at this H187 full refresh). Each day ends on a
+Forward-looking (re-derived at this H207 checkpoint). Each day ends on a
 committed, tested, clean stopping point; slips roll forward.
 
-- **Day 1 (2026-06-19):** The per-source custody **convergence-invariant**
-  cluster. H179 (status `enrichment_by_source`/`summary_by_source` ≡ `maintain`
-  ≡ `doctor`, refresh-debt axis), H183 (scoped `suggested` refresh commands name
-  exactly the debt-map sources), H195 (the MCP object-twin
-  `stats.custody.by_source` content tie — graph twin whole-library/isolation-
-  independent, works twin representation-only/⊂-doctor — which corrected its own
-  "connected-only ⊂ doctor" framing), and H211 (the object-twin `attention`-flag
-  scope tie it surfaced — graph flag whole-library ≡ `weakest_source(doctor)` ≡
-  `status` ≡ `maintain`, works flag honestly `null` when the loss is unrepresented)
-  **shipped** — closing the object-twin convergence sub-theme. H208 (the MCP
-  `get_library_health` nested refresh-debt read folded into the H179 three-way tie ≡
-  `status` ≡ `doctor`, whole-library + scoped, with the seed triplication factored into
-  one shared helper) and H209 (the MCP `run_maintenance` scoped-suggestion sibling of
-  H183 — the suggestion↔debt-map tie now closed over both the CLI and MCP surfaces, the
-  H182 short-circuit pinned over MCP, mutation-checked) **shipped** — the per-source
-  convergence-invariant cluster is now **closed**. Both folded into
-  `tests/test_custody_convergence.py`.
-- **Day 2 (2026-06-20):** The **readable / compiled-page parity** cluster — now
-  **complete**. H192 (action-line *content* parity on the bundle HTML form vs
-  Markdown) and H193 (single-source compiled `sources/<S>.md` `_Refresh:_` honest
-  presence ≡ `doctor --source <S>` debt, with the multi-source-cluster-narrowed
-  summary-absence pinned positively) **shipped** — the action-line contract is now
-  pinned across every readable surface (briefing/context/index/group/single-source
-  + the HTML form). Day 2 work rolls forward into the Day 1/Day 3 clusters.
-- **Day 3 (2026-06-21 → 2026-06-22):** The **dogfood symmetry** — H206 (CLI
-  attention → `maintain --source` *drift*-act triage as one shell flow in
-  `tests/test_dogfood.py`, the sibling of H204's MCP flow) **shipped**; remaining is
-  H210 (the *refresh*-act sibling: read `_Refresh:_` → run the scoped `classify/kb
-  --stale --source` it names → the debt clears), then re-derive the next
-  custody-deepening horizon at the H207 checkpoint.
+- **Day 1 (2026-06-20):** Close the per-source custody convergence theme and
+  re-derive the buffer. **H210** (the CLI refresh-debt *act* dogfood —
+  read `context` `_Refresh:_` → run the scoped `classify --stale --source <S>` /
+  `kb --stale --source <S>` it names → the named axis/source clears while the
+  untouched axis persists; the refresh-axis twin of H206's drift triage)
+  **shipped** in `tests/test_dogfood.py`, exhausting the per-source theme: every
+  read *and* act surface, both axes, both the CLI and MCP, now ties to `doctor`.
+  The **H207 checkpoint** (this refresh) opens the *budget/tier custody honesty*
+  horizon.
+- **Day 2 (2026-06-21):** The **budget/tier custody honesty** sub-theme. **H212**
+  (the `_Fidelity:_` holdings line at `index` budget — fidelity travels even at the
+  leanest tier, drift honestly does not; `src/scrolls/context.py` + test) is the
+  decision-grade production lead; **H213** (cross-tier fidelity convergence ≡
+  `doctor.tiers`) and **H214** (the MCP `get_context(budget="index")` twin) close it
+  as a tested contract.
+- **Day 3 (2026-06-22 → 2026-06-23):** Finish the sub-theme and start
+  portable-bundle depth. **H215** (fold the `index` fidelity line into the M2
+  completeness/anti-fabrication invariant — names its holdings, never a drift verdict
+  it didn't read), then **H216** (the mixed-fidelity bundle round-trip invariant —
+  `partial`/`reference` tiers re-import tier-lossless, not just `full`) and **H217**
+  (bundle import honest about orphan custody events). Re-derive at the H218 checkpoint.
 
 ---
 
-## Week plan (more tentative) — through 2026-06-26
+## Week plan (more tentative) — through 2026-06-27
 
-- The per-source custody **convergence invariants** are now **closed**
-  (H179/H183/H195/H211/H208/H209 shipped): the object-twin convergence sub-theme, the
-  MCP `get_library_health` refresh-debt read joining the H179 tie, and the
-  suggestion↔debt-map tie over both the CLI and MCP surfaces (H209 — the MCP
-  `run_maintenance` sibling of H183). The **compiled readable-parity** tail is also
-  closed (H192/H193 — the action-line contract pinned across every readable surface).
-  "Custody reads the same everywhere" is now a tested contract on the per-source,
-  action-line, and suggestion↔debt-map axes.
-- Pin the **dogfood symmetry** across both surfaces and both act axes: H206 (CLI
-  attention → scoped-`maintain` *drift*-act triage, the sibling of H204's MCP flow)
-  **shipped**; remaining is H210 (the *refresh*-act sibling — read `_Refresh:_` → run
-  the scoped `classify/kb --stale --source`).
-- Re-derive the next post-MVP horizon at the next full checkpoint. Candidate
-  directions stay custody-deepening (no new adapters): portable-custody depth,
-  progressive context bundles, doctor/repair surfacing.
+- The per-source custody **convergence theme is closed** (H179/H183/H195/H211/H208/
+  H209 the reads, H206/H210 the self-healing dogfood across both surfaces and both
+  act axes). "Custody reads the same everywhere, and an agent can act on exactly what
+  the pointer names" is now a tested contract on the per-source, action-line,
+  suggestion↔debt-map, and dogfood axes.
+- The fresh horizon is **budget/tier custody honesty** (H212–H215): the leanest
+  `index` context tier must still carry the *fidelity* holdings fact (vision principle
+  3 — fidelity travels with every result), while honestly *withholding* any drift
+  verdict it read no ledger for (M2 anti-fabrication). H212 is the one production slice;
+  H213–H215 are the cross-tier / cross-surface / completeness ties.
+- Then **portable-bundle round-trip depth** (H216–H217): prove portability is
+  *tier-lossless* (mixed-fidelity round-trip) and *event-complete* (no silently
+  orphaned custody events on import).
 - Consider a bi-temporal framing pass on drift events (captured-at vs
   source-changed-at) *only if* an agent workflow shows the event record is
   insufficient; otherwise keep deferred (MVP "out of scope").
