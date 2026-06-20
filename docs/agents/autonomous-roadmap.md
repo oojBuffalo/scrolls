@@ -74,7 +74,6 @@ un-started **work** slices; the next checkpoint (H207) follows.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H193 | **Single-source compiled `sources/*.md` page `_Refresh:_` honest presence ≡ `doctor --source`'s debt (cap 7 + cap 8).** Appended (maintenance rule, buffer top-up). H190 pins the compiled honest-*absence* (a clean page omits the action lines); the positive companion is that a **single-source** compiled `sources/<S>.md` page shows the `_Refresh:_` line (it has *no* single-source gate, unlike `_Attention:_`/`_By source:_`) **exactly when** source `<S>` carries stale debt, naming the same axes `doctor --source <S>`'s `custody.enrichment.by_source`/`summaries.by_source` do — and never `_Attention:_` or `_By source:_` on that single-source page. Fold into `tests/test_custody_convergence.py` (the compiled-surface convergence home, beside H184/H190): over a seed where one source carries a stale classification (and optionally a within-source stale summary cluster), `sources/<S>.md`'s `_Refresh:_` clauses ≡ `run_doctor(source=S)`'s debt-map keys for the page's own scope (the scope-consistent posture H178/H184 took), with the multi-source-concept-narrowed-below-`MIN_MEMBERS` summary-absence case from H184 pinned positively. Non-vacuous (≥1 source with debt) and mutation-checked (refresh clears the clause). Test + docs only; no production change. Precondition: H184 (the compiled action lines + scope-consistency, shipped); H190 (the honest-absence sibling, shipped). | → cap 7, cap 8 |
 | H195 | **Object-twin `stats.custody.by_source` *content* converges with `doctor` over a whole-library scope (cap 1 + cap 2).** Appended (maintenance rule, buffer top-up). H186 pins the *shape* (the object twins carry `stats.custody.by_source`); the unproven *content* tie is that, **when the scope is the whole library** (every item connected in the graph / represented in a work), `get_link_graph`/`get_works` `stats.custody.by_source` equals `run_doctor`'s `custody.by_source` field-for-field — the per-source split is the same tally, only differently scoped. The load-bearing subtlety to pin (not just assert equality): the graph/works maps are **scope-restricted** (connected-only / representation-only), so they equal the whole-library audit *exactly when* the seed leaves nothing isolated/unrepresented; over a seed with an isolated item, the object-twin map is a strict subset of doctor's — the honest scope difference, never a disagreement. Fold into `tests/test_custody_convergence.py` beside the H157/H169 `by_source` ties (the cross-surface convergence home): the whole-connected case (object-twin ≡ doctor) and the isolated-item case (object-twin ⊂ doctor, the dropped source is the isolate's). Non-vacuous (≥2 sources) and mutation-checked. Test + docs only; no production change. Precondition: H186 (shipped); H150/H155 (the object-twin `by_source`, shipped); H157 (the convergence-suite precedent, shipped). | → cap 1, cap 2 |
 | H206 | **CLI-side attention→scoped-maintenance triage folded into the shell dogfood flow (cap 11).** Appended (maintenance rule, buffer top-up after H204 shipped). H204 pinned the *MCP* attention→scoped-pass triage as one agent-driven flow (`tests/test_dogfood_mcp.py`); the symmetric **shell** flow — read `scrolls status`/`doctor` (the `attention` JSON flag names the weakest source) → run `scrolls maintain --source <that source>` to triage just it — is pinned per-command (H139/H165/H181) but not as one end-to-end dogfood sequence in `tests/test_dogfood.py` (the CLI dogfood home, where the whole-library `maintain` leg already lives). Add a test that drives that exact sequence over the CLI dogfood's drifted multi-source fixture: assert `status --json`'s `attention.source` names the weakest source, that `maintain --source <that source>` scopes to it (singleton `by_source`, null `attention`, `custody == doctor --source <S>`'s distilled), and that the scoped pass is **non-persisting** (the whole-library snapshot/log the dogfood's earlier whole-library `maintain` recorded is untouched, `delta` honestly absent) — the shell sibling of H204's MCP flow, so the triage-where-the-loss-is point is pinned over *both* surfaces. Non-vacuous (≥2 sources, one clean) and mutation-checked. Test + docs only (`docs/dogfood.md`'s CLI flow section gains the attention→`maintain --source` triage sentence beside the recurring `maintain` leg); no production change. Precondition: H204 (the MCP sibling, shipped); H139 (`status` JSON `attention`, shipped); H165/H181 (`maintain --source`, shipped); the CLI dogfood suite (shipped). | → cap 11 |
 | H208 | **MCP `get_library_health` refresh-debt maps ≡ `status` ≡ `doctor` folded into `tests/test_custody_convergence.py` (cap 2 + cap 8).** Appended (maintenance rule, buffer top-up after H179 shipped). H179 pinned the *flat* refresh-debt maps (`enrichment_by_source`/`summary_by_source`) tie across `status`≡`maintain`≡`doctor` (whole-library + scoped); the MCP read surface (`get_library_health`) keeps the *nested* form (`enrichment.by_source`/`summaries.by_source`, the H180 flat≡nested posture), so the cross-surface tie is unproven on the agent-facing read. Over the same combined stale-classification **and** stale-summary seed H179 uses, assert `get_library_health()["enrichment"]["by_source"]` ≡ `status`'s `enrichment_by_source` ≡ `doctor`'s `custody.enrichment.by_source`, and likewise the summaries axis (carrying the non-sum-to-whole asymmetry), with the `source=`-scoped read equal too (`get_library_health(source=S)` ≡ `status --source S` ≡ `doctor --source S`), and the single-source-cluster scope-collapse pinned positively (the wikipedia-only cluster survives its scope; a multi-source one fractures below `MIN_MEMBERS`). Non-vacuous (≥2 sources, both axes) and mutation-checked (a `kb --stale --source` refresh moves all three together). Test + docs only; no production change. Precondition: H179 (the CLI tie, shipped); H180 (the MCP flat≡nested refresh-debt block, shipped); H167 (the scoped MCP read, shipped). | → cap 2, cap 8 |
@@ -83,26 +82,30 @@ un-started **work** slices; the next checkpoint (H207) follows.
 | H207 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
 The current un-started theme is the **cross-surface convergence + dogfood tail** of
-the per-source custody work: three convergence invariants (H195, H208, H209), the
-single compiled readable-parity tie left (H193), and two dogfood-symmetry slices
-(H206 drift-act, H210 refresh-act). All are test+docs slices over already-shipped
-production code — they pin contracts, not new behavior. (H192 — the bundle-HTML
-action-line *content* parity — shipped, the HTML counterpart of H188's Markdown
-byte-identical tie; with the HTML full-shape already pinned by H160 and the HTML
-refresh honest-absence by `test_bundle.py`, the bundle-HTML action lines are now
-fully tied. H183 shipped; H209 extends it to the MCP `run_maintenance` tool. H179
-shipped; H208 extends it to the MCP read surface.)
+the per-source custody work: three convergence invariants (H195, H208, H209) and two
+dogfood-symmetry slices (H206 drift-act, H210 refresh-act). All are test+docs slices
+over already-shipped production code — they pin contracts, not new behavior. (H193 —
+the single-source compiled `sources/<S>.md` `_Refresh:_` honest-presence ≡ `doctor
+--source` debt, with the multi-source-cluster-narrowed-below-`MIN_MEMBERS`
+summary-absence pinned positively — shipped, the last compiled readable-parity tie
+H184/H188 left; the compiled action-line contract is now closed across the index,
+group, and single-source surfaces. H192 — the bundle-HTML action-line *content*
+parity — shipped. H183 shipped; H209 extends it to the MCP `run_maintenance` tool.
+H179 shipped; H208 extends it to the MCP read surface.)
 
-**Buffer-health note (2026-06-19, H192 run).** The readable-parity/convergence tail
-is near-saturated: several candidate appends were checked and found already shipped —
-the HTML full-shape (H160), the HTML/refresh honest-absence (`test_bundle.py:783`),
-the `context` budget-tier gating (`test_context.py`), `export events --source`
-(cli.py), and the per-source scoped reads/acts. The one genuinely *new-ground* append
-was H210 (the refresh-act dogfood narrative, the enrichment sibling of H204/H206's
-drift-act triage). The next full re-derivation (H207) should open a fresh
-custody-deepening horizon rather than mint more readable-parity micro-ties — per the
-maintenance rule §5 (*no invented work*), padding the buffer with marginal ties is
-itself churn to avoid.
+**Buffer-health note (2026-06-19, H193 run).** The readable-parity/convergence tail
+is **saturated** — H193 closed the last genuinely-new compiled readable-parity tie
+(single-source `sources/<S>.md` `_Refresh:_` presence). The remaining five work slices
+(H195, H208, H209 convergence invariants; H206, H210 dogfood-symmetry) cover the next
+~24h, so the queue sits at 5 un-started work slots — deliberately one short of the
+maintenance-rule §1 ≥6 target rather than padded with a marginal tie: a recheck of the
+candidate-append space (the MCP surface is mature — `get_scroll_history`,
+`get_library_health`, `run_maintenance`, `get_maintenance_history` all shipped; the
+compiled/readable/JSON `by_source` and action-line ties are all pinned) turned up no
+genuinely-new-ground micro-tie, and per §5 (*no invented work*) padding with marginal
+ties is itself churn to avoid. The next full re-derivation (H207) should open a fresh
+custody-deepening horizon (portable-custody depth, progressive context bundles, or
+doctor/repair surfacing) rather than mint more readable-parity ties.
 
 If the queue empties before the day does, deepen tests/fixtures on the slice just
 shipped or pick the next-highest PRD capability — never manufacture cosmetic
@@ -303,6 +306,7 @@ changelog (maintenance-rule §4).
 | H204 | Scoped MCP maintenance pass folded into the agent-driven dogfood flow | cap 11 |
 | H205 | Buffer checkpoint | maint |
 | H192 | Bundle-HTML action-line *content* parity ≡ the Markdown form ≡ the canonical primitive (the HTML counterpart of H188's byte-identical Markdown tie) | cap 5, cap 8 |
+| H193 | Single-source compiled `sources/<S>.md` `_Refresh:_` honest presence ≡ `doctor --source` debt, multi-source-cluster-narrowed-below-`MIN_MEMBERS` summary-absence pinned positively — the last compiled readable-parity tie | cap 7, cap 8 |
 
 ---
 
@@ -320,11 +324,13 @@ committed, tested, clean stopping point; slips roll forward.
   read-surface sibling of H179), and H209 (the MCP `run_maintenance`
   scoped-suggestion sibling of H183). All fold into
   `tests/test_custody_convergence.py`.
-- **Day 2 (2026-06-20):** The **readable / compiled-page parity** cluster.
-  H192 (action-line *content* parity on the bundle HTML form vs Markdown)
-  **shipped**; remaining: H193 (single-source compiled `sources/<S>.md`
-  `_Refresh:_` honest presence ≡ `doctor --source <S>` debt). H193 pins the
-  action-line contract onto the last compiled surface H184/H188 left out.
+- **Day 2 (2026-06-20):** The **readable / compiled-page parity** cluster — now
+  **complete**. H192 (action-line *content* parity on the bundle HTML form vs
+  Markdown) and H193 (single-source compiled `sources/<S>.md` `_Refresh:_` honest
+  presence ≡ `doctor --source <S>` debt, with the multi-source-cluster-narrowed
+  summary-absence pinned positively) **shipped** — the action-line contract is now
+  pinned across every readable surface (briefing/context/index/group/single-source
+  + the HTML form). Day 2 work rolls forward into the Day 1/Day 3 clusters.
 - **Day 3 (2026-06-21 → 2026-06-22):** The **dogfood symmetry** — H206 (CLI
   attention → `maintain --source` *drift*-act triage as one shell flow in
   `tests/test_dogfood.py`, the sibling of H204's MCP flow) and H210 (the
@@ -337,8 +343,9 @@ committed, tested, clean stopping point; slips roll forward.
 ## Week plan (more tentative) — through 2026-06-26
 
 - Close the remaining per-source custody **convergence invariants** (H195, H208,
-  H209 — H179/H183 shipped) and the last **compiled readable-parity** tie (H193 —
-  H192 shipped): make "custody reads the same everywhere" a tested contract on the
+  H209 — H179/H183 shipped). The **compiled readable-parity** tail is now closed
+  (H192/H193 shipped — the action-line contract is pinned across every readable
+  surface): make "custody reads the same everywhere" a tested contract on the
   per-source and action-line axes, including the suggestion↔debt-map tie over both
   the CLI and MCP surfaces.
 - Pin the **dogfood symmetry** across both surfaces and both act axes: H206 (CLI

@@ -266,6 +266,19 @@ source list equals the Markdown's per axis — the action-line analogue of H151'
 `_html_by_source_bullets` content tie, mutation-checked so perturbing the data moves
 both forms together.
 
+The **single-source `sources/<S>.md` pages** carry the positive companion of that
+honest-absence posture (roadmap H193). Unlike `_Attention:_` and `_By source:_` (the
+`<2`-source no-ops a single-source page always omits), the `_Refresh:_` line has *no*
+single-source gate, so a `sources/<S>.md` page shows it exactly when source `<S>`
+carries stale enrichment/summary debt — naming the same axes `doctor --source <S>`'s
+`enrichment.by_source`/`summaries.by_source` keys do, computed over the page's own
+member scope. The load-bearing subtlety pinned positively: a multi-source concept's
+stale summary attributes to every member source at the whole-library scope (the H171
+attribution), but narrows below `MIN_MEMBERS` under a single-source scope and drops
+out — so a `sources/<S>.md` page's summary axis reflects only the within-source
+clusters, exactly as the scoped audit does, and a source whose *only* summary
+participation was a multi-source cluster shows the honest-clean page (no `_Refresh:_`).
+
 The **act side of the per-source enrichment debt** is pinned the way the
 verify-selection section pins the drift act side. `classify --stale --source S`
 (roadmap H154) and `kb --stale --source S` (roadmap H176) each regenerate exactly
@@ -3708,6 +3721,157 @@ def test_compiled_pages_carry_the_action_lines_converging_with_doctor(
     refreshed = (library / "categories" / "ml.md").read_text(encoding="utf-8")
     assert _refresh_sources(refreshed, _REFRESH_CLASS_MD) == []  # enrichment cleared
     assert _refresh_sources(refreshed, _REFRESH_SUMM_MD) == ["arxiv", "web"]
+
+
+def _seed_single_source_refresh_fixture(db):
+    """A multi-source library whose refresh debt splits so each `sources/*.md` page's
+    `_Refresh:_` reads exactly its own single-source scope (roadmap H193).
+
+    `web` carries a stale rules classification (enrichment debt {web}) **and** a
+    *within-source* stale summary cluster — the web-only concept `WebOnly`, two
+    rendered web members under a superseded `members_hash` (summary debt {web} that
+    survives a single-source scope, ≥ `MIN_MEMBERS` web members). The concept `Bm25`
+    spans one web + one arxiv member with a stale stored summary: at the whole-library
+    scope it is eligible (2 members) and attributes to {arxiv, web} (the H171
+    multi-source attribution), but under *either* single-source scope it narrows below
+    `MIN_MEMBERS` and drops out — so `web`'s summary debt collapses to the WebOnly
+    cluster alone and `arxiv`'s only summary participation vanishes (its page is then
+    honestly clean). Every item is rendered, so the compiled `sources/<S>.md` page's
+    own-member scope == `doctor --source <S>`'s held set.
+    """
+    from scrolls.kb import ConceptSummary, save_concept_summary
+
+    # web: a rules classification under a superseded ruleset → enrichment debt {web}
+    insert_item(db, _item(
+        "web:stale", "Topic stale classification", source="web", category="tutorial",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"},
+        extracted_text="topic", raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/web/stale.md", content_hash="sha256:ws"))
+    # web-only concept `WebOnly`: two rendered web members → eligible at every scope
+    insert_item(db, _item(
+        "web:wo1", "Topic web-only one", source="web", concepts=("WebOnly",),
+        url="https://web.example.com/wo1", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/web/wo1.md", content_hash="sha256:wo1"))
+    insert_item(db, _item(
+        "web:wo2", "Topic web-only two", source="web", concepts=("WebOnly",),
+        url="https://web.example.com/wo2", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/web/wo2.md", content_hash="sha256:wo2"))
+    # multi-source concept `Bm25`: one web + one arxiv member — narrows below
+    # MIN_MEMBERS under either single-source scope
+    insert_item(db, _item(
+        "web:bm1", "Topic bm25 web", source="web", concepts=("Bm25",),
+        url="https://web.example.com/bm1", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/web/bm1.md", content_hash="sha256:bm1"))
+    insert_item(db, _item(
+        "arxiv:bm2", "Topic bm25 arxiv", source="arxiv", concepts=("Bm25",),
+        url="https://arxiv.org/abs/bm2", extracted_text="topic",
+        raw_text="<raw>topic</raw>", stage="rendered",
+        markdown_path="scrolls/arxiv/bm2.md", content_hash="sha256:bm2"))
+    # both clusters carry a stale stored summary (a superseded members_hash)
+    for slug, display in (("webonly", "WebOnly"), ("bm25", "Bm25")):
+        save_concept_summary(db, ConceptSummary(
+            slug=slug, display=display, summary="Old synthesis.",
+            members_hash="stale-old", engine="kb-llm-v1", model="claude-opus-4-8",
+            generated_at="2026-06-16T00:00:00+00:00"))
+
+
+def test_single_source_page_refresh_line_converges_with_doctor_source_debt(
+    scrolls_home, capsys
+):
+    # roadmap H193: H184 put the readable action lines on the compiled `library/`
+    # index/group pages and H190 pinned their honest *absence* (a clean page omits
+    # them). The positive companion for the single-source `sources/<S>.md` pages —
+    # which carry the `_Refresh:_` line (it has no single-source gate) but never
+    # `_Attention:_`/`_By source:_` (the `<2`-source no-ops) — is that the page's
+    # `_Refresh:_` clauses name exactly `doctor --source <S>`'s
+    # `enrichment.by_source`/`summaries.by_source` keys *for the page's own scope*.
+    # The load-bearing subtlety pinned positively: a multi-source concept's stale
+    # summary attributes to several sources at the whole-library scope (the H171
+    # attribution) but narrows below `MIN_MEMBERS` under a single-source scope and
+    # drops out — so the single-source page's summary axis reflects only the
+    # within-source clusters, exactly as `doctor --source <S>` does. Non-vacuous (web
+    # carries both axes) and mutation-checked (a refresh clears the named clause).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_single_source_refresh_fixture(db)
+    capsys.readouterr()
+
+    # whole-library: web carries the only enrichment debt; the summary axis names
+    # BOTH sources — the web-only `WebOnly` cluster {web} plus the multi-source `Bm25`
+    # cluster {arxiv, web} (the H171 attribution)
+    whole = run_doctor(get_paths())["custody"]
+    assert sorted(whole["enrichment"]["by_source"]) == ["web"]
+    assert sorted(whole["summaries"]["by_source"]) == ["arxiv", "web"]
+
+    # scoped: under a single-source scope the multi-source `Bm25` cluster narrows
+    # below MIN_MEMBERS and drops out — so web's summary debt is the WebOnly cluster
+    # alone ({web: 1}, NOT {web: 2}) and arxiv's only summary participation vanishes
+    web_doctor = run_doctor(get_paths(), source="web")["custody"]
+    arxiv_doctor = run_doctor(get_paths(), source="arxiv")["custody"]
+    assert web_doctor["enrichment"]["by_source"] == {"web": 1}
+    assert web_doctor["summaries"]["by_source"] == {"web": 1}  # Bm25 narrowed out
+    assert arxiv_doctor["enrichment"]["by_source"] == {}
+    assert arxiv_doctor["summaries"]["by_source"] == {}        # Bm25 narrowed out
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    library = get_paths().library_dir
+    web_page = (library / "sources" / "web.md").read_text(encoding="utf-8")
+    arxiv_page = (library / "sources" / "arxiv.md").read_text(encoding="utf-8")
+
+    # 1. `sources/web.md`: the `_Refresh:_` clauses name exactly doctor --source web's
+    #    debt-map keys for the page's own scope, on both axes
+    assert (_refresh_sources(web_page, _REFRESH_CLASS_MD)
+            == sorted(web_doctor["enrichment"]["by_source"]) == ["web"])
+    assert (_refresh_sources(web_page, _REFRESH_SUMM_MD)
+            == sorted(web_doctor["summaries"]["by_source"]) == ["web"])
+    # the single-source page carries the headline + the `_Refresh:_` pointer but
+    # never the `<2`-source no-op action/breakdown lines
+    assert "_Custody:" in web_page
+    assert "_Refresh:" in web_page
+    assert "_Attention:" not in web_page
+    assert "_By source:_" not in web_page
+
+    # 2. `sources/arxiv.md`: arxiv's only debt was the multi-source `Bm25` cluster,
+    #    which narrowed out — so the page is honestly clean (no `_Refresh:_` line),
+    #    converging with doctor --source arxiv's empty debt maps (the single-source
+    #    page sibling of the H190 honest absence)
+    assert (_refresh_sources(arxiv_page, _REFRESH_CLASS_MD)
+            == sorted(arxiv_doctor["enrichment"]["by_source"]) == [])
+    assert (_refresh_sources(arxiv_page, _REFRESH_SUMM_MD)
+            == sorted(arxiv_doctor["summaries"]["by_source"]) == [])
+    assert "_Custody:" in arxiv_page  # the scope headline is always present
+    assert "_Refresh:" not in arxiv_page
+    assert "_Attention:" not in arxiv_page
+    assert "_By source:_" not in arxiv_page
+
+    # mutation check: re-classify web:stale under the live ruleset → the enrichment
+    # axis clears; `sources/web.md`'s `_Refresh:_` line drops its classifications
+    # clause and keeps the summaries clause (WebOnly is untouched), still converging
+    # with doctor --source web — proving the clauses are derived, not coincidental
+    import dataclasses
+
+    from scrolls.classify import RULESET_FINGERPRINT
+    from scrolls.items import get_item, update_item
+    web_stale = get_item(db, "web:stale")
+    update_item(db, dataclasses.replace(web_stale, provenance={
+        "classified_by": "rules-v1", "classified_basis": "weak-source",
+        "classified_ruleset": RULESET_FINGERPRINT}))
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    web_doctor2 = run_doctor(get_paths(), source="web")["custody"]
+    assert web_doctor2["enrichment"]["by_source"] == {}        # enrichment cleared
+    assert web_doctor2["summaries"]["by_source"] == {"web": 1}  # summary untouched
+    refreshed = (library / "sources" / "web.md").read_text(encoding="utf-8")
+    assert (_refresh_sources(refreshed, _REFRESH_CLASS_MD)
+            == sorted(web_doctor2["enrichment"]["by_source"]) == [])
+    assert (_refresh_sources(refreshed, _REFRESH_SUMM_MD)
+            == sorted(web_doctor2["summaries"]["by_source"]) == ["web"])
+    assert "_Refresh:" in refreshed  # the line survives (the summary axis remains)
 
 
 # --- the two action lines read byte-identical across the readable surfaces ----
