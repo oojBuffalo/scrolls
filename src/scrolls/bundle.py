@@ -170,6 +170,8 @@ def _gather_scope(
     stage: str | None,
     tag: str | None,
     concept: str | None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> tuple[list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent]]:
     """Resolve the bundle scope once, for both the Markdown and HTML renderers.
 
@@ -181,6 +183,20 @@ def _gather_scope(
     ValueError on a blank one. The ledger reads are skipped when there is
     nothing to brief (no items, incl. a missing library) so an empty/pre-init
     bundle stays valid in either format.
+
+    `fidelity`/`drift` (roadmap H258) are the two per-item *custody* scopes — the
+    custody-filter family on the portable shareable bundle. They thread straight
+    to `count_matches`/`search_items`, which apply the `scrolls_fidelity`/
+    `scrolls_drift` UDFs in SQL (the `search --fidelity`/`--drift` primitives,
+    H251/H253), so the *whole* gathered set — the items, their ledger verdicts,
+    and the portable events block — is sieved by custody value at the source.
+    Every fold downstream (the briefing prose, the lossless custody block, the
+    events block) therefore describes exactly the exported slice, and the lossless
+    round-trip holds over it (`import bundle` re-holds exactly the kept rows, the
+    H216 mixed-fidelity round-trip under a custody scope). An unknown tier/posture
+    raises ValueError (a closed vocabulary; the CLI also rejects it via argparse
+    `choices`). The bundle carries no cap, so unlike `search`/`context` there is
+    no before-/after-cap distinction — the sieve simply narrows the complete set.
     """
     matched = count_matches(
         db_path,
@@ -190,6 +206,8 @@ def _gather_scope(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
+        drift=drift,
     )
     hits = search_items(
         db_path,
@@ -200,6 +218,8 @@ def _gather_scope(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
+        drift=drift,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
     verdicts = latest_events(db_path) if items else {}
@@ -239,6 +259,8 @@ def build_bundle(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> str:
     """Render the self-contained custody bundle for a query (briefing + block).
 
@@ -250,6 +272,21 @@ def build_bundle(
     query, like `scrolls context`. No matches still yields a valid bundle (an
     empty custody block) so an agent never crashes on an empty scope.
 
+    `fidelity`/`drift` (roadmap H258) add the two per-item *custody* scopes — the
+    custody-filter family on the portable shareable bundle, the export twin of
+    `context --fidelity`/`--drift` (H257). They narrow the bundle to one holdings
+    tier (`full`/`partial`/`reference`, ADR 0097) or one verify-ledger posture
+    (`verified`/…/`drifted`, H58) so an agent can "share only my full-fidelity
+    holdings on this topic" or "export only the drifted ones for a recapture
+    handoff". Both AND with the facets, are sieved in SQL by `_gather_scope`, and
+    are echoed in the title scope note (provenance of *what slice* was shared), so
+    the briefing prose (`custody_headline`, the per-source breakdown, the
+    `_Attention:_`/`_Refresh:_` pointers) and the embedded lossless custody +
+    events blocks all describe exactly the exported set — and `import bundle` of
+    it re-holds exactly those rows (the H216 round-trip under a custody scope). An
+    unknown tier/posture raises ValueError (closed vocabulary; the CLI also
+    rejects it via argparse `choices`).
+
     This is the **canonical, lossless re-import unit**: the Markdown form
     `scrolls import bundle` round-trips against. The browser-readable HTML form
     (`build_bundle_html`, roadmap H39) is export-only.
@@ -258,11 +295,11 @@ def build_bundle(
     # so each briefing entry can name its drift posture (H42) from the same
     # `latest_events` doctor aggregates — no per-item query, no disagreement.
     items, verdicts, events = _gather_scope(
-        db_path, query, source, category, stage, tag, concept
+        db_path, query, source, category, stage, tag, concept, fidelity, drift
     )
 
     title = f"# Scrolls Custody Bundle: {query}"
-    scope = _scope_note(source, category, stage, tag, concept)
+    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
@@ -352,6 +389,8 @@ def build_bundle_html(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> str:
     """Render the scoped custody bundle as a self-contained, offline HTML briefing.
 
@@ -363,6 +402,10 @@ def build_bundle_html(
     from the network). All dynamic content is HTML-escaped, so a tag-bearing
     title or body can never inject markup.
 
+    `fidelity`/`drift` (roadmap H258) scope the briefing to one holdings tier or
+    drift posture, exactly as in `build_bundle` — both share `_gather_scope`, so
+    the two forms cannot disagree about what the custody scope selects.
+
     **Export-only — not a re-import unit.** The canonical lossless round-trip
     stays a property of the Markdown form (`build_bundle`/`import bundle`); the
     HTML embeds the *same* sentinel-fenced custody + custody-events JSONL (the
@@ -372,10 +415,10 @@ def build_bundle_html(
     blank query, like `build_bundle`.
     """
     items, verdicts, events = _gather_scope(
-        db_path, query, source, category, stage, tag, concept
+        db_path, query, source, category, stage, tag, concept, fidelity, drift
     )
 
-    scope = _scope_note(source, category, stage, tag, concept)
+    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
     heading = f"Scrolls Custody Bundle: {query}"
     title = heading + (f" ({scope})" if scope else "")
 
@@ -872,8 +915,16 @@ def _scope_note(
     stage: str | None,
     tag: str | None,
     concept: str | None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> str:
-    """A `source=…, category=…` summary of the active facets, else '' (as `context`)."""
+    """A `source=…, category=…` summary of the active facets, else '' (as `context`).
+
+    `fidelity`/`drift` (roadmap H258, the per-item custody scopes) report their
+    value verbatim, so a custody-scoped bundle's title names which holdings tier /
+    drift posture it covers — the provenance of *what slice* was shared, beside
+    the existing query/facet echo.
+    """
     parts = []
     if source is not None:
         parts.append(f"source={source}")
@@ -885,6 +936,10 @@ def _scope_note(
         parts.append(f"tag={tag}")
     if concept is not None:
         parts.append(f"concept={concept}")
+    if fidelity is not None:
+        parts.append(f"fidelity={fidelity}")
+    if drift is not None:
+        parts.append(f"drift={drift}")
     return ", ".join(parts)
 
 

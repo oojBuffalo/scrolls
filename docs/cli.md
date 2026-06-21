@@ -2080,7 +2080,7 @@ $ scrolls export events --since 2026-06-16 >> ledger.jsonl   # append only check
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--format markdown|html]`
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--format markdown|html]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -2150,6 +2150,35 @@ briefing.md`. A blank query is a JSON error on stderr; an empty scope still
 yields a valid, importable bundle saying `No matching scrolls.`
 (`test_empty_scope_yields_a_valid_importable_bundle`). Re-import with
 `scrolls import bundle`.
+
+`--fidelity <tier>` and `--drift <posture>` add the two per-item **custody
+scopes** (roadmap H258) — the custody-filter family on the *portable shareable
+bundle*, the export twin of `context --fidelity`/`--drift` (H257), so a
+custody-scoped briefing travels. `--fidelity` (the holdings axis, ADR 0097)
+narrows the bundle to one custody-fidelity tier (`full`/`partial`/`reference`),
+so an agent can "share only my full-fidelity holdings on this topic" — only the
+sources it can re-derive offline. `--drift` (the ledger-claim axis, H58) narrows
+it to one verify-ledger posture (`verified`/`unverified`/`drifted`/`rotted`/
+`error`), so it can "export only the drifted ones for a recapture handoff".
+Both AND with the facets and with each other, and are sieved **in SQL** through
+the same `scrolls_fidelity`/`scrolls_drift` UDFs `search --fidelity`/`--drift`
+apply (the bundle threads them straight to `search_items`/`count_matches`), so
+the *whole* exported set — the briefing prose (the scope custody headline, the
+per-source breakdown, the `_Attention:_`/`_Refresh:_` pointers), the lossless
+custody block, *and* the custody-events block — describes exactly the kept slice
+(`test_bundle_custody_headline_describes_the_kept_set`,
+`test_bundle_fidelity_count_converges_with_the_unfiltered_headline`). The active
+custody value is echoed in the title scope note — provenance of *what slice* was
+shared (`test_bundle_custody_scope_is_named_in_the_title`). The lossless
+round-trip holds over the scope: `import bundle` of a custody-scoped bundle
+re-holds exactly the exported rows and their custody events, with no leakage of
+the unscoped ones — the H216 mixed-fidelity round-trip narrowed to one custody
+value (`test_bundle_custody_scope_round_trips_losslessly`). An unknown
+tier/posture is rejected by argparse `choices` (exit 2) on the CLI, and by
+`search_items` (`ValueError`) on the programmatic path
+(`test_export_bundle_cli_rejects_unknown_custody_value`,
+`test_bundle_unknown_custody_value_raises_valueerror`). The scope applies to the
+HTML form too (both share the gather step, `test_bundle_html_custody_scope`).
 
 `--format` (default `markdown`) chooses the output form (roadmap H39). `markdown`
 is the **canonical, lossless, re-importable** bundle described above — the form

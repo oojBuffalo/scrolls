@@ -2243,3 +2243,236 @@ def test_export_bundle_html_blank_query_is_an_error(scrolls_home, capsys):
     capsys.readouterr()
     assert main(["export", "bundle", '""', "--format", "html"]) == 1
     assert "error" in json.loads(capsys.readouterr().err)
+
+
+# --- the custody-filter family on the portable bundle (H258) -----------------
+#
+# `scrolls export bundle <query> --fidelity <tier>` / `--drift <posture>` scope
+# the shareable bundle to one per-item custody value — the export twin of
+# `context --fidelity`/`--drift` (H257), so a custody-scoped briefing travels.
+# Both axes thread through `_gather_scope` to the `search_items`/`count_matches`
+# SQL sieve (the `search --fidelity`/`--drift` primitives, H251/H253), so the
+# briefing prose AND the lossless custody + events blocks describe exactly the
+# kept set, and `import bundle` of it re-holds exactly the exported rows (the
+# H216 mixed-fidelity round-trip under a custody scope). The bundle carries no
+# cap, so the sieve simply narrows the complete set (no before-/after-cap split).
+
+
+def _seed_custody_scope(db):
+    """The mixed-fidelity trio at three distinct drift postures, all in "database".
+
+    Builds on `_mixed_fidelity_scope` (full / partial / reference) and pins one
+    drift posture per item so the two custody axes select genuinely different
+    subsets: Full→verified, Partial→drifted, Ref→unverified (no event). So
+    `--fidelity full` keeps {Full}, `--drift drifted` keeps {Partial}, and
+    `--fidelity full --drift drifted` is empty (Full is verified, Partial is
+    partial-fidelity) — a clean AND.
+    """
+    for item in _mixed_fidelity_scope():
+        insert_item(db, item)
+    record_events(db, [
+        _event("wikipedia:en:Full", "unchanged", observed="deadbeef"),
+        _event("wikipedia:en:Partial", "drifted", observed="cafe1234"),
+        # wikipedia:en:Ref left unverified
+    ])
+
+
+def test_bundle_fidelity_keeps_only_that_tier(scrolls_home):
+    # --fidelity full carries exactly the full-fidelity holding, in both the
+    # lossless block (parse) and the briefing prose
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    bundle = build_bundle(db, "database", fidelity="full")
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:Full"]
+    # the briefing names only the kept tier
+    assert "fidelity `full`" in bundle
+    assert "fidelity `partial`" not in bundle
+    assert "fidelity `reference`" not in bundle
+
+
+def test_bundle_drift_keeps_only_that_posture(scrolls_home):
+    # --drift drifted carries exactly the moved source — the recapture-handoff
+    # slice — and nothing verified or unverified
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    bundle = build_bundle(db, "database", drift="drifted")
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:Partial"]
+    assert "custody `drifted`" in bundle
+    assert "custody `verified`" not in bundle
+    assert "custody `unverified`" not in bundle
+
+
+def test_bundle_custody_axes_AND(scrolls_home):
+    # the two axes intersect: full ∩ verified keeps the one item at both; full ∩
+    # drifted is empty (the full item is verified, the drifted one is partial)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    both = build_bundle(db, "database", fidelity="full", drift="verified")
+    assert [i.id for i in parse_bundle(both)] == ["wikipedia:en:Full"]
+
+    empty = build_bundle(db, "database", fidelity="full", drift="drifted")
+    assert parse_bundle(empty) == []
+    assert "No matching scrolls." in empty
+
+
+def test_bundle_custody_scope_is_named_in_the_title(scrolls_home):
+    # provenance of *what slice* was shared: the title scope note echoes the
+    # active custody value(s) beside any facet echo
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    bundle = build_bundle(db, "database", fidelity="full", drift="verified")
+    assert bundle.startswith(
+        "# Scrolls Custody Bundle: database (fidelity=full, drift=verified)\n"
+    )
+
+
+def test_bundle_custody_headline_describes_the_kept_set(scrolls_home):
+    # the scope custody headline counts only the kept slice, not the whole scope —
+    # a scoped briefing must not claim library-wide custody (the M2 honesty the
+    # Coverage line gives the match set, here on the custody headline)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    headline = next(
+        line for line in build_bundle(db, "database", fidelity="full").splitlines()
+        if line.startswith("_Custody:")
+    )
+    assert "1 scroll(s)" in headline
+    assert "fidelity full 1" in headline
+    assert "partial" not in headline and "reference" not in headline
+
+
+def test_bundle_fidelity_count_converges_with_the_unfiltered_headline(scrolls_home):
+    # the convergence invariant (the H257 shape): the --fidelity T bundle holds
+    # exactly tier T's share of the *unfiltered* scope headline, because both
+    # fold the one `get_fidelity` primitive — the filter selects rows by exactly
+    # the value the unfiltered headline counts
+    import re
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    unfiltered = next(
+        line for line in build_bundle(db, "database").splitlines()
+        if line.startswith("_Custody:")
+    )
+    # the unfiltered headline reports one of each tier
+    full_share = int(re.search(r"fidelity .*?full (\d+)", unfiltered).group(1))
+    assert full_share == 1
+
+    scoped_items = parse_bundle(build_bundle(db, "database", fidelity="full"))
+    assert len(scoped_items) == full_share
+
+
+def test_bundle_drift_count_converges_with_facets_drift(scrolls_home):
+    # the ledger-axis convergence: the --drift P bundle holds exactly `facets
+    # drift`'s P count over the same scope — both read `posture_from_status`. The
+    # fixture is the whole library and every row matches "database", so the
+    # whole-library facet count is the "database"-scope count.
+    from scrolls.facets import compute_facets
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    drift_counts = {
+        row["value"]: row["count"]
+        for row in compute_facets(db, field="drift")["facets"]["drift"]
+    }
+    scoped = parse_bundle(build_bundle(db, "database", drift="drifted"))
+    assert len(scoped) == drift_counts.get("drifted", 0) == 1
+
+
+def test_bundle_custody_scope_round_trips_losslessly(scrolls_home, monkeypatch, tmp_path, capsys):
+    # the take-it-with-me proof under a custody scope: `export bundle --drift
+    # drifted` → `import bundle` into a fresh library re-holds exactly the
+    # exported (drifted) rows and their custody events — the H216 round-trip
+    # narrowed to one posture, with no leakage of the unscoped rows
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_custody_scope(db_a)
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--drift", "drifted"]) == 0
+    bundle_text = capsys.readouterr().out
+    bundle_path = tmp_path / "drifted.md"
+    bundle_path.write_text(bundle_text, encoding="utf-8")
+    # only the drifted row's custody events travel in the scoped bundle
+    assert [e.item_id for e in parse_bundle_events(bundle_text)] == ["wikipedia:en:Partial"]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["imported"] == 1
+    # exactly the scoped row landed; the unscoped rows never travelled
+    assert get_item(db_b, "wikipedia:en:Partial") is not None
+    assert get_item(db_b, "wikipedia:en:Full") is None
+    assert get_item(db_b, "wikipedia:en:Ref") is None
+
+
+def test_bundle_unknown_custody_value_raises_valueerror(scrolls_home):
+    # closed vocabulary on the library path (the belt for the MCP-less programmatic
+    # caller; the CLI also rejects via argparse choices) — ValueError, not a
+    # silent empty bundle that would read as honest absence
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    with pytest.raises(ValueError):
+        build_bundle(db, "database", fidelity="bogus")
+    with pytest.raises(ValueError):
+        build_bundle(db, "database", drift="bogus")
+
+
+def test_export_bundle_cli_rejects_unknown_custody_value(scrolls_home):
+    # the CLI closed-vocab is argparse `choices` → exit 2 (SystemExit), before the
+    # command body runs
+    main(["init"])
+    with pytest.raises(SystemExit) as exc:
+        main(["export", "bundle", "database", "--fidelity", "bogus"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        main(["export", "bundle", "database", "--drift", "bogus"])
+    assert exc.value.code == 2
+
+
+def test_export_bundle_cli_fidelity_end_to_end(scrolls_home, capsys):
+    # the CLI path carries the scope through to the rendered bundle
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--fidelity", "full"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Scrolls Custody Bundle: database (fidelity=full)\n")
+    assert [i.id for i in parse_bundle(out)] == ["wikipedia:en:Full"]
+
+
+def test_bundle_html_custody_scope(scrolls_home):
+    # the HTML form shares `_gather_scope`, so it scopes identically and names the
+    # custody slice in its heading
+    main(["init"])
+    db = get_paths().db_path
+    _seed_custody_scope(db)
+
+    html_bundle = build_bundle_html(db, "database", fidelity="full")
+    assert "Scrolls Custody Bundle: database (fidelity=full)" in html_bundle
+    # only the kept full-fidelity row appears as a scroll section
+    assert html_bundle.count('<section class="scroll">') == 1
+    assert "wikipedia:en:Full" in html_bundle
+    assert "wikipedia:en:Partial" not in html_bundle

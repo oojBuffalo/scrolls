@@ -598,6 +598,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only scrolls carrying this concept (matched by slug)",
     )
     export_bundle_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only scrolls the library holds at this custody-fidelity tier "
+        "(ADR 0097) — the holdings-axis companion of --drift; the briefing and "
+        "lossless block carry exactly the kept tier (e.g. --fidelity full to "
+        "share only the sources you can re-derive offline). ANDs with --drift",
+    )
+    export_bundle_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only scrolls at this custody drift posture (from the verify "
+        "ledger) — the ledger-claim-axis companion of --fidelity; the briefing "
+        "and lossless block carry exactly the kept posture (e.g. --drift drifted "
+        "to export only the sources that have moved, for a recapture handoff). "
+        "ANDs with --fidelity",
+    )
+    export_bundle_parser.add_argument(
         "--format",
         choices=("markdown", "html"),
         default="markdown",
@@ -1139,6 +1158,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.tag,
                 args.concept,
                 args.format,
+                args.fidelity,
+                args.drift,
             )
         return _cmd_export_opml()
     if args.command == "ingest":
@@ -1845,12 +1866,17 @@ def _cmd_export_bundle(
     tag: str | None,
     concept: str | None,
     fmt: str = "markdown",
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> int:
     paths = get_paths()
     # markdown (default) is the canonical, lossless, re-importable bundle; html
     # is a browser-readable, export-only briefing (roadmap H39). Both tolerate a
     # missing library (a valid empty document, no library created — like
-    # `scrolls context` before `init`).
+    # `scrolls context` before `init`). `fidelity`/`drift` (H258) scope the bundle
+    # to one custody tier/posture; an unknown value is rejected by argparse
+    # `choices` (exit 2) before reaching here, and on the library path by
+    # `search_items` (ValueError → exit 1, the empty-vocabulary belt-and-braces).
     builder = build_bundle_html if fmt == "html" else build_bundle
     try:
         bundle = builder(
@@ -1861,6 +1887,8 @@ def _cmd_export_bundle(
             stage=stage,
             tag=tag,
             concept=concept,
+            fidelity=fidelity,
+            drift=drift,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
