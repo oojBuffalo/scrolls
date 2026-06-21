@@ -184,6 +184,35 @@ def test_list_items_tag_and_concept_combine_with_other_filters(db_path):
     )] == ["web:a"]
 
 
+def test_list_items_filters_by_fidelity_tier(db_path):
+    # the holdings-axis filter (ADR 0097): selects items by derived custody tier,
+    # folding the same `fidelity_tier`/`get_fidelity` primitive `facets fidelity`
+    # counts with. `full` (re-derivable body at a captured stage), `partial`
+    # (some content, not re-derivable), `reference` (pointer only).
+    insert_item(db_path, make_item(id="web:full", source="web", source_id=None,
+                                   url="https://full.example",
+                                   raw_text="held in full", stage="fetched"))
+    insert_item(db_path, make_item(id="web:partial", source="web", source_id=None,
+                                   url="https://partial.example",
+                                   extracted_text="some content", stage="fetched"))
+    insert_item(db_path, make_item(id="web:ref", source="web", source_id=None,
+                                   url="https://ref.example", stage="detected"))
+
+    assert [i.id for i in list_items(db_path, fidelity="full")] == ["web:full"]
+    assert [i.id for i in list_items(db_path, fidelity="partial")] == ["web:partial"]
+    assert [i.id for i in list_items(db_path, fidelity="reference")] == ["web:ref"]
+    # composes (ANDs) with the SQL facets — same as every other filter
+    assert [i.id for i in list_items(db_path, source="web", fidelity="reference")] == [
+        "web:ref"
+    ]
+
+
+def test_list_items_rejects_an_unknown_fidelity_tier(db_path):
+    # a closed vocabulary (like the drift postures), never a silent empty
+    with pytest.raises(ValueError):
+        list_items(db_path, fidelity="ful")
+
+
 def test_list_items_orders_by_saved_at(db_path):
     insert_item(
         db_path,

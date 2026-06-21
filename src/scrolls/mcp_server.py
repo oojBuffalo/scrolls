@@ -165,6 +165,7 @@ def list_scrolls(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
@@ -177,7 +178,11 @@ def list_scrolls(
     them with no query at all, filtered by the same facets (they AND
     together): `source` and `stage` match exactly, `category` exactly except
     an empty string which selects unclassified items, `tag` by membership
-    (case-insensitive), and `concept` by membership (matched by slug). `drift`
+    (case-insensitive), and `concept` by membership (matched by slug).
+    `fidelity` selects items held at one custody-fidelity tier
+    (`full`/`partial`/`reference`, ADR 0097) — the holdings-axis companion of
+    `drift`; the items returned total `list_facets("fidelity")`'s count for that
+    tier, so you can drill from the aggregate to the rows. `drift`
     selects items by custody drift posture from the verify ledger
     (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the items returned
     total `list_facets("drift")`'s count for that posture, so you can drill from
@@ -219,6 +224,7 @@ def list_scrolls(
         category=category,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
         drift=drift,
         stale_before=boundary,
         stale_classification=stale_classification,

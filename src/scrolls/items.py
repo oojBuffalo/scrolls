@@ -528,6 +528,7 @@ def list_items(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
@@ -544,6 +545,16 @@ def list_items(
     filters. Shares the one clause builder (`item_filters`) with `search`
     and `facets`; its `items.`-qualified clauses run unchanged against this
     single-table `SELECT`.
+
+    `fidelity` is the holdings-axis filter (ADR 0097): it keeps only the items
+    held at one custody-fidelity tier (`full`/`partial`/`reference`), derived per
+    item by `get_fidelity` — the same `fidelity_tier` primitive `facets fidelity`
+    counts with, so the rows it returns total that facet's count for the tier over
+    the same scope (drill-from-the-count convergence, the holdings-axis twin of
+    `drift` ↔ `facets drift`). Unlike `drift` it reads no ledger — fidelity is a
+    pure function of stored content columns — so it is applied post-SQL over the
+    already-filtered rows (it ANDs with every other facet). An unknown tier is a
+    `ValueError` (a closed vocabulary, like `--stage`), never a silent empty.
 
     `drift` and `stale_before` are the two filters that are *not* stored columns:
     both derive from the verify ledger and are applied after the SQL filters over
@@ -606,6 +617,18 @@ def list_items(
     finally:
         conn.close()
     items = [_from_row(row) for row in rows]
+    if fidelity is not None:
+        # The holdings axis: a pure function of stored content columns (no ledger),
+        # so it filters the SQL-loaded rows directly via `get_fidelity` — the same
+        # primitive `facets fidelity` folds, keeping the two convergent.
+        from scrolls.custody import FIDELITY_TIERS
+
+        if fidelity not in FIDELITY_TIERS:
+            raise ValueError(
+                f"unknown fidelity tier {fidelity!r}; "
+                f"choose one of {', '.join(FIDELITY_TIERS)}"
+            )
+        items = [item for item in items if get_fidelity(item) == fidelity]
     if drift is not None or stale_before is not None:
         # lazy: custody imports items, so the reverse is import-time only here
         from scrolls.custody import (

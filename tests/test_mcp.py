@@ -385,6 +385,63 @@ def test_list_scrolls_rejects_an_unknown_drift_posture(scrolls_home):
         mcp_server.list_scrolls(drift="drited")
 
 
+def test_list_scrolls_filters_by_fidelity_tier(scrolls_home):
+    # the MCP twin of `scrolls list --fidelity` (ADR 0097): the holdings-axis
+    # companion of the drift filter. The items returned for a tier total
+    # `list_facets("fidelity")`'s count for it (drill-from-the-count).
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full0", source="web", url="https://ex.com/full0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full 0",
+        extracted_text="A re-derivable body.", content_hash="sha256:a",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full1", source="web", url="https://ex.com/full1",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full 1",
+        raw_text="Raw held in full.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://ex.com/partial",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial",
+        extracted_text="Content held, but no hash.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:reference", source="web", url="https://ex.com/reference",
+        saved_at="2026-06-12T00:00:03+00:00", title="Reference",
+        stage="detected"))
+
+    assert [r["id"] for r in mcp_server.list_scrolls(fidelity="full")] == [
+        "web:full0", "web:full1"
+    ]
+    assert [r["id"] for r in mcp_server.list_scrolls(fidelity="partial")] == [
+        "web:partial"
+    ]
+    assert [r["id"] for r in mcp_server.list_scrolls(fidelity="reference")] == [
+        "web:reference"
+    ]
+
+    # convergence with the facet aggregate the twin `list_facets` reports
+    counts = {
+        e["value"]: e["count"]
+        for e in mcp_server.list_facets("fidelity")["facets"]["fidelity"]
+    }
+    for tier, count in counts.items():
+        assert len(mcp_server.list_scrolls(fidelity=tier)) == count
+
+
+def test_list_scrolls_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # a closed vocabulary: an unknown tier is an error, never a silent empty
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.list_scrolls(fidelity="ful")
+
+
 def test_list_scrolls_filters_by_stale_before(scrolls_home):
     # the MCP twin of `scrolls list --stale-before` (H85): the stale set — items
     # whose newest verdict predates the boundary, never-checked included.

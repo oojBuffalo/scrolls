@@ -2691,7 +2691,7 @@ $ scrolls rm x:2222 x:1111                   # x:2222 is already gone
 
 ## Reading the library
 
-### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--drift D] [--stale-before ISO] [--stale-classification] [--stale-summary] [--limit N] [--stats]`
+### `scrolls list [--source S] [--stage S] [--category C] [--tag T] [--concept K] [--fidelity F] [--drift D] [--stale-before ISO] [--stale-classification] [--stale-summary] [--limit N] [--stats]`
 
 Every matching item as a summary array (full records: `scrolls show`).
 An empty or uninitialized library prints `[]`
@@ -2740,8 +2740,32 @@ concepts (matched by slug, so "BM25" and "bm25" agree), the same way
 `test_list_items_filters_by_concept`). They carry no empty-string
 overload — a value that nothing has prints `[]`.
 
-`--drift D` is the one filter that is not a stored column: a custody **drift
-posture** read from the verify ledger (`verified`/`unverified`/`drifted`/
+`--fidelity F` is the **holdings-axis** filter — the companion of `--drift`'s
+ledger-claim axis: a custody **fidelity tier** (`full`/`partial`/`reference`, a
+closed vocabulary — a typo is a usage error, exit 2 —
+`test_list_rejects_an_unknown_fidelity_tier`). It selects the items held at that
+tier, derived per item by the same `items.get_fidelity`/`fidelity_tier` primitive
+`scrolls facets fidelity` counts with — so the rows `--fidelity reference` returns
+*total* `facets fidelity`'s `reference` count for the same scope
+(`test_list_fidelity_rows_total_the_facets_fidelity_count`), the drill-from-the-
+count companion to that aggregate (`facets fidelity` says *how many* are
+reference-only, `list --fidelity reference` says *which ones* — the exact drill
+the custody vision §3.2 names). Unlike `--drift` it reads **no ledger** — fidelity
+is a pure function of the stored content columns — so it ANDs with every other
+facet over the already-filtered rows (`--fidelity full --source web` is web's
+full-fidelity holdings, `test_list_fidelity_composes_with_another_facet`). The
+tier a row *shows* (its `fidelity` key) is exactly the tier it is *selected* by
+(`test_list_row_fidelity_matches_the_fidelity_filter_value`). A valid tier nothing
+is held at prints `[]`
+(`test_list_fidelity_is_honestly_empty_for_a_tier_with_no_items`); under `--stats`,
+`matched` is the post-fidelity count, so it equals the facet count, not the
+library total (`test_list_fidelity_is_echoed_in_the_stats_scope`). The MCP twin
+`list_scrolls(fidelity=)` carries the same selection
+(`test_list_scrolls_filters_by_fidelity_tier`).
+
+`--drift D` is a **ledger-derived** filter (read from the verify ledger, not a
+stored column — the claim axis to `--fidelity`'s holdings axis): a custody **drift
+posture** (`verified`/`unverified`/`drifted`/
 `rotted`/`error`, a closed vocabulary — a typo is a usage error, exit 2 —
 `test_list_rejects_an_unknown_drift_posture`). It selects the held items whose
 latest ledger verdict maps to that posture, via the same `custody.drift_posture`

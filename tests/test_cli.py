@@ -4019,6 +4019,150 @@ def test_list_rejects_an_unknown_drift_posture(scrolls_home):
     assert excinfo.value.code == 2
 
 
+def _seed_fidelity_tiers():
+    """Four held items spanning the custody-fidelity tiers; library must exist.
+
+    Two `full` (a re-derivable body held at a captured stage — one via raw, one
+    via extracted+hash), one `partial` (extracted content but no hash to
+    re-derive against), one `reference` (only the pointer is held). The holdings
+    -axis twin of `_seed_drift_postures`. Returns the db path.
+    """
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full0", source="web", url="https://ex.com/full0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full 0",
+        extracted_text="A re-derivable body.", content_hash="sha256:a",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full1", source="web", url="https://ex.com/full1",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full 1",
+        raw_text="Raw held in full.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://ex.com/partial",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial",
+        extracted_text="Content held, but no hash to re-derive against.",
+        stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:reference", source="web", url="https://ex.com/reference",
+        saved_at="2026-06-12T00:00:03+00:00", title="Reference",
+        stage="detected"))
+    return db
+
+
+def test_list_fidelity_selects_items_by_custody_tier(scrolls_home, capsys):
+    # the holdings-axis companion of `--drift`: enumerate the items held at one
+    # custody-fidelity tier — the read-side of `facets fidelity` (ADR 0097)
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    main(["list", "--fidelity", "full"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == [
+        "web:full0", "web:full1"
+    ]
+
+    main(["list", "--fidelity", "partial"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:partial"]
+
+    main(["list", "--fidelity", "reference"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:reference"]
+
+
+def test_list_fidelity_rows_total_the_facets_fidelity_count(scrolls_home, capsys):
+    # drill-from-the-count convergence: the rows `--fidelity X` returns total the
+    # `facets fidelity` count for X over the same scope — the holdings-axis twin
+    # of `--drift` ↔ `facets drift`. Both fold the one `fidelity_tier` primitive.
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    main(["facets", "fidelity"])
+    counts = {
+        e["value"]: e["count"]
+        for e in json.loads(capsys.readouterr().out)["facets"]["fidelity"]
+    }
+    assert counts  # non-vacuous: the seed produced tiered holdings
+    for tier, count in counts.items():
+        main(["list", "--fidelity", tier])
+        rows = json.loads(capsys.readouterr().out)
+        assert len(rows) == count, f"{tier}: {len(rows)} rows != facet count {count}"
+
+
+def test_list_fidelity_is_honestly_empty_for_a_tier_with_no_items(scrolls_home, capsys):
+    # a valid tier nothing is held at is [], never an error (completeness G1)
+    main(["init"])
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(get_paths().db_path, ScrollItem(
+        id="web:0", source="web", url="https://ex.com/0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full",
+        raw_text="held in full", stage="fetched"))
+    capsys.readouterr()
+
+    main(["list", "--fidelity", "reference"])
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_list_fidelity_is_echoed_in_the_stats_scope(scrolls_home, capsys):
+    # the --stats envelope names the fidelity filter it honored, and matched is
+    # the post-filter count (so it equals the facet count, not the library total)
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    main(["list", "--fidelity", "full", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["fidelity"] == "full"
+    assert payload["stats"]["matched"] == 2
+    assert [r["id"] for r in payload["results"]] == ["web:full0", "web:full1"]
+
+
+def test_list_fidelity_composes_with_another_facet(scrolls_home, capsys):
+    # AND semantics: --fidelity intersects with --source (and every other facet),
+    # filtering the already-filtered set rather than the whole library
+    main(["init"])
+    _seed_fidelity_tiers()
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(get_paths().db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:04+00:00", title="Arxiv full",
+        raw_text="held in full", stage="fetched"))
+    capsys.readouterr()
+
+    main(["list", "--fidelity", "full", "--source", "web"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == [
+        "web:full0", "web:full1"
+    ]
+
+    main(["list", "--fidelity", "full", "--source", "arxiv"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["arxiv:1"]
+
+
+def test_list_row_fidelity_matches_the_fidelity_filter_value(scrolls_home, capsys):
+    # the tier a row *shows* (its `fidelity` field) is exactly the tier it would
+    # be *selected* by — `list --fidelity X` returns precisely the rows whose
+    # shown `fidelity` is X. The filter and the field can never disagree.
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    for tier in ("full", "partial", "reference"):
+        main(["list", "--fidelity", tier])
+        rows = json.loads(capsys.readouterr().out)
+        assert rows  # each tier is populated by the seed
+        assert all(r["fidelity"] == tier for r in rows)
+
+
+def test_list_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # fidelity tiers are a closed vocabulary; a typo should not silently match nothing
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
 def test_list_rows_carry_the_drift_posture(scrolls_home, capsys):
     # H58: every browse row shows the second custody axis — the drift posture —
     # not just `fidelity`, so a plain `list` reads the same posture `--drift`

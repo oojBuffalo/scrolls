@@ -655,6 +655,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only items carrying this concept (matched by slug)",
     )
     list_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only items held at this custody-fidelity tier (ADR 0097) — the "
+        "holdings-axis companion of --drift; the rows returned total `scrolls "
+        "facets fidelity`'s count for that tier",
+    )
+    list_parser.add_argument(
         "--drift",
         choices=("verified", "unverified", "drifted", "rotted", "error"),
         default=None,
@@ -1063,6 +1071,7 @@ def main(argv: list[str] | None = None) -> int:
             args.category,
             args.tag,
             args.concept,
+            args.fidelity,
             args.drift,
             args.stale_before,
             args.stale_classification,
@@ -2511,6 +2520,7 @@ def _cmd_list(
     category: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
     drift: str | None = None,
     stale_before: str | None = None,
     stale_classification: bool = False,
@@ -2525,6 +2535,7 @@ def _cmd_list(
         "stage": stage,
         "tag": tag,
         "concept": concept,
+        "fidelity": fidelity,
         "drift": drift,
         "stale_before": stale_before,
         # a boolean filter rides the `None`-is-pruned convention (scope_envelope):
@@ -2569,6 +2580,7 @@ def _cmd_list(
         category=category,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
         drift=drift,
         stale_before=boundary,
         stale_classification=stale_classification,
