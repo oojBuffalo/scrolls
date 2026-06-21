@@ -238,6 +238,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only scrolls carrying this concept (matched by slug)",
     )
     context_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only scrolls the library holds at this custody-fidelity tier "
+        "(ADR 0097) — the holdings-axis companion of --drift; sieved before "
+        "--limit, so the bundle covers the top matches *at that tier* (e.g. "
+        "build context from only the full-fidelity sources you can re-derive "
+        "offline). The rendered _Custody:_/_Fidelity:_ headline describes the "
+        "kept set",
+    )
+    context_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only scrolls at this custody drift posture (from the verify "
+        "ledger) — the ledger-claim-axis companion of --fidelity; sieved "
+        "before --limit, so the bundle covers the top matches *at that posture* "
+        "(e.g. --drift drifted to brief on only the sources that have moved). "
+        "ANDs with --fidelity",
+    )
+    context_parser.add_argument(
         "--budget",
         choices=CONTEXT_BUDGET_TIERS,
         default=DEFAULT_CONTEXT_BUDGET,
@@ -1056,6 +1077,8 @@ def main(argv: list[str] | None = None) -> int:
             args.stage,
             args.tag,
             args.concept,
+            args.fidelity,
+            args.drift,
             args.budget,
         )
     if args.command == "detect":
@@ -2814,6 +2837,8 @@ def _cmd_context(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> int:
     paths = get_paths()
@@ -2827,6 +2852,8 @@ def _cmd_context(
             stage=stage,
             tag=tag,
             concept=concept,
+            fidelity=fidelity,
+            drift=drift,
             budget=budget,
         )
     except ValueError as exc:

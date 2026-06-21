@@ -6517,3 +6517,102 @@ def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
         # no adjacent pairs → no per-run deltas to sum (the empty telescope)
         _, _, _, deltas = _telescoped(snapshots)
         assert deltas == []
+
+
+# --- the context custody filter partitions the unfiltered bundle (roadmap H257)
+#
+# The custody-filter family reaches the agent context bundle: `context
+# --fidelity T` / `--drift P` sieve the candidate set by the per-item holdings /
+# ledger-claim axes. The convergence claim that pins it honest: a custody-scoped
+# bundle's holdings count for value V must equal V's count in the *unfiltered*
+# (untruncated) bundle's `_Fidelity:_` line — the per-value filters *partition*
+# the unfiltered scope, never inflate or undercount it. This is the H213/H240
+# fidelity-ladder convergence lifted under a custody scope: the same
+# `get_fidelity` fold, read once whole and once per filtered value, must agree.
+
+
+def test_context_fidelity_filter_partitions_the_unfiltered_holdings(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # full 2, partial 1, reference 1 — a genuine multi-tier mix
+    capsys.readouterr()
+
+    # the unfiltered, untruncated bundle's leanest-tier `_Fidelity:_` holdings line
+    # (4 < DEFAULT_LIMIT, every title carries "topic" → the whole library, no cap)
+    whole = _rendered_fidelity_counts(
+        _line_with(_context_out(capsys, "topic", "--budget", "index"), "_Fidelity:")
+    )
+    assert whole == {"full": 2, "partial": 1, "reference": 1}  # the partition to cover
+
+    # each per-tier filter reports *only* that tier, and its count equals the
+    # tier's share of the unfiltered partition — never more, never fewer
+    for tier, expected in whole.items():
+        line = _line_with(
+            _context_out(capsys, "topic", "--budget", "index", "--fidelity", tier),
+            "_Fidelity:",
+        )
+        counts = _rendered_fidelity_counts(line)
+        assert counts == {tier: expected}                     # only that tier, kept whole
+        assert int(re.search(r"\(of (\d+)\)", line).group(1)) == expected  # scope = kept set
+
+    # the per-value counts sum back to the unfiltered total — a clean partition
+    assert sum(whole.values()) == 4
+
+    # mutation in lockstep — drop `web:full1`'s body so it falls full → partial.
+    # The shift must register identically on the unfiltered partition and on the
+    # per-tier filters, proving each folds `get_fidelity` over the live set.
+    import dataclasses
+
+    full1 = next(it for it in list_items(db) if it.id == "web:full1")
+    assert update_item(db, dataclasses.replace(full1, raw_text=None, content_hash=None))
+    assert get_fidelity(next(it for it in list_items(db) if it.id == "web:full1")) == "partial"
+    capsys.readouterr()
+
+    whole = _rendered_fidelity_counts(
+        _line_with(_context_out(capsys, "topic", "--budget", "index"), "_Fidelity:")
+    )
+    assert whole == {"full": 1, "partial": 2, "reference": 1}  # the shift, on the partition
+    full_counts = _rendered_fidelity_counts(
+        _line_with(
+            _context_out(capsys, "topic", "--budget", "index", "--fidelity", "full"),
+            "_Fidelity:",
+        )
+    )
+    partial_counts = _rendered_fidelity_counts(
+        _line_with(
+            _context_out(capsys, "topic", "--budget", "index", "--fidelity", "partial"),
+            "_Fidelity:",
+        )
+    )
+    assert full_counts == {"full": 1} and partial_counts == {"partial": 2}  # in lockstep
+
+
+def test_context_drift_filter_partitions_the_facets_drift_aggregate(scrolls_home, capsys):
+    # the ledger-axis companion: a `context --drift P` bundle's kept count equals
+    # P's count in `facets drift` (the browse aggregate of the same posture fold),
+    # so the bundle filter and the aggregate can never disagree on the partition —
+    # the H54/H59 "rows total the count" guarantee on the bundle surface.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # drift: verified 1, drifted 1, unverified 2
+    capsys.readouterr()
+
+    aggregate = _nonzero(_facet_map(compute_facets(db, field="drift")["facets"]["drift"]))
+    assert aggregate == {"verified": 1, "drifted": 1, "unverified": 2}
+
+    posture_token = re.compile(r"\b(verified|unverified|drifted|rotted|error) (\d+)\b")
+
+    def rendered_drift_counts(line):
+        # the drift section's posture counts; the posture words never collide with
+        # the fidelity tier words, so one parse reads the whole `_Custody:_` headline
+        return {p: int(n) for p, n in posture_token.findall(line)}
+
+    for posture, expected in aggregate.items():
+        # the connected headline carries the drift counts (the index tier reads no
+        # ledger); a `--drift P` bundle's headline reports *only* posture P, and its
+        # count equals P's share of the facets-drift aggregate — a clean partition.
+        headline = _line_with(
+            _context_out(capsys, "topic", "--budget", "connected", "--drift", posture),
+            "_Custody:",
+        )
+        assert rendered_drift_counts(headline) == {posture: expected}

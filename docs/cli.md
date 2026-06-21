@@ -3430,7 +3430,7 @@ $ scrolls works arxiv:1706.03762
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K]`
+### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -3565,6 +3565,45 @@ empty `--category ""` selects unclassified items and reads as
 `category=unclassified`, while `--tag`/`--concept` report their value
 verbatim. A facet that excludes everything still yields a valid `No
 matching scrolls.` bundle, with the scope note intact.
+
+`--fidelity <tier>` and `--drift <posture>` are the two per-item **custody
+scopes** (roadmap H257, `tests/test_context.py`) — the custody-filter family
+(`list`/`search`/`verify`/`related --fidelity`/`--drift`) reaching the agent
+context bundle, the one progressive read surface it had not. `--fidelity`
+keeps only the matches the library holds at one custody-fidelity tier
+(`full`/`partial`/`reference`, ADR 0097 — the holdings axis, a content-column
+fact), so an agent on a tight budget can build its working context from "only
+the full-fidelity sources I can re-derive offline"
+(`test_context_fidelity_filter_keeps_only_that_tier`). `--drift` keeps only the
+matches at one verify-ledger posture
+(`verified`/`unverified`/`drifted`/`rotted`/`error` — the ledger-claim axis), so
+it can "exclude the ones that have moved"
+(`test_context_drift_filter_keeps_only_that_posture`). Both fold the *same*
+`scrolls_fidelity`/`scrolls_drift` UDFs `scrolls search --fidelity`/`--drift`
+use (`build_context` passes them straight to `search_items`/`count_matches`), so
+they AND with the facets and — crucially — sieve the candidate set **before**
+the `--limit` cap (the `list`-sieve shape): the bundle covers the top matches
+*at that custody value*, not the top matches then sieved
+(`test_context_custody_filters_sieve_before_the_limit`). Because the sieve runs
+before the budget tier nests its excerpts, everything downstream — the
+work-collapse, the `_Custody:_`/`_Fidelity:_` headline, the Coverage
+denominator, and the `full`-budget per-excerpt drift tags — reads the kept set,
+so the rendered headline describes exactly what the bundle contains
+(`test_context_drift_filter_describes_kept_set_at_full_budget`). The convergence
+invariant pins it honest: a `--fidelity T` bundle's holdings count equals tier
+`T`'s share of the *unfiltered* bundle's `_Fidelity:_` line — the per-value
+filters partition the unfiltered scope, never inflate it
+(`test_context_fidelity_filter_partitions_the_unfiltered_holdings`,
+`test_context_drift_filter_partitions_the_facets_drift_aggregate` in
+`tests/test_custody_convergence.py`). The scope note names the active custody
+value — `(fidelity=full)`, `(drift=drifted)` — beside the facet echo
+(`test_context_custody_scope_named_in_the_title`); a closed vocabulary, so an
+unknown tier/posture is exit 2 (argparse `choices`) on the CLI and a `ValueError`
+on the `build_context`/MCP path
+(`test_context_cli_rejects_unknown_custody_values`). The two axes reach MCP
+clients through the same `get_context_bundle(query, fidelity=, drift=)` twin
+(`test_get_context_bundle_filters_by_fidelity_tier`,
+`test_get_context_bundle_filters_by_drift_posture` in `tests/test_mcp.py`).
 
 ```console
 $ scrolls context "local search"

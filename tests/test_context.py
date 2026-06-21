@@ -6,6 +6,7 @@ import re
 import pytest
 
 from scrolls.cli import main
+from scrolls.context import build_context
 from scrolls.custody import CustodyEvent, record_events
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
@@ -735,6 +736,191 @@ def test_context_index_fidelity_counts_match_the_connected_headline(
 def _fidelity_scope(line):
     """The `N` from a `_Fidelity: … (of N)._` line's scope suffix."""
     return int(re.search(r"\(of (\d+)\)", line).group(1))
+
+
+# --- custody filters on the context bundle (roadmap H257) -------------------
+#
+# The custody-filter family — browsable/rankable/actable/relatable on
+# `list`/`search`/`verify`/`related` — reaches the agent *context bundle*, the
+# one progressive read surface it had not. `--fidelity`/`--drift` scope the
+# candidate set by the per-item *holdings* (content-column) and *ledger-claim*
+# (verify-posture) axes *before* the `--limit` cap, the `list`-sieve shape, so
+# an agent can build context from "only the full-fidelity sources I can
+# re-derive offline" or "only the ones that have drifted". Both fold the same
+# `scrolls_fidelity`/`scrolls_drift` UDFs `search --fidelity`/`--drift` use
+# (`build_context` passes them straight to `search_items`/`count_matches`), so
+# the rendered `_Custody:_`/`_Fidelity:_` headline describes exactly the kept
+# set and the Coverage denominator counts only matches at that custody value.
+
+
+def _seed_custody_mix(db):
+    """Two full + two partial + one reference, all matching `database`.
+
+    Drift: both full items re-checked (one verified, one drifted); the rest
+    never re-checked (→ unverified). A `database` query matches the whole set
+    (every title carries it), so the bundle's scope is the whole library.
+    """
+    insert_item(db, make_item(
+        "wikipedia:en:Full0", "Full database zero", "A fully held database body.",
+        content_hash="sha256:f0", raw_text="<raw>full zero</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Full1", "Full database one", "Another fully held database body.",
+        content_hash="sha256:f1", raw_text="<raw>full one</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Partial0", "Partial database zero", "A partial database body.",
+    ))  # no hash/raw → partial
+    insert_item(db, make_item(
+        "wikipedia:en:Partial1", "Partial database one", "Another partial database body.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Ref", "Reference database pointer", "",
+        summary=None, stage="detected",
+    ))  # no content → reference
+    record_events(db, [
+        _drift_event("wikipedia:en:Full0", "unchanged", observed="sha256:f0"),
+        _drift_event("wikipedia:en:Full1", "drifted", observed="sha256:changed"),
+    ])
+
+
+def test_context_fidelity_filter_keeps_only_that_tier(scrolls_home, capsys):
+    # `--fidelity full` keeps only the matches held at the full tier, and the
+    # rendered headline describes exactly that kept set — not the whole library.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--fidelity", "full")
+    # only the two full-fidelity scrolls appear; the partials/reference do not
+    assert "wikipedia:en:Full0" in out and "wikipedia:en:Full1" in out
+    for absent in ("Partial0", "Partial1", "Ref"):
+        assert f"wikipedia:en:{absent}" not in out
+    # the headline describes the kept set: all full, nothing else
+    headline = _custody_line(out)
+    assert "2 scroll(s)" in headline
+    assert "fidelity full 2" in headline and "partial" not in headline
+
+
+def test_context_drift_filter_keeps_only_that_posture(scrolls_home, capsys):
+    # `--drift drifted` keeps only the matches whose latest verdict reads drifted
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--drift", "drifted")
+    assert "wikipedia:en:Full1" in out  # the one drifted scroll
+    for absent in ("Full0", "Partial0", "Partial1", "Ref"):
+        assert f"wikipedia:en:{absent}" not in out
+    headline = _custody_line(out)
+    assert "1 scroll(s)" in headline
+    assert "drift drifted 1" in headline and "unverified" not in headline
+
+
+def test_context_custody_filters_sieve_before_the_limit(scrolls_home, capsys):
+    # the before-cap sieve (the list-sieve shape): `--fidelity full --limit 1`
+    # returns the top *full* match, not the top match then sieved to nothing —
+    # and the Coverage denominator counts only the full-tier matches (2), so a
+    # capped custody bundle stays scope-honest about its own custody scope.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--fidelity", "full", "--limit", "1")
+    # exactly one match, and it is a full-fidelity one (the sieve ran first)
+    assert "1. " in out
+    assert "wikipedia:en:Full0" in out or "wikipedia:en:Full1" in out
+    # the denominator is the *full-tier* match count (2), never the library-wide 5
+    assert "the top 1 of 2 matching scrolls" in out
+
+
+def test_context_custody_filters_and_together(scrolls_home, capsys):
+    # the two axes AND: `--fidelity full --drift verified` keeps only the match
+    # that is both held in full *and* re-checked unchanged (Full0).
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--fidelity", "full", "--drift", "verified")
+    assert "wikipedia:en:Full0" in out
+    for absent in ("Full1", "Partial0", "Partial1", "Ref"):
+        assert f"wikipedia:en:{absent}" not in out
+
+
+def test_context_custody_scope_named_in_the_title(scrolls_home, capsys):
+    # a custody-scoped bundle is self-documenting: the title names which holdings
+    # tier / drift posture it covers, beside the existing facet echo.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--fidelity", "full")
+    assert out.startswith("# Scrolls Context Bundle: database (fidelity=full)\n")
+    out = run_context(capsys, "database", "--drift", "drifted")
+    assert out.startswith("# Scrolls Context Bundle: database (drift=drifted)\n")
+    # both axes, and ANDed after a facet, all read in the title
+    out = run_context(
+        capsys, "database", "--source", "wikipedia",
+        "--fidelity", "full", "--drift", "verified",
+    )
+    assert out.startswith(
+        "# Scrolls Context Bundle: database "
+        "(source=wikipedia, fidelity=full, drift=verified)\n"
+    )
+
+
+def test_context_drift_filter_describes_kept_set_at_full_budget(scrolls_home, capsys):
+    # the genuine subtlety (H257): the sieve runs *before* the budget tier nests
+    # its excerpts, so the `full`-budget per-excerpt drift tags describe the kept
+    # items — a `--drift drifted` bundle's excerpts all carry the `drifted` tag,
+    # never a `verified`/`unverified` one for a sieved-out item.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--drift", "drifted", "--budget", "full")
+    assert "## Excerpts" in out
+    assert "_drift `drifted`" in out
+    # no excerpt for a sieved-out posture leaked through
+    assert "_drift `verified`" not in out
+    assert "_drift `unverified`" not in out
+
+
+def test_context_fidelity_holdings_line_describes_kept_set_at_index(scrolls_home, capsys):
+    # the leanest `index` tier's ledger-free `_Fidelity:_` line is folded over the
+    # kept (sieved) set too: `--fidelity partial` reports only the partial holdings.
+    main(["init"])
+    _seed_custody_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--fidelity", "partial", "--budget", "index")
+    line = _fidelity_line(out)
+    assert "partial 2" in line and "full" not in line
+    assert _fidelity_scope(line) == 2  # the kept set, not the library-wide 5
+
+
+def test_context_unknown_fidelity_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError):
+        build_context(get_paths().db_path, "database", fidelity="ful")
+
+
+def test_context_unknown_drift_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError):
+        build_context(get_paths().db_path, "database", drift="drift")
+
+
+def test_context_cli_rejects_unknown_custody_values(scrolls_home):
+    # argparse `choices=` rejects a bad value with exit 2 before any DB access —
+    # the closed-vocabulary contract `list`/`search --fidelity`/`--drift` keep.
+    main(["init"])
+    with pytest.raises(SystemExit) as exc:
+        main(["context", "database", "--fidelity", "bogus"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        main(["context", "database", "--drift", "bogus"])
+    assert exc.value.code == 2
 
 
 def _fidelity_counts(line):

@@ -1924,6 +1924,88 @@ def test_get_context_bundle_honors_facets(scrolls_home, fake_wikipedia_api):
     assert "No matching scrolls." in empty
 
 
+def _seed_context_custody_mix(db):
+    """Two full + two partial matching `database`; one full re-checked unchanged,
+    one full drifted, the partials never re-checked (→ unverified)."""
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id="web:full0", source="web", url="https://ex.com/full0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full database zero",
+        raw_text="A database engine held in full.", content_hash="sha256:f0",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full1", source="web", url="https://ex.com/full1",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full database one",
+        raw_text="Another database engine held in full.", content_hash="sha256:f1",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:partial0", source="web", url="https://ex.com/partial0",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial database zero",
+        extracted_text="A database, content held but no hash.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:partial1", source="web", url="https://ex.com/partial1",
+        saved_at="2026-06-12T00:00:03+00:00", title="Partial database one",
+        extracted_text="Another database, content held but no hash.", stage="fetched"))
+    record_events(db, [
+        CustodyEvent("web:full0", "t", "unchanged", "sha256:f0", "sha256:f0", None),
+        CustodyEvent("web:full1", "t", "drifted", "sha256:f1", "sha256:x", None),
+    ])
+
+
+def test_get_context_bundle_filters_by_fidelity_tier(scrolls_home):
+    # roadmap H257 — the custody-filter family reaches the agent context bundle
+    # over MCP. The twin of `scrolls context --fidelity`: keeps only the matches
+    # held at the named tier (the same per-hit `fidelity` `search_scrolls` shows),
+    # sieved before the cap, and names the scope in the title.
+    from scrolls.cli import main
+
+    main(["init"])
+    _seed_context_custody_mix(get_paths().db_path)
+
+    bundle = mcp_server.get_context_bundle("database", fidelity="full")
+    assert bundle.startswith("# Scrolls Context Bundle: database (fidelity=full)")
+    assert "web:full0" in bundle and "web:full1" in bundle
+    assert "web:partial0" not in bundle and "web:partial1" not in bundle
+    # the rendered custody headline describes exactly the kept set
+    headline = next(ln for ln in bundle.splitlines() if ln.startswith("_Custody:"))
+    assert "fidelity full 2" in headline and "partial" not in headline
+
+
+def test_get_context_bundle_filters_by_drift_posture(scrolls_home):
+    # the ledger-axis twin: keeps only the matches at one verify-ledger posture
+    from scrolls.cli import main
+
+    main(["init"])
+    _seed_context_custody_mix(get_paths().db_path)
+
+    bundle = mcp_server.get_context_bundle("database", drift="drifted")
+    assert bundle.startswith("# Scrolls Context Bundle: database (drift=drifted)")
+    assert "web:full1" in bundle  # the one drifted match
+    for absent in ("web:full0", "web:partial0", "web:partial1"):
+        assert absent not in bundle
+    # both axes AND, sieved before the cap
+    both = mcp_server.get_context_bundle("database", fidelity="full", drift="verified")
+    assert "web:full0" in both
+    for absent in ("web:full1", "web:partial0", "web:partial1"):
+        assert absent not in both
+
+
+def test_get_context_bundle_rejects_unknown_custody_values(scrolls_home):
+    # the same closed vocabulary as search_scrolls/list_scrolls; never a silent
+    # empty bundle — an unknown tier/posture is an error the client sees.
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.get_context_bundle("database", fidelity="ful")
+    with pytest.raises(ValueError):
+        mcp_server.get_context_bundle("database", drift="drift")
+
+
 def test_search_and_bundle_honor_tag_and_concept_facets(scrolls_home):
     # The tag/concept membership facets (ADR 0059) reach MCP clients through
     # the same search_items/build_context, so lock both surfaces here.

@@ -104,6 +104,8 @@ def build_context(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
     budget: str = DEFAULT_BUDGET,
 ) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
@@ -116,6 +118,26 @@ def build_context(
     "anything about X". When any facet is set the title carries a scope note
     so the bundle is self-documenting; the empty-string `category` selects
     the unclassified pool and reads as `category=unclassified`.
+
+    `fidelity` and `drift` (roadmap H257) are the two per-item *custody* scopes
+    — the custody-filter family on the agent context bundle, the one progressive
+    read surface it had not reached. `fidelity` (the holdings axis, ADR 0097)
+    keeps only the matches the library holds at one custody tier
+    (`full`/`partial`/`reference`), so an agent on a tight budget can build its
+    working context from "only the full-fidelity sources I can re-derive
+    offline". `drift` (the ledger-claim axis, H58) keeps only the matches at one
+    verify-ledger posture (`verified`/…/`drifted`), so it can "exclude the ones
+    that have moved". Both fold the *same* primitives the `list`/`search`
+    custody filters use (`scrolls_fidelity`/`scrolls_drift` UDFs), passed
+    straight to `search_items`/`count_matches`, so they AND with the facets and
+    — crucially — scope the candidate set **before** the `limit` cap (the
+    `list`-sieve shape, like `search`/`related`): the bundle keeps the top-k *at
+    that custody value*, not the top-k then sieved. Everything downstream — the
+    work-collapse, the budget tiers' depth, the `_Custody:_`/`_Fidelity:_`
+    headline, and the per-excerpt drift tags — therefore reads the kept set, so
+    the rendered headline describes exactly what the bundle contains. An unknown
+    tier/posture raises ValueError (`search_items`, a closed vocabulary; the CLI
+    also rejects it via argparse `choices`).
 
     `budget` (MVP M3) bounds the bundle's *depth* through the nested
     `index`/`connected`/`full` tiers (`BUDGET_TIERS`): `index` is the catalog
@@ -152,6 +174,8 @@ def build_context(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
+        drift=drift,
     )
     kept, folded = _collapse_by_work(hits)
     # (hit, item) pairs in kept order; drop any hit whose row vanished
@@ -160,7 +184,7 @@ def build_context(
     items = [item for _, item in pairs]
 
     title = f"# Scrolls Context Bundle: {query}"
-    scope = _scope_note(source, category, stage, tag, concept)
+    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
@@ -182,6 +206,8 @@ def build_context(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
+        drift=drift,
     )
     lines += [_coverage_line(matched, len(hits)), ""]
     budget_note = _budget_line(budget)
@@ -395,13 +421,18 @@ def _scope_note(
     stage: str | None,
     tag: str | None,
     concept: str | None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> str:
     """A `source=…, category=…, …` summary of the active facets, else ''.
 
     The empty-string `category` (the unclassified pool, mirroring `scrolls
     search`/`list`) reads as `category=unclassified` so the title is honest
     about what an empty value selects. `tag`/`concept` (ADR 0059) carry no
-    such overload — they report their value verbatim.
+    such overload — they report their value verbatim. `fidelity`/`drift`
+    (roadmap H257, the per-item custody scopes) report their value verbatim
+    too, so a custody-scoped bundle's title names which holdings tier / drift
+    posture it covers.
     """
     parts = []
     if source is not None:
@@ -414,6 +445,10 @@ def _scope_note(
         parts.append(f"tag={tag}")
     if concept is not None:
         parts.append(f"concept={concept}")
+    if fidelity is not None:
+        parts.append(f"fidelity={fidelity}")
+    if drift is not None:
+        parts.append(f"drift={drift}")
     return ", ".join(parts)
 
 

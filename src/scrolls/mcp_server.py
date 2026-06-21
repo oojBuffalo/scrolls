@@ -502,6 +502,8 @@ def get_context_bundle(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
@@ -514,6 +516,20 @@ def get_context_bundle(
     (case-insensitive), and `concept` to items carrying a concept (matched by
     slug) — so the bundle can cover, e.g., what the *papers* say about a
     topic. A scoped bundle names its facets in the title.
+
+    `fidelity` and `drift` are the two per-item *custody* scopes — the
+    relationship-/browse-surface custody filters (`list_scrolls`/
+    `search_scrolls`/`get_related_scrolls`) lifted to the context bundle.
+    `fidelity` keeps only the matches the library holds at one custody tier
+    (`full`/`partial`/`reference`, ADR 0097), so an agent on a tight budget can
+    build context from "only the full-fidelity sources I can re-derive offline";
+    `drift` keeps only the matches at one verify-ledger posture
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`), so it can exclude the
+    ones that have moved. Both sieve the candidate set *before* the `limit` cap
+    (the same before-cap shape `search_scrolls` uses), so the bundle covers the
+    top matches *at that custody value* and the rendered custody headline
+    describes exactly the kept set. The two axes AND; an unknown tier/posture is
+    an error, never a silent empty bundle.
 
     `budget` bounds the bundle's depth (a budgeted boot sequence, identity/index
     first): `index` is the catalog alone (best matches + links), `connected`
@@ -532,6 +548,8 @@ def get_context_bundle(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
+        drift=drift,
         budget=budget,
     )
 
