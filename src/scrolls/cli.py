@@ -975,12 +975,24 @@ def build_parser() -> argparse.ArgumentParser:
         "re-checks the weakest source without --all (oldest saved first)",
     )
     verify_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Verify only held items at this custody-fidelity tier (ADR 0097) — "
+        "the act-axis twin of `scrolls list --fidelity` / `search --fidelity` "
+        "(the holdings axis), so a worker re-checks exactly its full-fidelity (or "
+        "partial) holdings without --all. Like every batch mode it touches only "
+        "rows carrying a content hash to diff, so the set is `list --fidelity "
+        "<tier>`'s held, hash-bearing subset; a tier with no fingerprint "
+        "(typically reference) is an honest empty no-op (oldest saved first)",
+    )
+    verify_parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Attempt at most N re-captures this run "
-        "(--all/--unverified/--stale-before/--drift/--source only), oldest saved "
-        "first",
+        "(--all/--unverified/--stale-before/--drift/--source/--fidelity only), "
+        "oldest saved first",
     )
 
     return parser
@@ -1155,7 +1167,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         return _cmd_verify(
             args.id, args.verify_all, args.unverified, args.limit, args.stale_before,
-            args.drift, args.source,
+            args.drift, args.source, args.fidelity,
         )
     return 2  # pragma: no cover - argparse enforces a valid command
 
@@ -2016,6 +2028,7 @@ def _cmd_verify(
     stale_before: str | None = None,
     drift: str | None = None,
     source: str | None = None,
+    fidelity: str | None = None,
 ) -> int:
     """Re-capture items and record drift/rot custody events (ADR 0098).
 
@@ -2035,19 +2048,23 @@ def _cmd_verify(
     `--source <S>` (the held, hash-bearing items from one source — the
     act-side of doctor/maintain's per-source custody breakdown, the verify-axis
     sibling of `list --source`, so a worker re-checks the weakest source
-    without `--all`). `error` (could-not-check) drives a nonzero exit;
-    `drifted`/`rotted` are successful checks that found a custody event.
+    without `--all`), or `--fidelity <tier>` (the held, hash-bearing items at
+    one custody-fidelity tier — the act-axis twin of `list --fidelity` /
+    `search --fidelity`, the holdings axis, so a worker re-verifies exactly its
+    full-fidelity holdings without `--all`). `error` (could-not-check) drives a
+    nonzero exit; `drifted`/`rotted` are successful checks that found a custody
+    event.
     """
     paths = get_paths()
     selections = (
         ref is not None, verify_all, unverified, stale_before is not None,
-        drift is not None, source is not None,
+        drift is not None, source is not None, fidelity is not None,
     )
     if sum(selections) != 1:
         print(
             json.dumps(
                 {"error": "verify needs exactly one of an item id, --all, "
-                 "--unverified, --stale-before, --drift, or --source"}
+                 "--unverified, --stale-before, --drift, --source, or --fidelity"}
             ),
             file=sys.stderr,
         )
@@ -2078,8 +2095,8 @@ def _cmd_verify(
             print(
                 json.dumps(
                     {"error": "--limit paces "
-                     "--all/--unverified/--stale-before/--drift/--source runs; "
-                     "drop it when verifying one item"}
+                     "--all/--unverified/--stale-before/--drift/--source/--fidelity "
+                     "runs; drop it when verifying one item"}
                 ),
                 file=sys.stderr,
             )
@@ -2113,6 +2130,18 @@ def _cmd_verify(
             # so a source nothing is held for is an honest empty no-op, never an
             # error. Preserves the oldest-saved-first order for `--limit`.
             items = [item for item in hash_bearing if item.source == source]
+        elif fidelity is not None:
+            # `--fidelity` is the holdings-axis sibling of `--source`: a plain
+            # item-intrinsic filter (the act-axis twin of `list --fidelity` /
+            # `search --fidelity`), folding the same `get_fidelity` primitive
+            # those read surfaces count with — no ledger read. Like every batch
+            # mode it re-captures only hash-bearing rows, so the set it touches
+            # is `list --fidelity <tier>`'s held, *hash-bearing* subset — genuinely
+            # narrower than the listing (a full capture held by raw body alone
+            # carries no hash, so it lists `full` yet is skipped here), and a tier
+            # holding no fingerprint (typically `reference`, which keeps no content)
+            # is an honest empty no-op. Preserves oldest-saved-first for `--limit`.
+            items = [item for item in hash_bearing if get_fidelity(item) == fidelity]
         else:
             # The ledger-driven selections all read the latest verdict per item.
             # `--unverified` takes the held − verdicts set doctor's

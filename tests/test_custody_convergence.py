@@ -6032,6 +6032,50 @@ def test_verify_source_clears_that_sources_unverified_bucket(scrolls_home, monke
     assert after["arxiv"]["coverage"] == {"verified": 0, "total": 1}
 
 
+def test_verify_fidelity_rechecks_exactly_what_list_fidelity_enumerates(
+    scrolls_home, monkeypatch, capsys
+):
+    # the act-side ≡ read-side drill on the *holdings* (fidelity) axis (the
+    # verify-axis twin of `list --fidelity`, the H252 counterpart of the H125
+    # `--source` / H54 `--drift` parities above): for every tier, `verify
+    # --fidelity T` re-captures exactly `list --fidelity T`'s held, *hash-bearing*
+    # rows. The `_seed_mixed_custody` partial (extracted only, no hash) and the
+    # reference pointer are in the listing but carry no baseline to diff, so
+    # neither is ever re-captured — the genuine gap between the holdings axis and
+    # the verifiable subset (custody holdings ⊋ what `verify` can re-check).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)
+    capsys.readouterr()
+
+    # the hash-bearing subset per tier — hardcoded so the drill is non-vacuous:
+    # only the two fulls carry a content_hash; the partial and reference do not.
+    expected = {
+        "full": {"web:full1", "web:full2"},
+        "partial": set(),  # the partial has no hash → unverifiable
+        "reference": set(),  # a reference pointer keeps no content → no hash
+    }
+    _stub_recapture(monkeypatch, lambda i: i)  # every re-check reads `unchanged`
+    for tier in ("full", "partial", "reference"):
+        assert main(["list", "--fidelity", tier]) == 0
+        listed = {r["id"] for r in json.loads(capsys.readouterr().out)}
+        # independently re-derive the verifiable subset from the store
+        hash_bearing = {
+            it.id for it in list_items(db, fidelity=tier) if it.content_hash
+        }
+        assert hash_bearing == expected[tier]
+        assert main(["verify", "--fidelity", tier]) == 0
+        rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+        assert rechecked == hash_bearing
+        # the listing carries the full tier (rows ⊇ recheck): the partial and
+        # reference are listed but unverifiable, so the listing is a strict
+        # superset of the recheck on those tiers
+        assert listed >= hash_bearing
+    # the concrete picture: the partial is listed yet re-checks nothing
+    assert main(["list", "--fidelity", "partial"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == {"web:partial"}
+
+
 # --- maintain's scheduled recheck ≡ the explicit verify selection (roadmap H111)
 #
 # A default `scrolls maintain` pass stale-bounds its recheck to the held items not

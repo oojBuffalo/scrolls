@@ -360,16 +360,20 @@ facets, so the windowed backup loses nothing the whole one keeps.
 
 Finally, the module pins the **verify-selection family** (roadmap H81) — the
 *act* side of the same custody picture the read surfaces enumerate. `scrolls
-verify` carries five batch selections over the same `custody` selectors:
+verify` carries six batch selections over the same `custody`/`items` selectors:
 `--unverified` (`unverified_items`), `--stale-before` (`items_checked_before`),
-`--drift` (`items_in_posture`), and `--source` (the item-intrinsic `source`
-filter, the one selection that reads no ledger — roadmap H125), plus `--all`. The
-invariant asserts they relate as documented: `verify --drift <posture>`
-re-captures exactly the rows `list --drift <posture>` enumerates (the act-side ≡
-read-side drill, by the shared `items_in_posture`); `verify --source <S>`
-re-captures exactly `list --source <S>`'s held, hash-bearing rows and clears that
-source's `unverified` count in `doctor`'s `custody.by_source[S]` (the per-source
-counterpart of how `--unverified` clears the whole-library bucket); `verify
+`--drift` (`items_in_posture`), `--source` (the item-intrinsic `source` filter,
+reading no ledger — roadmap H125), and `--fidelity` (the item-intrinsic
+`get_fidelity` filter, the holdings axis, also reading no ledger — roadmap H252),
+plus `--all`. The invariant asserts they relate as documented: `verify --drift
+<posture>` re-captures exactly the rows `list --drift <posture>` enumerates (the
+act-side ≡ read-side drill, by the shared `items_in_posture`); `verify --source
+<S>` re-captures exactly `list --source <S>`'s held, hash-bearing rows and clears
+that source's `unverified` count in `doctor`'s `custody.by_source[S]` (the
+per-source counterpart of how `--unverified` clears the whole-library bucket);
+`verify --fidelity <tier>` re-captures exactly `list --fidelity <tier>`'s held,
+*hash-bearing* subset (genuinely narrower than the listing — a `full` capture held
+by `raw_text` alone has no hash to diff, so it lists `full` yet is skipped); `verify
 --stale-before <future>` re-checks a *superset* of `--unverified` and clears the
 same `doctor custody.drift.unverified` bucket it subsumes; and every batch
 selection skips reference-only items identically (no baseline hash to diff). So
@@ -982,7 +986,7 @@ clean source omitted), keys sorted; pinned in
 `test_summaries_by_source_attributes_a_multi_source_stale_concept_to_each_source`
 and `test_summaries_by_source_converges_with_the_per_source_stale_summaries`.
 
-### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE | --source S] [--limit N]`
+### `scrolls verify [id] [--all | --unverified | --stale-before ISO | --drift POSTURE | --source S | --fidelity T] [--limit N]`
 
 Re-capture held items and record whether the live source still matches the
 copy in custody (ADR 0098; cited tests in `tests/test_verify_cli.py` and
@@ -993,13 +997,17 @@ overwrites the original capture, so proving a source changed can never lose
 what was held.
 
 Exactly one *selection* is required — a single item `id`/URL, `--all`,
-`--unverified`, `--stale-before`, `--drift`, or `--source` — never more than one
+`--unverified`, `--stale-before`, `--drift`, `--source`, or `--fidelity` — never
+more than one
 (`test_verify_needs_an_id_or_all`, `test_verify_rejects_id_and_all_together`,
 `test_verify_rejects_all_and_unverified_together`,
 `test_verify_rejects_all_and_stale_before_together`,
 `test_verify_rejects_all_and_drift_together`,
 `test_verify_rejects_all_and_source_together`,
-`test_verify_rejects_source_and_drift_together`). `--all` re-checks every
+`test_verify_rejects_source_and_drift_together`,
+`test_verify_rejects_all_and_fidelity_together`,
+`test_verify_rejects_source_and_fidelity_together`,
+`test_verify_rejects_id_and_fidelity_together`). `--all` re-checks every
 held item carrying a captured `content_hash` to diff against — a reference-only
 or still-`detected` item has no baseline and is skipped. `--unverified` narrows
 that to only the hash-bearing items the ledger has *no* verdict for — the same
@@ -1064,7 +1072,26 @@ nothing is held for is an honest empty no-op, never an error
 modes it skips reference-only items with no baseline
 (`test_verify_source_skips_reference_only_items`).
 
-`--limit N` paces a large `--all`/`--unverified`/`--stale-before`/`--drift`/`--source`
+`--fidelity <tier>` is the **holdings-axis** recheck — the act-axis twin of
+`scrolls list --fidelity` / `search --fidelity` (the read enumeration / ranked
+filter on the same axis), so a worker re-verifies exactly its full-fidelity (or
+`partial`) holdings without `--all`. It folds the same `get_fidelity` primitive
+those read surfaces count with — a pure function of stored content columns, **no
+ledger read** (the honest holdings-fact axis, vs `--drift`'s ledger-claim axis).
+Like every batch mode it re-checks only hash-bearing rows, so the set it touches
+is `list --fidelity <tier>`'s held, *hash-bearing* subset — and that makes it
+genuinely narrower than the listing: a `full` capture held by `raw_text` alone
+carries no `content_hash`, so it lists `full` yet has no baseline to diff and is
+skipped (`test_verify_fidelity_full_skips_a_full_item_without_a_baseline_hash`,
+`test_verify_fidelity_rechecks_exactly_the_list_fidelity_hash_bearing_rows`). A
+tier holding no fingerprint at all — typically `reference`, which keeps no content
+— is therefore an honest empty no-op
+(`test_verify_fidelity_reference_is_an_empty_noop`). It is a **closed** vocabulary
+(argparse `choices` over `full`/`partial`/`reference` — a typo is exit 2, never a
+silent empty; `test_verify_fidelity_rejects_an_unknown_tier`).
+
+`--limit N` paces a large
+`--all`/`--unverified`/`--stale-before`/`--drift`/`--source`/`--fidelity`
 run (oldest saved first), like `scrolls fetch` — so a bounded pass makes monotone
 coverage progress. A single `id` must itself hold a content hash
 (`test_verify_item_without_content_hash_is_an_error`).
@@ -1108,6 +1135,10 @@ $ scrolls verify --drift drifted      # re-check only the items flagged drifted 
 
 $ scrolls verify --source arxiv      # re-check only the weakest source doctor/maintain flagged
 {"checked": 2, "unchanged": 2, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "arxiv:2401.00001", "status": "unchanged", "prior_hash": "sha256:7c4d…", "observed_hash": "sha256:7c4d…", "detail": null}, {"id": "arxiv:2402.00002", "status": "unchanged", "prior_hash": "sha256:b81e…", "observed_hash": "sha256:b81e…", "detail": null}]}
+[exit 0]
+
+$ scrolls verify --fidelity full      # re-check only the full-fidelity holdings you can re-derive offline
+{"checked": 2, "unchanged": 2, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "arxiv:2401.00001", "status": "unchanged", "prior_hash": "sha256:7c4d…", "observed_hash": "sha256:7c4d…", "detail": null}, {"id": "web:af2e70e87b6d", "status": "unchanged", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:9c20…", "detail": null}]}
 [exit 0]
 ```
 

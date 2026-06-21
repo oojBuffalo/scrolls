@@ -747,6 +747,180 @@ def test_verify_rejects_source_and_drift_together(paths, capsys):
     assert "error" in json.loads(capsys.readouterr().err)
 
 
+# --- per-fidelity recheck (--fidelity T, H252) ----------------------------
+#
+# The act-axis twin of `list --fidelity` / `search --fidelity` (H250/H251, the
+# holdings axis): re-capture only the held items at one custody-fidelity tier
+# (ADR 0097), folding the same `get_fidelity` primitive those read surfaces
+# count with — no ledger read. Like every batch mode it touches only
+# hash-bearing rows (a re-fetch needs a baseline hash to diff), so the set it
+# re-checks is `list --fidelity T`'s held, *hash-bearing* subset. That makes it
+# genuinely narrower than `list --fidelity` (a full-fidelity capture held by raw
+# body alone carries no hash, so it lists `full` yet is skipped), and a tier
+# holding no fingerprint at all — typically `reference` — is an honest empty
+# no-op. A closed vocabulary (argparse choices): a typo is exit 2, never empty.
+
+
+def _full_no_hash_item(url):
+    """A full-fidelity capture held by raw body alone — no baseline to diff.
+
+    `get_fidelity` is `full` (a re-derivable `raw_text` body at a captured
+    stage), but with no `content_hash` there is nothing a re-fetch could diff,
+    so it is *not* hash-bearing — in `list --fidelity full` yet skipped by
+    `verify --fidelity full`, the real gap between the holdings axis and the
+    verifiable subset.
+    """
+    return _item(url, content_hash=None, raw_text="raw body", extracted_text=None)
+
+
+def _partial_hash_item(url):
+    """A hash-bearing partial: an extracted body + hash at an *uncaptured* stage.
+
+    `extracted_text` + `content_hash` would be `full` at a captured stage, but
+    a `detected` stage holds it at `partial` (ADR 0097) — and it still carries a
+    hash, so it is verifiable, the partial tier `verify --fidelity partial`
+    acts on.
+    """
+    return _item(url, content_hash="sha256:p", stage="detected")
+
+
+def test_verify_fidelity_selects_only_that_tier(paths, monkeypatch, capsys):
+    full = _item("https://example.com/full", content_hash="sha256:f")
+    partial = _partial_hash_item("https://example.com/partial")
+    insert_item(paths.db_path, full)
+    insert_item(paths.db_path, partial)
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--fidelity", "full"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)["results"]] == [full.id]
+
+    main(["verify", "--fidelity", "partial"])
+    out = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in out["results"]] == [partial.id]
+
+
+def test_verify_fidelity_full_skips_a_full_item_without_a_baseline_hash(
+    paths, monkeypatch, capsys
+):
+    # the distinguishing case vs --source: a full-fidelity capture held by raw
+    # body alone is in `list --fidelity full` but carries no hash to diff, so
+    # `verify --fidelity full` skips it like every other batch mode
+    hashed = _item("https://example.com/a", content_hash="sha256:a")
+    no_hash = _full_no_hash_item("https://example.com/b")
+    insert_item(paths.db_path, hashed)
+    insert_item(paths.db_path, no_hash)
+
+    main(["list", "--fidelity", "full"])
+    listed = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert listed == {hashed.id, no_hash.id}  # both are full fidelity
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", "--fidelity", "full"])
+    out = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in out["results"]] == [hashed.id]  # only the hash-bearing one
+
+
+def test_verify_fidelity_rechecks_exactly_the_list_fidelity_hash_bearing_rows(
+    paths, monkeypatch, capsys
+):
+    # the set --fidelity rechecks equals `list --fidelity T`'s held, hash-bearing
+    # rows — the verify-axis ≡ read-axis drill on the fidelity filter (the
+    # holdings-axis twin of the --source convergence)
+    full_hashed = _item("https://example.com/a", content_hash="sha256:a")
+    full_no_hash = _full_no_hash_item("https://example.com/b")
+    partial = _partial_hash_item("https://example.com/c")  # other tier, excluded
+    for it in (full_hashed, full_no_hash, partial):
+        insert_item(paths.db_path, it)
+
+    main(["list", "--fidelity", "full"])
+    listed = json.loads(capsys.readouterr().out)
+    assert {row["id"] for row in listed} == {full_hashed.id, full_no_hash.id}
+    # the verifiable subset is those carrying a baseline hash to diff (item_summary
+    # omits content_hash, so drill back through the store for the honest predicate)
+    listed_hash_bearing = {
+        row["id"] for row in listed if get_item(paths.db_path, row["id"]).content_hash
+    }
+
+    _stub_recapture(monkeypatch, lambda i: i)
+    main(["verify", "--fidelity", "full"])
+    rechecked = {r["id"] for r in json.loads(capsys.readouterr().out)["results"]}
+    assert rechecked == listed_hash_bearing == {full_hashed.id}
+
+
+def test_verify_fidelity_reference_is_an_empty_noop(paths, monkeypatch, capsys):
+    # reference-only items hold no content to fingerprint, so the reference tier
+    # has no hash-bearing rows — an honest empty no-op, no network touched
+    insert_item(paths.db_path, _item("https://example.com/a", content_hash="sha256:a"))
+    insert_item(paths.db_path, _item(
+        "https://example.com/ref", content_hash=None, extracted_text=None,
+        stage="detected"))
+
+    def explode(_):
+        raise AssertionError("recapture must not run for a tier with no baseline")
+
+    _stub_recapture(monkeypatch, explode)
+    exit_code = main(["verify", "--fidelity", "reference"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_fidelity_records_a_verdict_for_each_checked_item(
+    paths, monkeypatch, capsys
+):
+    # the re-check appends an append-only verdict the ledger now carries (so it
+    # feeds doctor's drift report, the act half of report↔refresh)
+    full = _item("https://example.com/a", content_hash="sha256:a")
+    insert_item(paths.db_path, full)
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--fidelity", "full"])
+    capsys.readouterr()
+    assert [e.status for e in item_events(paths.db_path, full.id)] == ["unchanged"]
+
+
+def test_verify_fidelity_composes_with_limit(paths, monkeypatch, capsys):
+    for n in range(3):
+        insert_item(paths.db_path, _item(
+            f"https://example.com/{n}", content_hash=f"sha256:{n}"))
+    insert_item(paths.db_path, _partial_hash_item("https://example.com/p"))  # excluded
+    _stub_recapture(monkeypatch, lambda i: i)
+
+    main(["verify", "--fidelity", "full", "--limit", "2"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["checked"] == 2  # oldest saved first, the third full item left
+
+
+def test_verify_fidelity_empty_library(scrolls_home, capsys):
+    exit_code = main(["verify", "--fidelity", "full"])
+    out = json.loads(capsys.readouterr().out)
+    assert exit_code == 0 and out["checked"] == 0
+
+
+def test_verify_fidelity_rejects_an_unknown_tier(paths):
+    # a closed vocabulary (argparse choices) — a typo is exit 2, never empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["verify", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
+def test_verify_rejects_all_and_fidelity_together(paths, capsys):
+    exit_code = main(["verify", "--all", "--fidelity", "full"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_rejects_source_and_fidelity_together(paths, capsys):
+    exit_code = main(["verify", "--source", "web", "--fidelity", "full"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_verify_rejects_id_and_fidelity_together(paths, capsys):
+    exit_code = main(["verify", "abc123", "--fidelity", "full"])
+    assert exit_code == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
 # --- scrolls history <id> — the per-item custody ledger timeline (H66) -----
 #
 # `verify` appends an append-only event per check; `show`/`list` carry only the
