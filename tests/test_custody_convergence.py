@@ -752,6 +752,84 @@ def test_scoped_index_fidelity_line_ties_to_doctor_source_tiers(scrolls_home, ca
     assert index == tiers                                      # and in lockstep on the line
 
 
+def test_scoped_index_fidelity_holdings_diverge_from_doctor_under_truncation(scrolls_home, capsys):
+    # roadmap H234 — the *boundary/complement* of H229. H229 ties the scoped leanest
+    # `index` `_Fidelity:_` line to `doctor --source <S>`'s `custody.tiers` *only when
+    # one query matches all of <S>'s held items* (no truncation). But the two answer
+    # genuinely different questions: the line is a *this-bundle* fact — "what does this
+    # bundle hold in full", over the post-cap kept set (`len(items)`) — while the audit
+    # is a *whole-source* fact — "what does this source hold in full", over every held
+    # row. When <S>'s matching items exceed the cap they must **differ**: the line sums
+    # to the kept slice `k`, the audit to the source's held count (> k), so the leanest
+    # tier never silently inflates to a source-wide custody claim the bundle didn't
+    # render. And lifting the cap (`--limit` ≥ the held count) collapses the divergence
+    # back to the H229 equality — proving the gap is exactly the truncation, nothing else.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls: full 2, partial 1, reference 1
+    # one out-of-scope `arxiv` `full` (title carries "topic", so the *unscoped* query
+    # matches it). It lifts the library-wide audit to {full 3, …}, so the source-wide
+    # web audit (full 2) is a third, distinct number from both the bundle-kept count
+    # and the library-wide holdings — the `--source web` filter is genuinely exercised.
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    paths = get_paths()
+
+    def scoped_index(limit):
+        # the leanest-tier holdings line for the web scope at a given cap. Its `(of N)`
+        # and tier counts are both over the post-cap kept set (`build_context` passes
+        # `len(items)` to `render_fidelity_holdings`, the kept representations).
+        line = _line_with(
+            _context_out(
+                capsys, "topic", "--budget", "index", "--source", "web",
+                "--limit", str(limit),
+            ),
+            "_Fidelity:",
+        )
+        counts = _rendered_fidelity_counts(line)
+        scope_n = int(re.search(r"\(of (\d+)\)", line).group(1))
+        return counts, scope_n
+
+    # the canonical *whole-source* audit: `doctor --source web` folds `get_fidelity`
+    # over all four held web rows, independent of any query or cap.
+    source_tiers = _nonzero(run_doctor(paths, source="web")["custody"]["tiers"])
+    assert source_tiers == {"full": 2, "partial": 1, "reference": 1}  # ≥2 tiers, non-vacuous
+    held = sum(source_tiers.values())
+    assert held == 4
+
+    # --- under truncation: a cap below the source's held count ----------------------
+    cap = 2
+    assert cap < held  # the cap genuinely truncates web's matching items (4 > 2)
+    kept, scope_n = scoped_index(cap)
+    # the bundle line is a *this-bundle* fact — its `(of N)` and tier counts sum to the
+    # kept slice `k`, never the whole-source held count.
+    assert scope_n == cap == 2
+    assert sum(kept.values()) == cap == 2
+    # so the two genuinely differ: the leanest-tier holdings never inflate to the
+    # source-wide custody claim (bundle-kept 2 ≠ source-wide {full 2, partial 1, reference 1}).
+    assert kept != source_tiers
+    assert sum(kept.values()) < sum(source_tiers.values())
+
+    # --- lift the cap: the divergence collapses back to the H229 equality -----------
+    # `--limit` ≥ the source's held count keeps every matching web item, so the post-cap
+    # kept set *is* the whole web scope the audit folds over — the H229 tie, recovered.
+    lifted, scope_n = scoped_index(held)  # cap == 4 == held → no truncation
+    assert scope_n == held == 4
+    assert sum(lifted.values()) == held == 4
+    assert lifted == source_tiers  # the gap was exactly the cap, nothing else
+
+    # the `--source web` filter is non-vacuous on both reads: the *unscoped* audit names
+    # the whole library (arxiv's `full` lifts it), so neither the bundle-kept count nor
+    # the source-wide audit is ever the library-wide holdings.
+    whole = _nonzero(run_doctor(paths)["custody"]["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert source_tiers != whole
+    assert kept != whole
+
+
 def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls_home, capsys):
     # roadmap H104: doctor's `custody.by_source` splits the whole-library custody
     # aggregate per source. Each per-source tally must equal `custody_counts` over
