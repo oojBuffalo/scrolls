@@ -948,6 +948,107 @@ def test_mixed_fidelity_bundle_round_trips_across_a_fresh_library(
     assert tiers_b == tiers_a
 
 
+# --- the bundle round-trip is byte-identical across mixed tiers too (H238) ---
+#
+# `test_mixed_fidelity_bundle_round_trips_across_a_fresh_library` (above) proves
+# every fidelity *tier* survives `export bundle` → `import bundle`; H231
+# (`tests/test_roundtrip.py`) proves the rebuilt scrolls + `library/` pages are
+# byte-for-byte equal — but only over the *whole-library JSONL backup*
+# (`export items`). The bundle item block is the *same* `export items` JSONL
+# (`bundle.py` `_items_block` → `dump_items_export`) wrapped in a sentinel-fenced
+# Markdown envelope — a genuinely different envelope around the same rows — and no
+# test pins byte-identity through *that* envelope. This is the bundle-surface
+# corner of the H216/H224/H231 round-trip matrix: the `partial` capture's
+# `content_hash`-less scroll (render.py omits a None field, a strictly different
+# frontmatter byte-shape than a `full` scroll) rebuilds byte-for-byte across the
+# bundle boundary, and — since the scope captures every item — the compiled
+# `library/` pages too.
+
+
+def _read_tree(directory) -> dict[str, bytes]:
+    """Every file under `directory`, keyed by path relative to it (bytes)."""
+    if not directory.exists():
+        return {}
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _render_mixed_library(items):
+    """Render the rendered-stage items to disk and index every item at the active
+    home, then compile the KB — the on-disk source library the bundle round-trip
+    reads from. The reference holds no body, so it is inserted as-is rather than
+    rendered (rendering would mint a scroll it has no body to fill)."""
+    from scrolls.db import init_db
+    from scrolls.render import write_scroll
+
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    for item in items:
+        if item.stage == "rendered":
+            item = write_scroll(paths, item)
+        insert_item(paths.db_path, item)
+    assert main(["kb"]) == 0
+
+
+def test_mixed_fidelity_bundle_rebuilds_byte_identically_across_a_fresh_library(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the bundle-surface byte-depth proof: a scoped `export bundle` →
+    # `import bundle` round-trip rebuilds the `partial` capture's
+    # `content_hash`-less scroll byte-for-byte (and, since "database" captures
+    # every item, the compiled `library/` pages too) — the bundle envelope the
+    # whole-library byte-identity tests (H231) never exercise
+    _render_mixed_library(_mixed_fidelity_scope())
+    paths_a = get_paths()
+    capsys.readouterr()  # drain the kb report before capturing the source trees
+
+    # capture the source's rendered scrolls and compiled library trees (bytes)
+    src_scrolls = _read_tree(paths_a.scrolls_dir)
+    src_library = _read_tree(paths_a.library_dir)
+
+    # non-vacuous: the source tree genuinely spans both byte-shapes. A `full`
+    # scroll carries a `content_hash:` frontmatter line; the `partial` capture has
+    # no hash to fingerprint its body, so render.py omits the line — a strictly
+    # different frontmatter byte-shape. Both shapes are present, so byte-identity
+    # over this tree is a stronger claim than over an all-`full` one.
+    with_hash = [p for p, body in src_scrolls.items() if b"content_hash" in body]
+    without_hash = [p for p, body in src_scrolls.items() if b"content_hash" not in body]
+    assert with_hash, "expected at least one full scroll (with a content_hash line)"
+    assert without_hash, "expected the partial scroll (rendered with no content_hash)"
+
+    # the bundle scope captures every item: "database" rides in the full/partial
+    # bodies and the reference's title, so the bundle is the whole library
+    assert main(["export", "bundle", "database"]) == 0
+    bundle_text = capsys.readouterr().out
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(bundle_text, encoding="utf-8")
+
+    # a fresh, empty library B
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    paths_b = get_paths()
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 3
+
+    # rebuild the derived artifacts from the imported rows, the documented restore
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()  # drain the doctor/kb reports
+
+    # the rendered scrolls — the partial's content_hash-less scroll included —
+    # rebuild byte-identically across the bundle boundary
+    assert _read_tree(paths_b.scrolls_dir) == src_scrolls
+    # and, since the scope captured the whole library, the compiled library/
+    # pages rebuild byte-identically too
+    assert _read_tree(paths_b.library_dir) == src_library
+
+
 # --- portable custody: the verify ledger travels in the bundle (H67) --------
 
 
