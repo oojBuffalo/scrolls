@@ -3047,7 +3047,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--stats]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--stats]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -3090,6 +3090,36 @@ the truncation marker is never inflated by tiers it never showed
 (`test_search_fidelity_scope_echo_and_truncation_denominator`). The MCP twin
 `search_scrolls(fidelity=)` carries the same selection
 (`test_search_scrolls_filters_by_fidelity_tier`).
+
+`--drift D` is the **ledger-claim-axis** filter on the ranked surface — the
+companion of `--fidelity`'s holdings axis and the search twin of `scrolls list
+--drift` (roadmap H58): a custody **drift posture**
+(`verified`/`unverified`/`drifted`/`rotted`/`error`, the same closed vocabulary
+— a typo is a usage error, exit 2 — `test_search_rejects_an_unknown_drift_posture`).
+It keeps only the matches whose latest verify verdict reads at that posture, the
+same posture each hit's own `drift` key shows, so a hit is *selected* by exactly
+the posture it *shows* (`test_search_drift_hits_match_the_filter_value`). The
+design difference from `--fidelity`: a fidelity tier is a pure function of an
+item's own content columns, but a drift posture is read from the **verify ledger**,
+so the filter cannot ride a content-column UDF. It instead ANDs the `scrolls_drift`
+UDF over the item's *latest `custody_events` verdict* (a correlated subquery for
+the most-recent row, `NULL` → `unverified`) into the SQL **before** the cap — so,
+like `--fidelity`, it scopes the *ranked* selection (`--drift verified --limit 5`
+returns the top five verified matches, not the verified ones among the top five —
+`test_search_drift_applies_before_the_limit`), which `list --drift` (no cap)
+sieves in Python instead. Both `scrolls_fidelity` and `scrolls_drift` delegate to
+the same primitives the per-hit fields are read off (`fidelity_tier` /
+`posture_from_status`), so the filter and the row never disagree. It composes with
+every other facet, including `--fidelity` (the two custody axes AND independently —
+`--fidelity full --drift drifted` is the full-fidelity matches that have drifted,
+`test_search_drift_composes_with_fidelity`); `count_matches` applies the same
+clause, so under `--stats` the `matched` denominator counts only the kept posture
+(`test_search_drift_scope_echo_and_truncation_denominator`). The per-posture
+totals across the closed vocabulary partition the query's matches — they sum to the
+unfiltered match count (`test_search_drift_partitions_the_query_matches`), the
+drill-from-`facets drift` convergence on the ranked surface. The MCP twin
+`search_scrolls(drift=)` carries the same selection
+(`test_search_scrolls_filters_by_drift_posture`).
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
 (matches bracketed, `…` for elided context), the per-item custody axes —

@@ -113,6 +113,7 @@ def search_scrolls(
     tag: str | None = None,
     concept: str | None = None,
     fidelity: str | None = None,
+    drift: str | None = None,
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
@@ -134,8 +135,12 @@ def search_scrolls(
     holdings-axis companion of `list_scrolls(fidelity=)`, ANDed into the ranked
     match before the cap, so it returns the top hits *the library still holds at
     that tier* (e.g. only the full-fidelity matches you could re-derive
-    offline). Use them to ask, e.g., what *papers* tagged efficient the library
-    knows about a topic, not just what mentions it.
+    offline). `drift` limits to one custody drift posture from the verify ledger
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the ledger-claim-axis
+    companion of `list_scrolls(drift=)`, also ANDed before the cap, so it returns
+    the top hits *at that posture* (e.g. only the matches you have re-verified
+    as still faithful to their source). Use them to ask, e.g., what *papers*
+    tagged efficient the library knows about a topic, not just what mentions it.
 
     Each hit also carries the scholarly `works` it represents (ADR 0101):
     empty for most hits, but when two hits are the same work — a preprint and
@@ -161,6 +166,7 @@ def search_scrolls(
         tag=tag,
         concept=concept,
         fidelity=fidelity,
+        drift=drift,
     )
     return [hit_payload(hit) for hit in hits]
 

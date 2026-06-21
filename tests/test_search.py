@@ -670,6 +670,177 @@ def test_search_unknown_fidelity_raises_even_on_a_missing_db(tmp_path):
     assert not missing.exists()
 
 
+# --- the drift filter: the ledger-claim-axis twin of --fidelity (H253) -------
+
+
+def _seed_mixed_drift(db_path):
+    """Four matches for "database", one per drift posture, via the verify ledger.
+
+    Unlike fidelity (a content-column fact), a posture is recorded in the
+    custody ledger: an `unchanged` re-check reads as `verified`, a `drifted`/
+    `rotted` verdict keeps its name, and a never-verified item is `unverified`.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+
+    for ident, title in (
+        ("wikipedia:en:Verified", "Verified database engine"),
+        ("wikipedia:en:Drifted", "Drifted database engine"),
+        ("wikipedia:en:Rotted", "Rotted database engine"),
+        ("wikipedia:en:Never", "Never-checked database engine"),
+    ):
+        insert_item(db_path, make_item(ident, title, "A database engine.",
+                                       raw_text="A database engine.",
+                                       content_hash="sha256:" + ident[-3:],
+                                       stage="rendered"))
+    record_events(db_path, [
+        CustodyEvent("wikipedia:en:Verified", "t", "unchanged", "h", "h", None),
+        CustodyEvent("wikipedia:en:Drifted", "t", "drifted", "h", "x", None),
+        CustodyEvent("wikipedia:en:Rotted", "t", "rotted", "h", None, "gone"),
+        # wikipedia:en:Never is left with no verdict -> unverified
+    ])
+
+
+def test_search_filters_by_drift(db_path):
+    # the ledger-claim-axis companion of --fidelity: keep only the matches whose
+    # latest verify verdict reads at one drift posture (H58), read from the same
+    # ledger the per-hit `drift` is.
+    _seed_mixed_drift(db_path)
+    assert [h.id for h in search_items(db_path, "database", drift="verified")] == [
+        "wikipedia:en:Verified"
+    ]
+    assert [h.id for h in search_items(db_path, "database", drift="drifted")] == [
+        "wikipedia:en:Drifted"
+    ]
+    assert [h.id for h in search_items(db_path, "database", drift="rotted")] == [
+        "wikipedia:en:Rotted"
+    ]
+    assert [h.id for h in search_items(db_path, "database", drift="unverified")] == [
+        "wikipedia:en:Never"
+    ]
+
+
+def test_search_drift_filter_agrees_with_the_per_hit_posture(db_path):
+    # every hit the filter returns carries exactly that posture — the ledger-axis
+    # twin of the fidelity row-shows-≡-filter: the SQL clause and the per-hit
+    # `drift` (both via posture_from_status) never disagree.
+    _seed_mixed_drift(db_path)
+    for posture in ("verified", "drifted", "rotted", "unverified"):
+        hits = search_items(db_path, "database", drift=posture)
+        assert hits  # non-vacuous: the seed has one match per posture
+        assert all(hit.drift == posture for hit in hits)
+
+
+def test_search_drift_partitions_the_query_matches(db_path):
+    # drill-from-count over the *query* scope: the postures partition the matches
+    # (every match has exactly one, `unverified` included), so the per-posture
+    # totals sum to the unfiltered match total.
+    _seed_mixed_drift(db_path)
+    whole = count_matches(db_path, "database")
+    by_posture = {
+        posture: count_matches(db_path, "database", drift=posture)
+        for posture in ("verified", "unverified", "drifted", "rotted", "error")
+    }
+    assert by_posture == {
+        "verified": 1, "unverified": 1, "drifted": 1, "rotted": 1, "error": 0
+    }
+    assert sum(by_posture.values()) == whole == 4
+
+
+def test_search_drift_ands_with_other_facets(db_path):
+    # --drift composes with --source: only the drifted arxiv match.
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper", "This paper studies databases.",
+        source="arxiv", raw_text="This paper studies databases.",
+        content_hash="sha256:a", stage="rendered",
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post", "Some database thoughts.",
+        source="web", raw_text="Some database thoughts.",
+        content_hash="sha256:w", stage="rendered",  # drifted, but wrong source
+    ))
+    record_events(db_path, [
+        CustodyEvent("arxiv:2401.0001", "t", "drifted", "h", "x", None),
+        CustodyEvent("web:abc", "t", "drifted", "h", "x", None),
+    ])
+    hits = search_items(db_path, "database", source="arxiv", drift="drifted")
+    assert [h.id for h in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_drift_applies_before_the_limit(db_path):
+    # the filter is part of the ranked selection, not a post-cap sieve: asking for
+    # the top-2 verified matches returns 2 verified hits even though drifted ones
+    # tie them in rank, not "the verified ones among the top 2". This is the key
+    # design point vs. list --drift (which sieves loaded rows, no cap).
+    from scrolls.custody import CustodyEvent, record_events
+
+    events = []
+    for index in range(3):
+        ident = f"wikipedia:en:Drifted_{index}"
+        insert_item(db_path, make_item(
+            ident, f"Drifted database {index}", "Every page is about databases.",
+            raw_text="Every page is about databases.",
+            content_hash=f"sha256:d{index}", stage="rendered",
+        ))
+        events.append(CustodyEvent(ident, "t", "drifted", "h", "x", None))
+    for index in range(3):
+        ident = f"wikipedia:en:Verified_{index}"
+        insert_item(db_path, make_item(
+            ident, f"Verified database {index}", "Every page is about databases.",
+            raw_text="Every page is about databases.",
+            content_hash=f"sha256:v{index}", stage="rendered",
+        ))
+        events.append(CustodyEvent(ident, "t", "unchanged", "h", "h", None))
+    record_events(db_path, events)
+    hits = search_items(db_path, "databases", drift="verified", limit=2)
+    assert len(hits) == 2
+    assert all(hit.drift == "verified" for hit in hits)
+
+
+def test_search_unknown_drift_posture_raises(db_path):
+    # a closed vocabulary, like the fidelity filter — never a silent empty.
+    _seed_mixed_drift(db_path)
+    with pytest.raises(ValueError):
+        search_items(db_path, "database", drift="bogus")
+
+
+def test_search_unknown_drift_raises_even_on_a_missing_db(tmp_path):
+    # the closed-vocabulary error never depends on library state.
+    missing = tmp_path / "absent.sqlite"
+    with pytest.raises(ValueError):
+        search_items(missing, "database", drift="bogus")
+    assert not missing.exists()
+
+
+def test_search_drift_composes_with_fidelity(db_path):
+    # the two custody axes AND independently: holdings (fidelity) and ledger
+    # (drift) scope the same ranked match together.
+    from scrolls.custody import CustodyEvent, record_events
+
+    # full + drifted
+    insert_item(db_path, make_item(
+        "wikipedia:en:A", "Full drifted database", "A database engine.",
+        raw_text="A database engine.", content_hash="sha256:a", stage="rendered",
+    ))
+    # full + verified
+    insert_item(db_path, make_item(
+        "wikipedia:en:B", "Full verified database", "A database engine.",
+        raw_text="A database engine.", content_hash="sha256:b", stage="rendered",
+    ))
+    # partial + drifted (no hash -> partial)
+    insert_item(db_path, make_item(
+        "wikipedia:en:C", "Partial drifted database", "A database engine.",
+    ))
+    record_events(db_path, [
+        CustodyEvent("wikipedia:en:A", "t", "drifted", "h", "x", None),
+        CustodyEvent("wikipedia:en:B", "t", "unchanged", "h", "h", None),
+        CustodyEvent("wikipedia:en:C", "t", "drifted", None, "x", None),
+    ])
+    hits = search_items(db_path, "database", fidelity="full", drift="drifted")
+    assert [h.id for h in hits] == ["wikipedia:en:A"]
+
+
 # --- count_matches: the honest denominator behind G2's truncation marker ----
 
 
@@ -715,6 +886,20 @@ def test_count_matches_honors_the_fidelity_filter(db_path):
     # an unknown tier raises here too (closed vocabulary)
     with pytest.raises(ValueError):
         count_matches(db_path, "database", fidelity="bogus")
+
+
+def test_count_matches_honors_the_drift_filter(db_path):
+    # the truncation denominator counts only the posture the search returns, so a
+    # `--drift verified --stats` result is never marked truncated by hits at other
+    # postures it never showed (the ledger-axis twin of the fidelity count tie).
+    _seed_mixed_drift(db_path)
+    assert count_matches(db_path, "database") == 4
+    assert count_matches(db_path, "database", drift="verified") == 1
+    assert count_matches(db_path, "database", drift="unverified") == 1
+    assert count_matches(db_path, "database", drift="error") == 0
+    # an unknown posture raises here too (closed vocabulary)
+    with pytest.raises(ValueError):
+        count_matches(db_path, "database", drift="bogus")
 
 
 def test_count_matches_validates_query_and_tolerates_missing_db(tmp_path):

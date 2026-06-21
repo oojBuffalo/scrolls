@@ -4274,6 +4274,138 @@ def test_search_rejects_an_unknown_fidelity_tier(scrolls_home):
     assert excinfo.value.code == 2
 
 
+# --- search --drift: the ledger-claim-axis filter on the *ranked* surface (H253) ---
+
+
+def _seed_drift_search():
+    """Matches for "database" spanning drift postures, every title sharing the
+    token so one query reaches all of them. Two `verified`, one `drifted`, one
+    `unverified` — the search/ledger twin of `_seed_fidelity_search`. Library
+    must exist.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    for ident in ("verified0", "verified1", "drifted", "never"):
+        insert_item(db, ScrollItem(
+            id=f"web:{ident}", source="web", url=f"https://ex.com/{ident}",
+            saved_at="2026-06-12T00:00:00+00:00",
+            title=f"{ident.capitalize()} database engine",
+            raw_text="A database engine.", content_hash=f"sha256:{ident}",
+            stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:verified0", "t", "unchanged", "h", "h", None),
+        CustodyEvent("web:verified1", "t", "unchanged", "h", "h", None),
+        CustodyEvent("web:drifted", "t", "drifted", "h", "x", None),
+        # web:never left with no verdict -> unverified
+    ])
+    return db
+
+
+def test_search_drift_selects_hits_by_custody_posture(scrolls_home, capsys):
+    # the ledger-claim-axis filter on the ranked surface: only the matches whose
+    # latest verify verdict reads at the named posture, the search twin of
+    # `list --drift` (H58)
+    main(["init"])
+    _seed_drift_search()
+    capsys.readouterr()
+
+    main(["search", "database", "--drift", "verified"])
+    assert {h["id"] for h in json.loads(capsys.readouterr().out)} == {
+        "web:verified0", "web:verified1"
+    }
+
+    main(["search", "database", "--drift", "drifted"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:drifted"]
+
+    main(["search", "database", "--drift", "unverified"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:never"]
+
+
+def test_search_drift_hits_match_the_filter_value(scrolls_home, capsys):
+    # every returned hit shows exactly the posture it was selected by — the filter
+    # and the per-hit `drift` field can never disagree (both via
+    # posture_from_status), the ledger-axis twin of the fidelity row-≡-filter
+    main(["init"])
+    _seed_drift_search()
+    capsys.readouterr()
+
+    for posture in ("verified", "drifted", "unverified"):
+        main(["search", "database", "--drift", posture])
+        hits = json.loads(capsys.readouterr().out)
+        assert hits  # each posture is populated by the seed
+        assert all(h["drift"] == posture for h in hits)
+
+
+def test_search_drift_scope_echo_and_truncation_denominator(scrolls_home, capsys):
+    # the --stats envelope names the drift filter it honored, and the matched
+    # denominator counts only that posture — so a capped `--drift verified` result
+    # is truncated by *verified* matches it hid, never by other postures (G2)
+    main(["init"])
+    _seed_drift_search()
+    capsys.readouterr()
+
+    main(["search", "database", "--drift", "verified", "--limit", "1", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["drift"] == "verified"
+    # two verified matches, capped at 1 → truncated, denominator is the verified
+    # count (2), not the library-wide match count (4)
+    assert payload["stats"]["returned"] == 1
+    assert payload["stats"]["matched"] == 2
+    assert payload["stats"]["truncated"] is True
+
+
+def test_search_drift_composes_with_source(scrolls_home, capsys):
+    # AND semantics: --drift intersects with --source like every other facet
+    main(["init"])
+    _seed_drift_search()
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:04+00:00", title="Arxiv database drifted",
+        raw_text="A database paper.", content_hash="sha256:x", stage="rendered"))
+    record_events(db, [CustodyEvent("arxiv:1", "t", "drifted", "h", "y", None)])
+    capsys.readouterr()
+
+    main(["search", "database", "--drift", "drifted", "--source", "arxiv"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["arxiv:1"]
+
+    main(["search", "database", "--drift", "drifted", "--source", "web"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:drifted"]
+
+
+def test_search_drift_composes_with_fidelity(scrolls_home, capsys):
+    # the two custody axes AND independently on the ranked surface: holdings
+    # (--fidelity) and ledger (--drift) scope the same match together
+    main(["init"])
+    _seed_drift_search()
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    # a partial (no hash) drifted match — excluded by --fidelity full
+    insert_item(db, ScrollItem(
+        id="web:partialdrift", source="web", url="https://ex.com/pd",
+        saved_at="2026-06-12T00:00:05+00:00", title="Partial drifted database",
+        extracted_text="A database, no hash.", stage="fetched"))
+    record_events(db, [CustodyEvent("web:partialdrift", "t", "drifted", None, "x", None)])
+    capsys.readouterr()
+
+    main(["search", "database", "--fidelity", "full", "--drift", "drifted"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:drifted"]
+
+
+def test_search_rejects_an_unknown_drift_posture(scrolls_home):
+    # the same closed vocabulary as `list --drift`; a typo is an exit-2 error
+    with pytest.raises(SystemExit) as excinfo:
+        main(["search", "database", "--drift", "drift"])
+    assert excinfo.value.code == 2
+
+
 def test_list_rows_carry_the_drift_posture(scrolls_home, capsys):
     # H58: every browse row shows the second custody axis — the drift posture —
     # not just `fidelity`, so a plain `list` reads the same posture `--drift`

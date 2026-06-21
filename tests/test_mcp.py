@@ -356,6 +356,57 @@ def test_search_scrolls_rejects_an_unknown_fidelity_tier(scrolls_home):
         mcp_server.search_scrolls("database", fidelity="ful")
 
 
+def test_search_scrolls_filters_by_drift_posture(scrolls_home):
+    # the ledger-claim-axis filter on the ranked surface — the MCP twin of
+    # `scrolls search --drift` and the search sibling of `list_scrolls(drift=)`
+    # (H58). Returns only the matches whose latest verify verdict reads at the
+    # named posture, the same per-hit `drift` each hit already shows.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    for ident in ("verified0", "verified1", "drifted", "never"):
+        insert_item(db, ScrollItem(
+            id=f"web:{ident}", source="web", url=f"https://ex.com/{ident}",
+            saved_at="2026-06-12T00:00:00+00:00",
+            title=f"{ident.capitalize()} database engine",
+            raw_text="A database engine.", content_hash=f"sha256:{ident}",
+            stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:verified0", "t", "unchanged", "h", "h", None),
+        CustodyEvent("web:verified1", "t", "unchanged", "h", "h", None),
+        CustodyEvent("web:drifted", "t", "drifted", "h", "x", None),
+        # web:never left unverified
+    ])
+
+    assert {r["id"] for r in mcp_server.search_scrolls("database", drift="verified")} == {
+        "web:verified0", "web:verified1"
+    }
+    assert [r["id"] for r in mcp_server.search_scrolls("database", drift="drifted")] == [
+        "web:drifted"
+    ]
+    assert [
+        r["id"] for r in mcp_server.search_scrolls("database", drift="unverified")
+    ] == ["web:never"]
+    # every returned hit shows exactly the posture it was selected by
+    for posture in ("verified", "drifted", "unverified"):
+        hits = mcp_server.search_scrolls("database", drift=posture)
+        assert hits and all(h["drift"] == posture for h in hits)
+
+
+def test_search_scrolls_rejects_an_unknown_drift_posture(scrolls_home):
+    # the same closed vocabulary as `list_scrolls(drift=)`; never a silent empty
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.search_scrolls("database", drift="drift")
+
+
 def test_list_scrolls_browses_by_facet(scrolls_home):
     # The enumeration counterpart to search_scrolls (ADR 0060): no query,
     # filtered by the same facets, bounded by a limit.

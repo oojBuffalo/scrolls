@@ -49,7 +49,13 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from scrolls.custody import FIDELITY_TIERS, drift_posture, last_checked, latest_events
+from scrolls.custody import (
+    DRIFT_POSTURES,
+    FIDELITY_TIERS,
+    drift_posture,
+    last_checked,
+    latest_events,
+)
 from scrolls.items import (
     classification_view,
     fidelity_tier,
@@ -111,6 +117,22 @@ _FIDELITY_CLAUSE = (
     "items.stage) = ?"
 )
 
+# The drift-posture filter (the ledger-claim axis, H58) as a WHERE clause. Unlike
+# `_FIDELITY_CLAUSE` — a pure function of the item's own content columns — a hit's
+# drift posture is read from the *verify ledger* (its latest `custody_events`
+# verdict), so the clause first pulls that latest status via a correlated subquery
+# (the largest `id` per item — the `latest_events` "most recent" rule, and the
+# `custody_events_item` index keeps it cheap) and folds it through the
+# `scrolls_drift` UDF, which delegates to the same `posture_from_status` the
+# per-hit `drift` is read off. So the clause matches exactly the posture each hit
+# shows, and a never-verified item (no row → the subquery yields NULL) maps to
+# `unverified`. ANDed before the LIMIT, so it scopes the top-k ranked selection
+# (the top hits at that posture), never a post-cap sieve of them.
+_DRIFT_CLAUSE = (
+    "scrolls_drift((SELECT ce.status FROM custody_events ce "
+    "WHERE ce.item_id = items.id ORDER BY ce.id DESC LIMIT 1)) = ?"
+)
+
 
 def _search_filters(
     source: str | None,
@@ -119,19 +141,21 @@ def _search_filters(
     tag: str | None,
     concept: str | None,
     fidelity: str | None,
+    drift: str | None,
 ) -> tuple[list[str], list[str]]:
     """The shared facet clauses for the ranked query and its count.
 
     `item_filters` covers the stored-column facets (source/category/stage/tag/
-    concept) the ranked query and `facets` share. `fidelity` is the one facet
-    that is *derived* (ADR 0097), not a stored column, so it rides the
-    `scrolls_fidelity` UDF as a WHERE clause over the content-presence booleans.
-    Because it ANDs into the SQL *before* the LIMIT, it scopes the top-k ranked
-    selection (the top full-fidelity matches), never a post-cap sieve of them;
-    `count_matches` appends the identical clause, so the G2 truncation marker
-    counts only the kept tier. An unknown tier is a `ValueError` (a closed
-    vocabulary, like `list_items`), raised before any DB access so it never
-    depends on library state.
+    concept) the ranked query and `facets` share. `fidelity` and `drift` are the
+    two facets that are *derived*, not stored columns, so each rides a UDF as a
+    WHERE clause: `fidelity` (ADR 0097) folds the content-presence booleans
+    through `scrolls_fidelity`; `drift` (H58) folds the item's latest verify
+    verdict through `scrolls_drift`. Because both AND into the SQL *before* the
+    LIMIT, they scope the top-k ranked selection (the top hits at that tier/
+    posture), never a post-cap sieve; `count_matches` appends the identical
+    clauses, so the G2 truncation marker counts only the kept set. An unknown
+    tier/posture is a `ValueError` (a closed vocabulary, like `list_items`),
+    raised before any DB access so it never depends on library state.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     if fidelity is not None:
@@ -142,6 +166,14 @@ def _search_filters(
             )
         clauses.append(_FIDELITY_CLAUSE)
         params.append(fidelity)
+    if drift is not None:
+        if drift not in DRIFT_POSTURES:
+            raise ValueError(
+                f"unknown drift posture {drift!r}; "
+                f"choose one of {', '.join(DRIFT_POSTURES)}"
+            )
+        clauses.append(_DRIFT_CLAUSE)
+        params.append(drift)
     return clauses, params
 
 
@@ -185,6 +217,7 @@ def search_items(
     tag: str | None = None,
     concept: str | None = None,
     fidelity: str | None = None,
+    drift: str | None = None,
 ) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
 
@@ -205,11 +238,22 @@ def search_items(
     therefore rides a SQL clause (`scrolls_fidelity`) ANDed before the LIMIT. An
     unknown tier is a `ValueError` (a closed vocabulary, like `list_items`).
 
+    `drift` is the ledger-claim-axis companion (H58): it keeps only the matches
+    whose latest verify verdict reads at one posture
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`), the same posture each
+    hit's own `drift` is read off. Unlike `fidelity` (a content-column fact), a
+    posture comes from the verify ledger, so it rides the `scrolls_drift` clause
+    over the item's latest `custody_events` verdict — also ANDed before the LIMIT,
+    so it scopes the ranked selection (the top hits at that posture). An unknown
+    posture is a `ValueError` (closed vocabulary).
+
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
     """
     match = _escape_query(query)
-    clauses, params = _search_filters(source, category, stage, tag, concept, fidelity)
+    clauses, params = _search_filters(
+        source, category, stage, tag, concept, fidelity, drift
+    )
     if not db_path.exists():
         return []
     sql = _QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))
@@ -257,6 +301,7 @@ def count_matches(
     tag: str | None = None,
     concept: str | None = None,
     fidelity: str | None = None,
+    drift: str | None = None,
 ) -> int:
     """Total items matching `query` in scope, ignoring the result cap.
 
@@ -268,10 +313,14 @@ def count_matches(
     truncated by partials it never showed), with no `LIMIT`, so the caller can
     mark a result truncated exactly when `count_matches > len(hits)`. Validates
     the query the same way `search_items` does; a missing database is an empty
-    library (0 matches).
+    library (0 matches). `drift` (the ledger-axis filter) is honored too, so a
+    `--drift verified --stats` result is never marked truncated by hits at
+    postures it never showed.
     """
     match = _escape_query(query)
-    clauses, params = _search_filters(source, category, stage, tag, concept, fidelity)
+    clauses, params = _search_filters(
+        source, category, stage, tag, concept, fidelity, drift
+    )
     if not db_path.exists():
         return 0
     sql = _COUNT_QUERY.format(filters="".join(f"\n  AND {clause}" for clause in clauses))

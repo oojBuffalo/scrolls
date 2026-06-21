@@ -536,6 +536,24 @@ def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
     return {row["item_id"]: _from_row(row) for row in rows}
 
 
+def posture_from_status(status: str | None) -> str:
+    """The reader-facing custody posture for a raw latest-verdict status.
+
+    The status-level core of `drift_posture`: ``None`` (no verdict on the ledger)
+    → ``unverified`` (never re-checked, so *unknown*, never silently "clean");
+    an ``unchanged`` re-check → ``verified``; any other status
+    (``drifted``/``rotted``/``error``) is itself the posture. Factored out so the
+    posture rule keeps a single home whether folded in Python from a
+    `CustodyEvent` (`drift_posture`, every browse surface) or called from SQL over
+    a raw `custody_events.status` column (the ``scrolls_drift`` UDF behind
+    `search --drift`, which must scope the *ranked* match before the LIMIT, so it
+    cannot post-filter the Python-side `drift_posture`).
+    """
+    if status is None:
+        return "unverified"
+    return "verified" if status == "unchanged" else status
+
+
 def drift_posture(event: CustodyEvent | None) -> str:
     """The reader-facing custody posture for an item, from its latest verdict.
 
@@ -548,11 +566,10 @@ def drift_posture(event: CustodyEvent | None) -> str:
     Because `doctor`'s ``custody.drift`` aggregate counts the same
     `latest_events` per status (``unchanged`` → the bundle's ``verified``,
     ``unverified`` = held − verdicts), the per-scroll posture an agent reads and
-    doctor's counts can never disagree.
+    doctor's counts can never disagree. Delegates to `posture_from_status` so the
+    SQL `scrolls_drift` filter reads the same rule.
     """
-    if event is None:
-        return "unverified"
-    return "verified" if event.status == "unchanged" else event.status
+    return posture_from_status(event.status if event is not None else None)
 
 
 def last_checked(event: CustodyEvent | None) -> str | None:

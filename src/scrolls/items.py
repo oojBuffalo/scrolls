@@ -470,6 +470,18 @@ def register_facet_functions(conn: sqlite3.Connection) -> None:
         ),
         deterministic=True,
     )
+    # The ledger-claim-axis posture as a SQL predicate (H58), so `search --drift`
+    # can AND it into the *ranked* match before the LIMIT — like fidelity, the
+    # filter must scope the top-k selection, not sieve it afterwards. Unlike
+    # fidelity (a content-column fact), a posture comes from the verify ledger, so
+    # the search clause hands this UDF the item's latest `custody_events.status`
+    # (NULL when never verified) and it delegates to `posture_from_status`, the one
+    # home of the rule the per-hit `drift` is read off in Python.
+    from scrolls.custody import posture_from_status  # lazy: custody imports items
+
+    conn.create_function(
+        "scrolls_drift", 1, posture_from_status, deterministic=True
+    )
 
 
 def tag_concept_filters(
