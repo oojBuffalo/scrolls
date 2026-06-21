@@ -995,7 +995,9 @@ def test_custody_events_round_trip_into_a_fresh_library(scrolls_home, monkeypatc
     capsys.readouterr()
     main(["import", "bundle", str(bundle_path)])
     report = json.loads(capsys.readouterr().out)
-    assert report["events"] == {"imported": 2, "skipped": 0, "orphaned": 0}
+    assert report["events"] == {
+        "imported": 2, "skipped": 0, "orphaned": 0, "orphaned_items": [],
+    }
     # the full ledger landed in B, newest-first, and the latest posture is the
     # exporter's — drift travels, it is not frozen as prose
     assert [e["status"] for e in item_history(db_b, "wikipedia:en:SQLite")] == [
@@ -1022,7 +1024,9 @@ def test_re_importing_a_bundle_dedups_the_custody_events(scrolls_home, tmp_path,
     # first import is back into the same library: the event already exists → skipped
     main(["import", "bundle", str(bundle_path)])
     report = json.loads(capsys.readouterr().out)
-    assert report["events"] == {"imported": 0, "skipped": 1, "orphaned": 0}
+    assert report["events"] == {
+        "imported": 0, "skipped": 1, "orphaned": 0, "orphaned_items": [],
+    }
     # the ledger did not grow — still exactly the one original check
     assert len(item_events(db, "wikipedia:en:SQLite")) == 1
 
@@ -1060,7 +1064,9 @@ def test_a_pre_h67_bundle_without_an_events_block_imports_items_only(scrolls_hom
     assert main(["import", "bundle", str(legacy_path)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["items"] == 1
-    assert report["events"] == {"imported": 0, "skipped": 0, "orphaned": 0}
+    assert report["events"] == {
+        "imported": 0, "skipped": 0, "orphaned": 0, "orphaned_items": [],
+    }
 
 
 def test_a_corrupt_custody_events_block_is_reported(scrolls_home):
@@ -1140,7 +1146,10 @@ def test_import_bundle_skips_and_counts_orphan_custody_events(
     assert rc == 0
     report = json.loads(captured.out)
     # the held item's event imported; the orphan one counted, not imported
-    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 1}
+    assert report["events"] == {
+        "imported": 1, "skipped": 0, "orphaned": 1,
+        "orphaned_items": ["wikipedia:en:Ghost"],
+    }
     # the orphan left no dangling ledger row — custody stays coherent
     assert item_events(db, "wikipedia:en:Ghost") == []
     # the anchored event did land
@@ -1242,8 +1251,90 @@ def test_import_bundle_reports_zero_orphans_when_every_event_resolves(
     captured = capsys.readouterr()
     report = json.loads(captured.out)
     assert report["events"]["orphaned"] == 0
+    # the structured id list is affirmatively empty too — "we checked, none
+    # dangled" stated, never silently omitted (H230, the M2 ethos)
+    assert report["events"]["orphaned_items"] == []
     # no orphans → no warning noise on stderr
     assert captured.err == ""
+
+
+def test_import_bundle_summary_names_which_items_orphaned(
+    scrolls_home, tmp_path, capsys
+):
+    # H230: the machine-readable half of H225. An agent piping `import bundle`
+    # *stdout* sees only the `events.orphaned` count; to learn *which* items dangle
+    # it would otherwise have to scrape the human warning prose off stderr. The
+    # summary now carries `events.orphaned_items` — the distinct orphan `item_id`s
+    # (sorted, deduped) — beside the count, on both the live import and the
+    # `--dry-run` preview, the same set the H225 warning names.
+    main(["init"])
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    bundle = _spliced_bundle(
+        held,
+        anchored_events=[_event("wikipedia:en:SQLite", "drifted", observed="cafe1234")],
+        orphan_events=[
+            _event("wikipedia:en:Ghost", "drifted", observed="beef9999"),
+            _event("wikipedia:en:Ghost", "rotted", observed="beef0000"),
+            _event("arxiv:2401.00001", "drifted", observed="dead0001"),
+        ],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    # the dry-run preview names the distinct orphan items first (it writes nothing)…
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    # …the *count* stays the event count (3 events); the *items* the distinct-item
+    # set (2 ids, sorted) — the doubly-orphaned `wikipedia:en:Ghost` named once
+    assert preview["events"]["orphaned"] == 3
+    assert preview["events"]["orphaned_items"] == [
+        "arxiv:2401.00001",
+        "wikipedia:en:Ghost",
+    ]
+
+    # the live import names the identical set — the structured channel never
+    # diverges from the preview (byte-equal `orphaned_items`)
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert live["events"]["orphaned"] == 3
+    assert live["events"]["orphaned_items"] == preview["events"]["orphaned_items"]
+
+
+def test_import_bundle_orphaned_items_is_uncapped_while_the_warning_bounds(
+    scrolls_home, tmp_path, capsys
+):
+    # H230: the structured `orphaned_items` carries the *complete* loss — every
+    # distinct orphan id — even when the human stderr warning caps its named list
+    # with a `(+N more)` tail. Structured completeness vs. human readability (M2):
+    # a programmatic consumer gets the full diagnosable set, the operator a bounded
+    # one. The cap is a stderr-prose concern, never a structured-field truncation.
+    from scrolls.cli import _MAX_ORPHAN_ITEM_IDS
+
+    main(["init"])
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    overflow = _MAX_ORPHAN_ITEM_IDS + 2
+    orphans = [
+        _event(f"web:orphan-{i}", "drifted", observed=f"dead{i:04d}")
+        for i in range(overflow)
+    ]
+    bundle = _spliced_bundle(held, anchored_events=[], orphan_events=orphans)
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    expected = sorted(f"web:orphan-{i}" for i in range(overflow))
+    # the structured field lists *every* distinct orphan id, sorted — uncapped
+    assert report["events"]["orphaned_items"] == expected
+    assert len(report["events"]["orphaned_items"]) == overflow
+    # …while the human warning bounds its named list with a `(+N more)` tail —
+    # the same set, two different completeness contracts on two channels
+    warning = json.loads(captured.err)["warning"]
+    assert warning.count("`web:orphan-") == _MAX_ORPHAN_ITEM_IDS
+    assert f"(+{overflow - _MAX_ORPHAN_ITEM_IDS} more)" in warning
 
 
 # --- import bundle --dry-run preview (roadmap H220) ------------------------
@@ -1282,7 +1373,9 @@ def test_import_bundle_dry_run_previews_without_writing(
     assert report["dry_run"] is True
     assert report["imported"] == 1 and report["skipped"] == 0
     # the event resolves to the would-be-imported item, not an orphan
-    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 0}
+    assert report["events"] == {
+        "imported": 1, "skipped": 0, "orphaned": 0, "orphaned_items": [],
+    }
     # nothing was written — the preview is a pure read
     assert get_item(db_b, "wikipedia:en:SQLite") is None
     assert item_events(db_b, "wikipedia:en:SQLite") == []
@@ -1326,7 +1419,9 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         # the reviewable id lists (H226) — dry-run-only, alongside `dry_run`
         "new": ["arxiv:1706.03762"],
         "held": ["wikipedia:en:SQLite"],
-        "events": {"imported": 2, "skipped": 0, "orphaned": 0},
+        "events": {
+            "imported": 2, "skipped": 0, "orphaned": 0, "orphaned_items": [],
+        },
     }
 
     # the dry-run wrote nothing — B still holds only the one pre-seeded scroll
@@ -1368,7 +1463,10 @@ def test_import_bundle_dry_run_previews_orphan_events(
     assert report["dry_run"] is True
     # the anchored item would import; its event resolves; the ghost event orphans
     assert report["imported"] == 1
-    assert report["events"] == {"imported": 1, "skipped": 0, "orphaned": 1}
+    assert report["events"] == {
+        "imported": 1, "skipped": 0, "orphaned": 1,
+        "orphaned_items": ["wikipedia:en:Ghost"],
+    }
     # the orphan is loud in the preview, just as in a real import
     assert "orphan" in captured.err.lower()
     # …but the preview wrote nothing — not the item, not its event

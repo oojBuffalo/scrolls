@@ -1730,6 +1730,19 @@ def _cmd_export_bundle(
 _MAX_ORPHAN_ITEM_IDS = 5
 
 
+def _orphan_item_ids(orphan_events: list) -> list[str]:
+    """The distinct `item_id`s a batch of orphan events dangle on, sorted + deduped.
+
+    The single source of truth for both diagnosable orphan surfaces (H225/H230):
+    the human stderr warning (`_warn_orphan_events`, which bounds the *named* list
+    with a `(+N more)` tail) and the structured `events.orphaned_items` summary
+    field (which carries the list **uncapped** — the machine channel reports the
+    complete loss; the cap is a human-readability concern, never a structured-field
+    truncation, the M2 ethos). Two events on one missing item name it once.
+    """
+    return sorted({event.item_id for event in orphan_events})
+
+
 def _warn_orphan_events(orphan_events: list) -> None:
     """Surface orphan custody events on stderr (roadmap H217/H225), loud not silent.
 
@@ -1747,7 +1760,7 @@ def _warn_orphan_events(orphan_events: list) -> None:
     """
     if not orphan_events:
         return
-    distinct_ids = sorted({event.item_id for event in orphan_events})
+    distinct_ids = _orphan_item_ids(orphan_events)
     named = ", ".join(f"`{item_id}`" for item_id in distinct_ids[:_MAX_ORPHAN_ITEM_IDS])
     if len(distinct_ids) > _MAX_ORPHAN_ITEM_IDS:
         named += f" (+{len(distinct_ids) - _MAX_ORPHAN_ITEM_IDS} more)"
@@ -1815,6 +1828,11 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
             "imported": ev_imported,
             "skipped": ev_skipped,
             "orphaned": len(orphan_events),
+            # the distinct ids the orphan events dangle on (H230) — the structured,
+            # **uncapped** twin of the bounded stderr warning, so an agent piping
+            # stdout learns *which* items the bundle is missing, not just how many.
+            # Always present (`[]` is the honest "we checked, none dangled").
+            "orphaned_items": _orphan_item_ids(orphan_events),
         },
     }))
     return 0
@@ -1876,6 +1894,9 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
             "imported": ev_imported,
             "skipped": ev_skipped,
             "orphaned": len(orphan_events),
+            # the same uncapped distinct-id list the live import reports (H230) —
+            # the preview is honest about *which* items orphan, not just how many.
+            "orphaned_items": _orphan_item_ids(orphan_events),
         },
     }))
     return 0

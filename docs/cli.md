@@ -2164,6 +2164,12 @@ those events dangle on (sorted, deduped, bounded with a `(+N more)` tail), so "2
 orphan events" becomes "… not in this bundle …: `arxiv:x`, `web:ghost`" — the
 operator can see *which* rows the items block is missing, not just that the bundle
 is corrupt (`test_import_bundle_warning_names_which_items_the_orphans_dangle_on`).
+The same distinct ids also ride the **structured** summary as `events.orphaned_items`
+(roadmap H230) — sorted, deduped, and **uncapped**, so an agent piping stdout gets
+the complete loss while the human warning keeps its bounded `(+N more)` tail
+(structured completeness vs. human readability, the M2 ethos;
+`test_import_bundle_summary_names_which_items_orphaned`,
+`test_import_bundle_orphaned_items_is_uncapped_while_the_warning_bounds`).
 (The whole-library `import events` restore
 does *not* skip orphans — that path tolerates events restored before their items;
 a bundle is an atomic items+events unit whose events should always anchor.)
@@ -2200,18 +2206,18 @@ the real import stays terse
 | `items` | scroll records read from the custody block |
 | `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |
-| `events` | `{imported, skipped, orphaned}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217) |
+| `events` | `{imported, skipped, orphaned, orphaned_items}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217); `orphaned_items` names the distinct orphan ids (sorted, deduped, uncapped — H230) |
 | `dry_run` | present and `true` only under `--dry-run`; the summary is a preview and nothing was written |
 
 ```console
 $ scrolls export bundle "database engine" > briefing.md
 
 $ scrolls import bundle briefing.md --dry-run
-{"dry_run": true, "imported": 2, "skipped": 0, "items": 2, "new": ["arxiv:1706.03762", "wikipedia:en:SQLite"], "held": [], "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
+{"dry_run": true, "imported": 2, "skipped": 0, "items": 2, "new": ["arxiv:1706.03762", "wikipedia:en:SQLite"], "held": [], "events": {"imported": 3, "skipped": 0, "orphaned": 0, "orphaned_items": []}}
 [exit 0]
 
 $ scrolls import bundle briefing.md
-{"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0}}
+{"imported": 2, "skipped": 0, "items": 2, "events": {"imported": 3, "skipped": 0, "orphaned": 0, "orphaned_items": []}}
 [exit 0]
 ```
 

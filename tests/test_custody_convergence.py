@@ -5482,7 +5482,9 @@ def test_the_drift_posture_survives_an_export_import_round_trip(
     # every item and every recorded check travelled (web:4 has no event), and
     # every event anchored to a bundled item — no orphans (H217)
     assert report["imported"] == 4
-    assert report["events"] == {"imported": 3, "skipped": 0, "orphaned": 0}
+    assert report["events"] == {
+        "imported": 3, "skipped": 0, "orphaned": 0, "orphaned_items": [],
+    }
 
     # every per-item surface in B reports the *same* posture A did — the per-item
     # convergence invariant (H59), now across the round trip
