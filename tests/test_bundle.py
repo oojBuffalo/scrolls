@@ -1772,6 +1772,84 @@ def test_import_bundle_dry_run_dedups_new_and_held_under_within_bundle_dup_ids(
     assert "new" not in live and "held" not in live
 
 
+def test_import_bundle_dry_run_new_and_held_partition_the_distinct_bundle_ids(
+    scrolls_home, tmp_path, capsys
+):
+    # H239: the *completeness complement* of H233's dedup. H233 pins that each
+    # reviewable list dedups (no list over-claims a within-bundle repeat); the
+    # missing guarantee is that *together* `new`/`held` account for every distinct
+    # id the bundle holds, exactly once — `set(new) ∪ set(held)` equals the bundle's
+    # distinct ids and `set(new) ∩ set(held) == ∅`. Without it a preview could
+    # silently drop an id from review (in neither list — invisible to the operator
+    # confirming the merge) or double-count it (in both — a contradiction, since an
+    # id is either already held or not). This is the M2 completeness ethos on the
+    # reviewable-partition axis: nothing the merge touches is invisible to review,
+    # nothing reviewed twice.
+    new1 = make_item(
+        "arxiv:1706.03762", "Attention", "An attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    )
+    new2 = make_item(
+        "arxiv:2401.00001", "Vectors", "A vector-index paper.",
+        source="arxiv", url="https://arxiv.org/abs/2401.00001",
+    )
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    # a mixed, corrupt bundle: would-be-new ids + an already-held id, each with a
+    # within-bundle repeat (parse_bundle appends every record without deduping,
+    # bundle.py:667, so the dups reach the preview)
+    bundle_items = [new1, new1, new2, held, held]
+    bundle_path = tmp_path / "spliced.md"
+    bundle_text = _items_only_bundle(bundle_items)
+    bundle_path.write_text(bundle_text, encoding="utf-8")
+
+    # the distinct ids the bundle actually holds, computed independently via the
+    # same parse path the import uses (parse_bundle keeps every record, so the set
+    # collapses the within-bundle dups) — the partition target, not a hardcode
+    distinct_bundle_ids = {item.id for item in parse_bundle(bundle_text)}
+    assert distinct_bundle_ids == {
+        "arxiv:1706.03762", "arxiv:2401.00001", "wikipedia:en:SQLite",
+    }
+
+    # the library already holds the SQLite scroll; both arxiv papers would be new
+    main(["init"])
+    insert_item(get_paths().db_path, held)
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    # the partition: together the two lists name every distinct id exactly once…
+    assert sorted(preview["new"] + preview["held"]) == sorted(distinct_bundle_ids)
+    # …and never the same id twice (an id is either already held or not — disjoint)
+    assert set(preview["new"]).isdisjoint(preview["held"])
+    # concretely, the new ids land under `new`, the already-held id under `held`
+    assert preview["new"] == ["arxiv:1706.03762", "arxiv:2401.00001"]
+    assert preview["held"] == ["wikipedia:en:SQLite"]
+
+    # mutation: adding one more *distinct* would-be-new id extends `new` by exactly
+    # that id, leaves `held` untouched, and grows the union by one — the partition
+    # tracks the bundle's distinct set, never a stale snapshot
+    new3 = make_item(
+        "arxiv:9999.00002", "Graphs", "A graph-index paper.",
+        source="arxiv", url="https://arxiv.org/abs/9999.00002",
+    )
+    bundle_path.write_text(
+        _items_only_bundle(bundle_items + [new3]), encoding="utf-8"
+    )
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    grown = json.loads(capsys.readouterr().out)
+
+    assert set(grown["new"]) == set(preview["new"]) | {"arxiv:9999.00002"}
+    assert grown["held"] == preview["held"]  # untouched by the new-id addition
+    assert set(grown["new"] + grown["held"]) == distinct_bundle_ids | {"arxiv:9999.00002"}
+    # still a clean, exhaustive partition after the mutation
+    assert set(grown["new"]).isdisjoint(grown["held"])
+    assert sorted(grown["new"] + grown["held"]) == sorted(
+        distinct_bundle_ids | {"arxiv:9999.00002"}
+    )
+
+
 # --- scope, completeness, honesty ------------------------------------------
 
 
