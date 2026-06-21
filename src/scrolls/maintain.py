@@ -54,7 +54,7 @@ from scrolls.custody import (
     weakest_source,
 )
 from scrolls.doctor import run_doctor
-from scrolls.items import list_items
+from scrolls.items import get_fidelity, list_items
 from scrolls.kb import compile_kb
 from scrolls.paths import LibraryPaths
 
@@ -668,7 +668,9 @@ def read_log(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     return entries
 
 
-def maintain_coverage(paths: LibraryPaths, source: str | None = None) -> dict[str, int]:
+def maintain_coverage(
+    paths: LibraryPaths, source: str | None = None, fidelity: str | None = None
+) -> dict[str, int]:
     """Recheck coverage from a standalone ledger read — the ``--no-recheck`` path.
 
     The recheck path folds its events into its own `latest_events` read; with no
@@ -678,17 +680,27 @@ def maintain_coverage(paths: LibraryPaths, source: str | None = None) -> dict[st
     — nothing held, nothing to verify. `source` scopes the verifiable set to one
     source's held items (roadmap H165), so an offline scoped pass reports <S>'s
     coverage, agreeing with the scoped audit's `custody.drift.coverage`.
+
+    `fidelity` is the holdings-axis scope (roadmap H255): the offline twin of the
+    `verify --fidelity` recheck (H252) — the verifiable set narrows to the held,
+    hash-bearing items at one custody-fidelity tier (`get_fidelity`, the same
+    primitive the read surfaces fold), so an offline ``--fidelity`` pass reports
+    *that tier's* coverage. A tier holding no fingerprint (typically `reference`)
+    is the honest empty ``{verified: 0, total: 0}``. The two scopes never combine
+    (one scope axis per pass, enforced at the CLI), so only one filter ever bites.
     """
     if not paths.db_path.exists():
         return {"verified": 0, "total": 0}
     hash_bearing = [
         item for item in list_items(paths.db_path, source=source) if item.content_hash
     ]
+    if fidelity is not None:
+        hash_bearing = [item for item in hash_bearing if get_fidelity(item) == fidelity]
     return recheck_coverage(hash_bearing, latest_events(paths.db_path))
 
 
 def skipped_recheck_report(
-    paths: LibraryPaths, source: str | None = None
+    paths: LibraryPaths, source: str | None = None, fidelity: str | None = None
 ) -> dict[str, Any]:
     """The ``recheck`` block of a pass that skipped the live edge (``--no-recheck``).
 
@@ -698,12 +710,13 @@ def skipped_recheck_report(
     block is the honest skipped shape: zeroed verdict counts, ``scope``/``since``
     null (no window was used), and the coverage figure still read from the current
     ledger (`maintain_coverage`) so even an offline pass reports "N of M verifiable
-    items carry a verdict".
+    items carry a verdict". `source`/`fidelity` scope that coverage read to one
+    source's held items (H165) or one custody-fidelity tier (H255) respectively.
     """
     return {
         "skipped": True, "scope": None, "since": None, "checked": 0,
         "unchanged": 0, "drifted": 0, "rotted": 0, "error": 0,
-        "coverage": maintain_coverage(paths, source),
+        "coverage": maintain_coverage(paths, source, fidelity),
     }
 
 
@@ -713,6 +726,7 @@ def assemble_report(
     recheck_report: dict[str, Any],
     previous: dict[str, Any] | None,
     source: str | None,
+    fidelity: str | None = None,
     now: str,
 ) -> dict[str, Any]:
     """Build a maintenance-pass report from a recheck result (roadmap H34/H196).
@@ -726,19 +740,34 @@ def assemble_report(
     1. *regenerate* views (`compile_kb` — never an LLM re-synthesis),
     2. *audit* the post-maintenance state once (`run_doctor`, read-only — maintain
        never ``--fix``es),
-    3. compute the **custody delta** vs the last recorded snapshot and, for a
-       whole-library pass (``source is None``), *record* this run's snapshot (the
-       next delta baseline) and *append* it to the trend log,
+    3. compute the **custody delta** vs the last recorded snapshot and, for an
+       *unscoped* whole-library pass, *record* this run's snapshot (the next delta
+       baseline) and *append* it to the trend log,
     4. assemble the report: the recheck counts, the compiled-view counts, the
        distilled `custody` snapshot + one-line `headline`, the live-pass-only
        per-source breakdowns (`by_source`/`enrichment_by_source`/`summary_by_source`),
        the single weakest-source `attention` flag, the `delta`, the structural
        `issues` count, and the `suggested` on-request repair commands.
 
-    A **scoped** pass (``source`` set) does not record the snapshot/log — it must
-    not clobber the single whole-library baseline with a one-source slice — so its
-    `delta` is the honest ``null`` (custody-vision §2.4 / ADR 0082). The whole-
-    library pass owns the cross-run trend.
+    **The two scope axes are non-persisting focused triage** — a pass scoped on
+    *either* axis records no snapshot/log baseline, so its `delta` is the honest
+    ``null`` (custody-vision §2.4 / ADR 0082); the *unscoped* whole-library pass
+    owns the cross-run trend. The axes differ in *what* the scope narrows:
+
+    - ``source`` (H165): the recheck (caller-side) *and* the audit narrow to <S>
+      — `run_doctor(source=)` scopes via `list_items(source=)`, so every reported
+      block is the one-source view and `by_source` collapses to ``{S: …}``. The
+      snapshot it would record is a one-source slice (the stored snapshot drops
+      `by_source`), so recording it would clobber the single whole-library baseline.
+    - ``fidelity`` (H255): only the *recheck* narrows to the tier (caller-side, the
+      `verify --fidelity` held hash-bearing subset); the **audit/regenerate stay
+      whole-library** — a fidelity tier spans sources, so `run_doctor`'s source
+      semantics (`by_source`-singleton collapse, orphan/FTS skip) don't apply, and
+      scoping the audit is a separate, larger change deferred unless the recheck-only
+      shape proves insufficient. The whole-library snapshot it *could* record is
+      correct, but a partial-recheck pass is a focused triage, not a trend
+      checkpoint, so it is still non-persisting (null delta) — a fidelity pass must
+      not stamp the trend as if it had rechecked the whole library.
 
     Report-only and idempotent: it regenerates `library/` views and records the
     snapshot/log bookkeeping, but never repairs index rows, reclassifies, or
@@ -746,18 +775,20 @@ def assemble_report(
     explicit, on-request mutations.
     """
     # 1. REGENERATE views from canonical rows (views are regenerable). Whole-library
-    #    even under --source: a deterministic global recompile, not a per-source one.
+    #    even under any scope: a deterministic global recompile, not a scoped one.
     compiled = compile_kb(paths)
 
     # 2. AUDIT the post-maintenance state, read-only. `source` scopes the whole
-    #    audit to <S> via the shipped pre-filter (roadmap H162).
+    #    audit to <S> via the shipped pre-filter (roadmap H162); a `fidelity` scope
+    #    leaves the audit whole-library (the recheck alone is scoped, H255).
     report = run_doctor(paths, source=source)
     current = custody_snapshot(report)
 
     # 3. DELTA vs the last recorded snapshot, then record this run's — but only for
-    #    a whole-library pass: a scoped pass keeps no per-source baseline (the stored
-    #    snapshot drops `by_source`), so its delta is honestly `null`.
-    if source is None:
+    #    an *unscoped* pass. A pass scoped on either axis is a non-persisting focused
+    #    triage: it keeps no baseline (a source pass's snapshot is a one-source slice;
+    #    a fidelity pass rechecked only one tier), so its delta is honestly `null`.
+    if source is None and fidelity is None:
         delta = compute_delta(previous, current)
         save_snapshot(snapshot_path(paths), {**current, "recorded_at": now})
         append_log_entry(
@@ -771,6 +802,7 @@ def assemble_report(
     return {
         "recorded_at": now,
         "source": source,
+        "fidelity": fidelity,
         "recheck": recheck_report,
         "compiled": dataclasses.asdict(compiled),
         "custody": current,

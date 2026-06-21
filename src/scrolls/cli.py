@@ -778,6 +778,19 @@ def build_parser() -> argparse.ArgumentParser:
         "library trend baseline, so its delta is null (composes with "
         "--all/--limit/--no-recheck; conflicts with --history)",
     )
+    maintain_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Scope the pass to one custody-fidelity holdings tier (ADR 0097) — "
+        "the scheduled-maintenance act twin of verify --fidelity, so a worker can "
+        "maintain just its full-fidelity holdings. Only the recheck narrows to the "
+        "tier (the verify --fidelity held, hash-bearing subset); the audit and view "
+        "regeneration stay whole-library. Like --source the pass is non-persisting "
+        "(records drift events, never the trend baseline, so its delta is null). "
+        "Composes with --all/--limit/--no-recheck; conflicts with --source (one "
+        "scope axis per pass) and --history",
+    )
 
     subparsers.add_parser(
         "mcp",
@@ -1139,12 +1152,24 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        # `--source` scopes a pass; `--history` is a read of recorded passes —
-        # mutually exclusive, rejected here (it lives outside the group so it can
-        # compose with --all/--limit/--no-recheck). The `--all`/`--trend` precedent.
-        if args.source is not None and args.history is not None:
+        # `--source` and `--fidelity` are the two custody scope axes — one per pass
+        # (roadmap H255): the source axis scopes the recheck *and* audit, the
+        # fidelity axis only the recheck, so combining them is ambiguous. Rejected
+        # here rather than silently honoring one (the `--all`/`--trend` precedent).
+        if args.source is not None and args.fidelity is not None:
             print(
-                json.dumps({"error": "--source scopes a maintenance pass; it "
+                json.dumps({"error": "--source and --fidelity are two scope axes; "
+                            "choose one per maintenance pass"}),
+                file=sys.stderr,
+            )
+            return 2
+        # Either scope axis scopes a *pass*; `--history` is a read of recorded
+        # passes — mutually exclusive, rejected here (both axes live outside the
+        # group so they compose with --all/--limit/--no-recheck).
+        scope_axis = "--source" if args.source is not None else "--fidelity"
+        if (args.source is not None or args.fidelity is not None) and args.history is not None:
+            print(
+                json.dumps({"error": f"{scope_axis} scopes a maintenance pass; it "
                             "conflicts with --history (a read, not a pass)"}),
                 file=sys.stderr,
             )
@@ -1156,7 +1181,9 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps({"error": "--trend requires --history"}), file=sys.stderr
             )
             return 2
-        return _cmd_maintain(args.recheck, args.recheck_all, args.limit, args.source)
+        return _cmd_maintain(
+            args.recheck, args.recheck_all, args.limit, args.source, args.fidelity
+        )
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
@@ -1252,9 +1279,10 @@ def _cmd_doctor(fix: bool, source: str | None = None) -> int:
 
 
 def _cmd_maintain(
-    recheck: bool, recheck_all: bool, limit: int | None, source: str | None = None
+    recheck: bool, recheck_all: bool, limit: int | None, source: str | None = None,
+    fidelity: str | None = None,
 ) -> int:
-    """One scheduled custody-maintenance pass (roadmap H22/H23/H34/H83/H165).
+    """One scheduled custody-maintenance pass (roadmap H22/H23/H34/H83/H165/H255).
 
     The dogfood flow's recurring sibling, composed entirely from surfaces that
     already ship: *recheck* the live edge (`verify`, bounded by `--limit`, behind
@@ -1296,6 +1324,22 @@ def _cmd_maintain(
       per-pass `recheck` movement is the signal, and the whole-library `maintain`
       owns the cross-run trend.
 
+    `fidelity` scopes the pass to one custody-fidelity *holdings* tier (roadmap
+    H255) — the scheduled-maintenance act twin of `verify --fidelity` (H252), so a
+    worker can run "a maintenance pass over just my full-fidelity holdings". It is
+    the holdings-axis sibling of `--source`, but narrows *less*: only the **recheck**
+    targets the tier (the `verify --fidelity <tier>` held, hash-bearing subset), and
+    the **audit/regeneration stay whole-library**. A fidelity tier spans sources, so
+    `run_doctor`'s source semantics (the `by_source` singleton-collapse, the
+    orphan/FTS skip) don't apply to it — scoping the audit is a separate, larger
+    change deferred unless the recheck-only shape proves insufficient. The pass is
+    still **non-persisting** (`delta` is `null`, no snapshot/log recorded): a
+    partial-recheck pass is a focused triage, not a trend checkpoint, and must not
+    stamp the trend as if it had rechecked the whole library. Closed vocabulary
+    (argparse `choices`): a typo is exit 2, never a silently empty pass. Composes
+    with `--all`/`--limit`/`--no-recheck`; conflicts with `--source` (one scope axis
+    per pass) and `--history` (a read, not a pass).
+
     Report-only and idempotent (custody-vision §2.4): it records drift events and
     regenerates `library/` views, but never repairs index rows, reclassifies, or
     re-summarizes — `doctor --fix` / `classify --stale` / `kb --stale` stay the
@@ -1318,13 +1362,17 @@ def _cmd_maintain(
 
     # 1. RECHECK — the one live edge, bounded; records drift events, never
     #    touching the captures (ADR 0098). Skipped entirely with --no-recheck.
-    #    `source` narrows the candidate set to that source's held items (H165).
+    #    `source` narrows the candidate set to that source's held items (H165);
+    #    `fidelity` narrows it to one custody-fidelity tier (H255, the `verify
+    #    --fidelity` set). The two scope axes are mutually exclusive (one per pass).
     if recheck:
-        recheck_report = _recheck_held_items(paths, limit, now, boundary, source)
+        recheck_report = _recheck_held_items(
+            paths, limit, now, boundary, source, fidelity
+        )
     else:
         # --no-recheck skips the live edge, reporting coverage from a standalone
         # ledger read (roadmap H109) — the same offline shape every MCP pass uses.
-        recheck_report = skipped_recheck_report(paths, source)
+        recheck_report = skipped_recheck_report(paths, source, fidelity)
 
     # 2-5. REGENERATE views, AUDIT, DELTA, record, and assemble the report — the
     #       shared composition `maintain.assemble_report` owns, run identically by
@@ -1334,7 +1382,8 @@ def _cmd_maintain(
     #       breakdowns, the weakest-source `attention` flag, and the `suggested`
     #       on-request repairs the audit implies.
     result = assemble_report(
-        paths, recheck_report=recheck_report, previous=previous, source=source, now=now
+        paths, recheck_report=recheck_report, previous=previous, source=source,
+        fidelity=fidelity, now=now
     )
     print(json.dumps(result))
     # nonzero only on structural drift the operator must address (mirrors doctor)
@@ -1370,7 +1419,7 @@ def _cmd_maintain_history(limit: int | None, trend: bool) -> int:
 
 def _recheck_held_items(
     paths: LibraryPaths, limit: int | None, now: str, boundary: str | None,
-    source: str | None = None,
+    source: str | None = None, fidelity: str | None = None,
 ) -> dict:
     """Bounded re-capture of held items carrying a baseline hash; record events.
 
@@ -1394,6 +1443,17 @@ def _recheck_held_items(
     stale default a window over it. A source nothing is held for is the honest
     empty no-op (sources are open-ended, never a closed vocabulary).
 
+    `fidelity` is the holdings-axis scope (roadmap H255) — the same item-intrinsic
+    filter `verify --fidelity` applies (H252), folding the `get_fidelity` primitive
+    the read surfaces count with (ADR 0097). Like every batch recheck it touches
+    only hash-bearing rows, so the candidate set is `list --fidelity <tier>`'s held,
+    *hash-bearing* subset (genuinely narrower than the listing: a full capture held
+    by raw body alone carries no hash, so it lists `full` yet is skipped here), and
+    a tier holding no fingerprint (typically `reference`) is an honest empty no-op.
+    It composes with the same staleness window and `--limit`. The two scope axes
+    never combine — one scope axis per pass, enforced at the CLI — so only one
+    filter ever bites.
+
     Coverage-first ordering (roadmap H55): the targeted set is then ordered by
     `recheck_order` — never-checked items first, then already-verified
     oldest-verdict-first — so a ``--limit``-bounded pass spends its budget on new
@@ -1409,6 +1469,8 @@ def _recheck_held_items(
     hash_bearing = [
         item for item in list_items(paths.db_path, source=source) if item.content_hash
     ]
+    if fidelity is not None:
+        hash_bearing = [item for item in hash_bearing if get_fidelity(item) == fidelity]
     verdicts = latest_events(paths.db_path)
     if boundary is not None:
         counts["scope"] = "stale"

@@ -36,6 +36,7 @@ from scrolls.db import init_db
 from scrolls.doctor import run_doctor
 from scrolls.items import (
     ScrollItem,
+    get_fidelity,
     get_item,
     insert_item,
     item_to_dict,
@@ -2618,6 +2619,292 @@ def test_source_conflicts_with_history(home, capsys):
     assert main(["maintain", "--source", "web", "--history"]) == 2
     error = json.loads(capsys.readouterr().err)["error"].lower()
     assert "source" in error and "history" in error
+
+
+# --- the fidelity-scoped maintenance pass (roadmap H255) -------------------
+#
+# `maintain --fidelity <tier>` is the scheduled-maintenance *act* twin of
+# `verify --fidelity` (H252): the holdings-axis sibling of `--source`, but it
+# narrows *less*. Only the **recheck** targets the tier (the `verify --fidelity`
+# held, hash-bearing subset); the **audit and view regeneration stay whole-
+# library** — a fidelity tier spans sources, so `run_doctor`'s source semantics
+# (`by_source` collapse, orphan/FTS skip) don't apply, and scoping the audit is a
+# separate, larger change deferred (the H255 decision). The pass is still
+# non-persisting (records drift events, never the trend baseline → null delta).
+# CLI-only (no MCP batch-maintain scope twin, the H252 precedent).
+
+
+def _seed_mixed_fidelity() -> dict[str, ScrollItem]:
+    """Insert a library spanning all three tiers *and* the holdings/verifiable gap.
+
+    Inserted directly (no scroll files written): a `detected`-stage row carries no
+    `markdown_path`, and a `rendered` row written without a scroll file is exempt
+    from doctor's missing-scroll check (`_check_missing_scrolls` skips rows with no
+    `markdown_path`), so the audit stays clean (exit 0) without rendering. Returns
+    the items keyed by role so a test can name the exact recheck set.
+
+    - ``full_hashed`` — full fidelity *with* a baseline hash (the `verify --fidelity
+      full` set: rechecked).
+    - ``full_nohash`` — full fidelity held by raw body alone, no hash to diff (in
+      `list --fidelity full`, but *skipped* by the recheck — the holdings vs
+      verifiable gap, ADR 0097).
+    - ``partial_hashed`` — a hash-bearing partial (extracted body + hash at an
+      uncaptured stage; the `verify --fidelity partial` set, a *different* source).
+    - ``reference`` — only the pointer, no content/hash (rechecked by neither tier).
+    """
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    init_db(paths.db_path)
+    items = {
+        "full_hashed": _rendered(
+            "web", None, "https://example.com/full-hashed", title="Full Hashed"
+        ),
+        "full_nohash": _rendered(
+            "web", None, "https://example.com/full-nohash", title="Full No Hash",
+            content_hash=None,
+        ),
+        "partial_hashed": _rendered(
+            "arxiv", "2001.00001", "https://arxiv.org/abs/2001.00001",
+            title="Partial Hashed", raw_text=None, extracted_text="extracted body",
+            stage="detected",
+        ),
+        "reference": _rendered(
+            "web", None, "https://example.com/reference", title="Reference Only",
+            raw_text=None, extracted_text=None, content_hash=None, stage="detected",
+        ),
+    }
+    for item in items.values():
+        insert_item(paths.db_path, item)
+    return items
+
+
+def test_seed_mixed_fidelity_spans_the_tiers_and_the_verifiable_gap(home):
+    """Guard the fixture's own invariants: the four roles sit at the tiers and
+    hash-bearing flags the recheck-scope tests rely on (so a later refactor of
+    `_rendered`/`fidelity_tier` can't quietly invalidate them)."""
+    items = _seed_mixed_fidelity()
+    assert get_fidelity(items["full_hashed"]) == "full" and items["full_hashed"].content_hash
+    assert get_fidelity(items["full_nohash"]) == "full" and not items["full_nohash"].content_hash
+    assert get_fidelity(items["partial_hashed"]) == "partial" and items["partial_hashed"].content_hash
+    assert get_fidelity(items["reference"]) == "reference" and not items["reference"].content_hash
+
+
+def test_fidelity_scopes_the_recheck_to_that_tiers_hash_bearing_set(
+    home, monkeypatch, capsys
+):
+    """`maintain --fidelity full --all` re-captures only the full-fidelity items
+    carrying a baseline hash — the `verify --fidelity full` set — never the
+    partial, reference, or hash-less full one."""
+    items = _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["fidelity"] == "full"
+    assert report["source"] is None
+    # only the one full+hash item was rechecked; full_nohash is skipped (no
+    # baseline to diff), partial/reference are other tiers
+    assert report["recheck"]["checked"] == 1
+    assert report["recheck"]["unchanged"] == 1
+
+
+def test_fidelity_recheck_set_equals_the_verify_fidelity_hash_bearing_subset(
+    home, monkeypatch, capsys
+):
+    """The set a `maintain --fidelity T` pass rechecks equals `list --fidelity T`'s
+    held, *hash-bearing* rows — the same `verify --fidelity T` selection (H252), the
+    verify-axis ≡ maintain-axis drill on the holdings filter."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    # the independently-computed full-tier hash-bearing subset
+    held = list_items(get_paths().db_path)
+    expected = {
+        item.id for item in held
+        if get_fidelity(item) == "full" and item.content_hash
+    }
+
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the recheck attempted exactly that set (the report carries counts, so confirm
+    # via the per-item ledger the recheck just wrote)
+    rechecked = {
+        item_id for item_id, event in latest_events(get_paths().db_path).items()
+    }
+    assert rechecked == expected
+
+
+def test_fidelity_audit_and_regen_stay_whole_library_unlike_source(
+    home, monkeypatch, capsys
+):
+    """The load-bearing distinction from `--source` (the H255 decision): a fidelity
+    scope narrows only the recheck — the audit stays whole-library. So with
+    `--fidelity full` the `custody`/`by_source` still report *every* tier and
+    *every* source (the partial arxiv item included), equal to an unscoped audit —
+    never collapsed to the full tier."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # the audit is the whole-library picture: all three tiers, both sources
+    whole = run_doctor(get_paths())
+    assert report["custody"] == custody_snapshot(whole)
+    assert report["custody"]["tiers"] == {"full": 2, "partial": 1, "reference": 1}
+    assert set(report["by_source"]) == {"web", "arxiv"}
+    # the headline is the whole-library snapshot rendered (not a one-tier slice)
+    assert report["headline"] == snapshot_headline(report["custody"])
+
+
+def test_fidelity_pass_is_non_persisting_and_leaves_the_trend_baseline(
+    home, monkeypatch, capsys
+):
+    """A fidelity-scoped pass is a focused triage, not a trend checkpoint: it
+    records no snapshot/log and its `delta` is null — a partial-recheck pass must
+    not stamp the trend as if it had rechecked the whole library."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    # one whole-library pass records the single baseline + first log entry
+    assert main(["maintain", "--all"]) == 0
+    capsys.readouterr()
+    baseline = load_snapshot(snapshot_path(home))
+    assert baseline is not None
+    assert len(read_log(log_path(home))) == 1
+
+    # a fidelity-scoped pass: delta null, baseline/log untouched afterwards
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["delta"] is None
+    assert load_snapshot(snapshot_path(home)) == baseline  # not clobbered
+    assert len(read_log(log_path(home))) == 1  # no scoped run appended
+
+
+def test_fidelity_records_drift_events_the_next_whole_pass_folds_in(
+    home, monkeypatch, capsys
+):
+    """The scoped recheck is real work: it appends per-item custody events (the
+    next whole-library pass folds them into the trend), even though the scoped pass
+    writes no snapshot. Custody-safe: events accrue, the baseline doesn't."""
+    items = _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    drifted = items["full_hashed"]
+    monkeypatch.setattr(cli, "live_recapture", _recapture_drifting(drifted.id))
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["drifted"] == 1
+
+    # the per-item ledger recorded the drift event (a real, persisted change)
+    events = latest_events(home.db_path)
+    assert events[drifted.id].status == "drifted"
+    # but no maintenance snapshot was written (the scoped pass is non-persisting)
+    assert load_snapshot(snapshot_path(home)) is None
+
+
+def test_fidelity_full_skips_a_full_item_without_a_baseline_hash(
+    home, monkeypatch, capsys
+):
+    """The holdings vs verifiable gap (ADR 0097): a full-fidelity capture held by
+    raw body alone is in `list --fidelity full`, but with no hash to diff it is
+    skipped by the recheck — exactly as `verify --fidelity full` skips it."""
+    items = _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    # both full items are listed at the full tier...
+    assert main(["list", "--fidelity", "full"]) == 0
+    listed = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert listed == {items["full_hashed"].id, items["full_nohash"].id}
+
+    # ...but only the hash-bearing one is rechecked
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--all", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["checked"] == 1
+    rechecked = set(latest_events(home.db_path))
+    assert rechecked == {items["full_hashed"].id}
+
+
+def test_fidelity_reference_is_an_honest_empty_recheck_with_a_whole_library_audit(
+    home, monkeypatch, capsys
+):
+    """The `reference` tier holds no fingerprint, so its recheck is an empty no-op
+    — but the audit stays whole-library (unlike `--source ghost`, which collapses
+    everything): the report still names all three tiers, and the empty recheck
+    touches no network."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    def explode(_):
+        raise AssertionError("a tier with no hash-bearing rows must not re-capture")
+
+    monkeypatch.setattr(cli, "live_recapture", explode)
+    assert main(["maintain", "--all", "--fidelity", "reference"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["checked"] == 0
+    # the audit is still the whole library — reference scopes the recheck, not the audit
+    assert report["custody"]["tiers"] == {"full": 2, "partial": 1, "reference": 1}
+    assert report["delta"] is None
+
+
+def test_fidelity_composes_with_limit(home, monkeypatch, capsys):
+    """`--fidelity partial --all --limit 1` bounds the scoped recheck — the partial
+    tier here holds one hash-bearing item, so the bound is moot but exercised; the
+    flag is accepted alongside the scope (composes scope ∧ bound)."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--all", "--limit", "1", "--fidelity", "partial"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["checked"] == 1  # the one hash-bearing partial
+
+
+def test_fidelity_no_recheck_reports_the_tier_scoped_coverage(home, capsys):
+    """`--no-recheck --fidelity full` skips the live edge but still reports the
+    full tier's coverage — `verified`/`total` over the full-fidelity hash-bearing
+    held set (one item here), not the whole library (the offline `--source` shape,
+    holdings axis)."""
+    _seed_mixed_fidelity()
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck", "--fidelity", "full"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["recheck"]["skipped"] is True
+    # one full+hash item, never verified yet → 0 of 1 covered (not the whole library)
+    assert report["recheck"]["coverage"] == {"verified": 0, "total": 1}
+
+
+def test_fidelity_conflicts_with_source(home, capsys):
+    """`--source` and `--fidelity` are the two custody scope axes — one per pass
+    (the source axis scopes recheck+audit, the fidelity axis only the recheck), so
+    combining them is a usage error (exit 2), not a silently-honored one."""
+    assert main(["maintain", "--source", "web", "--fidelity", "full"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"].lower()
+    assert "source" in error and "fidelity" in error
+
+
+def test_fidelity_conflicts_with_history(home, capsys):
+    """`--fidelity` scopes a pass; `--history` is a read of recorded passes — a
+    usage error (exit 2), the `--source`/history precedent on the holdings axis."""
+    assert main(["maintain", "--fidelity", "full", "--history"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"].lower()
+    assert "fidelity" in error and "history" in error
+
+
+def test_fidelity_unknown_tier_is_a_closed_vocabulary_exit_2(home):
+    """The fidelity vocabulary is closed (argparse choices): a typo is a loud exit
+    2, never a silently empty pass that could mask the mistake (the `verify
+    --fidelity` / `verify --drift` precedent)."""
+    with pytest.raises(SystemExit) as excinfo:
+        main(["maintain", "--fidelity", "bogus", "--no-recheck"])
+    assert excinfo.value.code == 2
 
 
 # --- suggest_repairs ≡ what `doctor --fix` actually repairs (roadmap H106) ---

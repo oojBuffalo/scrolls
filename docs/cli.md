@@ -426,6 +426,27 @@ sources differ on every axis) and mutation-checked
 custody picture is one number whichever surface a worker or agent reaches, and a
 future scoped surface has a single contract to satisfy.
 
+The **holdings-axis scope twin** is `maintain --fidelity <tier>` (roadmap H255) —
+the scheduled-maintenance *act* twin of `verify --fidelity` (H252), so a worker can
+maintain "just my full-fidelity holdings". It is the holdings-axis sibling of
+`maintain --source`, but it narrows *less*: only the **recheck** targets the tier
+(the `verify --fidelity <tier>` held, hash-bearing subset — folding the same
+`get_fidelity` primitive, so a `full` capture held by `raw_text` alone is listed but
+skipped, and a tier with no fingerprint like `reference` is an honest empty no-op);
+the **audit and view regeneration stay whole-library**. A fidelity tier spans
+sources, so `run_doctor`'s source semantics (the `by_source` singleton-collapse, the
+orphan/FTS skip) do not apply to it — scoping the audit is a separate, larger change
+deferred unless the recheck-only shape proves insufficient. Like `--source` the pass
+is **non-persisting**: it records per-item drift events (the next whole-library pass
+folds them into the trend) but never writes the single whole-library snapshot/log
+baseline, so a partial-recheck pass cannot stamp the trend as if it had rechecked
+everything — its `delta` is honestly `null`. The vocabulary is closed (argparse
+`choices`: a typo is exit 2); it composes with `--all`/`--limit`/`--no-recheck` and
+conflicts with `--source` (one scope axis per pass) and `--history` (a read, not a
+pass). CLI-only — no MCP batch-maintain scope twin, the `verify --fidelity` (H252)
+precedent (`test_fidelity_audit_and_regen_stay_whole_library_unlike_source` and its
+siblings in `tests/test_maintain.py`).
+
 The **readable per-source breakdown** carries its own one-place tie (roadmap H151).
 The `_By source:_` bullets that follow a scope custody headline ride four readable
 surfaces — the `export bundle` briefing (H141) **and its HTML form**, the
