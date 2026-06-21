@@ -1850,6 +1850,125 @@ def test_import_bundle_dry_run_new_and_held_partition_the_distinct_bundle_ids(
     )
 
 
+def _spliced_items_and_events_bundle(items, *, anchored_events, orphan_events):
+    """A bundle corrupt on *both* axes at once (H243): a within-bundle item-dup
+    items block (like `_items_only_bundle`) *and* an events block carrying orphans
+    beside resolvable events (like `_spliced_bundle`).
+
+    The union of the two single-axis splice helpers. A well-formed export desyncs
+    neither block — `_gather_scope` returns distinct rows and `events_for_items`
+    scopes events to those rows — so a bundle corrupt on both axes only arises from
+    a concat/splice of overlapping exports plus a hand-edit. We render the real
+    block builders so the ADR 0102 sentinels and code fences stay valid and only the
+    *content* of each block carries its corruption.
+    """
+    from scrolls.bundle import _events_block, _items_block
+
+    return (
+        "# Scrolls Custody Bundle: spliced\n\n"
+        + _items_block(items)
+        + "\n"
+        + _events_block(list(anchored_events) + list(orphan_events))
+        + "\n"
+    )
+
+
+def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_corruptions(
+    scrolls_home, tmp_path, capsys
+):
+    # H243: the *both-axes-corrupt* analogue of H220's whole-summary byte-identity.
+    # H233 pins the dry-run's item-level {imported, skipped} equal to a real import's
+    # under within-bundle *item* dups (empty events); H237 pins the whole `events`
+    # block equal under orphan *events* (a single, distinct item). Neither exercises
+    # a bundle corrupt on *both* axes simultaneously, where the item-dedup path
+    # (new_ids/held_ids sets, the read-only twin of INSERT OR IGNORE) and the
+    # event-accounting path (partition_resolvable_events + preview_import_events/
+    # import_events) both run over the one parsed bundle. A naive implementation
+    # could let one corruption axis perturb the other's count — an orphan-event
+    # partition that miscounts items, or an item-dedup that drops a resolvable event.
+    # This pins that they don't cross-contaminate: the dry-run's *entire* top-level
+    # summary (sans the dry-run-only {dry_run, new, held}) equals the real import's,
+    # over a bundle corrupt on both the item-dedup and orphan-event axes at once.
+    new = make_item(
+        "arxiv:1706.03762", "Attention", "An attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    )
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    # axis 1 — the items block repeats *both* a would-be-new id and an already-held
+    # id (parse_bundle appends every record without deduping, bundle.py:667): 4 raw
+    # items → 1 new + 3 skips. axis 2 — the events block carries resolvable events on
+    # the held item (with a within-bundle dup → a skipped resolvable event) *beside*
+    # orphan events on two missing items (one doubly-orphaned).
+    dup_anchor = _event("wikipedia:en:SQLite", "drifted", observed="cafe1234")
+    bundle = _spliced_items_and_events_bundle(
+        [new, new, held, held],
+        anchored_events=[
+            dup_anchor,
+            dup_anchor,  # within-bundle duplicate → skipped by the content dedup
+            _event("wikipedia:en:SQLite", "rotted", observed="beef0000"),
+        ],
+        orphan_events=[
+            _event("wikipedia:en:Ghost", "drifted", observed="beef9999"),
+            _event("wikipedia:en:Ghost", "rotted", observed="beef0000"),
+            _event("arxiv:2401.00001", "drifted", observed="dead0001"),
+        ],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    # the library already holds the SQLite scroll (so its anchored events resolve on
+    # both surfaces); the arxiv paper would be new
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, held)
+    capsys.readouterr()
+
+    # dry-run first — it writes nothing, so the live import below sees the same
+    # library state and the two summaries are a like-for-like comparison
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    # the preview is non-trivial in *both* axes — neither block is a vacuous zero:
+    # items {imported 1, skipped 3} from the dup'd items, events {imported 2,
+    # skipped 1, orphaned 3} from the dup'd anchors beside the orphans
+    expected = {
+        "imported": 1,
+        "skipped": 3,
+        "items": 4,
+        "events": {
+            "imported": 2,
+            "skipped": 1,
+            "orphaned": 3,
+            "orphaned_items": ["arxiv:2401.00001", "wikipedia:en:Ghost"],
+        },
+    }
+    _DRY_RUN_ONLY = {"dry_run", "new", "held"}
+    assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == expected
+    # the preview truly wrote nothing — not the new item, not any resolvable event
+    assert get_item(db, "arxiv:1706.03762") is None
+    assert item_events(db, "wikipedia:en:SQLite") == []
+
+    # now the real import into the same library: its *entire* top-level summary
+    # equals the dry-run's (sans the dry-run-only fields) — the both-axes-corrupt
+    # analogue of H220's whole-summary byte-identity. Strictly the union of H233
+    # (the item counts) and H237 (the whole events block) on one bundle, proving the
+    # item-dedup axis and the orphan-event axis don't distort each other's accounting.
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == live
+    assert live == expected
+    # the live import moved exactly what the matching summary reported: the new item
+    # inserted, the two distinct resolvable events anchored (not the dup), never the
+    # orphans — the counts both surfaces agreed on are real on disk, never silently
+    # dropped or phantom-retained
+    assert get_item(db, "arxiv:1706.03762") is not None
+    assert sorted(e.status for e in item_events(db, "wikipedia:en:SQLite")) == [
+        "drifted",
+        "rotted",
+    ]
+    assert item_events(db, "wikipedia:en:Ghost") == []
+    assert item_events(db, "arxiv:2401.00001") == []
+
+
 # --- scope, completeness, honesty ------------------------------------------
 
 
