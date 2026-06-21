@@ -2249,6 +2249,132 @@ def test_get_context_bundle_index_fidelity_diverges_from_scoped_health_under_tru
     assert get_fidelity(ref) == "reference"
 
 
+def test_get_context_bundle_index_fidelity_ties_to_the_deeper_tier_headlines_over_mcp(
+    scrolls_home,
+):
+    # roadmap H241 — the MCP twin of H213's deeper-tier convergence, under scope.
+    # H235 ties the scoped `index` `_Fidelity:_` line to `get_library_health(source=<S>)`
+    # *across tools* over MCP, and H227/H229 tie it to the CLI; but no test pins that the
+    # *deeper budget tiers* an agent boots over MCP agree with the leanest one *over MCP*.
+    # `get_context_bundle(query, budget="connected"/"full", source=<S>)`'s `_Custody:_`
+    # headline renders its `fidelity` section via `render_custody_headline` — a *different*
+    # function than the `index` line's `render_fidelity_holdings` — so their agreement is a
+    # genuine cross-rendering guarantee, not the same code twice. Over a scoped, untruncated
+    # mixed-fidelity library, all three fold `get_fidelity` over the same scoped post-facet
+    # `items`, so the three MCP budget tiers must name identical fidelity holdings: an agent
+    # that boots cheap on `index` then deepens to `connected`/`full` over MCP never sees the
+    # held-fidelity counts shift under it. The deeper tiers additionally carry a drift verdict
+    # the `index` line withholds (H214/H219) — that asymmetry stays intact, the tie is on the
+    # *fidelity* section alone.
+    from scrolls.custody import custody_counts_by_source, get_fidelity
+    from scrolls.items import ScrollItem, insert_item, list_items, update_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # web spans three tiers (full 2, partial 1, reference 1 → 4 held); one out-of-scope
+    # arxiv `full` lifts the library-wide audit to {full 3, …}, so web's scope is a strict
+    # subset of — and a different tier split than — the whole library (scoping is
+    # non-vacuous). Every title carries "topic" so one query matches all of web's held
+    # items (no truncation: web holds 4 < the default limit, so each tier's post-facet set
+    # *is* the whole web scope — the H241 precondition; H242 is the truncated boundary).
+    def _web(item_id, title, **kw):
+        kw.setdefault("stage", "fetched")
+        return ScrollItem(
+            id=item_id, source="web", url=f"https://web.example/{item_id}",
+            saved_at="2026-06-12T00:00:00+00:00", title=title, **kw)
+
+    insert_item(db, _web("web:full1", "Topic full one",
+                         extracted_text="topic one body",
+                         raw_text="<raw>topic one</raw>", content_hash="sha256:f1"))
+    insert_item(db, _web("web:full2", "Topic full two",
+                         extracted_text="topic two body",
+                         raw_text="<raw>topic two</raw>", content_hash="sha256:f2"))
+    insert_item(db, _web("web:partial", "Topic partial",
+                         extracted_text="topic partial body"))  # no hash/raw → partial
+    insert_item(db, _web("web:ref", "Topic reference pointer",
+                         stage="detected"))  # no content → reference
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:00+00:00", title="Topic arxiv paper", stage="fetched",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:a"))
+
+    def _nonzero(counts):
+        return {tier: n for tier, n in counts.items() if n}
+
+    def _fidelity_counts(line):
+        # tier words (full/partial/reference) never collide with the `(of N)`/`N scroll(s)`
+        # scalars or the drift-posture words, so one parse reads either the `_Fidelity:_`
+        # holdings line or the `_Custody:_` headline's `fidelity` section.
+        return {t: int(n) for t, n in re.findall(r"(full|partial|reference) (\d+)", line)}
+
+    def tier_picture():
+        # the three budget tiers an agent boots over MCP, scoped to web. `index` carries the
+        # ledger-free `_Fidelity:_` holdings line; `connected`/`full` carry the `_Custody:_`
+        # headline whose `fidelity` section folds the same counts via a *different* renderer.
+        bundles = {
+            b: mcp_server.get_context_bundle("topic", budget=b, source="web")
+            for b in ("index", "connected", "full")
+        }
+        index_line = next(
+            l for l in bundles["index"].splitlines() if l.startswith("_Fidelity:"))
+        counts = {"index": _fidelity_counts(index_line)}
+        for b in ("connected", "full"):
+            headline = next(
+                l for l in bundles[b].splitlines() if l.startswith("_Custody:"))
+            counts[b] = _fidelity_counts(headline)
+        scope_n = int(re.search(r"\(of (\d+)\)", index_line).group(1))
+        return bundles, counts, scope_n
+
+    bundles, counts, scope_n = tier_picture()
+    # non-vacuous: web's scope is a genuine multi-tier mix (≥2 non-zero tiers)
+    assert counts["index"] == {"full": 2, "partial": 1, "reference": 1}
+    # the precondition holds: the query matched all of web's held items, so the `index`
+    # line's `(of N)` names the whole scoped held set — no truncation (H242 is the boundary).
+    assert scope_n == sum(counts["index"].values()) == 4
+    # the tie: the leanest `_Fidelity:_` holdings ≡ both deeper `_Custody:_` headlines'
+    # `fidelity` section, all read over MCP — two renderers (`render_fidelity_holdings` vs.
+    # `render_custody_headline`) over one scoped post-facet set, so the budget ladder never
+    # disagrees *with itself* on what fraction of the source is held in full.
+    assert counts["index"] == counts["connected"] == counts["full"]
+
+    # the drift-withholding asymmetry stays intact (H214/H219): the leanest `index` tier
+    # reads no ledger, so it carries no `_Custody:_` headline and no drift verdict; the
+    # deeper tiers do. The cross-tier tie is on the *fidelity* section alone, never a drift
+    # claim the leanest tier didn't read.
+    assert "_Custody:" not in bundles["index"]
+    assert "drift" not in bundles["index"]
+    for b in ("connected", "full"):
+        headline = next(
+            l for l in bundles[b].splitlines() if l.startswith("_Custody:"))
+        assert "drift unverified 4" in headline
+
+    # tied to the shared per-source primitive too, not independently hardcoded — every tier
+    # folds `get_fidelity` over the same scoped subset the per-source tally folds over.
+    web_tiers = _nonzero(custody_counts_by_source(list_items(db), {})["web"]["tiers"])
+    assert counts["index"] == web_tiers
+
+    # the scope genuinely narrows: the *unscoped* MCP audit names the whole library (arxiv's
+    # `full` lifts it to {full 3, …}), so no tier silently reverts to the library-wide
+    # holdings it didn't see.
+    whole = _nonzero(mcp_server.get_library_health()["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert counts["index"] != whole
+
+    # mutation in lockstep — drop `web:full1`'s re-derivable body (raw_text + hash) so it
+    # falls `full` → `partial`. The shift must register identically on all three MCP budget
+    # tiers, proving each recomputes `get_fidelity` over the scoped set rather than echoing
+    # a cache or a single shared count snapshot.
+    full1 = next(it for it in list_items(db) if it.id == "web:full1")
+    assert update_item(db, dataclasses.replace(full1, raw_text=None, content_hash=None))
+    mutated = next(it for it in list_items(db) if it.id == "web:full1")
+    assert get_fidelity(mutated) == "partial"  # the dropped body cost it a tier
+
+    _, counts, scope_n = tier_picture()
+    assert counts["index"] == {"full": 1, "partial": 2, "reference": 1}  # the shift
+    assert scope_n == 4                                                  # still whole web scope
+    assert counts["index"] == counts["connected"] == counts["full"]      # in lockstep on all 3
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
