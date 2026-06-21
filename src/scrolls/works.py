@@ -46,6 +46,9 @@ from pathlib import Path
 from typing import Any
 
 from scrolls.custody import (
+    DRIFT_POSTURES,
+    FIDELITY_TIERS,
+    SAFE_DRIFT_POSTURES,
     CustodyEvent,
     drift_posture,
     last_checked,
@@ -299,6 +302,69 @@ def membership_payload(refs: tuple[WorkRef, ...]) -> list[dict]:
     ]
 
 
+def work_custody(
+    representations: tuple[Representation, ...],
+    verdicts: dict[str, CustodyEvent],
+) -> dict[str, Any]:
+    """The aggregate custody posture of a work — its representations *consolidated*.
+
+    The new custody *shape* (vision §3.5, custody-vision §2.7, roadmap H261): the
+    custody-filter family made each per-*item* axis (fidelity, drift) readable
+    everywhere, but a *work* is a cluster of representations and had no aggregate
+    custody verdict. This folds the per-rep custody every other works surface
+    already reads — the item-intrinsic `fidelity` on each `Representation` and the
+    `drift_posture` over the *same* `verdicts` `to_payload`'s per-rep `drift` folds
+    — into one work-level block, **no schema change, no extra ledger read**:
+
+    - ``best_fidelity`` — the best (most complete) tier any representation holds,
+      by the canonical `FIDELITY_TIERS` order (full > partial > reference): "what is
+      the most re-derivable form of this work the library holds?"
+    - ``safest_drift`` — the safest (most reassuring) drift posture any
+      representation carries, by the canonical `DRIFT_POSTURES` order (verified >
+      unverified > drifted > rotted > error): "what is the least-moved form?"
+    - ``safely_held`` — the consolidation verdict: ``True`` iff **∃ a representation
+      that is `full` *and* whose drift ∈ `SAFE_DRIFT_POSTURES`** ({verified,
+      unverified}). An *unmoved, fully re-derivable* copy of the work exists somewhere
+      in its cluster, so the work survives even if its other forms have degraded or
+      drifted.
+
+    The ``safely_held`` predicate is the **strong** form, resolving the one judgement
+    the H261 spec flagged: a `partial` capture is missing content and so cannot fully
+    re-derive the work offline — it is *not* a safe hold even when verified. And a
+    `full` copy that has *drifted*/*rotted* (or could not be checked — *error*) is not
+    safe either: the source has moved away from, or we cannot confirm it still matches,
+    our capture. Both axes must hold on the *same* representation — a work with a
+    drifted full preprint and a verified *partial* record is **not** safely held, since
+    neither form is both full and unmoved. ``best_fidelity``/``safest_drift`` are
+    picked *independently* across the cluster (the best on each axis, possibly from
+    different reps), so they report what the work offers per axis without implying a
+    single rep achieves both.
+
+    `representations` is non-empty by construction (a `Work` has at least one), so the
+    `min` picks never see an empty sequence. `verdicts` is the `latest_events` ledger
+    read keyed by item id; absent (the pure caller), every representation reads
+    `unverified`/safe, so a never-verified full copy is safely held — honest, no
+    network. The shared primitive H262's `works --fidelity`/`--drift` filter and
+    H263's at-risk-works signal reuse, so the consolidation rule keeps one home.
+    """
+    postures = [
+        (rep.fidelity, drift_posture(verdicts.get(rep.id)))
+        for rep in representations
+    ]
+    return {
+        "best_fidelity": min(
+            (fidelity for fidelity, _ in postures), key=FIDELITY_TIERS.index
+        ),
+        "safest_drift": min(
+            (drift for _, drift in postures), key=DRIFT_POSTURES.index
+        ),
+        "safely_held": any(
+            fidelity == "full" and drift in SAFE_DRIFT_POSTURES
+            for fidelity, drift in postures
+        ),
+    }
+
+
 def to_payload(
     works: list[Work],
     item_count: int,
@@ -313,6 +379,17 @@ def to_payload(
     `scrolls graph` uses. `canonical` names the work's canonical
     representation by id (ADR 0095), a pointer into its own `representations`
     so a consumer can highlight the one form that stands for the work.
+
+    Each work also carries a `custody` block — the *aggregate* custody posture of
+    the work, the consolidation of its representations' per-item custody (roadmap
+    H261, the new custody *shape* vision §3.5): `{best_fidelity, safest_drift,
+    safely_held}` from `work_custody` over the work's representations and the same
+    `verdicts`. So a reader of a 3-representation work sees not just "the preprint
+    is full, the DOI record rotted" per row but the work-level verdict "this work
+    is **safely held** (an unmoved, fully re-derivable copy exists — via the
+    preprint)" — the custody promise applied to the *work*, not just the item. A
+    pure fold over the per-rep `fidelity`/`drift` below, so it adds no ledger read
+    and agrees with the representation entries it rides beside by construction.
 
     Each representation carries the per-item custody picture: its item-intrinsic
     `fidelity` tier (how much is held, ADR 0100), its `drift` posture (whether the
@@ -389,6 +466,11 @@ def to_payload(
                 "doi": work.doi,
                 "url": work.url,
                 "canonical": work.canonical.id,
+                # the work-level aggregate custody verdict (roadmap H261): the
+                # consolidation of the per-rep custody below into "is this work
+                # safely held?", a pure fold over the same `fidelity`/`drift` the
+                # representations carry — no schema change, no extra ledger read.
+                "custody": work_custody(work.representations, verdicts),
                 "representations": [
                     {
                         "id": rep.id,

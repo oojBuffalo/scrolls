@@ -52,7 +52,24 @@ FIDELITY_TIERS = ("full", "partial", "reference")
 # `verified` is the posture word for the ledger's `unchanged` status, so a
 # headline's `verified` count equals `doctor`'s `custody.drift.unchanged` and
 # `unverified` equals held − verdicts (the H42 convergence, lifted to a scope).
+# The order is also *safest-first*: `verified` (confirmed unmoved) is the most
+# reassuring custody posture, `unverified` (never checked, so unknown — but no
+# evidence of movement) next, then the confirmed/uncertain losses
+# (`drifted`/`rotted`/`error`). The consolidation surface reads it that way —
+# `works.work_custody`'s `safest_drift` is the min-index posture across a work's
+# representations (roadmap H261).
 DRIFT_POSTURES = ("verified", "unverified", "drifted", "rotted", "error")
+
+# The drift postures that count as a *safe hold* — the source has not confirmed
+# moved away from, or rotted out from under, our capture. `verified` (re-checked
+# unchanged) and `unverified` (never checked, so no *evidence* of movement — the
+# M2 honesty: unknown, not silently "clean") are safe; `drifted`/`rotted` are
+# confirmed loss and `error` is "we tried and could not confirm" (weaker than
+# never-checked), so none of those three is a safe hold. The complement of
+# `_LOSS_POSTURES` ∪ {`error`}. The work-level `safely_held` predicate
+# (roadmap H261) pairs this with full fidelity: a work is safely held when a
+# representation is both `full` *and* in a safe drift posture.
+SAFE_DRIFT_POSTURES = ("verified", "unverified")
 
 # HTTP statuses that mean the resource is definitively gone, not transiently
 # unreachable: 404 Not Found and 410 Gone. A capture whose source returns one

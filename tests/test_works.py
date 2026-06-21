@@ -422,6 +422,167 @@ def test_representation_last_checked_defaults_to_null_without_a_ledger():
     )
 
 
+# --- the per-work aggregate custody posture (roadmap H261) -----------------
+#
+# Each work now carries a `custody` block — the *consolidation* of its
+# representations' per-item custody (the new custody shape, vision §3.5): the
+# work-level verdict "is this work safely held?", not just the per-row fidelity/
+# drift. `best_fidelity`/`safest_drift` are the best each axis offers across the
+# representations; `safely_held` is the strong predicate ∃ a `full` rep whose
+# drift ∈ {verified, unverified} — an unmoved, fully re-derivable copy exists.
+
+
+def _full(item_id, doi, **overrides):
+    """A full-fidelity representation of the work named by `doi`."""
+    return make_item(
+        item_id, url=f"https://example.org/{item_id}",
+        links=(f"https://doi.org/{doi}",),
+        raw_text="body", content_hash=f"sha256:{item_id}", stage="rendered",
+        **overrides,
+    )
+
+
+def _partial(item_id, doi, **overrides):
+    """A partial-fidelity representation (summary only) of `doi`."""
+    return make_item(
+        item_id, url=f"https://example.org/{item_id}",
+        links=(f"https://doi.org/{doi}",),
+        summary="a summary", stage="rendered", **overrides,
+    )
+
+
+def _reference(item_id, doi, **overrides):
+    """A reference-only representation (bare pointer) of `doi`."""
+    return make_item(
+        item_id, url=f"https://example.org/{item_id}",
+        links=(f"https://doi.org/{doi}",), stage="rendered", **overrides,
+    )
+
+
+def _verdict(item_id, status, at="2026-06-14T00:00:00+00:00"):
+    from scrolls.custody import CustodyEvent
+
+    return CustodyEvent(
+        item_id=item_id, checked_at=at, status=status,
+        prior_hash="sha256:a", observed_hash="sha256:b",
+    )
+
+
+def _work_custody(items, verdicts=None):
+    """The `custody` block of the single work the items form."""
+    (work,) = works_over(items)
+    payload = to_payload(
+        [work], len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    return payload["works"][0]["custody"]
+
+
+def test_work_custody_block_consolidates_the_representations():
+    # the basic shape: a full+verified preprint and a reference+unverified record →
+    # the work is safely held (the full copy is unmoved), best fidelity is full, the
+    # safest drift verified — the consolidated verdict, not the per-row detail.
+    items = [_full("arxiv:a", "10.1000/x"), _reference("crossref:10.1000/x", "10.1000/x")]
+    custody = _work_custody(items, {"arxiv:a": _verdict("arxiv:a", "unchanged")})
+    assert custody == {
+        "best_fidelity": "full",
+        "safest_drift": "verified",
+        "safely_held": True,
+    }
+
+
+def test_work_custody_safely_held_requires_a_full_representation():
+    # the one judgement (H261 spec): a partial copy cannot fully re-derive the work
+    # offline, so even a partial+verified rep does NOT make the work safely held —
+    # the strong form. best_fidelity reports the partial honestly.
+    items = [
+        _partial("arxiv:a", "10.1000/x", title="A"),
+        _reference("crossref:10.1000/x", "10.1000/x"),
+    ]
+    custody = _work_custody(items, {"arxiv:a": _verdict("arxiv:a", "unchanged")})
+    assert custody["best_fidelity"] == "partial"
+    assert custody["safest_drift"] == "verified"
+    assert custody["safely_held"] is False  # partial+verified is not "safely held"
+
+
+def test_work_custody_not_safely_held_when_the_full_copy_drifted():
+    # a full copy that has *drifted* is no longer a safe hold (the source moved away
+    # from our capture); a verified *partial* sibling does not rescue it (partial
+    # can't re-derive). So a work can hold a full form and a verified form yet be
+    # unsafe — neither is *both* full and unmoved.
+    items = [
+        _full("arxiv:a", "10.1000/x", title="A"),
+        _partial("biorxiv:10.1101/y", "10.1000/x", title="B"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "drifted"),
+        "biorxiv:10.1101/y": _verdict("biorxiv:10.1101/y", "unchanged"),
+    }
+    custody = _work_custody(items, verdicts)
+    assert custody["best_fidelity"] == "full"  # the full form is still held
+    assert custody["safest_drift"] == "verified"  # the partial is verified
+    assert custody["safely_held"] is False  # but no single rep is full AND unmoved
+
+
+def test_work_custody_safely_held_via_an_unverified_full_copy():
+    # a never-checked full copy *is* safely held: it is fully re-derivable and there
+    # is no evidence the source moved (unverified ∈ the safe set, the M2 honesty —
+    # unknown, not confirmed loss). The pure caller (no ledger) is exactly this case.
+    items = [_full("arxiv:a", "10.1000/x"), _reference("crossref:10.1000/x", "10.1000/x")]
+    custody = _work_custody(items)  # no verdicts → every rep unverified
+    assert custody == {
+        "best_fidelity": "full",
+        "safest_drift": "unverified",
+        "safely_held": True,
+    }
+
+
+def test_work_custody_best_and_safest_pick_across_representations():
+    # best_fidelity/safest_drift are the best each axis offers anywhere in the work,
+    # picked independently: a reference+drifted rep and a partial+verified rep →
+    # best fidelity partial (FIDELITY_TIERS order), safest drift verified
+    # (DRIFT_POSTURES order). Not safely held (no full rep at all).
+    items = [
+        _reference("arxiv:a", "10.1000/x", title="A"),
+        _partial("biorxiv:10.1101/y", "10.1000/x", title="B"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "drifted"),
+        "biorxiv:10.1101/y": _verdict("biorxiv:10.1101/y", "unchanged"),
+    }
+    custody = _work_custody(items, verdicts)
+    assert custody["best_fidelity"] == "partial"
+    assert custody["safest_drift"] == "verified"
+    assert custody["safely_held"] is False
+
+
+def test_work_custody_error_posture_is_not_a_safe_hold():
+    # a full copy whose only verdict is `error` is NOT safely held: an error means
+    # we *tried and could not confirm* the source is unchanged — weaker than
+    # never-checked, so it is excluded from the safe set {verified, unverified}.
+    items = [_full("arxiv:a", "10.1000/x"), _reference("crossref:10.1000/x", "10.1000/x")]
+    custody = _work_custody(items, {"arxiv:a": _verdict("arxiv:a", "error")})
+    assert custody["best_fidelity"] == "full"
+    assert custody["safest_drift"] == "unverified"  # the reference rep is unverified
+    assert custody["safely_held"] is False
+
+
+def test_work_custody_matches_the_shared_helper():
+    # the payload block is exactly `work_custody(reps, verdicts)` — the one helper
+    # H262's filter and H263's at-risk signal reuse (their preconditions), not a
+    # re-derivation, so the consolidation rule has a single home.
+    from scrolls.works import work_custody
+
+    items = [_full("arxiv:a", "10.1000/x"), _reference("crossref:10.1000/x", "10.1000/x")]
+    verdicts = {"arxiv:a": _verdict("arxiv:a", "drifted")}
+    (work,) = works_over(items)
+    payload = to_payload(
+        [work], len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    assert payload["works"][0]["custody"] == work_custody(
+        work.representations, verdicts
+    )
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -523,6 +684,36 @@ def test_cli_works_representation_last_checked_matches_the_list_row(db, capsys):
         assert reps[item_id]["last_checked"] == rows[item_id]["last_checked"]
     assert reps["arxiv:1706.03762"]["last_checked"] == "2026-06-14T00:00:00+00:00"
     assert reps["crossref:10.1000/x"]["last_checked"] is None
+
+
+def test_cli_works_carries_the_aggregate_custody_block(db, capsys):
+    # H261 end to end: each work's `custody` block consolidates the fidelity/drift
+    # the rendered representation entries carry — the work-level "safely held?"
+    # verdict, derived from the same per-rep fields by construction.
+    from scrolls.custody import CustodyEvent, record_events
+
+    insert_item(db, make_item(
+        "arxiv:1706.03762", url="https://arxiv.org/abs/1706.03762",
+        links=("https://doi.org/10.1000/x",),
+        raw_text="the preprint body", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, make_item(
+        "crossref:10.1000/x", url="https://doi.org/10.1000/x", stage="rendered"))
+    # the full preprint is re-checked and unchanged → the work is safely held by it
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="unchanged", prior_hash="sha256:a", observed_hash="sha256:a")])
+
+    assert main(["works"]) == 0
+    work = json.loads(capsys.readouterr().out)["works"][0]
+    assert work["custody"] == {
+        "best_fidelity": "full",
+        "safest_drift": "verified",
+        "safely_held": True,
+    }
+    # the block folds exactly the rep entries it is rendered beside (parity)
+    reps = work["representations"]
+    assert {r["fidelity"] for r in reps} == {"full", "reference"}
+    assert work["custody"]["best_fidelity"] == "full"
 
 
 def test_cli_works_min_flag(db, capsys):

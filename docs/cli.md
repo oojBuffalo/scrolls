@@ -3468,7 +3468,28 @@ per-item surface reads, so a representation's `drift` and `last_checked` equal
 that item's `list` row by construction, `unverified`/`null` when never re-checked
 — `test_cli_works_representation_drift_matches_the_list_row`,
 `test_cli_works_representation_last_checked_matches_the_list_row`), sorted by
-id; works sort by representation count then DOI. `--min N` sets the minimum
+id; works sort by representation count then DOI.
+
+Each work also carries a `custody` block — the work-level *aggregate* custody
+posture, the **consolidation** of its representations' per-item custody (roadmap
+H261, the new custody *shape*: custody at the level of a work, not just the item):
+`{best_fidelity, safest_drift, safely_held}`. `best_fidelity` is the best
+(most-complete) tier any representation holds and `safest_drift` the safest
+(most-reassuring) drift posture any carries — each picked independently across the
+cluster, "what is the most re-derivable / least-moved form of this work?".
+`safely_held` is the consolidation verdict: `true` iff **∃ a representation that is
+`full` *and* whose drift is `verified` or `unverified`** — an unmoved, fully
+re-derivable copy of the work exists somewhere in its cluster, so the work survives
+even if its other forms degraded or drifted. It is the **strong** form: a `partial`
+capture cannot fully re-derive the work, so it is never a safe hold even when
+verified, and a `full` copy that has *drifted*/*rotted* (or could not be checked —
+*error*) is not safe either; both must hold on the *same* representation, so a work
+with a drifted full preprint and a verified *partial* record is **not** safely held.
+A pure fold over the same `fidelity`/`drift` the representations carry — no extra
+ledger read, agreeing with the entries it rides beside by construction
+(`test_cli_works_carries_the_aggregate_custody_block`).
+
+`--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
 library total. `stats.custody` is the works-surface member of the
@@ -3505,11 +3526,11 @@ item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 
@@ -3928,7 +3949,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
-| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); `stats.custody` tallies the reported reps (H100) |
+| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `stats.custody` tallies the reported reps (H100) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |

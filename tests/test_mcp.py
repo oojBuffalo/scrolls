@@ -1547,6 +1547,51 @@ def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
     assert expected["attention"]["source"] == "arxiv"
 
 
+def test_get_works_carries_the_aggregate_custody_block(scrolls_home):
+    # H261: the per-work `custody` block rides the MCP twin too — both route through
+    # `works.to_payload` — and equals the shared `work_custody` fold by construction,
+    # so the consolidation verdict reads identically on CLI and MCP.
+    from scrolls.cli import main
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+    from scrolls.works import work_custody, works_over
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="arxiv:1706.03762", source="arxiv", source_id="1706.03762",
+        url="https://arxiv.org/abs/1706.03762",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        links=("https://doi.org/10.5555/3295222",), stage="rendered",
+        raw_text="the preprint body", content_hash="sha256:a",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.5555/3295222", source="crossref", source_id="10.5555/3295222",
+        url="https://doi.org/10.5555/3295222",
+        saved_at="2026-06-12T00:00:00+00:00", title="Attention Is All You Need",
+        stage="rendered",
+    ))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:1706.03762", checked_at="2026-06-14T00:00:00+00:00",
+        status="unchanged", prior_hash="sha256:a", observed_hash="sha256:a")])
+
+    work = mcp_server.get_works()["works"][0]
+    assert work["custody"] == {
+        "best_fidelity": "full",
+        "safest_drift": "verified",
+        "safely_held": True,  # the full preprint is held and verified unmoved
+    }
+    # the MCP block equals the shared helper over the same clustering + ledger
+    from scrolls.items import list_items
+    from scrolls.custody import latest_events
+
+    items = list_items(db)
+    (clustered,) = works_over(items)
+    assert work["custody"] == work_custody(
+        clustered.representations, latest_events(db)
+    )
+
+
 def test_get_works_item_lens_reports_one_items_work(scrolls_home):
     from scrolls.cli import main
     from scrolls.items import ScrollItem, insert_item
