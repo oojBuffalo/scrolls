@@ -2045,6 +2045,101 @@ def test_get_context_bundle_index_fidelity_scope_is_honest_under_facet_and_trunc
     assert fidelity == cli_fidelity
 
 
+def test_get_context_bundle_index_fidelity_counts_tie_to_scoped_library_health(
+    scrolls_home,
+):
+    # roadmap H235 — the MCP twin of H229. Where H229 ties the *CLI*
+    # `context --budget index --source <S>`'s `_Fidelity:_` tier counts to
+    # `doctor --source <S>`'s `custody.tiers`, this carries that scoped tie onto the
+    # read *pair* an agent reaches over MCP: over a multi-source, mixed-fidelity
+    # library where one query matches all of <S>'s held items (no truncation),
+    # `get_context_bundle(query, budget="index", source=<S>)`'s `_Fidelity:_` tier
+    # counts ≡ `get_library_health(source=<S>)`'s `custody.tiers` (non-zero) — both
+    # fold `get_fidelity` over the same scoped item set, so the leanest tier an agent
+    # boots on over MCP and the deep custody audit it also reads over MCP never
+    # disagree on what fraction of one source is held in full. The scoped sibling, on
+    # the MCP read pair, of H214's unscoped MCP↔CLI fidelity-line tie.
+    from scrolls.custody import custody_counts_by_source, get_fidelity
+    from scrolls.items import ScrollItem, insert_item, list_items, update_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # web spans three tiers (full 2, partial 1, reference 1); one out-of-scope arxiv
+    # `full` lifts the library-wide tiers to {full 3, …}, so web's scope is a strict
+    # subset of — and a different tier split than — the whole library (scoping is
+    # non-vacuous). Every title carries "topic" so one query matches all of web's held
+    # items (no truncation: web holds 4 < the default limit, so the bundle's post-facet
+    # set *is* the whole web scope the audit folds over).
+    def _web(item_id, title, **kw):
+        kw.setdefault("stage", "fetched")
+        return ScrollItem(
+            id=item_id, source="web", url=f"https://web.example/{item_id}",
+            saved_at="2026-06-12T00:00:00+00:00", title=title, **kw)
+
+    insert_item(db, _web("web:full1", "Topic full one",
+                         extracted_text="topic one body",
+                         raw_text="<raw>topic one</raw>", content_hash="sha256:f1"))
+    insert_item(db, _web("web:full2", "Topic full two",
+                         extracted_text="topic two body",
+                         raw_text="<raw>topic two</raw>", content_hash="sha256:f2"))
+    insert_item(db, _web("web:partial", "Topic partial",
+                         extracted_text="topic partial body"))  # no hash/raw → partial
+    insert_item(db, _web("web:ref", "Topic reference pointer",
+                         stage="detected"))  # no content → reference
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:00+00:00", title="Topic arxiv paper", stage="fetched",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:a"))
+
+    def _nonzero(counts):
+        return {tier: n for tier, n in counts.items() if n}
+
+    def scoped_picture():
+        # the leanest-tier holdings line for the web scope over MCP, and the canonical
+        # scoped audit's tiers over MCP — the read *pair* an agent reaches over MCP.
+        bundle = mcp_server.get_context_bundle("topic", budget="index", source="web")
+        line = next(l for l in bundle.splitlines() if l.startswith("_Fidelity:"))
+        index = {t: int(n) for t, n in re.findall(r"(full|partial|reference) (\d+)", line)}
+        scope_n = int(re.search(r"\(of (\d+)\)", line).group(1))
+        tiers = _nonzero(mcp_server.get_library_health(source="web")["tiers"])
+        return index, scope_n, tiers
+
+    index, scope_n, tiers = scoped_picture()
+    # non-vacuous: web's scope is a genuine multi-tier mix (≥2 non-zero tiers)
+    assert tiers == {"full": 2, "partial": 1, "reference": 1}
+    # the precondition holds: the query matched all of web's held items, so `(of N)`
+    # names the whole scoped held set — the line was never truncated (the H235 tie is a
+    # count-equality only when the bundle saw the whole source; H236 is the boundary)
+    assert scope_n == sum(tiers.values()) == 4
+    # the tie: the scoped leanest-tier holdings over MCP ≡ the scoped audit's tiers over MCP
+    assert index == tiers
+    # tied to the shared per-source primitive too, not independently hardcoded — both the
+    # bundle line and `get_library_health` fold `get_fidelity` over the same scoped subset
+    web_tiers = _nonzero(custody_counts_by_source(list_items(db), {})["web"]["tiers"])
+    assert index == web_tiers
+
+    # the scope genuinely narrows: the *unscoped* MCP audit names the whole library
+    # (arxiv's `full` lifts it to {full 3, …}), so the scoped read never silently reverts
+    # to the library-wide holdings it didn't see
+    whole = _nonzero(mcp_server.get_library_health()["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert tiers != whole
+
+    # mutation in lockstep — drop `web:full1`'s re-derivable body (raw_text + hash) so it
+    # falls `full` → `partial`. The shift must register identically on the scoped MCP
+    # `_Fidelity:_` line and the scoped `get_library_health(source="web")` audit, proving
+    # each recomputes `get_fidelity` over the scoped set rather than echoing a cache.
+    full1 = next(it for it in list_items(db) if it.id == "web:full1")
+    assert update_item(db, dataclasses.replace(full1, raw_text=None, content_hash=None))
+    mutated = next(it for it in list_items(db) if it.id == "web:full1")
+    assert get_fidelity(mutated) == "partial"  # the dropped body cost it a tier
+
+    index, scope_n, tiers = scoped_picture()
+    assert tiers == {"full": 1, "partial": 2, "reference": 1}  # the shift, on the audit
+    assert scope_n == 4                                        # still the whole web scope
+    assert index == tiers                                      # and in lockstep on the line
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
