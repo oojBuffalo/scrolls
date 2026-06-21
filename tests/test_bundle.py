@@ -1515,6 +1515,83 @@ def test_import_bundle_dry_run_names_which_items_are_new_vs_held(
     assert report["held"] == sorted(report["held"])
 
 
+def _items_only_bundle(items):
+    """A bundle whose custody block is exactly `items` — within-bundle duplicate
+    ids included, with an empty events block.
+
+    A *well-formed* export never repeats an item id (`_gather_scope` returns
+    distinct rows), so a repeat only arises from a concat/splice of two
+    overlapping exports. We render the real block builders so the ADR 0102
+    sentinels and code fences stay valid and only the items *content* carries
+    the dup — exactly what `parse_bundle` appends without deduping.
+    """
+    from scrolls.bundle import _events_block, _items_block
+
+    return (
+        "# Scrolls Custody Bundle: spliced\n\n"
+        + _items_block(items)
+        + "\n"
+        + _events_block([])
+        + "\n"
+    )
+
+
+def test_import_bundle_dry_run_dedups_new_and_held_under_within_bundle_dup_ids(
+    scrolls_home, tmp_path, capsys
+):
+    # H233: the *dedup* half of H226. H226's `new`/`held` are deduped sets and
+    # `len(new) == imported` holds by construction over a well-formed bundle; this
+    # pins the corrupt case a naive id-list would phantom-inflate — a spliced
+    # bundle whose custody block *repeats* both a would-be-new id and an already-
+    # held id (`parse_bundle` appends every record without deduping, bundle.py:667,
+    # so the dups reach the preview). The reviewable surface names each distinct id
+    # exactly once — never over-claiming more items than the bundle holds (the M2
+    # ethos on the dedup axis) — while `imported`/`skipped` keep counting the raw
+    # occurrences, exactly what a real INSERT OR IGNORE import would report.
+    new = make_item(
+        "arxiv:1706.03762", "Attention", "An attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    )
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    # the corrupt bundle: each id appears twice in the items block
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(
+        _items_only_bundle([new, new, held, held]), encoding="utf-8"
+    )
+
+    # the library already holds the SQLite scroll; the arxiv paper would be new
+    main(["init"])
+    insert_item(get_paths().db_path, held)
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    # the reviewable lists name each distinct id exactly once — never inflated by
+    # the within-bundle repeat (a naive id-list would yield two entries each)
+    assert preview["new"] == ["arxiv:1706.03762"]
+    assert preview["held"] == ["wikipedia:en:SQLite"]
+    # the distinguishing asymmetry: `len(new) == imported` survives the duplicate
+    # (the count is the distinct-new count)…
+    assert len(preview["new"]) == preview["imported"] == 1
+    # …while `len(held) < skipped` (the held-id repeat is skipped twice but named
+    # once, and the dup-new also counts a skip): named distinct, counted raw
+    assert len(preview["held"]) < preview["skipped"]
+    # `items`/`imported`/`skipped` count the raw occurrences (4 items: 1 new + 3
+    # skips), so the reviewable surface never claims more distinct items than held
+    assert preview["items"] == 4
+    assert (preview["imported"], preview["skipped"]) == (1, 3)
+
+    # …and those raw counts are exactly what a *real* import of the same corrupt
+    # bundle reports — the dry-run never drifts from reality, even under dups
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert (live["imported"], live["skipped"]) == (preview["imported"], preview["skipped"])
+    # the real import stays terse — no reviewable id lists
+    assert "new" not in live and "held" not in live
+
+
 # --- scope, completeness, honesty ------------------------------------------
 
 
