@@ -1337,6 +1337,85 @@ def test_import_bundle_orphaned_items_is_uncapped_while_the_warning_bounds(
     assert f"(+{overflow - _MAX_ORPHAN_ITEM_IDS} more)" in warning
 
 
+def test_import_bundle_dry_run_whole_events_block_matches_a_real_import_under_orphans(
+    scrolls_home, tmp_path, capsys
+):
+    # H237: the corrupt-bundle analogue of H220's byte-identity guarantee. H220
+    # pins the preview summary byte-equal to the real import's only over a *clean*
+    # held/new scope; H230 pins only `orphaned`/`orphaned_items` equal across the
+    # two surfaces. The untested cell is the *whole* `events` block —
+    # `{imported, skipped, orphaned, orphaned_items}`, including the resolvable-event
+    # accounting — over a corrupt, orphan-bearing bundle. It matters because the two
+    # surfaces run **different** functions: the dry-run counts events via
+    # `preview_import_events`, the live import via `import_events`, so their agreement
+    # on `{imported, skipped}` *in the presence of partitioned-out orphans* is a
+    # genuine cross-implementation guarantee, not the same code twice.
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite", "A database engine.")
+    # anchored events on the in-scope item resolve (it rides the items block, so the
+    # live import inserts it and the dry-run anchors it via `known_ids`). A
+    # within-bundle *duplicate* of the first anchored event forces a non-trivial
+    # resolvable split — imported 2 (the two distinct identities), skipped 1 (the
+    # dup) — so the block exercises the `{imported, skipped}` accounting, not just a
+    # bare `imported`. Orphan events for two missing items (one doubly-orphaned)
+    # partition out: orphaned 3 (events), orphaned_items 2 (distinct ids).
+    dup_anchor = _event("wikipedia:en:SQLite", "drifted", observed="cafe1234")
+    bundle = _spliced_bundle(
+        held,
+        anchored_events=[
+            dup_anchor,
+            dup_anchor,  # within-bundle duplicate → skipped by the content dedup
+            _event("wikipedia:en:SQLite", "rotted", observed="beef0000"),
+        ],
+        orphan_events=[
+            _event("wikipedia:en:Ghost", "drifted", observed="beef9999"),
+            _event("wikipedia:en:Ghost", "rotted", observed="beef0000"),
+            _event("arxiv:2401.00001", "drifted", observed="dead0001"),
+        ],
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(bundle, encoding="utf-8")
+
+    # dry-run first — it writes nothing, so the live import below sees the same
+    # empty-ledger library and its counts are a like-for-like comparison
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    # the preview is non-trivial in *every* field — not a vacuous all-zero block:
+    # the resolvable accounting (imported 2, skipped 1) rides beside the orphan loss
+    expected_events = {
+        "imported": 2,
+        "skipped": 1,
+        "orphaned": 3,
+        "orphaned_items": ["arxiv:2401.00001", "wikipedia:en:Ghost"],
+    }
+    assert preview["events"] == expected_events
+    # the preview truly wrote nothing — neither the anchored item nor any event
+    assert get_item(db, "wikipedia:en:SQLite") is None
+    assert item_events(db, "wikipedia:en:SQLite") == []
+    assert item_events(db, "wikipedia:en:Ghost") == []
+
+    # now the real import into the same library: its *entire* events block equals
+    # the preview's — the byte-identity H220 guarantees over a clean scope, here
+    # held over a corrupt, orphan-bearing bundle. Strictly stronger than H230's
+    # two-field (`orphaned`/`orphaned_items`) cross-surface tie: this also pins the
+    # resolvable-event accounting (`imported`/`skipped`), the part each surface
+    # computes through a *different* function.
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert live["events"] == preview["events"]
+    assert live["events"] == expected_events
+    # the live import did anchor the two distinct resolvable events (not the dup),
+    # never the orphans — the counts the matching block reported are real on disk
+    assert sorted(e.status for e in item_events(db, "wikipedia:en:SQLite")) == [
+        "drifted",
+        "rotted",
+    ]
+    assert item_events(db, "wikipedia:en:Ghost") == []
+    assert item_events(db, "arxiv:2401.00001") == []
+
+
 # --- import bundle --dry-run preview (roadmap H220) ------------------------
 
 
