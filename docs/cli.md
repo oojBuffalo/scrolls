@@ -3016,7 +3016,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--stats]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--stats]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -3038,6 +3038,27 @@ items — the same convention `scrolls list`/`scrolls set` use. `--tag` and
 case-insensitive, `--concept` by slug, as `scrolls related` compares them
 — with no empty-string overload. A facet that excludes every hit prints
 `[]`, not an error.
+
+`--fidelity F` is the **holdings-axis** filter on the ranked surface — the
+search twin of `scrolls list --fidelity` (ADR 0097): a custody **fidelity tier**
+(`full`/`partial`/`reference`, the same closed vocabulary — a typo is a usage
+error, exit 2 — `test_search_rejects_an_unknown_fidelity_tier`). It keeps only
+the matches the library holds at that tier, derived from the same content-presence
+flags each hit's own `fidelity` key is read off, so a hit is *selected* by exactly
+the tier it *shows* (`test_search_fidelity_hits_match_the_filter_value`). The one
+difference from `list --fidelity`: `list` has no cap, so it sieves its loaded rows
+in Python; `search` applies a ranked `LIMIT`, so the tier must scope the *ranked*
+selection — it ANDs into the SQL **before** the cap (via the `scrolls_fidelity`
+UDF over the presence booleans, never the body text), so `--fidelity full --limit
+5` returns the *top five full-fidelity matches*, not the full ones among the top
+five (`test_search_fidelity_applies_before_the_limit`). It composes with every
+other facet (`--fidelity full --source arxiv` is arxiv's full-fidelity matches,
+`test_search_fidelity_composes_with_source`); `count_matches` applies the same
+clause, so under `--stats` the `matched` denominator counts only the kept tier and
+the truncation marker is never inflated by tiers it never showed
+(`test_search_fidelity_scope_echo_and_truncation_denominator`). The MCP twin
+`search_scrolls(fidelity=)` carries the same selection
+(`test_search_scrolls_filters_by_fidelity_tier`).
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
 (matches bracketed, `…` for elided context), the per-item custody axes —

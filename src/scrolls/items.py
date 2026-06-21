@@ -451,6 +451,25 @@ def register_facet_functions(conn: sqlite3.Connection) -> None:
 
     conn.create_function("scrolls_slug", 1, slugify, deterministic=True)
     conn.create_function("scrolls_lower", 1, str.lower, deterministic=True)
+    # The holdings-axis tier as a SQL predicate (ADR 0097), so `search --fidelity`
+    # can AND it into the *ranked* match before the LIMIT — the filter must scope
+    # the top-k selection, not sieve it afterwards. It takes the four content
+    # *presence* booleans + stage (never the body text, the way `search`'s
+    # `_PRESENCE` and `facets`' `_fidelity_counts` read presence not content) and
+    # delegates to `fidelity_tier`, so the rule keeps its one home whether folded
+    # in Python (list/facets) or called from SQL (search).
+    conn.create_function(
+        "scrolls_fidelity",
+        5,
+        lambda has_raw, has_extracted, has_summary, has_hash, stage: fidelity_tier(
+            has_raw=bool(has_raw),
+            has_extracted=bool(has_extracted),
+            has_summary=bool(has_summary),
+            has_hash=bool(has_hash),
+            stage=stage,
+        ),
+        deterministic=True,
+    )
 
 
 def tag_concept_filters(

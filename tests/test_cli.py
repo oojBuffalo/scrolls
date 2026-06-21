@@ -4163,6 +4163,117 @@ def test_list_rejects_an_unknown_fidelity_tier(scrolls_home):
     assert excinfo.value.code == 2
 
 
+# --- search --fidelity: the holdings-axis filter on the *ranked* surface (H251) ---
+
+
+def _seed_fidelity_search():
+    """Matches for "database" spanning the fidelity tiers, every title shares the
+    token so one query reaches all of them. Two `full`, one `partial`, one
+    `reference` — the search twin of `_seed_fidelity_tiers`. Library must exist.
+    """
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full0", source="web", url="https://ex.com/full0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full database alpha",
+        raw_text="A database engine held in full.", content_hash="sha256:a",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full1", source="web", url="https://ex.com/full1",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full database beta",
+        raw_text="Another database engine held in full.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://ex.com/partial",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial database",
+        extracted_text="A database, content held but no hash.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:reference", source="web", url="https://ex.com/reference",
+        saved_at="2026-06-12T00:00:03+00:00", title="Reference database",
+        stage="detected"))
+    return db
+
+
+def test_search_fidelity_selects_hits_by_custody_tier(scrolls_home, capsys):
+    # the holdings-axis filter on the ranked surface: only the matches the library
+    # holds at the named tier, the search twin of `list --fidelity` (ADR 0097)
+    main(["init"])
+    _seed_fidelity_search()
+    capsys.readouterr()
+
+    main(["search", "database", "--fidelity", "full"])
+    assert {h["id"] for h in json.loads(capsys.readouterr().out)} == {
+        "web:full0", "web:full1"
+    }
+
+    main(["search", "database", "--fidelity", "partial"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:partial"]
+
+    main(["search", "database", "--fidelity", "reference"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["web:reference"]
+
+
+def test_search_fidelity_hits_match_the_filter_value(scrolls_home, capsys):
+    # every returned hit shows exactly the tier it was selected by — the filter
+    # and the per-hit `fidelity` field can never disagree (the row-shows-≡-filter
+    # guarantee, the search twin of `test_list_row_fidelity_matches_...`)
+    main(["init"])
+    _seed_fidelity_search()
+    capsys.readouterr()
+
+    for tier in ("full", "partial", "reference"):
+        main(["search", "database", "--fidelity", tier])
+        hits = json.loads(capsys.readouterr().out)
+        assert hits  # each tier is populated by the seed
+        assert all(h["fidelity"] == tier for h in hits)
+
+
+def test_search_fidelity_scope_echo_and_truncation_denominator(scrolls_home, capsys):
+    # the --stats envelope names the fidelity filter it honored, and the matched
+    # denominator counts only that tier — so a capped `--fidelity full` result is
+    # truncated by *full* matches it hid, never by partials it never showed (G2).
+    main(["init"])
+    _seed_fidelity_search()
+    capsys.readouterr()
+
+    main(["search", "database", "--fidelity", "full", "--limit", "1", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["fidelity"] == "full"
+    # two full matches, capped at 1 → truncated, denominator is the full count (2),
+    # not the library-wide match count (4)
+    assert payload["stats"]["returned"] == 1
+    assert payload["stats"]["matched"] == 2
+    assert payload["stats"]["truncated"] is True
+
+
+def test_search_fidelity_composes_with_source(scrolls_home, capsys):
+    # AND semantics: --fidelity intersects with --source like every other facet
+    main(["init"])
+    _seed_fidelity_search()
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(get_paths().db_path, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:04+00:00", title="Arxiv database full",
+        raw_text="A database paper held in full.", stage="rendered"))
+    capsys.readouterr()
+
+    main(["search", "database", "--fidelity", "full", "--source", "arxiv"])
+    assert [h["id"] for h in json.loads(capsys.readouterr().out)] == ["arxiv:1"]
+
+    main(["search", "database", "--fidelity", "full", "--source", "web"])
+    assert {h["id"] for h in json.loads(capsys.readouterr().out)} == {
+        "web:full0", "web:full1"
+    }
+
+
+def test_search_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # the same closed vocabulary as `list --fidelity`; a typo is an exit-2 error
+    with pytest.raises(SystemExit) as excinfo:
+        main(["search", "database", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
 def test_list_rows_carry_the_drift_posture(scrolls_home, capsys):
     # H58: every browse row shows the second custody axis — the drift posture —
     # not just `fidelity`, so a plain `list` reads the same posture `--drift`

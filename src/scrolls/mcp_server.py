@@ -112,6 +112,7 @@ def search_scrolls(
     stage: str | None = None,
     tag: str | None = None,
     concept: str | None = None,
+    fidelity: str | None = None,
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
@@ -128,9 +129,13 @@ def search_scrolls(
     category (an empty string selects unclassified items), `stage` to one
     pipeline stage (detected, fetched, rendered), `tag` to items carrying a
     tag (case-insensitive), and `concept` to items carrying a concept
-    (matched by slug, so "BM25" and "bm25" agree). Use them to ask, e.g.,
-    what *papers* tagged efficient the library knows about a topic, not just
-    what mentions it.
+    (matched by slug, so "BM25" and "bm25" agree). `fidelity` limits to one
+    custody-fidelity tier (`full`/`partial`/`reference`, ADR 0097) — the
+    holdings-axis companion of `list_scrolls(fidelity=)`, ANDed into the ranked
+    match before the cap, so it returns the top hits *the library still holds at
+    that tier* (e.g. only the full-fidelity matches you could re-derive
+    offline). Use them to ask, e.g., what *papers* tagged efficient the library
+    knows about a topic, not just what mentions it.
 
     Each hit also carries the scholarly `works` it represents (ADR 0101):
     empty for most hits, but when two hits are the same work — a preprint and
@@ -155,6 +160,7 @@ def search_scrolls(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
     )
     return [hit_payload(hit) for hit in hits]
 

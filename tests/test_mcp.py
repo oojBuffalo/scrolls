@@ -302,6 +302,60 @@ def test_search_scrolls_honors_facets(scrolls_home, fake_wikipedia_api):
     assert mcp_server.search_scrolls("database", category="") == []
 
 
+def test_search_scrolls_filters_by_fidelity_tier(scrolls_home):
+    # the holdings-axis filter on the ranked surface — the MCP twin of
+    # `scrolls search --fidelity` and the search sibling of
+    # `list_scrolls(fidelity=)` (ADR 0097). Returns only the matches the library
+    # holds at the named tier, the same per-hit `fidelity` each hit already shows.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full0", source="web", url="https://ex.com/full0",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full database alpha",
+        raw_text="A database engine held in full.", content_hash="sha256:a",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full1", source="web", url="https://ex.com/full1",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full database beta",
+        raw_text="Another database engine held in full.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://ex.com/partial",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial database",
+        extracted_text="A database, content held but no hash.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:reference", source="web", url="https://ex.com/reference",
+        saved_at="2026-06-12T00:00:03+00:00", title="Reference database",
+        stage="detected"))
+
+    assert {r["id"] for r in mcp_server.search_scrolls("database", fidelity="full")} == {
+        "web:full0", "web:full1"
+    }
+    assert [r["id"] for r in mcp_server.search_scrolls("database", fidelity="partial")] == [
+        "web:partial"
+    ]
+    assert [
+        r["id"] for r in mcp_server.search_scrolls("database", fidelity="reference")
+    ] == ["web:reference"]
+    # every returned hit shows exactly the tier it was selected by
+    for tier in ("full", "partial", "reference"):
+        hits = mcp_server.search_scrolls("database", fidelity=tier)
+        assert hits and all(h["fidelity"] == tier for h in hits)
+
+
+def test_search_scrolls_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # the same closed vocabulary as `list_scrolls(fidelity=)`; never a silent empty
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.search_scrolls("database", fidelity="ful")
+
+
 def test_list_scrolls_browses_by_facet(scrolls_home):
     # The enumeration counterpart to search_scrolls (ADR 0060): no query,
     # filtered by the same facets, bounded by a limit.

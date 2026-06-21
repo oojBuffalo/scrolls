@@ -551,6 +551,125 @@ def test_search_blank_query_still_rejected_with_filters(db_path):
         search_items(db_path, "   ", source="arxiv")
 
 
+# --- the holdings-axis filter: search --fidelity (the search twin of list --fidelity) ---
+
+
+def _seed_mixed_fidelity(db_path):
+    """Three matches for "database", one per fidelity tier (full/partial/reference)."""
+    insert_item(db_path, make_item(
+        "wikipedia:en:Full", "Full database engine",
+        "A database engine held in full.",
+        raw_text="A database engine held in full.", content_hash="sha256:f",
+        stage="rendered",
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Partial", "Partial database engine",
+        "A database engine, summary only.",  # extracted+summary, no hash -> partial
+    ))
+    insert_item(db_path, ScrollItem(
+        id="wikipedia:en:Ref", source="wikipedia",
+        url="https://example.org/ref", saved_at="2026-06-12T00:00:00+00:00",
+        title="Reference database engine", stage="detected",  # title-only -> reference
+    ))
+
+
+def test_search_filters_by_fidelity(db_path):
+    # the holdings-axis companion of --source/--stage: keep only the matches the
+    # library holds at one custody-fidelity tier, derived from the same presence
+    # flags the per-hit `fidelity` is read off (ADR 0097).
+    _seed_mixed_fidelity(db_path)
+    assert [h.id for h in search_items(db_path, "database", fidelity="full")] == [
+        "wikipedia:en:Full"
+    ]
+    assert [h.id for h in search_items(db_path, "database", fidelity="partial")] == [
+        "wikipedia:en:Partial"
+    ]
+    assert [h.id for h in search_items(db_path, "database", fidelity="reference")] == [
+        "wikipedia:en:Ref"
+    ]
+
+
+def test_search_fidelity_filter_agrees_with_the_per_hit_tier(db_path):
+    # every hit the filter returns carries exactly that tier — the holdings-axis
+    # twin of list's row-shows-≡-filter: the filter and the row never disagree.
+    _seed_mixed_fidelity(db_path)
+    for tier in ("full", "partial", "reference"):
+        hits = search_items(db_path, "database", fidelity=tier)
+        assert hits  # non-vacuous: the seed has one match per tier
+        assert all(hit.fidelity == tier for hit in hits)
+
+
+def test_search_fidelity_partitions_the_query_matches(db_path):
+    # drill-from-count over the *query* scope: the three tiers partition the
+    # matches, so their per-tier totals sum to the unfiltered match total.
+    _seed_mixed_fidelity(db_path)
+    whole = count_matches(db_path, "database")
+    by_tier = {
+        tier: count_matches(db_path, "database", fidelity=tier)
+        for tier in ("full", "partial", "reference")
+    }
+    assert by_tier == {"full": 1, "partial": 1, "reference": 1}
+    assert sum(by_tier.values()) == whole == 3
+
+
+def test_search_fidelity_ands_with_other_facets(db_path):
+    # --fidelity composes with --source: only the full-fidelity arxiv match.
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "A database paper",
+        "This paper studies database engines.",
+        raw_text="This paper studies database engines.", content_hash="sha256:a",
+        source="arxiv", stage="rendered",
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0002", "Another database paper",
+        "Another database study.", source="arxiv",  # partial
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "A database blog post",
+        "Some database thoughts.",
+        raw_text="Some database thoughts.", content_hash="sha256:w",
+        source="web", stage="rendered",  # full, but wrong source
+    ))
+    hits = search_items(db_path, "database", source="arxiv", fidelity="full")
+    assert [h.id for h in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_fidelity_applies_before_the_limit(db_path):
+    # the filter is part of the ranked selection, not a post-cap sieve: asking
+    # for the top-2 full matches returns 2 full hits even though partials
+    # outrank some of them, not "the full ones among the top 2".
+    for index in range(3):
+        insert_item(db_path, make_item(
+            f"wikipedia:en:Partial_{index}", f"Partial database {index}",
+            "Every page is about databases.",  # partial: no raw/hash
+        ))
+    for index in range(3):
+        insert_item(db_path, make_item(
+            f"wikipedia:en:Full_{index}", f"Full database {index}",
+            "Every page is about databases.",
+            raw_text="Every page is about databases.", content_hash=f"sha256:{index}",
+            stage="rendered",
+        ))
+    hits = search_items(db_path, "databases", fidelity="full", limit=2)
+    assert len(hits) == 2
+    assert all(hit.fidelity == "full" for hit in hits)
+
+
+def test_search_unknown_fidelity_tier_raises(db_path):
+    # a closed vocabulary, like list_items — never a silent empty selection.
+    _seed_mixed_fidelity(db_path)
+    with pytest.raises(ValueError):
+        search_items(db_path, "database", fidelity="bogus")
+
+
+def test_search_unknown_fidelity_raises_even_on_a_missing_db(tmp_path):
+    # the closed-vocabulary error never depends on library state.
+    missing = tmp_path / "absent.sqlite"
+    with pytest.raises(ValueError):
+        search_items(missing, "database", fidelity="bogus")
+    assert not missing.exists()
+
+
 # --- count_matches: the honest denominator behind G2's truncation marker ----
 
 
@@ -583,6 +702,19 @@ def test_count_matches_honors_the_same_facets_as_search(db_path):
     assert count_matches(db_path, "database", source="arxiv") == 1
     # a scope that excludes everything counts zero — never an error
     assert count_matches(db_path, "database", source="github") == 0
+
+
+def test_count_matches_honors_the_fidelity_filter(db_path):
+    # the truncation denominator counts only the tier the search returns, so a
+    # `--fidelity full --stats` result is never marked truncated by partials it
+    # never showed.
+    _seed_mixed_fidelity(db_path)
+    assert count_matches(db_path, "database") == 3
+    assert count_matches(db_path, "database", fidelity="full") == 1
+    assert count_matches(db_path, "database", fidelity="reference") == 1
+    # an unknown tier raises here too (closed vocabulary)
+    with pytest.raises(ValueError):
+        count_matches(db_path, "database", fidelity="bogus")
 
 
 def test_count_matches_validates_query_and_tolerates_missing_db(tmp_path):

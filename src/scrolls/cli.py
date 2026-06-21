@@ -866,6 +866,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only hits carrying this concept (matched by slug)",
     )
     search_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only hits the library holds at this custody-fidelity tier (ADR "
+        "0097) — the holdings-axis companion of --source/--stage; ANDed into the "
+        "ranked match before --limit, so it returns the top hits at that tier",
+    )
+    search_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1132,6 +1140,7 @@ def main(argv: list[str] | None = None) -> int:
             args.tag,
             args.concept,
             args.stats,
+            args.fidelity,
         )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
@@ -2824,6 +2833,7 @@ def _cmd_search(
     tag: str | None = None,
     concept: str | None = None,
     stats: bool = False,
+    fidelity: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
@@ -2836,6 +2846,7 @@ def _cmd_search(
             stage=stage,
             tag=tag,
             concept=concept,
+            fidelity=fidelity,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -2856,6 +2867,7 @@ def _cmd_search(
         stage=stage,
         tag=tag,
         concept=concept,
+        fidelity=fidelity,
     )
     # `stats.custody` (roadmap H98): the custody tally over the *matched* scope, not
     # just the returned page — each hit already carries its `fidelity`/`drift` (the
@@ -2864,7 +2876,7 @@ def _cmd_search(
     # (the cap is the common case, so the extra scan is paid only when it adds rows).
     matched_hits = hits if matched <= len(hits) else search_items(
         paths.db_path, query, limit=matched, source=source, category=category,
-        stage=stage, tag=tag, concept=concept,
+        stage=stage, tag=tag, concept=concept, fidelity=fidelity,
     )
     custody = tally_custody((hit.fidelity, hit.drift) for hit in matched_hits)
     # `stats.custody.by_source` (roadmap H155): the query-matched scope split per
@@ -2884,6 +2896,7 @@ def _cmd_search(
         "stage": stage,
         "tag": tag,
         "concept": concept,
+        "fidelity": fidelity,
         "limit": limit,
     }
     print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
