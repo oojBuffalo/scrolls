@@ -3592,6 +3592,175 @@ def test_export_items_source_filter_scopes_the_export(scrolls_home, capsys):
     assert json.loads(lines[0])["source"] == "github"
 
 
+# --- export items --fidelity / --drift: the custody-filter family on the
+# whole-library JSONL backup (H259), the backup-path sibling of `export bundle`
+# --fidelity/--drift (H258). A pure thread-through: `list_items` already applies
+# both axes (the `list --fidelity`/`--drift` primitives, H250/H54), so the backup
+# scopes to "only my full-fidelity holdings" / "only the drifted rows for a
+# recapture handoff" with no new sieve. ---
+
+
+def test_export_items_fidelity_scopes_the_backup(scrolls_home, capsys):
+    # back up only the holdings at one custody-fidelity tier — the JSONL is the
+    # subset `scrolls list --fidelity` enumerates, in saved order (ADR 0097)
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    exit_code = main(["export", "items", "--fidelity", "full"])
+    assert exit_code == 0
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:full0", "web:full1"]
+
+    main(["export", "items", "--fidelity", "reference"])
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:reference"]
+
+
+def test_export_items_drift_scopes_the_backup(scrolls_home, capsys):
+    # ship only the rows at one custody drift posture (from the verify ledger) —
+    # the backup of the set `scrolls list --drift` enumerates, for a recapture
+    # handoff. The two seed reference-fidelity items differ only by ledger posture.
+    main(["init"])
+    _seed_drift_postures()
+    capsys.readouterr()
+
+    exit_code = main(["export", "items", "--drift", "drifted"])
+    assert exit_code == 0
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:1"]
+
+    main(["export", "items", "--drift", "verified"])
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:0"]
+
+
+def test_export_items_fidelity_is_byte_identical_to_the_unscoped_subset(
+    scrolls_home, capsys
+):
+    # the core backup guarantee: a custody-scoped backup is byte-for-byte the
+    # matching subset of the whole-library backup — `dump_items_export` over the
+    # kept rows, and `list_items` preserves saved order under the post-SQL sieve,
+    # so the scoped stream is exactly the unscoped lines for those ids.
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    main(["export", "items"])
+    unscoped = capsys.readouterr().out
+    main(["export", "items", "--fidelity", "full"])
+    scoped = capsys.readouterr().out
+
+    full_ids = {"web:full0", "web:full1"}
+    expected = "".join(
+        line
+        for line in unscoped.splitlines(keepends=True)
+        if json.loads(line)["id"] in full_ids
+    )
+    assert scoped == expected
+    assert scoped  # non-vacuous: the seed holds full-fidelity rows
+
+
+def test_export_items_custody_axes_and_together(scrolls_home, capsys):
+    # both axes AND: --fidelity intersects --drift (and every other facet). A
+    # full-fidelity drifted item plus reference-fidelity rows in mixed postures.
+    main(["init"])
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:fulldrift", source="web", url="https://ex.com/fulldrift",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full + drifted",
+        raw_text="A re-derivable body whose source moved.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://ex.com/ref",
+        saved_at="2026-06-12T00:00:01+00:00", title="Reference + drifted",
+        stage="detected"))
+    record_events(db, [
+        CustodyEvent("web:fulldrift", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+        CustodyEvent("web:ref", "2026-06-14T00:00:00+00:00", "drifted", "h", "x", None),
+    ])
+    capsys.readouterr()
+
+    # the intersection: full *and* drifted is exactly the one row in both sets
+    main(["export", "items", "--fidelity", "full", "--drift", "drifted"])
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:fulldrift"]
+
+    # the drift axis alone keeps both drifted rows regardless of fidelity
+    main(["export", "items", "--drift", "drifted"])
+    ids = [json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()]
+    assert ids == ["web:fulldrift", "web:ref"]
+
+    # an empty intersection is the honest empty document, never an error
+    exit_code = main(["export", "items", "--fidelity", "reference", "--drift", "verified"])
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_items_custody_scoped_backup_round_trips_through_import(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the lossless round-trip holds over a custody scope: `import items` of a
+    # scoped backup re-holds exactly the exported rows — no leakage of the
+    # filtered-out tiers (the H216 round-trip narrowed to one custody value).
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    main(["export", "items", "--fidelity", "full"])
+    out_path = tmp_path / "full-only.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored-home"))
+    exit_code = main(["import", "items", str(out_path)])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"imported": 2, "skipped": 0, "items": 2}
+
+    db = get_paths().db_path
+    assert get_item(db, "web:full0") is not None
+    assert get_item(db, "web:full1") is not None
+    # the filtered-out tiers never travelled
+    assert get_item(db, "web:partial") is None
+    assert get_item(db, "web:reference") is None
+
+
+def test_export_items_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # fidelity tiers are a closed vocabulary; a typo is exit 2, never a silent
+    # empty backup (the `list --fidelity` precedent)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "items", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
+def test_export_items_rejects_an_unknown_drift_posture(scrolls_home):
+    # drift postures are a closed vocabulary; a typo is exit 2, never a silent empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "items", "--drift", "drited"])
+    assert excinfo.value.code == 2
+
+
+def test_cmd_export_items_unknown_tier_on_the_programmatic_path_is_exit_1(
+    scrolls_home, capsys
+):
+    # belt-and-braces below argparse: a direct call past `choices` surfaces the
+    # `list_items` ValueError as a JSON error on stderr, exit 1 (the
+    # `_cmd_export_bundle` precedent), never a stdout backup
+    from scrolls.cli import _cmd_export_items
+
+    main(["init"])
+    _seed_fidelity_tiers()
+    capsys.readouterr()
+
+    exit_code = _cmd_export_items(None, None, None, "bogus-tier", None)
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_import_items_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
     exit_code = main(["import", "items", str(tmp_path / "nowhere.jsonl")])
     assert exit_code == 1

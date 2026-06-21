@@ -540,6 +540,26 @@ def build_parser() -> argparse.ArgumentParser:
     export_items_parser.add_argument(
         "--tag", default=None, help="Only items carrying this tag (case-insensitive)"
     )
+    export_items_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only back up items held at this custody-fidelity tier (ADR 0097) — "
+        "the holdings-axis companion of --drift; the JSONL stream is the "
+        "byte-identical subset `scrolls list --fidelity` enumerates (e.g. "
+        "--fidelity full to back up only the holdings you can re-derive offline). "
+        "ANDs with --drift",
+    )
+    export_items_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only back up items at this custody drift posture (from the verify "
+        "ledger) — the ledger-claim-axis companion of --fidelity; the JSONL "
+        "stream is the subset `scrolls list --drift` enumerates (e.g. --drift "
+        "drifted to ship only the moved rows for a recapture handoff). ANDs with "
+        "--fidelity",
+    )
     export_events_parser = export_sub.add_parser(
         "events",
         help="Export the verify ledger (custody events) as a lossless JSONL "
@@ -1144,7 +1164,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.export_command == "bookmarks":
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
         if args.export_command == "items":
-            return _cmd_export_items(args.source, args.category, args.tag)
+            return _cmd_export_items(
+                args.source, args.category, args.tag, args.fidelity, args.drift
+            )
         if args.export_command == "events":
             return _cmd_export_events(
                 args.source, args.category, args.tag, args.since
@@ -1804,17 +1826,39 @@ def _cmd_export_bookmarks(
 
 
 def _cmd_export_items(
-    source: str | None, category: str | None, tag: str | None
+    source: str | None,
+    category: str | None,
+    tag: str | None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> int:
     paths = get_paths()
     # the same durable-property facets `export bookmarks` offers scope the
     # export to a slice; they AND together and default to the whole library
-    # (the backup case), in `list_items` saved order
-    items = (
-        list_items(paths.db_path, source=source, category=category, tag=tag)
-        if paths.db_path.exists()
-        else []
-    )
+    # (the backup case), in `list_items` saved order. `fidelity`/`drift` (H259)
+    # add the two custody axes — "back up only my full-fidelity holdings" /
+    # "ship only the drifted rows for a recapture handoff" — folding the same
+    # `list --fidelity`/`--drift` sieve, so the JSONL is the byte-identical
+    # subset of the unscoped backup. An unknown value is rejected by argparse
+    # `choices` (exit 2) before reaching here; on the library path `list_items`
+    # raises ValueError (the empty-vocabulary belt-and-braces → exit 1, the
+    # `export bundle` precedent).
+    try:
+        items = (
+            list_items(
+                paths.db_path,
+                source=source,
+                category=category,
+                tag=tag,
+                fidelity=fidelity,
+                drift=drift,
+            )
+            if paths.db_path.exists()
+            else []
+        )
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     # the JSONL stream *is* the artifact, like `export opml`/`export bookmarks`,
     # so it prints raw — `scrolls export items > library.jsonl`
     sys.stdout.write(dump_items_export(items))

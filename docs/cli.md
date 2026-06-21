@@ -1990,7 +1990,7 @@ $ scrolls export bookmarks
 [exit 0]
 ```
 
-### `scrolls export items`
+### `scrolls export items [--source S] [--category C] [--tag T] [--fidelity T] [--drift P]`
 
 Export the library's items as a lossless JSON Lines stream (ADR 0082) —
 the inverse of `scrolls import items`, and the way a whole library is
@@ -2013,6 +2013,30 @@ selects unclassified items), and `--tag` (case-insensitive). So
 `scrolls export items --source arxiv > papers.jsonl` exports just the arXiv
 items (`test_export_items_source_filter_scopes_the_export` in
 `tests/test_cli.py`).
+
+**Custody scope (`--fidelity` / `--drift`).** Two more filters scope the
+backup by the per-item custody axes — the backup-path sibling of
+`export bundle --fidelity`/`--drift` (the shareable briefing). `--fidelity`
+(`full`/`partial`/`reference`) backs up only the holdings at one
+custody-fidelity tier (ADR 0097), reading no ledger — the honest holdings
+fact; `--drift` (`verified`/`unverified`/`drifted`/`rotted`/`error`) backs up
+only the rows at one custody drift posture, from the verify ledger. Both fold
+the same `list_items` sieve `scrolls list --fidelity`/`--drift` use, so the
+backup is the **byte-identical subset** of the whole-library backup for those
+rows (`dump_items_export` over the kept rows, in saved order;
+`test_export_items_fidelity_is_byte_identical_to_the_unscoped_subset`). They
+AND with each other and every durable filter (`test_export_items_custody_axes_and_together`),
+so `scrolls export items --fidelity full > rederivable.jsonl` backs up only
+the holdings you can re-derive offline, and `--drift drifted` ships only the
+moved rows for a recapture handoff. The lossless round-trip holds over the
+scope: `import items` of a custody-scoped backup re-holds **exactly** the
+exported rows, no leakage of the filtered-out tiers
+(`test_export_items_custody_scoped_backup_round_trips_through_import`). Both
+are a closed vocabulary — an unknown value is exit 2 (argparse `choices`),
+never a silent empty backup
+(`test_export_items_rejects_an_unknown_fidelity_tier`); the `_cmd_export_items`
+programmatic path surfaces the `list_items` `ValueError` as exit 1
+(`test_cmd_export_items_unknown_tier_on_the_programmatic_path_is_exit_1`).
 
 The round-trip is the contract: an export re-imports to the same items,
 every field intact — into a fresh library it is a faithful restore, into
