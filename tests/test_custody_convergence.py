@@ -830,6 +830,101 @@ def test_scoped_index_fidelity_holdings_diverge_from_doctor_under_truncation(scr
     assert kept != whole
 
 
+def test_scoped_budget_ladder_stays_equal_under_truncation_while_diverging_from_doctor(
+    scrolls_home, capsys
+):
+    # roadmap H240 — the *deeper-tier-headline analogue* of H234. H213 ties the
+    # *unscoped* `index` ≡ `connected` ≡ `full` ≡ `doctor` (all four equal,
+    # untruncated); H234 pins only the *leanest* `index` `_Fidelity:_` line diverging
+    # from `doctor --source <S>` under truncation. The untested cell is the *deeper*
+    # budget tiers under a cap: the `connected`/`full` `_Custody:_` headline's
+    # `fidelity` section is rendered by a *different* function (`custody_headline` over
+    # the kept items) than the `index` line (`render_fidelity_holdings`), yet both fold
+    # over the *same* post-cap kept set (`build_context` applies `--limit` at
+    # `search_items` regardless of budget). So under truncation the three budget tiers
+    # must stay mutually *equal* (all bundle-kept, summing to the kept slice `k`) even
+    # as all three *together* diverge from the source-wide audit (summing to the held
+    # count > k) — the leanest *and* the deeper tiers never inflate the bundle-kept
+    # holdings to a source-wide claim. Lifting the cap (`--limit` ≥ held) reconverges
+    # all four to the H213 scoped equality, so the ladder never disagrees *with itself*
+    # on holdings even under a cap.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_mixed_custody(db)  # four `web` scrolls: full 2, partial 1, reference 1
+    # one out-of-scope `arxiv` `full` (title carries "topic", matched by the *unscoped*
+    # query) so the library-wide audit is a third, distinct number from both the
+    # bundle-kept count and the source-wide web audit — `--source web` is genuinely
+    # exercised, exactly as in H234.
+    insert_item(db, _item("arxiv:1", "Topic arxiv paper", source="arxiv",
+                          url="https://arxiv.org/abs/1", extracted_text="topic",
+                          raw_text="<raw>topic</raw>", content_hash="sha256:arxiv"))
+    capsys.readouterr()
+
+    paths = get_paths()
+
+    def ladder(limit):
+        # the rendered fidelity counts for *each* budget tier at a given cap. The
+        # `index` tier carries the ledger-free `_Fidelity:_` holdings line; the
+        # `connected`/`full` tiers carry the `_Custody:_` headline whose `fidelity`
+        # section folds the same counts — two different renderers over the one post-cap
+        # kept set. (`_rendered_fidelity_counts` reads either line: the `(of N)`/`N
+        # scroll(s)` scalars never match a tier token, and the drift-posture words
+        # never collide with full/partial/reference.)
+        prefixes = {"index": "_Fidelity:", "connected": "_Custody:", "full": "_Custody:"}
+        out = {}
+        for budget, prefix in prefixes.items():
+            line = _line_with(
+                _context_out(
+                    capsys, "topic", "--budget", budget, "--source", "web",
+                    "--limit", str(limit),
+                ),
+                prefix,
+            )
+            out[budget] = _rendered_fidelity_counts(line)
+        return out
+
+    # the canonical *whole-source* audit: `doctor --source web` folds `get_fidelity`
+    # over all four held web rows, independent of any query or cap.
+    source_tiers = _nonzero(run_doctor(paths, source="web")["custody"]["tiers"])
+    assert source_tiers == {"full": 2, "partial": 1, "reference": 1}  # ≥2 tiers, non-vacuous
+    held = sum(source_tiers.values())
+    assert held == 4
+
+    # --- under truncation: a cap below the source's held count ----------------------
+    cap = 2
+    assert cap < held  # the cap genuinely truncates web's matching items (4 > 2)
+    capped = ladder(cap)
+    # the three budget tiers stay mutually *equal* under the cap — the leanest
+    # `_Fidelity:_` holdings line, the `connected` `_Custody:_` headline, and the `full`
+    # `_Custody:_` headline all fold over the one post-cap kept set, so the budget ladder
+    # never disagrees *with itself* on what it holds in full.
+    assert capped["index"] == capped["connected"] == capped["full"]
+    # and all three sum to the kept slice `k`, never the whole-source held count.
+    assert sum(capped["index"].values()) == cap == 2
+    # so the whole ladder *together* diverges from the source-wide audit: no tier — not
+    # the leanest, not the deeper ones — inflates the bundle-kept holdings to a
+    # source-wide custody claim it didn't render.
+    for budget in ("index", "connected", "full"):
+        assert capped[budget] != source_tiers
+        assert sum(capped[budget].values()) < sum(source_tiers.values())
+
+    # --- lift the cap: the whole ladder reconverges to the H213 scoped equality -----
+    # `--limit` ≥ the source's held count keeps every matching web item, so the post-cap
+    # kept set *is* the whole web scope the audit folds over — index ≡ connected ≡ full ≡
+    # the scoped audit, all four equal again (the gap was exactly the cap, nothing else).
+    lifted = ladder(held)  # cap == 4 == held → no truncation
+    assert lifted["index"] == lifted["connected"] == lifted["full"] == source_tiers
+
+    # the `--source web` filter is non-vacuous on every read: the *unscoped* audit names
+    # the whole library (arxiv's `full` lifts it), so neither the bundle-kept ladder nor
+    # the source-wide audit is ever the library-wide holdings.
+    whole = _nonzero(run_doctor(paths)["custody"]["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert source_tiers != whole
+    for budget in ("index", "connected", "full"):
+        assert capped[budget] != whole
+
+
 def test_doctor_by_source_converges_with_the_per_source_tally_and_facets(scrolls_home, capsys):
     # roadmap H104: doctor's `custody.by_source` splits the whole-library custody
     # aggregate per source. Each per-source tally must equal `custody_counts` over
