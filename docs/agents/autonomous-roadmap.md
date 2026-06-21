@@ -21,7 +21,7 @@ half-done slice from the previous run first."
 
 ---
 
-## Status snapshot — 2026-06-20
+## Status snapshot — 2026-06-21
 
 **MVP M1–M5 complete** (custody-first): refresh-safe sentinel-fenced
 regeneration (M1, ADR 0102), the anti-fabrication/completeness invariant (M2),
@@ -64,6 +64,19 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   `attention` → runs `maintain --source <S>`; the refresh triage reads the
   `context` `_Refresh:_` line → runs the scoped `classify --stale --source <S>` /
   `kb --stale --source <S>`.
+- **The custody-filter family is complete across both axes and all three verbs.**
+  The two per-item custody axes — *holdings* (`fidelity`, a content-column fact,
+  no ledger) and *ledger-claim* (`drift`, the verify-ledger posture) — can now be
+  **browsed, ranked, and acted on**: `list --fidelity` (H250) / `search --fidelity`
+  (H251) / `verify --fidelity` (H252) on the holdings axis, and `list --drift`
+  (H54) / `search --drift` (H253) / `verify --drift` (H80) on the ledger axis, each
+  with its MCP twin where one exists (`list_scrolls`/`search_scrolls`). Every
+  filter folds the *same* primitive the per-item field is read off
+  (`get_fidelity`/`fidelity_tier`, `drift_posture`/`posture_from_status`), so a row
+  is selected by exactly the value it shows, and the per-value totals partition the
+  scope (drill-from-`facets fidelity`/`drift`). The ranked surface scopes *before*
+  the cap (UDF-in-SQL, never a post-sieve), so `--stats` truncation counts only the
+  kept set (G2).
 
 **Per-slice provenance is in git** — every shipped slice's commit subject carries
 its `(H<NN>)` tag, so `git log --oneline | grep '(H183)'` resolves any slice to
@@ -78,923 +91,58 @@ index that keeps `H<NN>` cross-references resolvable.
 Ordered. Take the next slice whose preconditions are met (all listed
 preconditions are shipped), finish it to a committed/tested/clean stopping
 point, and stop. `→ capN` marks the PRD capability. These are the un-started
-**work** slices; the next checkpoint (H218) follows.
+**work** slices; the next checkpoint (H256) follows.
 
-The new horizon, re-derived at this H207 checkpoint, is **budget/tier custody
-honesty** (cap 2/7/10): the `scrolls context` budgeted boot sequence currently
-hides *all* custody signal at its leanest `index` tier (the headline/per-source
-map are gated to `connected`+, `src/scrolls/context.py:203`), so an agent reading
-an `index` catalog can't tell whether the top matches are full-fidelity,
-reference-only, or anything between — a gap against vision principle 3 (*fidelity
-and provenance travel with every result*). The fix is honest *and* ledger-free:
-**fidelity is a holdings fact** (`items.fidelity_tier`, computed from item fields),
-so it can ride the leanest tier; **drift is a ledger claim**, so it honestly stays
-gated to `connected`+ (rendering "unverified" at `index`, where no ledger was read,
-would be the exact M2 anti-fabrication violation we forbid). **H212 shipped the
-production `_Fidelity:_` line and H213 (this run) pinned its cross-tier convergence
-tie** — the `index` line ≡ the `connected`/`full` `_Custody:_` headline ≡ `doctor`'s
-`custody.tiers`, mutation-checked, folded into `tests/test_custody_convergence.py`.
-**H214 pinned the MCP twin** — `get_context(budget="index")` carries the
-same `_Fidelity:_` line, byte-identical to the CLI. **H215 folded the
-`index` line into the M2 completeness invariant** (names its holdings, never a drift
-verdict it didn't read), closing the sub-theme CLI-side; **H219 (this run) finished it
-over MCP** (the same completeness fold on `get_context_bundle`, beside the CLI test) —
-so the *drift-withholding* honesty now holds on both surfaces. H216–H217 (+ the
-appended H220–H223) deepen portable-bundle round-trip custody and the leanest tier's
-scope-honesty under truncation and facet scope.
+**The horizon, re-derived at this H218 checkpoint (2026-06-21).** Two themes
+that ran the last ~50 slices are now *closed*: the **budget/tier custody
+honesty** theme (H212–H249's leanest-`index` `_Fidelity:_` line and its whole
+cross-tier × CLI/MCP × scoped/unscoped × untruncated/truncated convergence
+matrix) and the **custody-filter family** (the per-item *holdings* and
+*ledger-claim* axes are now browsable/rankable/actable across
+`list`/`search`/`verify`, holdings via H250/H251/H252 and ledger via
+H54/H253/H80 — see the snapshot bullet). With both per-item custody axes fully
+filterable on the row, ranked, and act surfaces, the **next genuinely-new
+custody shape** is the *relationship* surface: `related`/`graph` nodes already
+*carry* `fidelity`/`drift` (H56) but cannot be *scoped* by them — you can read a
+neighbor's posture but not ask "show me only the full-fidelity / only the
+drifted neighbors of this scroll." That is the lead capability (H254), with the
+scheduled-maintenance act twin `maintain --fidelity` (H255) behind it. The
+remaining **budget/tier convergence cells H244–H249 are valid regression
+guards but explicitly de-prioritized** — they are the tail of a combinatorial
+matrix, each self-describing as *correct-by-construction*, and the last four
+runs (H250–H253) correctly preferred genuine capability over taking them. Take
+a capability (H254/H255) first; reach for H244–H249 only when no capability
+slice is ready, and prefer closing one rather than appending more of the same
+shape.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
+| H254 | **`scrolls related --fidelity <tier>` / `--drift <posture>` + the MCP `get_related_scrolls` twins — the custody-filter family on the *relationship* surface, completing it across the last un-filtered read surface.** The capability the H218 horizon names: `related`/`graph` nodes already *carry* per-item `fidelity`/`drift` (H56) — a neighbour shows its custody axes — but no surface lets an agent *scope a neighbourhood* to one custody value: "show me only the full-fidelity neighbours of this scroll" (the ones I can re-derive offline) or "which of this scroll's neighbours have drifted." It is the relationship-surface twin of `list --fidelity`/`--drift` (H250/H54) and `search --fidelity`/`--drift` (H251/H253). **Concrete implementation path (verified):** `find_related` is `scored_related(db_path, item_id)[:limit]` — it scores *every* candidate then caps in Python, and each `RelatedHit` already carries `fidelity` (`get_fidelity(other)`) and `drift` (`drift_posture(verdicts.get(other.id))`, `related.py:178`). So this is the **`list` sieve shape, not the `search` before-LIMIT shape**: filter the scored candidates by `hit.fidelity == tier` / `hit.drift == posture` *before* the `[:limit]` slice (so the cap returns the top-k neighbours *at that value*, not the matching ones among the top-k), folding the same per-hit primitives the field is read off (row-shows-≡-filter). Closed vocab (`FIDELITY_TIERS`/`DRIFT_POSTURES`) → `ValueError`/exit 2; ANDs the two axes; `--stats` count honours it (the `scored_related` denominator, the H99 `related --stats` precedent). Add to the `related` CLI subparser, `_cmd_related`, and `get_related_scrolls` (MCP parity §2.6). Tests in `tests/test_related.py`, `tests/test_cli.py`, `tests/test_mcp.py`, + a fold into the custody-convergence drill (`related --fidelity <T>` rows ≡ the tier's count among the neighbourhood). Precondition: H56 (related/graph carry the custody axes, **shipped**), H253 (the search-surface twin, **shipped this run**). | → cap 1, cap 2, cap 7 |
+| H255 | **`scrolls maintain --fidelity <tier>` — the scheduled-maintenance *act* twin of `verify --fidelity`, scoping a custody pass to one holdings tier.** `maintain --source <S>` (H165) scopes a pass to one source (recheck + audit + by_source narrow, view-regen stays whole-library, delta null — a non-persisting focused triage); the holdings-axis equivalent is missing — "run a maintenance pass over just my full-fidelity holdings." **Design subtlety to resolve (the genuine work, not a copy of `--source`):** the recheck is clean — it targets `verify --fidelity <tier>`'s held, *hash-bearing* subset (H252, the same `get_fidelity`-filtered set, fidelity ⊥ hash-bearing so a no-fingerprint tier is an honest empty no-op). But `maintain`'s **audit** rides `run_doctor(source=)`, which has *source* semantics a fidelity scope does not share: `run_doctor` scopes via `list_items(source=)`, and its `_check_duplicates`, `by_source`-singleton-collapse, and orphan/fts-skip all assume one source. A fidelity tier spans sources, so a fidelity-scoped audit would *not* collapse `by_source` and *would* keep `attention` meaningful. **Decision for the slice:** scope only the **recheck** to the tier (the `verify --fidelity` set) and keep the audit/regenerate **whole-library** with a **null delta** (the non-persisting triage posture `--source` already establishes), rather than adding fidelity scoping to `run_doctor` (a larger, separate change — defer unless the recheck-only shape proves insufficient). Closed vocab → exit 2; composes with `--all`/`--limit`/`--no-recheck`; conflicts with `--history`/`--source` (one scope axis per pass — decide and document). CLI-only (no MCP batch-maintain scope twin, the H252 precedent). Tests in `tests/test_maintain.py`/`test_cli.py`. Precondition: H252 (`verify --fidelity` + its hash-bearing set, **shipped**), H165 (`maintain --source`, **shipped**). | → cap 1, cap 2, cap 7 |
 | H244 | **The custody bundle is reproducible across the round-trip boundary — `export bundle <Q>` from a library rebuilt *from a bundle* is byte-identical to the original `export bundle <Q>`, the bundle-artifact analogue of `test_export_rebuild_is_byte_identical`'s point 2 (export→import→export byte-stability).** H238 (this run) pins the rebuilt *scrolls* + compiled `library/` pages byte-identical across the `export bundle` → `import bundle` boundary; the untested guarantee is that the *bundle artifact itself* re-exports byte-for-byte from the rebuilt library. It is a genuine, distinct claim: the bundle is more than its item block — it carries derived prose (the `custody_headline`, the `_Attention:_`/`_Refresh:_` pointers, the per-source breakdown via `render_custody_by_source`) computed over the rows + ledger, none of it clock-derived (`bundle.py` has no `datetime`/`now()` call). So if the round-trip carries every field those folds read from, re-exporting the *whole* briefing from the rebuilt home reproduces the original byte-for-byte — the M4/cap 9 "self-contained, shareable" briefing is itself reproducible, not just its lossless core. Pin it: over the mixed-fidelity `_mixed_fidelity_scope` (no recorded events → an empty events block on both sides, keeping the slice correct-by-construction), `export bundle "database"` from source A, `import bundle` + `doctor --fix` + `kb` into fresh B, then `export bundle "database"` from B and assert the two bundle texts are byte-identical (and, separately, that the re-exported items block alone is byte-stable — the `dump_items_export`-over-identical-rows guarantee point 2 already covers for `export items`). Implementation path: `build_bundle` folds only row/ledger-derived primitives (`custody_headline`, `custody_counts_by_source`, `_refresh_debt_by_source`) with no clock input, and H238/export-items byte-stability already give row-level byte-identity, so bundle reproducibility is correct-by-construction; the slice pins it on the bundle artifact the scroll/library byte-identity tests never re-export. Test only (`tests/test_bundle.py`, beside the H238 byte-identity test). Precondition: H238 (the bundle scroll/library byte-identity, **shipped this run**), H216 (the mixed-fidelity bundle round-trip). | → cap 9, cap 4 |
 | H245 | **The dry-run's `new`/`held` partition *predicts the real import's per-id write effect* — the identity-level closure of H233's count-level "the preview never drifts from reality."** H233 ties the dry-run's `imported`/`skipped` *counts* to a real import's; the untested guarantee is that the dry-run's reviewable *id sets* name exactly the rows the merge actually moves on disk. The counts could match while the preview names the wrong ids — and an operator confirms a merge by reading `new`/`held`, not by reconciling integer counts. Pin it: over a mixed bundle (would-be-new ids, already-held ids, within-bundle dups), capture each parsed id's pre-import held-state (`get_item is None`), dry-run to read `new`/`held`, then real-import the *same* bundle into the same library; assert every id in `new` was absent before and is held after (a genuine absent→present transition the merge caused) and every id in `held` was held before *and* after (no transition) — so the reviewable surface an operator confirms is exactly the set of rows the merge inserts vs. leaves untouched, not merely the right *number* of them. Mutation-checked: pre-holding one of the `new` ids before the dry-run moves it from `new` to `held` *and* removes it from the post-import absent→present transition set, in lockstep — the prediction tracks the library's real state, never a stale snapshot. Implementation path: the dry-run's `new`/`held` come from the same `get_item(...) is None` test the live import's INSERT OR IGNORE (ADR 0082) acts on, so the prediction is correct-by-construction; the slice pins the identity-level closure H233 left at the count level (the reviewable surface describes the *actual* merge, the M2/cap-9 custody-honesty on the predict-the-write axis). Test only (`tests/test_bundle.py`, beside H239/H233). Precondition: H239 (the partition, **shipped this run**), H233 (the count-level reality tie), H226 (the reviewable lists). | → cap 9, cap 7 |
 | H246 | **The whole budget ladder stays mutually equal under truncation while *together* diverging from the *library-wide* `doctor` audit — the *unscoped* twin of H240 (and the truncated boundary of H213).** H213 ties the unscoped `index` ≡ `connected` ≡ `full` ≡ `doctor` *only* when one query matches the whole library (no truncation); H240 (shipped this run) pins the *scoped* ladder under a cap diverging from `doctor --source <S>`. The untested cell is the *unscoped* ladder under a cap: the no-facet path, where the library-wide audit and the kept-`k` bundle must genuinely differ. Over `_seed_mixed_custody` (four scrolls: full 2, partial 1, reference 1, no source filter), `context --budget {index,connected,full} --limit k` with `k` below the held count renders three fidelity sections all *equal to each other* (the kept-`k` slice) and all `≠` the library-wide `doctor`'s `custody.tiers` (summing to the whole held count `> k`); lifting the cap (`--limit` ≥ held) reconverges all four to the H213 unscoped equality. So the no-facet budget ladder never disagrees *with itself* under a cap, and neither the leanest nor the deeper tiers inflate the bundle-kept holdings to a library-wide claim — H240's cohesion guarantee on the unscoped (no-`--source`) read path. Test only (`tests/test_custody_convergence.py`, beside H240/H213). Implementation path: all three tiers fold `get_fidelity` over the same post-cap `items` (`index` via `render_fidelity_holdings`, `connected`/`full` via `custody_headline`) while unscoped `doctor` folds over every held row, so the cohesion-under-truncation is correct-by-construction; the slice pins the unscoped boundary H213 (untruncated) and H240 (scoped) leave between them. Precondition: H240 (the scoped ladder-under-truncation, **shipped this run**), H213 (the unscoped four-way tie). | → cap 1, cap 2, cap 10 |
 | H247 | **The whole budget ladder is mutually equal *and* equal to `get_library_health()`'s `tiers`, all read over MCP and untruncated — the direct MCP twin of H213 (and the unscoped sibling of H241).** H241 (this run) pins `index` ≡ `connected` ≡ `full` over MCP *under scope*; H214 pins only the *leanest* `index` `_Fidelity:_` line ≡ the CLI over MCP, never the cross-*tier* tie over MCP. The untested cell is the *unscoped* (no-`source`) MCP cross-tier tie: over a library-wide query matching every held item (no facet, no truncation), `get_context_bundle(query, budget={index,connected,full})`'s fidelity counts must all be equal to each other *and* equal to `get_library_health()`'s `tiers` — the leanest `_Fidelity:_` line (`render_fidelity_holdings`) and the deeper `_Custody:_` headlines' `fidelity` section (`render_custody_headline`, a **different** function) and the whole-library MCP audit (the MCP twin of `doctor`) are four reads of one ledger-free fact (`get_fidelity` per item) over the one library-wide scope. Pin it: over `_seed_mixed_custody`-style holdings (full 2, partial 1, reference 1) with every title sharing a query token (so one unscoped query matches all 4 held < the default limit → no truncation), all three MCP budget tiers' fidelity counts equal each other and equal `get_library_health()`'s `tiers` (the `index` line still withholds the drift verdict the deeper tiers carry — the H214/H219 honesty stays intact). Mutation-checked: dropping a `full` item's body shifts the tier on all three MCP tiers *and* the MCP audit in lockstep. Test only (`tests/test_mcp.py`, beside the H241/H235/H214 twins). Implementation path: all three tiers fold `get_fidelity` over the same `items` in `build_context` and `get_library_health()` is the MCP twin of `doctor` folding over every held row, so the four-way unscoped tie is correct-by-construction; the slice pins the direct MCP twin of H213's CLI cross-tier convergence (the unscoped sibling of H241). Precondition: H241 (the scoped MCP cross-tier tie, **shipped this run**), H214 (the unscoped MCP leanest line ≡ CLI), H213 (the CLI cross-tier tie). | → cap 1, cap 2, cap 10 |
 | H248 | **The whole *unscoped* MCP budget ladder stays mutually equal under truncation while *together* diverging from the *library-wide* `get_library_health()` `tiers` — the *MCP twin of H246* (and the truncated boundary of H247), filling the last open cell of the cross-tier × untruncated/truncated × CLI/MCP × scoped/unscoped fidelity-convergence matrix.** H247 ties the *unscoped* `index` ≡ `connected` ≡ `full` ≡ `get_library_health()` over MCP *untruncated*; H242 (shipped this run) pins the *scoped* MCP ladder under a cap diverging from `get_library_health(source=<S>)`. The untested cell is the *unscoped* MCP ladder under a cap: the no-`source` path, where the library-wide MCP audit and the kept-`k` bundle must genuinely differ. The `connected`/`full` `_Custody:_` headline's `fidelity` section is rendered by `render_custody_headline` (a **different** function than the `index` line's `render_fidelity_holdings`), yet all three fold over the *same* post-cap kept set — so under truncation the three MCP budget tiers must stay mutually equal (all bundle-kept, summing to `k`) *even as all three collectively diverge* from the whole-library MCP audit (summing to the held count `> k`). Pin it: over a library-wide mixed-fidelity holdings (full 2, partial 1, reference 1) where one unscoped query matches every held item, `get_context_bundle(query, budget={index,connected,full}, limit=k)` with `k` below the held count renders three fidelity sections all equal to each other and all `≠ get_library_health()`'s `tiers`; lifting the cap (`limit` ≥ held) reconverges all three to the H247 unscoped MCP equality. So the no-`source` MCP budget ladder never disagrees *with itself* on holdings under a cap, and neither the leanest nor the deeper tiers inflate the bundle-kept holdings to a library-wide claim — H242's cohesion guarantee on the unscoped MCP read path. Test only (`tests/test_mcp.py`, beside the H242/H247/H214 twins). Implementation path: all three tiers fold `get_fidelity` over the same post-cap `items` in `build_context` while `get_library_health()` (no `source`) is the MCP twin of `doctor` folding over every held row, so the cohesion-under-truncation is correct-by-construction; the slice pins the unscoped MCP boundary H247 (untruncated) and H242 (scoped) leave between them. Precondition: H242 (the scoped MCP ladder-under-truncation, **shipped this run**), H247 (the unscoped MCP four-way tie), H246 (the unscoped CLI ladder-under-truncation). | → cap 1, cap 2, cap 10 |
 | H249 | **The dry-run's `new`/`held`/`orphaned_items` form a clean *three-way* id-space partition even over a bundle corrupt on *both* axes — the both-axes closure of H239 (which proved the two-way `new`/`held` partition over an items-*only* corrupt bundle).** H239 pins `set(new) ∪ set(held)` = the bundle's distinct item ids and `set(new) ∩ set(held) == ∅`, but only over an items-only corrupt bundle (empty events); the untested cell is whether that reviewable partition stays clean when the *events* block is *also* corrupt (orphan events present), and whether the orphan-item id-space stays disjoint from the item partition. It is a genuine guarantee: `new`/`held` are folded from the items block (`imported_items`) while `orphaned_items` is folded from the events block's unresolved ids (`_orphan_item_ids`), two independent reads of the one parsed bundle, so a naive impl could let an orphan item leak into `new`/`held` (double-classifying an id the merge never writes) or an items-block id vanish from review. Pin it: over the H243 `_spliced_items_and_events_bundle` (a within-bundle item-dup items block *plus* anchored-and-orphan events), dry-run and assert (a) `sorted(new + held)` equals the distinct items-block ids computed independently via `parse_bundle`, (b) `set(new).isdisjoint(held)`, and (c) `set(orphaned_items).isdisjoint(set(new) | set(held))` — three non-overlapping id-spaces, so an operator reviewing the preview never sees one id classified two ways across the item and orphan axes. Mutation-checked: adding a distinct orphan event for a new missing item extends `orphaned_items` by exactly that id and leaves `new`/`held` untouched (the orphan axis never perturbs the item partition). Implementation path: `orphan` item ids are exactly those neither held nor in `known_ids` (`partition_resolvable_events`), so they are disjoint from the items-block ids by construction; the slice pins the cross-axis disjointness H239 (items-only) and H243 (counts, not the id partition) leave open. Test only (`tests/test_bundle.py`, beside H243/H239). Precondition: H243 (the both-axes whole-summary tie + `_spliced_items_and_events_bundle`, **shipped this run**), H239 (the two-way items-only partition). | → cap 9, cap 7 |
-| H218 | **Buffer refresh checkpoint** (maintenance rule). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
+| H256 | **Buffer refresh checkpoint** (maintenance rule; next full refresh due ~2026-06-22). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H244** (the topmost un-started row; H250/H251/H252 shipped out-of-queue capability,
-not these test-only cells; the H252 steering note recommends the overdue **H218 checkpoint** ahead of them) — the *both-axes-corrupt* analogue of H220's whole-summary byte-identity: the dry-run's
-entire top-level summary equals the real import's over a bundle corrupt on *both* the item-dedup *and*
-orphan-event axes at once, proving the two corruption axes don't cross-contaminate (the union of H233
-and H237 on one bundle). H244 is the *bundle-artifact* analogue of
-`test_export_rebuild_is_byte_identical`'s point 2 — `export bundle <Q>` from a library rebuilt *from a
-bundle* is byte-identical to the original `export bundle <Q>`, so the self-contained, shareable briefing
-is itself reproducible across the round-trip boundary, not just its lossless `item_to_dict` core,
-H245 is the *identity-level closure* of H233's count-level reality tie — the
-dry-run's `new`/`held` partition predicts the real import's per-id write effect (every `new` id
-transitions absent→held, every `held` id was already present), so the reviewable surface an operator
-confirms describes the *actual* merge, not merely the right count of rows, H246
-is the *unscoped twin* of H240 — the whole budget ladder stays mutually equal under truncation while
-*together* diverging from the *library-wide* `doctor` audit (the no-facet boundary H213, untruncated,
-and H240, scoped, leave between them), H247
-is the *direct MCP twin* of H213 (and the unscoped sibling of H241) — the whole budget ladder is
-mutually equal *and* equal to `get_library_health()`'s `tiers`, all read over MCP and untruncated, the
-unscoped (no-`source`) MCP cross-tier convergence H214 (leanest line only) and H241 (scoped) leave
-between them, H248
-is the *MCP twin of H246* (and the truncated boundary of H247) — the whole *unscoped* MCP budget ladder
-stays mutually equal under truncation while *together* diverging from the *library-wide*
-`get_library_health()` `tiers`, filling the last open cell of the cross-tier × untruncated/truncated ×
-CLI/MCP × scoped/unscoped fidelity-convergence matrix, and H249 (appended this run)
-is the *both-axes closure of H239* — the dry-run's `new`/`held`/`orphaned_items` form a clean *three-way*
-id-space partition even over a bundle corrupt on *both* axes, so the orphan-item id-space stays disjoint
-from the reviewable item partition (the id-level analogue of H243's whole-summary no-cross-contamination).
+The next lead slot is **H254** — `related --fidelity`/`--drift` + the MCP twins,
+the custody-filter family on the *relationship* surface (the last un-filtered read
+surface; concrete `list`-sieve path verified above), with **H255**
+(`maintain --fidelity`, the scheduled-maintenance act twin) behind it. The
+**budget/tier convergence cells H244–H249** sit below them as **de-prioritized but
+valid regression guards** — each a correct-by-construction cell of the
+cross-tier × CLI/MCP × scoped/unscoped × untruncated/truncated fidelity matrix
+(H244 bundle-artifact reproducibility, H245 dry-run per-id write prediction, H246
+unscoped CLI ladder-under-truncation, H247 unscoped MCP four-way tie, H248 unscoped
+MCP ladder-under-truncation, H249 both-axes three-way id partition). Take a
+capability first; reach for a guard cell only when no capability is ready.
 Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line in-file
 index (maintenance-rule §4: *git is the changelog*).
 
-**This run shipped H252 — `scrolls verify --fidelity <tier>`, the holdings-axis *act* surface and the
-verify-axis twin of H250's `list --fidelity` / H251's `search --fidelity`.** It is the capability the H251
-steering note named first (the `--fidelity`-scoped act surface): H250/H251 let an agent *enumerate/rank* a
-fidelity tier, and `verify --source`/`--drift` let a worker *act* on the source/ledger axes (H125/H54), but
-no surface re-verified *exactly the holdings at one fidelity tier* — "re-check the full-fidelity scrolls I
-can re-derive offline" (vision §3, fidelity travels with every result, now on the act axis). It is a new
-standalone batch selection mirroring `--source`, folding the same `get_fidelity` primitive the read surfaces
-count with — a pure function of stored content columns, **no ledger read** (the holdings-fact axis, vs
-`--drift`'s ledger-claim axis). **The one design subtlety that makes it a genuine slice, not a copy of
-`--source`:** every batch verify touches only hash-bearing rows (a re-fetch needs a baseline hash to diff),
-and fidelity ⊥ hash-bearing — a `full` capture held by `raw_text` alone carries no `content_hash`, so it
-lists `full` (H250) yet has no baseline and is skipped. So `verify --fidelity <tier>` re-checks `list
---fidelity <tier>`'s held, *hash-bearing* subset (genuinely narrower than the listing), and a tier with no
-fingerprint (typically `reference`, which keeps no content) is an honest empty no-op. Closed vocabulary
-(argparse `choices` → exit 2); CLI-only (the batch verify selections have no MCP twin — MCP `verify_scroll`
-is single-item). 12 new tests (`test_verify_cli.py` ×11, `test_custody_convergence.py` ×1 folded into the
-verify-selection-family invariant; full suite **3322 passed**), docs in `docs/cli.md` (the verify section +
-the verify-selection-family invariant paragraph). Taken out of queue order (alongside the still-un-taken
-test-only cells H244–H249), following the H251 steering note's recommendation to prefer genuine capability
-over another convergence-matrix pin. **Steering note for the next run:** with the holdings axis now complete
-across browse (`list`), rank (`search`), and act (`verify`), the **H218 checkpoint** (full buffer refresh
-against `docs/product/mvp.md`) is overdue and is the recommended next pick — the test-only convergence cells
-H244–H249 remain valid regression guards a future run may still take, but nine consecutive `test:` cells
-before H250 showed that loop has reached diminishing returns. If a capability is preferred over the
-checkpoint, the natural remaining holdings-axis surfaces are `maintain --fidelity` (the scheduled-maintenance
-twin of `verify --fidelity`) and the `--fidelity` `--stats`/`custody` tally's cross-surface convergence.
-
-**Prior run shipped H250 — a real capability slice, taken *out of queue order* by deliberate
-judgment.** The next queued slot was H244, a test-only bundle-reproducibility pin — the **ninth
-consecutive `test:` commit** (H231, H233–H243 are all test-only convergence-matrix cells), each run
-shipping one cell and auto-appending another to keep the buffer at 6. That loop is self-perpetuating and
-has reached clear diminishing returns: the cells are honest regression guards but each self-describes as
-*correct-by-construction*, and the matrix (leanest/cross-tier × CLI/MCP × scoped/unscoped ×
-untruncated/truncated × fidelity/drift) is combinatorial. Per CLAUDE.md ("avoid trivial progress…prefer
-substantive work") and the custody vision, that run instead shipped a genuine, vision-mandated capability:
-**`scrolls list --fidelity <tier>` and its MCP twin `list_scrolls(fidelity=)`** (commit subject carries
-`(H250)`; `src/scrolls/items.py` `list_items`, `src/scrolls/cli.py` `list` subparser + `_cmd_list`,
-`src/scrolls/mcp_server.py` `list_scrolls`; `tests/test_items.py`, `tests/test_cli.py`, `tests/test_mcp.py`,
-11 new tests). The gap was real: `list`/MCP/`verify` could filter the **ledger-claim axis** (`--drift`,
-H54) and `facets fidelity` *counted* the **holdings axis**, but no surface let an agent *enumerate the
-items* at a fidelity tier — the exact drill vision §3.2 names ("you hold 1,200 scrolls: 800 full, 300
-metadata-only, 100 reference-only" → *which ones?*). The filter folds the same `get_fidelity`/`fidelity_tier`
-primitive `facets fidelity` counts with (post-SQL over the already-filtered rows, ANDs with every facet,
-**no ledger read** — fidelity is a pure function of stored content columns, the honest holdings-fact axis
-vs. drift's ledger-claim axis), so the rows it returns total `facets fidelity`'s count for the tier
-(drill-from-the-count convergence, the holdings-axis twin of `--drift` ↔ `facets drift`); an unknown tier
-is a `ValueError`/exit-2 closed-vocabulary error, never a silent empty. Dogfooded end-to-end: over a
-`{full 2, partial 1, reference 1}` library, `facets fidelity` → `{full:2,partial:1,reference:1}` and
-`list --fidelity reference` → `[web:ref]`, `--fidelity full --source web` ANDs to the two web fulls,
-`--fidelity full --stats` echoes `scope.fidelity=full, matched=2`. Its steering note recommended
-`search --fidelity` parity as the next coherent capability — **this run (H251) took it.**
-
-**Prior run shipped H243** — the *both-axes-corrupt* analogue of H220's whole-summary byte-identity
-(`tests/test_bundle.py`, `test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_corruptions`,
-beside the H237/H233 twins). H233 pins the dry-run's item-level `{imported, skipped}` equal to a real
-import's under within-bundle *item* dups (empty events); H237 pins the whole `events` block equal under
-orphan *events* (a single, distinct item). Neither exercised a bundle corrupt on *both* axes at once,
-where the item-dedup path (`new_ids`/`held_ids` sets, the read-only twin of INSERT OR IGNORE) and the
-event-accounting path (`partition_resolvable_events` + `preview_import_events`/`import_events`) both run
-over the *one* parsed bundle — a naive impl could let one corruption axis perturb the other's count (an
-orphan-event partition that miscounts items, an item-dedup that drops a resolvable event). A new
-`_spliced_items_and_events_bundle` helper (the union of the H233 `_items_only_bundle` and the H237
-`_spliced_bundle`) builds a bundle whose items block *repeats* both a would-be-new id (`arxiv:1706.03762`)
-and an already-held id (`wikipedia:en:SQLite`) — 4 raw items → `imported 1, skipped 3` — *and* whose
-events block carries a within-bundle-dup'd anchored event on the held item (`imported 2, skipped 1`)
-beside three orphan events on two missing items (`orphaned 3`, `orphaned_items` 2). The test dry-runs
-first (writing nothing — asserted via `get_item`/`item_events`), then real-imports into the same library,
-and asserts the dry-run's *entire* top-level summary sans the dry-run-only `{dry_run, new, held}` equals
-the real import's *and* the expected non-trivial block `{imported 1, skipped 3, items 4, events {imported
-2, skipped 1, orphaned 3, orphaned_items [arxiv:2401.00001, wikipedia:en:Ghost]}}` — so neither
-corruption axis silently distorts the other's accounting (the corrupt-bundle analogue of H220's
-whole-summary byte-identity, which H237 proved only for the `events` sub-block). The live import then
-leaves exactly that on disk: the new item inserted, the two distinct resolvable events anchored on SQLite
-(not the dup), never the orphans. **Test-only** — the item dedup (`new_ids`/`held_ids`) and the event
-split (`partition_resolvable_events` + the preview/live event twins) are two independent folds over the
-one parsed bundle, so the no-cross-talk is correct-by-construction; the slice pins it on the
-both-axes-corrupt bundle neither H233 nor H237 exercises. **Sabotage-verified non-vacuous:** computing
-`item_skipped` as `len(held_ids)` (in place of `len(items) − item_imported`) ignores the within-bundle
-item dups, so the dry-run reports `skipped 1` while the real import reports `skipped 3` and the
-whole-summary tie fails — exactly the item-dedup-under-dups cross-contamination the slice guards.
-Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run **restored it to ~6**
-by appending **H249** — the *both-axes closure of H239* (the dry-run's `new`/`held`/`orphaned_items` form
-a clean three-way id-space partition even over a bundle corrupt on both axes, so the orphan-item id-space
-stays disjoint from the reviewable item partition). The queue now sits at **6** un-started work slots
-(H244–H249) + the H218 checkpoint.
-
-**Prior run shipped H242** — the *MCP twin of H240* (and the truncated boundary of H241), completing the
-leanest/cross-tier × untruncated/truncated × CLI/MCP fidelity-convergence matrix on the scoped axis
-(`tests/test_mcp.py`, `test_get_context_bundle_budget_ladder_stays_equal_under_truncation_over_mcp`,
-beside the H236/H241/H235 twins). H241 ties `index` ≡ `connected` ≡ `full` over MCP *untruncated* (the
-deeper-tier cross-rendering tie under scope); H236 pins only the *leanest* `index` `_Fidelity:_` line
-diverging from `get_library_health(source=<S>)`'s `tiers` under truncation over MCP. The untested cell was
-the *deeper* MCP tiers under a cap: `get_context_bundle(query, budget="connected"/"full", source=<S>)`'s
-`_Custody:_` headline renders its `fidelity` section via `render_custody_headline` — a **different**
-function than the `index` line's `render_fidelity_holdings` — yet all three fold over the *same* post-cap
-kept set (`build_context` applies `limit` at `search_items` regardless of budget). Over a `web` scope of
-`full 2, partial 1, reference 1` (4 held) + one out-of-scope `arxiv` `full` (so the *unscoped* MCP audit
-names `{full 3, …}` — `source="web"` genuinely exercised), every title carrying "topic" so one query
-matches all 4 held, `get_context_bundle("topic", budget={index,connected,full}, source="web", limit=2)`
-(cap `2 < 4 = held`) renders three fidelity sections all *equal to each other* (the kept-2 slice, summing
-to `k`) and all `≠ get_library_health(source="web")`'s `tiers` `{full 2, partial 1, reference 1}` (summing
-to the held count `4 > k`) — so no MCP budget tier, leanest or deeper, inflates the bundle-kept holdings
-to a source-wide claim. The **drift-withholding asymmetry stays intact under truncation too** (H214/H219):
-the leanest `index` bundle carries no `_Custody:_` headline and no `drift` token, while the deeper tiers
-carry `drift unverified 2` — *also* over the kept slice (the 2 kept items), so the deeper tiers stay honest
-about the bundle scope on the drift axis as well as the fidelity one. **Lifting the cap** (`limit=4` ≥ held)
-keeps every matching web item, so the post-cap kept set *is* the whole web scope the audit folds over —
-`index ≡ connected ≡ full ≡` the scoped MCP audit, all four equal again (the gap was exactly the cap).
-**Test-only** — all three tiers fold `get_fidelity` over the same post-cap `items` in `build_context`
-(`index` via `render_fidelity_holdings(tiers, len(items))`, `connected`/`full` via `custody_headline(items,
-…)`) while `get_library_health(source=)` is the MCP twin of `doctor` folding over the whole scoped rows,
-so the cohesion-under-truncation (and its collapse on lift) is correct-by-construction; the slice pins the
-MCP twin of H240's budget-ladder-cohesion axis. **Sabotage-verified non-vacuous:** folding the
-`connected`/`full` `_Custody:_` headline over a doubled item set (`items + items`) breaks
-`index == connected == full` under the cap (the deeper tiers count `items + items`, the leanest line counts
-`items`), failing the mutual-equality assertion. Shipping one slice dropped the work queue to 5, so per
-maintenance-rule §1 this run **restored it to ~6** by appending **H248** — the *MCP twin of H246* (and the
-truncated boundary of H247): the whole *unscoped* MCP budget ladder stays mutually equal under truncation
-while *together* diverging from the *library-wide* `get_library_health()` `tiers`, filling the last open
-cell of the cross-tier × untruncated/truncated × CLI/MCP × scoped/unscoped fidelity-convergence matrix. The
-queue now sits at **6** un-started work slots (H243–H248) + the H218 checkpoint.
-
-**Prior run shipped H241** — the *cross-tier MCP convergence* under scope, the MCP twin of H213's
-deeper-tier tie (`tests/test_mcp.py`,
-`test_get_context_bundle_index_fidelity_ties_to_the_deeper_tier_headlines_over_mcp`, beside the
-H235/H236/H214 twins). H235 ties the scoped `index` `_Fidelity:_` line to `get_library_health(source=<S>)`
-*across tools* over MCP, and H227/H229 tie it to the CLI; but no test pinned that the *deeper budget
-tiers* an agent boots over MCP agree with the leanest one *over MCP*. The two are genuinely distinct
-renderers: `get_context_bundle(query, budget="connected"/"full", source=<S>)`'s `_Custody:_` headline
-renders its `fidelity` section via `render_custody_headline` (`custody_headline` over the kept items),
-a **different** function than the `index` line's `render_fidelity_holdings`, so their agreement is a
-cross-rendering guarantee, not the same code twice. Over a `web` scope of `full 2, partial 1, reference 1`
-(4 held) + one out-of-scope `arxiv` `full` (so the *unscoped* MCP audit names `{full 3, …}` — `source="web"`
-genuinely exercised), every title carrying "topic" so one query matches all 4 held < the default limit
-(no truncation — the H241 precondition; H242 is the truncated boundary), all three MCP budget tiers'
-fidelity counts are equal — `index ≡ connected ≡ full == {full 2, partial 1, reference 1}` — and equal the
-shared `custody_counts_by_source(...)["web"]["tiers"]`, so an agent that boots cheap on `index` then deepens
-to `connected`/`full` over MCP never sees the held-fidelity counts shift under it. The **drift-withholding
-asymmetry stays intact** (H214/H219): the leanest `index` bundle carries no `_Custody:_` headline and no
-`drift` token, while the deeper tiers carry `drift unverified 4` — the cross-tier tie is on the *fidelity*
-section alone, never a drift verdict the leanest tier didn't read. **Mutation in lockstep** — dropping
-`web:full1`'s `raw_text`+`content_hash` falls it `full`→`partial`, shifting all three MCP tiers to
-`{full 1, partial 2, reference 1}` together, proving each recomputes `get_fidelity` over the scoped set
-rather than echoing a shared snapshot. **Test-only** — all three tiers fold `get_fidelity` over the same
-scoped post-facet `items` in `build_context` (`index` via `render_fidelity_holdings(tiers, len(items))`,
-`connected`/`full` via `custody_headline(items, …)`), so the cross-tier tie is correct-by-construction; the
-slice pins the MCP twin of H213's deeper-tier convergence under scope. **Sabotage-verified non-vacuous:**
-folding the `connected`/`full` `_Custody:_` headline over a doubled item set (`items + items`) breaks
-`index == connected == full` (`{full 2, partial 1, reference 1}` ≠ `{full 4, partial 2, reference 2}`).
-Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run **restored it to ~6**
-by appending **H247** — the *direct MCP twin* of H213 (and the unscoped sibling of H241): the whole budget
-ladder is mutually equal *and* equal to `get_library_health()`'s `tiers`, all read over MCP and untruncated,
-the unscoped (no-`source`) MCP cross-tier convergence H214 (leanest line only) and H241 (scoped) leave
-between them. The queue now sits at **6** un-started work slots (H242–H247) + the H218 checkpoint.
-
-**Prior run shipped H240** — the *deeper-tier-headline analogue* of H234's leanest-line boundary
-(`tests/test_custody_convergence.py`,
-`test_scoped_budget_ladder_stays_equal_under_truncation_while_diverging_from_doctor`, beside the
-H234/H229/H213 ties). H213 ties the *unscoped* `index` ≡ `connected` ≡ `full` ≡ `doctor` (all four
-equal, untruncated); H234 (shipped last run) pins only the *leanest* `index` `_Fidelity:_` line
-diverging from `doctor --source <S>` under truncation. The untested cell was the *deeper* budget tiers
-under a cap: the `connected`/`full` `_Custody:_` headline's `fidelity` section is rendered by a
-**different** function (`custody_headline` over the kept items) than the `index` line
-(`render_fidelity_holdings`), yet both fold over the *same* post-cap kept set — `build_context` applies
-`--limit` at `search_items` regardless of budget, so the three tiers see one kept slice. Over
-`_seed_mixed_custody` (four `web` scrolls: full 2, partial 1, reference 1) + one out-of-scope `arxiv`
-`full` (so the *unscoped* audit names the library-wide `{full 3, …}` — `--source web` genuinely
-exercised), `context --budget {index,connected,full} --source web --limit 2` (cap `2 < 4 = held`)
-renders three fidelity sections all *equal to each other* (the kept-2 slice `{partial 1, reference 1}`,
-summing to `k`) and all `≠ doctor --source web`'s `custody.tiers` `{full 2, partial 1, reference 1}`
-(summing to the held count `4 > k`) — so no tier, leanest or deeper, inflates the bundle-kept holdings
-to a source-wide claim. **Lifting the cap** (`--limit 4` ≥ held) reconverges all four to the H213 scoped
-equality (`index ≡ connected ≡ full ≡` the scoped audit), proving the gap is exactly the cap.
-**Test-only** — all three tiers fold `get_fidelity` over the same post-cap `items` while `doctor
---source` folds over the whole scoped rows, so the cohesion-under-truncation is correct-by-construction;
-the slice pins the *budget-ladder-cohesion* axis (the ladder never disagrees *with itself* on holdings
-even under a cap — M2/principle-3 honesty). Sabotage-verified non-vacuous: folding the `connected`/`full`
-`_Custody:_` headline over a doubled item set (`items + items`) breaks `index == connected == full`
-(`{partial 1, reference 1}` ≠ `{partial 2, reference 2}`). Shipping one slice dropped the work queue to
-5, so per maintenance-rule §1 this run **restored it to ~6** by appending **H246** — the *unscoped twin*
-of H240 (the whole budget ladder stays mutually equal under truncation while *together* diverging from
-the *library-wide* `doctor` audit, the no-facet boundary H213/H240 leave between them). The queue now
-sits at **6** un-started work slots (H241–H246) + the H218 checkpoint.
-
-**Prior run shipped H239** — the *completeness complement* of H233's dedup
-(`tests/test_bundle.py`, `test_import_bundle_dry_run_new_and_held_partition_the_distinct_bundle_ids`,
-beside the H233 `…dedups_new_and_held…` and H226 `…names_which_items_are_new_vs_held` pins). H233 pins
-that each reviewable list **dedups** (no list over-claims a within-bundle repeat); the missing guarantee
-was that *together* `new`/`held` form a **complete, non-overlapping partition** of the bundle's distinct
-item ids — `set(new) ∪ set(held)` equals every distinct id the bundle holds and `set(new) ∩ set(held) ==
-∅`. Without it a preview could silently drop an id from review (in neither list — invisible to the
-operator confirming the merge) or double-count it (in both — a contradiction, since an id is either
-already held or not). Over a mixed, corrupt bundle (two would-be-new arxiv ids + one already-held
-wikipedia id, each with a within-bundle repeat, rendered via the H233 `_items_only_bundle` helper so the
-dups reach `_preview_import_bundle`), the test computes the distinct bundle ids *independently* via
-`parse_bundle` (the same parse the import uses, the partition target not a hardcode), then asserts
-`sorted(new + held)` equals that distinct set and `set(new).isdisjoint(held)` — a complete,
-non-overlapping partition. **Mutation-checked:** appending one more distinct would-be-new id extends
-`new` by exactly that id, leaves `held` untouched, and grows the union by one — the partition tracks the
-bundle's distinct set, never a stale snapshot. **Test-only** — `new_ids`/`held_ids` are built from the
-disjoint branches of `get_item(...) is not None` over every parsed item (`cli.py:1873`), so the union =
-the distinct ids and the intersection is empty by construction; the slice pins the contract (an operator
-never reviews a merge with an id missing from both lists — the M2 completeness ethos on the
-reviewable-partition axis). Sabotage-verified non-vacuous: adding the held id to `new_ids` as well as
-`held_ids` (breaking disjointness) puts `wikipedia:en:SQLite` in both lists, so `sorted(new + held)`
-carries it twice and the partition equality fails. Shipping one slice dropped the work queue to 5, so
-per maintenance-rule §1 this run **restored it to ~6** by appending **H245** — the *identity-level
-closure* of H233's count-level reality tie (the dry-run's `new`/`held` partition predicts the real
-import's per-id write effect: every `new` id transitions absent→held, every `held` id was already
-present, so the reviewable surface describes the *actual* merge, not merely the right count of rows). The
-queue now sits at **6** un-started work slots (H240–H245) + the H218 checkpoint.
-
-**Prior run shipped H238** — the *bundle*-surface corner of the H216/H224/H231 round-trip matrix
-(`tests/test_bundle.py`, `test_mixed_fidelity_bundle_rebuilds_byte_identically_across_a_fresh_library`,
-beside `test_mixed_fidelity_bundle_round_trips_across_a_fresh_library`). H216 pins that every fidelity
-*tier* survives `export bundle` → `import bundle`; H231 pins the rebuilt *scrolls* + compiled
-`library/` pages byte-for-byte — but only over the *whole-library JSONL backup* (`export items`). The
-untested cell was *bundle × bytes*: a `partial` capture's `content_hash`-less scroll, carried in a
-portable briefing rather than a whole-library JSONL dump, rebuilding byte-for-byte. It is a genuine
-guarantee, not the same code as H231: the bundle item block is `export items`' JSONL
-(`dump_items_export`) embedded in a *sentinel-fenced Markdown envelope* (`bundle.py` `_items_block`),
-a different envelope around the same `item_to_dict` rows. Over the mixed-fidelity `_mixed_fidelity_scope`
-(full + partial + reference, all in the `"database"` scope — the full/partial via their bodies, the
-reference via its title), a new `_render_mixed_library` helper renders the rendered-stage scrolls to
-disk (the reference holds no body → inserted as-is, minting no scroll) and compiles the KB; the test
-captures the source's `scrolls_dir`/`library_dir` trees, `export bundle "database"` (no cap → captures
-every item), `import bundle` into a fresh home, rebuilds via `doctor --fix` → `kb`, and asserts both
-`_read_tree` snapshots are byte-identical across the bundle boundary — the `partial`'s scroll included.
-A non-vacuous guard proves the tree spans both byte-shapes (≥1 scroll with a `content_hash:` line, ≥1
-without — the partial, which `render.py` renders with the `None` field omitted, a strictly different
-frontmatter byte-shape). **Test-only** — `import bundle` reconstructs identical rows via
-`parse_bundle`/`item_from_dict` (ADR 0082) and `doctor --fix` re-renders each scroll deterministically
-(`write_scroll`), so byte-identity is correct-by-construction; the slice pins it on the bundle envelope
-the whole-library byte-identity tests never exercise, completing the round-trip-depth matrix's fourth
-cell. Sabotage-verified non-vacuous: dropping `extracted_text` on the bundle's parse path
-(`item_from_dict`) strips the rebuilt `partial` scroll's `## Extracted Content` section, so the
-scroll-tree byte-identity fails — exactly the field-loss-through-the-bundle-envelope the slice guards.
-Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run **restored it to
-~6** by appending **H244** — the *bundle-artifact* analogue of `test_export_rebuild_is_byte_identical`'s
-point 2 (`export bundle <Q>` from a library rebuilt *from a bundle* is byte-identical to the original
-`export bundle <Q>`, so the self-contained, shareable briefing is itself reproducible across the
-round-trip boundary, not just its lossless `item_to_dict` core). The queue now sits at **6** un-started
-work slots (H239–H244) + the H218 checkpoint.
-
-**Prior run shipped H237** — the *corrupt-bundle analogue* of H220's byte-identity guarantee
-(`tests/test_bundle.py`,
-`test_import_bundle_dry_run_whole_events_block_matches_a_real_import_under_orphans`, beside the
-H230 orphan tests). H220 pins the dry-run summary byte-equal to the real import's only over a *clean*
-held/new scope; H230 pins only `orphaned`/`orphaned_items` equal across the two surfaces. The untested
-cell was the **whole** `events` block — `{imported, skipped, orphaned, orphaned_items}`, including the
-resolvable-event accounting — over a corrupt, orphan-bearing bundle. It is a genuine cross-implementation
-guarantee, not the same code twice: the dry-run counts resolvable events via `custody.preview_import_events`
-(tracking the within-batch dedup in a local `seen` set), the live import via `custody.import_events`
-(getting that dedup for free from its prior INSERT), so their agreement on `{imported, skipped}` *in the
-presence of partitioned-out orphans* is two functions reaching the same answer. Over a `_spliced_bundle`
-whose anchored events carry a within-bundle **duplicate** (forcing a non-trivial resolvable split —
-`imported 2`, `skipped 1`) beside three orphan events on two missing items (`orphaned 3`,
-`orphaned_items` 2, the doubly-orphaned id named once), the test dry-runs first (writing nothing —
-asserted via `get_item`/`item_events`), then real-imports into the same library, and asserts the dry-run's
-entire `events` block equals the real import's `events` block *and* equals the expected non-trivial block
-(non-vacuous in every field). Strictly stronger than H230's two-field tie: this also pins the
-`{imported, skipped}` accounting each surface computes through a *different* function. The live import's
-two distinct resolvable events land on disk (`item_events` shows `[drifted, rotted]`, the dup skipped),
-the orphans never (`item_events == []` for both missing ids). **Test-only** — `preview_import_events` and
-`import_events` are the read-only/writing twins of the same content-dedup over the shared
-`partition_resolvable_events`/`_orphan_item_ids` split, so the byte-identity is correct-by-construction;
-the slice pins it on the corrupt path the H220 clean-scope test never exercises. Sabotage-verified
-non-vacuous: stripping `preview_import_events`'s within-batch `seen` dedup makes the dry-run report
-`imported 3, skipped 0` while the live import (via `import_events`) still reports `imported 2, skipped 1`,
-so both the whole-block tie and the expected-block assertion fail — exactly the cross-function divergence
-the slice guards. Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run
-**restored it to ~6** by appending **H243** — the *both-axes-corrupt* analogue of H220's whole-summary
-byte-identity (the dry-run's entire top-level summary equals the real import's over a bundle corrupt on
-*both* the item-dedup *and* orphan-event axes at once, the union of H233 and H237 on one bundle, proving
-the two corruption axes don't cross-contaminate). The queue now sits at **6** un-started work slots
-(H238–H243) + the H218 checkpoint.
-
-**Prior run shipped H236** — the *MCP twin* of H234's scoped fidelity-divergence-under-truncation
-(`tests/test_mcp.py`,
-`test_get_context_bundle_index_fidelity_diverges_from_scoped_health_under_truncation`, beside the
-H232/H235 twins). H235 ties `get_context_bundle(query, budget="index", source=<S>)`'s `_Fidelity:_`
-tier counts to `get_library_health(source=<S>)`'s `tiers` *only* when one query matches all of `<S>`'s
-held items (no truncation); H236 pins the **boundary** where the bundle is capped, on the read *pair*
-an agent reaches over MCP. The two answer genuinely different questions: the bundle line is a
-*this-bundle* fact ("what does this bundle hold in full", over the post-cap kept set `len(items)`)
-while the scoped health audit is a *whole-source* fact ("what does this source hold in full", over
-every held row). Over a `web` scope of `full 2, partial 1, reference 1` (4 held) + one out-of-scope
-`arxiv` `full`, `get_context_bundle("topic", budget="index", source="web", limit=2)` (cap `2 < 4`)
-renders a `_Fidelity:_` line whose `(of N)` and tier counts both sum to the kept slice `2`, while
-`get_library_health(source="web")`'s `tiers` sum to web's whole held count `4` — so the two
-**genuinely differ** over MCP (bundle-kept `2` ≠ source-wide `{full 2, partial 1, reference 1}`), the
-leanest tier never inflating the holdings to a source-wide claim. Mutation in the test: lifting the
-cap to `limit=4` (≥ held) keeps every matching web item, so the post-cap kept set *is* web's whole
-scope and the line reconverges exactly to `get_library_health(source="web")`'s tiers — the H235
-equality, recovered, proving the gap is exactly the cap. The `source="web"` filter is non-vacuous on
-both reads: the *unscoped* MCP audit names `{full 3, partial 1, reference 1}` (arxiv's `full` lifts
-it), so neither the bundle-kept count nor the source-wide audit is ever the library-wide holdings;
-the scoped audit is also tied to the shared `custody_counts_by_source` primitive, not independently
-hardcoded. **Test-only** — `get_context_bundle` forwards to `build_context` (post-cap `len(items)` →
-`render_fidelity_holdings`) while `get_library_health(source=)` is the MCP twin of `doctor`
-(`run_doctor`) folding `get_fidelity` over the *whole* scoped rows, so the divergence (and its
-collapse on lift) is correct-by-construction; the slice pins the MCP twin of H234's semantic
-boundary (bundle-kept vs. source-wide). Sabotage-verified non-vacuous: passing the pre-cap `matched`
-count to `render_fidelity_holdings` (in place of `len(items)`) inflates the line's `(of N)` to the
-source-wide `4` even under the cap — exactly the silent-inflation bug the slice guards — and the
-`scope_n == cap == 2` divergence assertion fails. Shipping one slice dropped the work queue to 5, so
-per maintenance-rule §1 this run **restored it to ~6** by appending **H242** — the *MCP twin of H240*
-(and the truncated boundary of H241): the whole MCP budget ladder stays mutually equal under
-truncation while *together* diverging from `get_library_health(source=<S>)`, completing the
-leanest/cross-tier × untruncated/truncated × CLI/MCP fidelity-convergence matrix. The queue now sits
-at **6** un-started work slots (H237–H242) + the H218 checkpoint.
-
-**This run shipped H235** — the *MCP twin* of H229's scoped cross-tier fidelity convergence
-(`tests/test_mcp.py`, `test_get_context_bundle_index_fidelity_counts_tie_to_scoped_library_health`,
-beside the H222/H227/H232 twins). H229 ties the *CLI* `context --budget index --source <S>`'s
-`_Fidelity:_` tier counts to `doctor --source <S>`'s `custody.tiers`; H235 carries that scoped tie
-onto the read *pair* an agent actually reaches over MCP — `get_context_bundle(query, budget="index",
-source=<S>)` for the leanest-tier holdings and `get_library_health(source=<S>)` for the deep audit.
-Over a `web` scope of `full 2, partial 1, reference 1` + one out-of-scope `arxiv` `full`, the
-bundle's `_Fidelity:_` tier counts equal `get_library_health(source="web")`'s `tiers` (non-zero,
-`{full 2, partial 1, reference 1}`), with `(of 4)` confirming the query matched all of web's held
-items (no truncation — the H235 precondition; H236 is the truncated boundary), while the *unscoped*
-`get_library_health()` names the library-wide `{full 3, partial 1, reference 1}` (arxiv's `full`
-lifts it; scoping non-vacuous on the MCP read). Tied to the shared `custody_counts_by_source`
-primitive, not independently hardcoded. Mutation in the test: dropping `web:full1`'s
-`raw_text`+`content_hash` falls it `full`→`partial`, shifting both the scoped MCP `_Fidelity:_` line
-and `get_library_health(source="web")`'s tiers to `{full 1, partial 2, reference 1}` in lockstep —
-proving each recomputes `get_fidelity` over the scoped set rather than echoing a cache. **Test-only**
-— `get_context_bundle` forwards to `build_context` (post-facet `len(items)` →
-`render_fidelity_holdings`) and `get_library_health` is the MCP twin of `doctor` (`run_doctor`),
-both folding over the same scoped rows, so the tie is correct-by-construction; the slice pins it on
-the read pair an agent reaches over MCP. Sabotage-verified non-vacuous on **both** axes: neutering
-`run_doctor`'s source filter leaks the whole-library `full 3` into
-`get_library_health(source="web")`'s tiers (fails the `tiers == {full 2, …}` non-vacuity assert),
-and recomputing the bundle line over the whole library — ignoring the facet — leaks `full 3` into
-the line (fails the `index == tiers` tie). Shipping one slice dropped the work queue to 5, so per
-maintenance-rule §1 this run **restored it to ~6** by appending **H241** — the *cross-tier MCP
-convergence* under scope (the scoped `index` `_Fidelity:_` counts ≡ the scoped `connected`/`full`
-`_Custody:_` headline's `fidelity` section, both read over MCP; the MCP twin of H213's deeper-tier
-tie). The queue now sits at **6** un-started work slots (H236–H241) + the H218 checkpoint.
-
-**This run shipped H234** — the *boundary/complement* of H229's scoped cross-tier fidelity
-convergence (`tests/test_custody_convergence.py`,
-`test_scoped_index_fidelity_holdings_diverge_from_doctor_under_truncation`, beside the H229 tie).
-H229 ties the scoped `index` `_Fidelity:_` line to `doctor --source <S>`'s `custody.tiers` *only
-when one query matches all of `<S>`'s held items* (no truncation); the gap was the **truncated**
-case, where the two answer genuinely different questions — the line is a *this-bundle* fact
-("what does this bundle hold in full", over the post-cap kept set `len(items)`) while the audit is
-a *whole-source* fact ("what does this source hold in full", over every held row). Over
-`_seed_mixed_custody` (four `web` scrolls: `full 2, partial 1, reference 1`) + one out-of-scope
-`arxiv` `full`, `context --budget index --source web --limit 2` (cap `2 < 4 = held`) renders a
-`_Fidelity:_` line whose `(of N)` and tier counts both sum to the kept slice `2`, while
-`doctor --source web`'s `custody.tiers` sum to web's whole held count `4` — so the two
-**genuinely differ** (bundle-kept `2` ≠ source-wide `{full 2, partial 1, reference 1}`), the
-leanest tier never inflating the holdings to a source-wide claim it didn't render. Mutation in the
-test: lifting the cap to `--limit 4` (≥ held) keeps every matching web item, so the post-cap kept
-set *is* web's whole scope and the line reconverges exactly to `doctor --source web`'s tiers — the
-H229 equality, recovered, proving the gap is exactly the cap, nothing else. The `--source web`
-filter is non-vacuous on both reads: the *unscoped* audit names `{full 3, partial 1, reference 1}`
-(arxiv's `full` lifts it), so neither the bundle-kept count nor the source-wide audit is ever the
-library-wide holdings. **Test-only** — `build_context` passes the post-cap `len(items)` to
-`render_fidelity_holdings` while `run_doctor(source=)` folds `get_fidelity` over the whole scoped
-rows, so the divergence (and its collapse on lift) is correct-by-construction; the slice pins the
-semantic boundary (bundle-kept vs. source-wide) the H229 untruncated test never reaches.
-Sabotage-verified non-vacuous: passing the pre-cap `matched` count to `render_fidelity_holdings`
-(in place of `len(items)`) inflates the line's `(of N)` to the source-wide `4` even under the cap
-— exactly the silent-inflation bug the slice guards — and the `scope_n == 2` divergence assertion
-fails. Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run
-**restored it to ~6** by appending **H240** — the *deeper-tier-headline analogue* of H234 (the
-whole `index`/`connected`/`full` budget ladder stays mutually equal under truncation while
-*together* diverging from `doctor --source <S>`, reconverging to the H213 scoped equality when the
-cap lifts). The queue now sits at **6** un-started work slots (H235–H240) + the H218 checkpoint.
-
-**This run shipped H233** — the *dedup* half of H226's reviewable preview lists
-(`tests/test_bundle.py`, `test_import_bundle_dry_run_dedups_new_and_held_under_within_bundle_dup_ids`
-+ the new `_items_only_bundle` helper, beside the H226 `new`/`held` pin). H226's `new`/`held`
-are deduped sets and `len(new) == imported` holds by construction over a *well-formed* bundle;
-the gap was the **corrupt** case a naive id-list would phantom-inflate. A spliced bundle whose
-custody block repeats both a would-be-new id and an already-held id (modeled by rendering the
-real `_items_block([new, new, held, held])`, since `parse_bundle` appends every record without
-deduping, `bundle.py:667`, so the dups reach `_preview_import_bundle`) now provably names each
-distinct id **exactly once** — `new == ["arxiv:1706.03762"]`, `held == ["wikipedia:en:SQLite"]` —
-while `items`/`imported`/`skipped` count the raw occurrences (4 items → `imported 1, skipped 3`),
-so the reviewable surface never over-claims more distinct items than the bundle holds (the M2
-ethos on the dedup axis). The test pins the distinguishing asymmetry — `len(new) == imported == 1`
-survives the duplicate (the count is the distinct-new count), while `len(held) < skipped` (the
-held-id repeat is skipped twice but named once, and the dup-new also counts a skip) — and that
-the dry-run's raw `imported`/`skipped` equal a **real** import of the same corrupt bundle (the
-preview never drifts from reality, even under dups; the live import stays terse — no `new`/`held`).
-**Test-only** — the set-based collection in `_preview_import_bundle` dedups by construction, so
-the slice pins it on the corrupt path the H226 clean-scope test never exercises.
-Sabotage-verified non-vacuous: swapping the dedup sets for naive append-lists inflates `new` to
-two entries and fails the test. Shipping one slice dropped the work queue to 5, so per
-maintenance-rule §1 this run **restored it to ~6** by appending **H239** — the *completeness
-complement* of H233 (the dry-run `new`/`held` lists *partition* the bundle's distinct ids: union
-= the distinct set, intersection empty, so no touched id is invisible to review or in both lists).
-The queue now sits at **6** un-started work slots (H234–H239) + the H218 checkpoint.
-
-**This run shipped H231** — the byte-depth sibling of H224's tier-count guarantee
-(`tests/test_roundtrip.py`, `test_whole_library_backup_rebuilds_byte_identically_across_tiers`,
-beside `test_whole_library_backup_is_tier_lossless`). `test_export_rebuild_is_byte_identical`
-already pins the rebuilt *rendered scrolls* and *compiled `library/` pages* are byte-identical,
-but only over the all-`full` `_seed_items` — so a `partial` capture's scroll, rendered with
-**no** `content_hash` to fingerprint it (`render.py` omits a `None` frontmatter field, a
-strictly different byte-shape than a `full` scroll's), had never been proven to rebuild
-byte-for-byte. Reusing H224's `_mixed_fidelity_seed` (2 `full` + 1 `partial` + 1 `reference`),
-the test captures the source's `scrolls_dir`/`library_dir` trees, rebuilds in a fresh home via
-the documented `import items` → `doctor --fix` → `kb` restore, and asserts both `_read_tree`
-snapshots are byte-identical across the boundary — so the lossless round-trip is a guarantee in
-the rendered *bytes* of a degraded capture, not only in its tier count. A non-vacuous guard
-proves the tree genuinely spans both byte-shapes: at least one scroll carries a `content_hash:`
-line (a `full` capture) and at least one does not (the `partial`), so byte-identity here is a
-strictly stronger claim than over the all-`full` tree. **Test-only** — `import items` carries
-every content field (`item_to_dict`/`item_from_dict`, ADR 0082) and `doctor --fix` re-renders
-each scroll deterministically from those rows (`write_scroll`), so byte-identity is
-correct-by-construction; the slice pins it on the partial tier the all-`full` byte-identity
-test never reaches. Sabotage-verified non-vacuous: dropping `extracted_text` in
-`item_from_dict` strips every scroll's `## Extracted Content` section on rebuild (the
-`partial`'s included), and the byte-identity equality fails. (A render-side perturbation applied
-symmetrically to both the source render and the rebuild correctly leaves byte-identity intact —
-the guarantee is that `import items` carries the fields, not that `write_scroll` is constant.)
-Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run **restored
-it to ~6** by appending **H238** — the *bundle*-surface corner of the H216/H224/H231 round-trip
-matrix (the scoped `export bundle` → `import bundle` round-trip rebuilds the `partial` scroll
-byte-for-byte too; the bundle item block is `export items`' JSONL in a sentinel-fenced Markdown
-envelope, a genuinely different envelope around the same rows). The queue now sits at **6**
-un-started work slots (H233–H238) + the H218 checkpoint.
-
-**This run shipped H230** — the machine-readable half of H225 (`src/scrolls/cli.py`
-`_orphan_item_ids`, `tests/test_bundle.py`, `docs/cli.md`). H225 named the distinct orphan
-`item_id`s in the `{"warning": …}` *stderr* string; an agent piping `import bundle` *stdout*
-still saw only the `events.orphaned` event count and had to scrape the human warning prose to
-learn *which* items dangle. The import summary now carries `events.orphaned_items` beside the
-count — the distinct orphan `item_id`s, sorted + deduped + **uncapped** — on **both** the live
-import and the `--dry-run` preview, always present (`[]` is the honest "we checked, none
-dangled", the M2 affirmative). A new `_orphan_item_ids` helper is the single source of truth
-shared by the structured field and `_warn_orphan_events` (which still bounds its *named* list
-with a `(+N more)` tail), so the two surfaces never disagree on the orphan set — the cap is a
-human-readability concern, never a structured-field truncation. Two tests pin it:
-`test_import_bundle_summary_names_which_items_orphaned` (a 3-event / 2-item spliced bundle's
-`orphaned_items == ["arxiv:2401.00001", "wikipedia:en:Ghost"]` — the doubly-orphaned id named
-once, distinct-item count, while `orphaned` stays the event count 3 — byte-equal between the
-live import and the dry-run) and `test_import_bundle_orphaned_items_is_uncapped_while_the_warning_bounds`
-(a `>_MAX_ORPHAN_ITEM_IDS` spliced bundle's `orphaned_items` lists *every* distinct id while
-the stderr warning shows exactly five + a `(+N more)` tail — structured completeness vs. human
-bound). The honest-zero case (`…_reports_zero_orphans_when_every_event_resolves`) now also pins
-`orphaned_items == []`. Eight existing exact-equality `events` assertions (`test_bundle.py` ×7,
-`test_custody_convergence.py` ×1) were updated to the new always-present shape, and `docs/cli.md`'s
-orphan-restore paragraph + the dry-run/import examples now document the structured field.
-Sabotage-verified non-vacuous: capping `_orphan_item_ids` at `_MAX_ORPHAN_ITEM_IDS` drops the
-two tail ids and fails the uncapped test. **Test + small source** — the helper lift and two
-one-line summary folds; the diagnosability the human warning already gave (H225) now rides the
-machine channel too. Shipping one slice dropped the work queue to 5, so per maintenance-rule §1
-this run **restored it to ~6** by appending **H237** (the corrupt-bundle analogue of H220's
-byte-identity — the dry-run's whole `events` block equals the real import's over an
-orphan-bearing bundle, pinning that the two distinct event-accounting functions agree under
-partitioned-out orphans). The queue now sits at **6** un-started work slots (H231, H233–H237)
-+ the H218 checkpoint.
-
-**This run shipped H229** — the scoped sibling of H213's cross-tier fidelity
-convergence (`tests/test_custody_convergence.py`,
-`test_scoped_index_fidelity_line_ties_to_doctor_source_tiers`, beside the H213 unscoped
-tie). Over `_seed_mixed_custody` (web `full 2, partial 1, reference 1`) + one out-of-scope
-arxiv `full`, `context --budget index --source web` (query `topic`, matching all of web's
-held items) carries a `_Fidelity:_` line whose tier counts ≡ `doctor --source web`'s
-`custody.tiers` (`{full 2, partial 1, reference 1}`), tied to the shared
-`custody_counts_by_source` primitive, with `(of 4)` confirming no truncation (the H229
-precondition; H234 is the truncated boundary) — while the *unscoped* audit names the
-library-wide `{full 3, partial 1, reference 1}` (scoping non-vacuous). Mutation-checked:
-dropping `web:full1`'s `raw_text`+`content_hash` falls it `full`→`partial`, shifting both the
-scoped `_Fidelity:_` line and `doctor --source web`'s tiers to `{full 1, partial 2,
-reference 1}` in lockstep. **Test-only** — `build_context` passes the post-facet `len(items)`
-to `render_fidelity_holdings` and `run_doctor(source=)` folds `get_fidelity` over the scoped
-rows, so the tie is correct-by-construction. Sabotage-verified non-vacuous on **both** axes:
-neutering `run_doctor`'s source filter (`doctor.py:157`) leaks the whole-library `full 3`
-into the scoped audit, and recomputing the `index` `_Fidelity:_` tiers over the whole library
-(ignoring the facet) leaks `full 3` into the line — each breaks the `index == tiers` tie.
-Shipping one slice dropped the work queue to 5, so per maintenance-rule §1 this run
-**restored it to ~6** by appending **H236** (the MCP twin of H234 — the scoped leanest-tier
-holdings diverge honestly from `get_library_health(source=<S>)`'s `custody.tiers` *under
-truncation* over MCP, collapsing back to the H235 equality when the cap lifts). The queue now
-sits at **6** un-started work slots (H230–H231, H233–H236) + the H218 checkpoint.
-
-**Buffer-health note (2026-06-20, H207 checkpoint + H212/H213).** The earlier
-H207-checkpoint run shipped **H210**
-(the CLI refresh-debt *act* dogfood — read the `context` `_Refresh:_` pointer → run the
-scoped `classify --stale --source <S>` / `kb --stale --source <S>` it names → the named
-axis/source clears while the untouched axis persists; the refresh-axis twin of H206's
-drift-act triage), which **closed the per-source custody convergence theme**: every read
-*and* act surface, on both the drift and enrichment/summary axes, over both the CLI and
-MCP, now ties to the `doctor` audit, and the self-healing dogfood is pinned across both
-surfaces and both act axes (H204/H206/H210). With that theme exhausted, the H207
-checkpoint **opened a fresh horizon** — *budget/tier custody honesty* — backed by a
-verified gap (the `index` tier hid fidelity, `context.py:203`) and vision principle 3,
-and that run also **shipped its lead slice H212** (the `index`-budget `_Fidelity:_`
-holdings line — fidelity travels even at the leanest tier, drift honestly does not).
-
-**This run shipped H213 and H214** — the cross-tier *and* cross-surface fidelity
-convergence ties for the H212 line. **H213**: the `index` `_Fidelity:_` counts ≡ the
-`connected`/`full` `_Custody:_` headline's `fidelity` section ≡ `doctor`'s
-`custody.tiers` over one mixed-fidelity scope (full 2, partial 1, reference 1; ≥2
-tiers, non-vacuous), mutation-checked (drop a body → the tier shifts `full`→`partial`
-on every surface in lockstep), folded into `tests/test_custody_convergence.py`.
-**H214**: the MCP twin — `get_context(budget="index")` carries the same line,
-byte-identical to the CLI, and honestly omits the drift verdict (no ledger read);
-sabotage-verified non-vacuous in `tests/test_mcp.py`. Shipping two slices dropped the
-queue, so per maintenance-rule §1 that run **kept it at ~6** by appending three
-concrete, PRD-mapped slices (§5: no invented work) — **H219** (the MCP completeness
-twin of H215), **H220** (an `import bundle --dry-run` preview built on H217's
-orphan-event accounting), and **H221** (the leanest tier's `(of N)` scope-honesty
-under truncation).
-
-**This run shipped H219** — the MCP twin of the H215 CLI completeness fold
-(`tests/test_completeness.py`,
-`test_mcp_index_budget_names_fidelity_holdings_but_no_drift_verdict`), placed beside
-it so the M2 anti-fabrication contract is pinned on the read an agent actually reaches
-over MCP. `get_context_bundle(query, budget="index")` names its `_Fidelity: full N
-(of K)._` holdings (a ledger-free fact; fidelity travels, vision principle 3) and
-carries no `_Custody:`/drift token, while the *same* query at `connected`+ — over a
-**recorded** `drifted` verdict — does carry the `_Custody:_` headline's `drift drifted
-1` section, so the `index` silence is a genuine withholding, not an empty scope. Where
-H214 already pinned the MCP fidelity *line* and its CLI byte-identity, H219 adds the
-*completeness* framing: the honest absence is proven against a verdict the deeper tiers
-surface. Sabotage-verified non-vacuous (flipping the `index`-tier ledger gate so the
-`_Custody:_` headline leaks suppresses the dedicated `_Fidelity:_` line, failing the
-test). With H215 (CLI) and H219 (MCP) both shipped, the budget/tier-honesty
-*drift-withholding* contract holds on both surfaces. Shipping one slice dropped the
-work queue to 5, so per maintenance-rule §1 this run **restored it to ~6** by appending
-**H223** (the *facet*-axis sibling of H221's *truncation*-axis `(of N)` scope-honesty —
-the `index` fidelity holdings name only the agent's scoped subset, never the
-library-wide tiers). The queue now sits at **6** un-started work slots (H216–H217 +
-H220–H223) + the H218 checkpoint, which re-derives. The full §2 refresh already ran at
-today's H207 checkpoint, so this was the incremental §1 update.
-
-**This run shipped H216** — the mixed-fidelity bundle round-trip invariant, opening
-the *portable-bundle round-trip depth* horizon (`tests/test_bundle.py`,
-`test_mixed_fidelity_bundle_parse_preserves_each_tier` +
-`test_mixed_fidelity_bundle_round_trips_across_a_fresh_library`). The other
-round-trip ties only ever exercise an all-`full` fixture, so the `partial`/`reference`
-tiers were never proven portable end-to-end. The new tests build a scope spanning all
-three tiers (a `full` body, an extracted-but-unhashed `partial`, and a body-less
-`reference` pointer that rides its query term in the title), `export bundle` it, and
-re-import into a fresh library — asserting each item's `get_fidelity` tier is identical
-across the boundary (exact-equality, so it catches a downgrade *or* a spurious
-promotion). Sabotage-verified non-vacuous: dropping the body in `item_from_dict`
-falls `full`→`partial` and `partial`→`reference` and both tests fail. The work is
-*test-only* — the round-trip is lossless by construction (`item_to_dict`/`item_from_dict`
-carry every field; `insert_item` writes every column), so H216 pins that portability is
-*tier-lossless*, not just full-lossless (vision principle 3 — fidelity travels with every
-result). The fixture also surfaced a correctness fact now noted in the H224 entry:
-a `full` body backed by *both* `raw_text` and `extracted_text`+`content_hash` stays
-`full` if either survives — the tier rule is robust, not brittle. Shipping one slice
-dropped the work queue to 5, so per §1 this run **restored it to ~6** by appending
-**H224** (the whole-library `export items`/`import items` backup sibling of H216 — the
-*other* portable surface, only ever exercised all-`full` in `test_roundtrip.py`). The
-queue now sits at **6** un-started work slots (H217 + H220–H224) + the H218 checkpoint.
-
-**This run shipped H217** — bundle import is honest about orphan custody events,
-opening the *event-complete* leg of the portable-bundle round-trip-depth horizon
-(`src/scrolls/custody.py`, `src/scrolls/cli.py`, `tests/test_bundle.py`). The new
-`custody.partition_resolvable_events` splits a bundle's parsed events into those that
-resolve to a held-or-imported item and *orphans* (an `item_id` matching no such item);
-`_cmd_import_bundle` imports only the resolvable ones, counts the orphans in the summary
-(`events.orphaned`, **always present** — `0` is the honest affirmative "we checked, none
-dangled"), and emits a `{"warning": …}` on stderr when non-zero. A well-formed export
-never produces orphans (its events ride only for in-scope items, all in the items block),
-so this guards the corrupt/hand-edited case: importing such an event would write a
-dangling ledger row for an item `scrolls show` 404s on — `history`/`facets drift` would
-read a phantom — so it is neither silently retained nor silently dropped (the M2
-anti-fabrication ethos, on the import-completeness axis; custody §2.4). The whole-library
-`import events` restore (H72) deliberately stays orphan-tolerant — that path restores
-events independently of items, order the operator's (cli.md) — so the asymmetry is
-principled, not accidental. Sabotage-verified non-vacuous: neutering the partition to
-treat every event as resolvable fails both the orphan-count test and the
-no-dangling-row test. Three existing exact-equality `events` assertions
-(`test_bundle.py` ×2, `test_custody_convergence.py` ×1) were updated to the new
-always-present `orphaned: 0` shape. Shipping one slice dropped the work queue to 5, so
-per maintenance-rule §1 this run **restored it to ~6** by appending **H225** (the
-*diagnosable* half of H217 — name *which* items the orphan events dangle on, so a
-corrupt bundle is fixable, not just flagged). The queue now sits at **6** un-started work
-slots (H220–H225) + the H218 checkpoint.
-
-**This run shipped H220** — `scrolls import bundle --dry-run`, the read-only preview
-of a bundle merge (`src/scrolls/cli.py` `_preview_import_bundle`,
-`src/scrolls/custody.py`, `tests/test_bundle.py`). An agent handed a portable
-"take it with me" bundle can now see *exactly* what an import would add vs. skip —
-the same `{imported, skipped, items, events}` summary the real import prints, plus a
-`"dry_run": true` marker — **without writing**, the read-only sibling of the
-custody-safe `INSERT OR IGNORE` import (ADR 0082). Item counts come from `get_item`
-existence (tracking within-bundle dups in a `seen_item_ids` set, so the preview is
-exact, not just existence-based); event counts from the new
-`custody.preview_import_events` (the writer's content-dedup, read-only, tracking
-within-batch dups in a local `seen` set instead of via the prior INSERT); the orphan
-split from `partition_resolvable_events`, now taking a `known_ids` argument so the
-bundle's own item ids anchor the partition — a real import inserts those rows
-*before* partitioning, so a preview into an **empty** library resolves the bundle's
-events instead of mis-flagging every one as an orphan (the key correctness subtlety,
-sabotage-verified: neutering `known_ids` fails all three new tests). The summary is
-pinned **byte-for-byte equal to the subsequent real import's** (sans `dry_run`) over
-a mixed held/new scope (`test_import_bundle_dry_run_counts_match_a_real_import`), so
-the preview can never drift from reality; the dry-run also writes nothing
-(`test_import_bundle_dry_run_previews_without_writing`) and is honest about orphan
-events exactly as the real import (`test_import_bundle_dry_run_previews_orphan_events`,
-warning on stderr, nothing written). Shipping one slice dropped the work queue to 5,
-so per maintenance-rule §1 this run **restored it to ~6** by appending **H226** (the
-*reviewable* half of H220 — name *which* scrolls are new vs. already held in the
-preview JSON, so an agent confirms the merge adds what it expects, not just how much).
-The queue now sits at **6** un-started work slots (H221–H226) + the H218 checkpoint.
-
-**This run shipped H221** — the `index` `_Fidelity:_` line's `(of N)` scope is honest
-under truncation (`tests/test_context.py`,
-`test_context_index_fidelity_scope_is_honest_under_truncation`). The leanest tier's
-holdings line counts the *in-bundle* set — `len(items)`, the kept post-cap
-representations — not the library-wide matched total, so when the bundle is capped the
-`(of N)` names only what the bundle saw. The test seeds a mixed-fidelity scope larger
-than the cap (3 `full` + 3 `partial`, all matching `database`) and runs `context
---budget index --limit 4`: pigeonhole forces the kept 4 to span *both* tiers (only 3 of
-either exist), so the in-bundle split (sums to 4) is provably not the library-wide `full
-3, partial 3` (sums to 6). It pins three ties — the `_Fidelity:` `(of N)` equals the
-`_Coverage: the top 4 of 6` line's `returned` (4, never the `matched` 6, the two numbers
-parsed from the rendered lines so they're tied, not independently hardcoded), the tier
-counts sum to that kept set (4, not 6), and the kept set is genuinely mixed. The work is
-**test-only**: the production line already passes `len(items)` to
-`render_fidelity_holdings` (`src/scrolls/context.py:252`), so the truncation honesty is
-correct-by-construction — the slice *pins* it (the depth-axis sibling of H215's
-drift-absence honesty; the *fidelity* counterpart of the Coverage line's match-set
-honesty). Sabotage-verified non-vacuous on **both** guards: passing `matched` as the
-scope N fails the `(of N)` tie, and folding the library-wide tier counts under the kept
-`(of N)` fails the tier-sum tie. Shipping one slice dropped the work queue to 5, so per
-maintenance-rule §1 this run **restored it to ~6** by appending **H227** (the MCP twin of
-H223's *facet*-axis scope-honesty — the leanest tier names only the agent's facet scope on
-the read reached over MCP, byte-identical to the CLI). The queue now sits at **6**
-un-started work slots (H222–H227) + the H218 checkpoint.
-
-**This run shipped H222** — the MCP twin of H221's `(of N)` scope-honesty under
-truncation (`tests/test_mcp.py`,
-`test_get_context_bundle_index_fidelity_scope_is_honest_under_truncation`, beside the
-H214 twin). The leanest tier's holdings-scope honesty under a cap now holds on the read
-an agent actually reaches over MCP: `get_context_bundle("database", budget="index",
-limit=4)` over a >`limit` mixed-fidelity scope (3 `full` + 3 `partial`) carries
-`_Fidelity: … (of 4)._` whose `(of 4)` equals the `_Coverage: the top 4 of 6` line's
-`returned` (parsed from both rendered lines, so tied not hardcoded — never the
-library-wide `matched` 6), whose tier counts sum to that kept set (4, not 6), and whose
-split is provably mixed (pigeonhole: 4 from {3 full, 3 partial} spans both tiers). The
-distinguishing MCP-twin assertion is the H214 byte-identity *under truncation*: the
-bundle's `_Fidelity:_` line is byte-identical to the CLI's `context --budget index
---limit 4` (both are `build_context`, so the agent-facing bundle and the CLI never
-diverge on the truncated holdings line either). The work is **test-only**:
-`get_context_bundle` is a read-through of `build_context`, which already passes
-`len(items)` (the kept post-cap representations) to `render_fidelity_holdings`, so the
-truncation honesty is shared-by-construction and the slice pins it on the MCP surface.
-Sabotage-verified non-vacuous on **both** guards in `context.py`: passing `matched` as
-the scope N fails the `(of N)` tie (6 ≠ 4), and inflating the tier counts under the kept
-`(of N)` fails the tier-sum tie (6 ≠ 4). Shipping one slice dropped the work queue to 5,
-so per maintenance-rule §1 this run **restored it to ~6** by appending **H228** (the
-*composition* of H221's truncation axis and H223's facet axis — the `index`
-`_Fidelity:_` `(of N)` honest when both scope-narrowing filters apply at once, neither
-silently reverting to a pre-filter count). The queue now sits at **6** un-started work
-slots (H223–H228) + the H218 checkpoint.
-
-**This run shipped H223** — the `index` `_Fidelity:_` holdings honor the active facet
-scope (`tests/test_context.py`,
-`test_context_index_fidelity_scope_honors_the_active_facet`, beside the H221
-truncation pin). The leanest tier's holdings line counts the *post-facet* kept set
-(the representations `build_context` keeps after the `source`/`category`/`stage`/`tag`/
-`concept` filter, `len(items)`), so a scoped `context --budget index --source <S>`
-names only `<S>`'s fidelity tiers and `(of k)` scope — never the library-wide holdings
-of a multi-source library. The fixture is multi-source *and* mixed-fidelity within one
-source (web full 1 + partial 1, arxiv full 2), so web's scoped holdings
-(`{full 1, partial 1}`, `(of 2)`) are provably a strict subset of — and a different
-tier split than — the library-wide holdings (`{full 3, partial 1}`, `(of 4)`); the
-test reads both the scoped and unscoped `_Fidelity:_` line and asserts the scoped
-counts + `(of N)` equal web's subset (tied to the shared `custody_counts_by_source`
-primitive, not independently hardcoded) while the unscoped names the whole library,
-the two genuinely differing on both axes (non-vacuous). The *facet*-axis sibling of
-H221's *truncation*-axis `(of N)` scope-honesty: the holdings fact never over-claims
-beyond the agent's chosen scope. **Test-only** — the production already passes the
-post-facet `len(items)`/`custody_counts(items, {})` to `render_fidelity_holdings`
-(`context.py:251`), so the facet honesty is correct-by-construction and the slice pins
-it. Sabotage-verified non-vacuous: recomputing the holdings over the whole library
-(ignoring the facet) makes the scoped run leak `{full 3, partial 1}` and the test
-fails on both the tier-count and `(of N)` guards. Shipping one slice dropped the work
-queue to 5, so per maintenance-rule §1 this run **restored it to ~6** by appending
-**H229** (the scoped sibling of H213's cross-tier convergence — the scoped `index`
-`_Fidelity:_` counts ≡ `doctor --source <S>`'s `custody.tiers`, tying the leanest-tier
-scoped holdings to the canonical scoped audit). The queue now sits at **6** un-started
-work slots (H224–H229) + the H218 checkpoint.
-
-**This run shipped H225** — `import bundle` names *which* items the orphan custody
-events dangle on, the diagnosable half of H217 (`src/scrolls/cli.py`
-`_warn_orphan_events`, `tests/test_bundle.py`). H217 surfaced an orphan *event count*
-(`events.orphaned`) and a generic "N orphan custody event(s) … not in this bundle"
-warning — enough to know a take-it-with-me bundle is corrupt, not *what to fix*. The
-warning now leads with that same event count, then names the distinct orphan `item_id`s
-those events point at (sorted, deduped, bounded with a `(+N more)` tail at
-`_MAX_ORPHAN_ITEM_IDS = 5`, the readable-surface idiom), so "3 orphan events" becomes
-"… not in this bundle …: `arxiv:2401.00001`, `wikipedia:en:Ghost`" and the operator can
-see which rows the items block is missing (a splice/truncation), not just that it is
-corrupt. The leading count stays the *event* count; the named id list is the
-*distinct-item* count, so two events on one missing item name it once
-(`test_import_bundle_warning_names_which_items_the_orphans_dangle_on` — 3 events / 2
-items, the doubly-orphaned id named once). Because `_warn_orphan_events` is shared by the
-live import and the `--dry-run` preview (H220), both surfaces get the diagnosable ids for
-free. A second test pins the `(+N more)` bound (`…_orphan_warning_bounds_the_id_list` —
-`_MAX_ORPHAN_ITEM_IDS + 2` distinct orphans show exactly five ids + a `(+2 more)` tail,
-the leading count staying the full event count). `docs/cli.md`'s orphan-restore paragraph
-now documents the diagnosable warning. Shipping one slice dropped the work queue to 5, so
-per maintenance-rule §1 this run **restored it to ~6** by appending **H230** (the
-machine-readable half of H225 — carry the orphan ids into the *structured* import summary
-`events.orphaned_items`, uncapped, so a programmatic consumer gets the same diagnosability
-the human warning does). The queue now sits at **6** un-started work slots (H224, H226–H230)
-+ the H218 checkpoint.
-
-**This run shipped H224** — the whole-library JSONL backup is *tier-lossless* too, the
-H216 round-trip guarantee on the other portable surface (`tests/test_roundtrip.py`,
-`test_whole_library_backup_is_tier_lossless`). Every round-trip test before it builds an
-all-`full` library (`_seed_items` — raw + hash at a rendered stage, so
-`test_rebuilt_library_passes_its_own_custody_audit` asserts `custody.tiers["full"] ==
-len(seed)`), so the `partial`/`reference` tiers were never proven to survive the
-*whole-library* backup the way H216 proved they survive the *scoped bundle*. The new test
-builds a mixed-fidelity library (`_mixed_fidelity_seed`: 2 `full` raw+hash captures, a
-`partial` whose extracted text survives but carries no raw body or `content_hash`, and a
-body-less `reference` pointer held at `detected` stage), reads `doctor`'s `custody.tiers`
-as the source spread (`{full 2, partial 1, reference 1}`, asserted non-vacuous — ≥2
-non-zero tiers), then rebuilds in a fresh home via the documented backup commands
-(`export items` → `import items` → `doctor --fix` → `kb`) and asserts the rebuilt
-`custody.tiers` *equals* that spread — no rebuild-side downgrade — plus a clean audit
-(`score 100`, `issues 0`: an honest partial/reference is custody, not a violation). The
-work is **test-only**: `import items` carries every content field (`item_to_dict` /
-`item_from_dict`, ADR 0082) and `doctor --fix` rebuilds only derived artifacts (scroll
-files, FTS), never the row fields `get_fidelity` reads from, so tier-losslessness is
-correct-by-construction and the slice pins it. Sabotage-verified non-vacuous: dropping
-`raw_text`+`content_hash` in `item_from_dict` downgrades both `full` items to `partial`
-(`{full 2, partial 1}` → `{full 0, partial 3}`) and the equality fails. Shipping one slice
-dropped the work queue to 5, so per maintenance-rule §1 this run **restored it to ~6** by
-appending **H231** (the byte-depth sibling of H224 — the byte-identical whole-library
-rebuild holds across mixed fidelity tiers, deepening tier *counts* to the `partial`
-scroll's rendered *bytes*, never exercised by the all-`full` fixture). The queue now sits
-at **6** un-started work slots (H226–H231) + the H218 checkpoint.
-
-**This run shipped H227** — the MCP twin of H223's *facet*-axis `(of N)` scope-honesty
-(`tests/test_mcp.py`, `test_get_context_bundle_index_fidelity_scope_honors_the_active_facet`,
-beside the H214/H222 twins). The leanest tier's facet-scope honesty now holds on the read
-an agent actually reaches over MCP: `get_context_bundle("database", budget="index",
-source="web")` over a multi-source, mixed-fidelity library (web full 1 + partial 1, arxiv
-full 2) carries a `_Fidelity:_` line whose tier counts (`{full 1, partial 1}`) and `(of 2)`
-scope equal web's post-facet subset — tied to the shared `custody_counts_by_source`
-primitive, never independently hardcoded — while the *unscoped* twin names the library-wide
-holdings (`{full 3, partial 1}`, `(of 4)`); the two genuinely differ on both axes
-(non-vacuous). The distinguishing MCP-twin assertion is the H214 byte-identity *under facet
-scope*: the scoped bundle's `_Fidelity:_` line is byte-identical to the CLI's `context
---budget index --source web` (both are `build_context`, so the agent-facing bundle and the
-CLI never diverge on the facet-scoped holdings line either, just as H214/H222 pin for the
-untruncated/truncated line). The work is **test-only**: `get_context_bundle` forwards
-`source`/facets straight to `build_context` (`src/scrolls/mcp_server.py:491`), which already
-passes the post-facet `len(items)`/`custody_counts(items, {})` to `render_fidelity_holdings`
-(`context.py:251`), so the facet honesty is shared-by-construction and the slice pins it on
-the MCP surface. Sabotage-verified non-vacuous: recomputing the holdings over the whole
-library (ignoring the facet) in `context.py` leaks `{full 3, partial 1}` into the scoped
-read and fails **both** the H227 (MCP) and H223 (CLI) facet tests in lockstep. Shipping one
-slice dropped the work queue to 5, so per maintenance-rule §1 this run **restored it to ~6**
-by appending **H232** (the MCP twin of H228 — the `(of N)` honest under facet scope *and*
-truncation at once on the read an agent reaches over MCP, byte-identical to the CLI). The
-queue now sits at **6** un-started work slots (H226, H228–H232) + the H218 checkpoint.
-
-**This run shipped H226** — `import bundle --dry-run` names *which* scrolls are new vs.
-already held, the reviewable half of H220 (`src/scrolls/cli.py` `_preview_import_bundle`,
-`tests/test_bundle.py`, `docs/cli.md`). H220's preview surfaces *counts*
-(`imported: 1, skipped: 1`) — how much a merge would change, not *what*; an operator
-handed a take-it-with-me bundle still had to trust the numbers blind. The dry-run summary
-now carries two reviewable id lists beside the counts: `new` (the would-be-imported item
-ids) and `held` (the already-in-library ids the merge would skip), each **sorted, deduped,
-and uncapped** — the structured channel carries the complete sets (the M2 ethos: structured
-completeness vs. the bounded human orphan warning). They are **dry-run-only**; the live
-import stays terse (its rows are already written, so "new vs. held" is a pre-merge review
-concept). The preview loop, already a read-only diff against the library, now collects the
-two id sets directly (`new_ids` = ids `get_item` finds absent, `held_ids` = ids it finds
-present), so `item_imported = len(new_ids)` is unchanged and `len(new) == imported` holds
-by construction; `len(held) == skipped` holds for a well-formed (dup-free) bundle. The new
-`test_import_bundle_dry_run_names_which_items_are_new_vs_held` pins the one-new/one-held
-case (the new id under `new`, the held under `held`, each length equal to its count,
-both sorted); the H220 byte-identity test (`…_counts_match_a_real_import`) was widened to
-strip the dry-run-only `new`/`held` alongside `dry_run`, so the *counts* byte-identity
-guarantee survives intact and the real import is asserted terse. Shipping one slice dropped
-the work queue to 5, so per maintenance-rule §1 this run **restored it to ~6** by appending
-**H233** (the *dedup* half of H226 — the `new`/`held` lists dedup honestly under
-within-bundle duplicate ids, never phantom-inflating beyond the distinct items the bundle
-holds). The queue now sits at **6** un-started work slots (H228–H233) + the H218 checkpoint.
-
-**This run shipped H228** — the `index` `_Fidelity:_` `(of N)` is honest under facet scope
-*and* truncation at once, the *composition* of H221's truncation axis and H223's facet axis
-(`tests/test_context.py`,
-`test_context_index_fidelity_scope_is_honest_under_facet_and_truncation`, beside the H221
-truncation pin). The leanest tier's holdings line stays honest when **both** scope-narrowing
-filters apply at once — neither silently reverting to a pre-filter count when the other is
-active. Over a mixed-fidelity, multi-source library where one source's matching scope exceeds
-the cap (web: 3 `full` + 3 `partial` = 6 matching; arxiv: 2 `full`; library-wide 8), `context
---budget index --source web --limit 4` carries `_Fidelity: … (of 4)._` whose `(of 4)` equals
-the scoped-*and*-truncated `_Coverage: the top 4 of 6`'s `returned` (parsed from both rendered
-lines, so the two numbers are tied, not independently hardcoded), whose tier counts sum to that
-kept set (4, not the scoped-untruncated 6 or the library-wide 8), and whose split is provably
-mixed (pigeonhole: 4 from {3 full, 3 partial} spans both tiers). The composition is pinned on
-**both** axes: the scoped Coverage *denominator* is web's 6 — **never** the library-wide 8 the
-*unscoped* read at the same cap shows (`top 4 of 8`) — so the facet stays applied under the cap
-(facet axis non-vacuous), and the *untruncated* scoped read names web's full `(of 6)` — so the
-cap genuinely truncated (truncation axis non-vacuous). The work is **test-only**: `build_context`
-already passes `len(items)` — the items kept after *both* the facet filter and the cap — to
-`render_fidelity_holdings` (`src/scrolls/context.py:252`), so the composition is
-correct-by-construction and the slice pins that neither axis reverts to a pre-filter count when
-the other is active (the CLI sibling H232 will twin over MCP). Sabotage-verified non-vacuous:
-passing the scoped-but-untruncated `matched` (6) as the scope N fails the `(of N)` tie (6 ≠ 4)
-on both H228 and the H221 truncation pin in lockstep. Shipping one slice dropped the work queue
-to 5, so per maintenance-rule §1 this run **restored it to ~6** by appending **H234** (the
-*boundary/complement* of H229 — the scoped leanest-tier holdings diverge honestly from `doctor
---source <S>`'s whole-source audit *under truncation*: bundle-kept vs. source-wide, the gap
-exactly the cap, collapsing back to the H229 equality when the cap lifts). The queue now sits at
-**6** un-started work slots (H229–H234) + the H218 checkpoint.
-
-**This run shipped H232** — the MCP twin of H228 (`tests/test_mcp.py`,
-`test_get_context_bundle_index_fidelity_scope_is_honest_under_facet_and_truncation`, beside the
-H222/H227 twins). The leanest `index` `_Fidelity:_` `(of N)` now stays honest under facet scope
-*and* truncation at once on the read an agent reaches over MCP: `get_context_bundle("database",
-budget="index", source="web", limit=4)` over a mixed-fidelity, multi-source library where one
-source's matching scope exceeds the cap (web 3 `full` + 3 `partial` = 6 matching; arxiv 2
-`full`; library-wide 8) carries `_Fidelity: … (of 4)._` whose `(of 4)` equals the
-scoped-*and*-truncated `_Coverage: the top 4 of 6`'s `returned` (parsed from both rendered
-lines, so the two numbers are tied, not independently hardcoded), whose tier counts sum to that
-kept set (4, not the scoped-untruncated 6 or library-wide 8), and whose split is provably mixed
-(pigeonhole: 4 from {3 full, 3 partial} spans both tiers). Both axes pinned non-vacuous: the
-*unscoped* read at the same cap shows `top 4 of 8` (the facet stays applied under the cap, 6 ≠
-8) and the *untruncated* scoped read names web's `(of 6)` (the cap genuinely truncated, 4 ≠ 6).
-The distinguishing MCP-twin assertion is the H214 byte-identity *under both filters*: the
-bundle's `_Fidelity:_` line is byte-identical to the CLI's `context --budget index --source web
---limit 4` (both are `build_context`, so the agent-facing bundle and the CLI never diverge on
-the composed holdings line either, just as H222/H227 pin each filter alone). The work is
-**test-only**: `get_context_bundle` is a read-through of `build_context`, which already passes
-`len(items)` — the items kept after *both* the facet filter and the cap — to
-`render_fidelity_holdings` (`src/scrolls/context.py:252`), so the composition honesty is
-shared-by-construction and the slice pins it on the MCP surface. Sabotage-verified non-vacuous on
-**both** fidelity-line guards in `context.py`: passing the scoped-but-untruncated `matched` (6)
-as the scope N fails the `(of N)` tie (6 ≠ 4), and inflating the tier counts under the kept `(of
-N)` fails the tier-sum tie (6 ≠ 4). With H228 (CLI) and H232 (MCP) both shipped, the
-facet+truncation composition honesty holds on both surfaces. Shipping one slice dropped the work
-queue to 5, so per maintenance-rule §1 this run **restored it to ~6** by appending **H235** (the
-MCP twin of H229 — the scoped `index` `_Fidelity:_` counts ≡ `get_library_health(source=<S>)`'s
-`custody.tiers`, tying the leanest-tier scoped holdings to the canonical scoped audit on the read
-*pair* an agent reaches over MCP). The queue now sits at **6** un-started work slots (H229–H231,
-H233–H235) + the H218 checkpoint.
-
-If the queue empties before the day does, deepen tests/fixtures on the slice just
-shipped or pick the next-highest PRD capability — never manufacture cosmetic
-churn (CLAUDE.md, *Avoid trivial progress*).
+**This run (2026-06-21, H218 checkpoint) shipped H253** — `scrolls search --drift <posture>` + MCP `search_scrolls(drift=)`, the ledger-claim-axis twin of H251's `search --fidelity`, completing the custody-filter family across both per-item axes and all three verbs (browse/rank/act — see the snapshot bullet). It then ran the **overdue H218 buffer-refresh checkpoint** (deferred since H207): refreshed the status snapshot to 2026-06-21, re-derived the badly-stale 3-day/week plans (they still named the H207 checkpoint and listed long-shipped H213–H236 as “remaining”) with absolute dates, re-grounded the horizon around genuine capability (seeded **H254** `related --fidelity`/`--drift` and **H255** `maintain --fidelity`, de-prioritized the correct-by-construction convergence cells H244–H249), and — per maintenance-rule §6 — **compacted ~850 lines of re-accreted backward-looking “Prior run shipped…” changelog prose** into this note. That prose is redundant: every shipped slice's full description and diff live in git (`git log --oneline | grep '(H<NN>)'`) and its one-line gloss in the **Shipped ledger** below. This doc points *forward* (maintenance-rule §4: *git is the changelog*); it is not a changelog.
 
 ---
 
@@ -1232,91 +380,61 @@ changelog (maintenance-rule §4).
 | H251 | **`scrolls search --fidelity <tier>` + MCP `search_scrolls(fidelity=)` — the holdings-axis filter on the *ranked* surface, the search twin of H250's `list --fidelity`.** The capability completion the H250 steering note named first: `list`/MCP could enumerate a fidelity tier (H250) but `search` could not, so an agent ranking matches for a topic couldn't scope to "only the full-fidelity ones I can re-derive offline" (vision §3, fidelity travels with every result). The new filter keeps only the matches the library holds at one tier, derived from the same content-presence flags each hit's `fidelity` is read off — so a hit is *selected* by exactly the tier it *shows* (the row-shows-≡-filter guarantee, the search twin of H250's `test_list_row_fidelity_matches_the_fidelity_filter_value`). **Key design difference from `list --fidelity`:** `list` has no cap, so it sieves loaded rows in Python (H250); `search` applies a ranked `LIMIT`, so the tier must scope the *ranked* selection (the top-k full-fidelity matches, not the full ones among the top-k). It therefore rides a new `scrolls_fidelity` SQL UDF (registered in `items.register_facet_functions`, delegating to `fidelity_tier` so the rule keeps one home; passed the presence booleans + stage, never the body text, honoring `_PRESENCE`'s presence-not-content discipline) ANDed into both `_QUERY` (before LIMIT) and `_COUNT_QUERY` via a shared `_search_filters` helper — so `count_matches` honors it too and the `--stats` truncation denominator counts only the kept tier (never inflated by tiers it never showed, G2). ANDs with every other facet; unknown tier is a `ValueError`/exit-2 (closed vocabulary). 15 new tests (`test_search.py` ×8: selection, row-≡-filter, partitions-the-matches, ANDs-with-facets, applies-before-limit, unknown-tier-raises ×2, count_matches-honors-it; `test_cli.py` ×5: selection, hits-≡-filter, stats-scope+truncation-denominator, composes-with-source, unknown-tier-exit-2; `test_mcp.py` ×2: MCP selection+row-≡-filter, unknown-tier ValueError). Full suite 3310 passed. Out-of-queue (alongside the un-taken test-only cells H244–H249), per the H250 steering note: genuine capability over another convergence-matrix pin. | cap 1, cap 2, cap 7 |
 | H243 | The dry-run's *whole top-level summary* `{imported, skipped, items, events}` (sans the dry-run-only `{dry_run, new, held}`) is byte-identical to the real import's over a bundle corrupt on *both* axes at once — within-bundle item dups *and* orphan events — the union of H233 (item counts) and H237 (whole events block) on one bundle (`tests/test_bundle.py`, `test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_corruptions`, beside the H237/H233 twins). H233 pins the item-level `{imported, skipped}` equal under item dups (empty events); H237 pins the whole `events` block equal under orphan events (a single, distinct item). Neither exercises both axes at once, where the item-dedup path (`new_ids`/`held_ids` sets, the read-only twin of INSERT OR IGNORE) and the event-accounting path (`partition_resolvable_events` + `preview_import_events`/`import_events`) both run over the one parsed bundle. Over a `_spliced_items_and_events_bundle` whose items block repeats both a would-be-new id and an already-held id (4 raw → imported 1, skipped 3) *and* whose events block carries a dup'd anchored event on the held item (imported 2, skipped 1) beside three orphan events on two missing items (orphaned 3, orphaned_items 2), dry-run first (writes nothing — asserted via `get_item`/`item_events`) then real import into the same library; the dry-run's entire summary sans `{dry_run, new, held}` equals the real import's *and* the expected non-trivial block — so neither corruption axis silently distorts the other's accounting. Test-only — the item dedup and the event split are two independent folds over the one parsed bundle, correct-by-construction. Sabotage-verified non-vacuous (computing `item_skipped` as `len(held_ids)` instead of `len(items) − item_imported` ignores the within-bundle item dups, so the dry-run reports `skipped 1` while the real import reports `skipped 3` and the whole-summary tie fails). The *both-axes-corrupt analogue of H220's whole-summary byte-identity* | cap 9, cap 7 |
 | H252 | **`scrolls verify --fidelity <tier>` — the holdings-axis *act* surface, the verify-axis twin of H250's `list --fidelity` / H251's `search --fidelity`.** A real capability slice (not a convergence pin): `list`/`search`/MCP could *enumerate/rank* a fidelity tier (H250/H251) and `verify --source`/`--drift` could *act* on the source/ledger axes (H125/H54), but no surface let a worker *re-verify exactly its holdings at one fidelity tier* — "re-check the full-fidelity scrolls I can re-derive offline" (vision §3, fidelity travels with every result, now on the act axis). A new standalone batch selection mirroring `--source`: it folds the same `get_fidelity` primitive the read surfaces count with — a pure function of stored content columns, **no ledger read** (the holdings-fact axis, vs `--drift`'s ledger-claim axis) — over the held, hash-bearing rows. **Key design subtlety vs `--source`:** every batch verify touches only hash-bearing rows (a re-fetch needs a baseline hash to diff), and fidelity ⊥ hash-bearing — a `full` capture held by `raw_text` alone carries no `content_hash`, so it lists `full` (H250) yet has no baseline and is skipped. So `verify --fidelity <tier>` re-checks `list --fidelity <tier>`'s held, *hash-bearing* subset (genuinely narrower than the listing), and a tier with no fingerprint (typically `reference`, which keeps no content) is an honest empty no-op. Closed vocabulary (`full`/`partial`/`reference`, argparse `choices` → exit 2). CLI-only: the batch verify selections have no MCP twin (MCP `verify_scroll` is single-item). 12 new tests (`test_verify_cli.py` ×11: tier selection, full-without-hash skip, list-fidelity hash-bearing convergence, reference empty no-op, ledger write, `--limit` pacing, empty library, unknown-tier exit-2, three mutual-exclusion rejections; `test_custody_convergence.py` ×1: the act ≡ read drill across all three tiers, folded into the verify-selection-family invariant). Full suite 3322 passed. Sabotage-verified non-vacuous (filtering `all_items` instead of `hash_bearing` fails 4 tests — the no-hash full leaks into the recheck). Out-of-queue (alongside the un-taken test-only cells H244–H249), per the H251 steering note: the `--fidelity`-scoped act surface. | cap 1, cap 2, cap 7 |
+| H253 | **`scrolls search --drift <posture>` + MCP `search_scrolls(drift=)` — the ledger-claim-axis filter on the *ranked* surface, the drift twin of H251's `search --fidelity`.** Completes the search filter family to match `list` (`--fidelity` + `--drift` H54) and `verify` (`--fidelity` H252 + `--drift` H80): search could rank a topic's matches and scope them by the *holdings* axis but not the *ledger-claim* axis — "only the matches I have re-verified as still faithful." **Key design difference from `--fidelity`:** a fidelity tier is a pure function of an item's own content columns (the `scrolls_fidelity` UDF), but a drift posture is read from the verify ledger, so it cannot ride a content-column UDF. It instead ANDs a new `scrolls_drift` UDF over the item's *latest `custody_events` verdict* (a correlated subquery for the most-recent row, `NULL`→`unverified`) into both `_QUERY` (before LIMIT) and `_COUNT_QUERY` via `_search_filters` — so the ranked selection is scoped before the cap (not post-sieved like `list --drift` can be, having no cap) and `count_matches` honors it (the `--stats` truncation denominator counts only the kept posture, G2). `scrolls_drift` delegates to a new `custody.posture_from_status` (the status-level core factored out of `drift_posture`) so the filter and the per-hit `drift` field read one rule (row-shows-≡-filter); the per-posture totals partition the matches (drill-from-`facets drift`). ANDs with every facet incl. `--fidelity` (the two custody axes scope independently); closed vocab (`DRIFT_POSTURES`) → exit 2 / `ValueError`. 17 new tests (`test_search.py` ×9, `test_cli.py` ×6, `test_mcp.py` ×2); full suite 3339 passed. Out-of-queue, then ran the H218 checkpoint. | cap 1, cap 2, cap 7 |
 
 ---
 
-## 3-day plan — 2026-06-20 → 2026-06-23
+## 3-day plan — 2026-06-21 → 2026-06-24
 
-Forward-looking (re-derived at this H207 checkpoint). Each day ends on a
-committed, tested, clean stopping point; slips roll forward.
+Forward-looking (re-derived at this H218 checkpoint, 2026-06-21). Each day ends
+on a committed, tested, clean stopping point; slips roll forward.
 
-- **Day 1 (2026-06-20):** Close the per-source custody convergence theme and
-  re-derive the buffer. **H210** (the CLI refresh-debt *act* dogfood —
-  read `context` `_Refresh:_` → run the scoped `classify --stale --source <S>` /
-  `kb --stale --source <S>` it names → the named axis/source clears while the
-  untouched axis persists; the refresh-axis twin of H206's drift triage)
-  **shipped** in `tests/test_dogfood.py`, exhausting the per-source theme: every
-  read *and* act surface, both axes, both the CLI and MCP, now ties to `doctor`.
-  The **H207 checkpoint** (this refresh) opened the *budget/tier custody honesty*
-  horizon, and the same run **shipped its lead slice H212** (the `_Fidelity:_`
-  holdings line at `index` budget — fidelity travels even at the leanest tier via the
-  new shared `custody.render_fidelity_holdings`, drift honestly does not;
-  `src/scrolls/context.py` + `tests/test_context.py` + `docs/cli.md`).
-- **Day 2 (2026-06-21):** Close the **budget/tier custody honesty** sub-theme around
-  the shipped H212 line. **H213** (cross-tier fidelity convergence ≡ `doctor.tiers`),
-  **H214** (the MCP `get_context(budget="index")` twin), **H215** (the CLI M2
-  completeness fold — the `index` line names its holdings, never a drift verdict it
-  didn't read), and **H219** (the MCP completeness twin of H215, this run) **all
-  shipped 2026-06-20**, closing the sub-theme as a tested cross-tier / cross-surface /
-  completeness contract on both surfaces — the *drift-withholding* honesty holds on
-  the CLI and the read an agent reaches over MCP.
-- **Day 3 (2026-06-22 → 2026-06-23):** Portable-bundle round-trip depth. **H216**
-  (the mixed-fidelity bundle round-trip invariant — `partial`/`reference` tiers
-  re-import tier-lossless, not just `full`) and **H217** (bundle import honest about
-  orphan custody events — every imported event resolves to a held-or-imported item or
-  is counted-and-skipped, never a dangling ledger row) **both shipped 2026-06-20**
-  (`tests/test_bundle.py`), opening this horizon ahead of schedule. **H220**
-  (`import bundle --dry-run` — the read-only preview of a merge, built on H217's
-  orphan accounting) **shipped 2026-06-20**. Next: **H224** (the whole-library
-  `export items`/`import items` backup sibling of H216 — tier-lossless on the *other*
-  portable surface too), **H225** (the diagnosable half of H217 — name which items the
-  orphan events dangle on), and **H226** (the reviewable half of H220 — name which
-  scrolls are new vs. already held in the preview). The budget/tier scope-honesty
-  pins slot in alongside: **H221** (the `index` `_Fidelity:_` `(of N)` honest under
-  *truncation*, CLI), **H222** (its MCP twin), **H223** (the *facet*-axis CLI
-  sibling), and **H227** (the MCP twin of H223) **all shipped 2026-06-20**; **H228**
-  (the composition of both axes) and its MCP twin **H232 both shipped 2026-06-20**.
-  **H229** (the scoped `_Fidelity:_` ≡ `doctor --source` tie) **shipped 2026-06-20**;
-  **H234** (the truncated boundary of H229), **H235** (the MCP twin of H229 —
-  `get_context_bundle` ≡ `get_library_health`, scoped), and **H236** (the MCP twin of
-  H234 — that boundary under truncation over MCP) remain. Re-derive at the H218 checkpoint.
+- **Day 1 (2026-06-21):** **Done.** Shipped **H253** (`scrolls search --drift
+  <posture>` + MCP `search_scrolls(drift=)`, the ledger-claim-axis twin of
+  `search --fidelity`, completing the custody-filter family across both per-item
+  axes and all three verbs), then ran the **overdue H218 checkpoint**: refreshed
+  the snapshot/plans to absolute dates, re-grounded the horizon, and compacted
+  ~850 lines of re-accreted changelog prose (maintenance-rule §6).
+- **Day 2 (2026-06-22):** Take the new lead **H254** — `scrolls related
+  --fidelity <tier>` / `--drift <posture>` + the MCP `get_related_scrolls` twins,
+  the custody-filter family on the *relationship* surface (the last un-filtered
+  read surface). Concrete `list`-sieve path: filter `scored_related(...)` by the
+  per-hit `fidelity`/`drift` *before* the `[:limit]` slice, folding the same
+  primitives the field is read off. Closed vocab → exit 2; ANDs both axes;
+  `--stats` count honors it. Tests in `tests/test_related.py`/`test_cli.py`/
+  `test_mcp.py` + a custody-convergence drill fold.
+- **Day 3 (2026-06-23 → 2026-06-24):** **H255** — `scrolls maintain --fidelity
+  <tier>`, the scheduled-maintenance act twin of `verify --fidelity`. The genuine
+  work is the audit-scoping decision (recheck the `verify --fidelity` hash-bearing
+  set, keep audit/regenerate whole-library + null delta — the non-persisting
+  triage posture `--source` establishes — rather than adding fidelity scoping to
+  `run_doctor`, which has source-specific semantics). If H254/H255 land early,
+  optionally close one de-prioritized convergence guard (H244–H249) or deepen
+  `related`/`graph` custody tests rather than starting unrelated work.
 
 ---
 
-## Week plan (more tentative) — through 2026-06-27
+## Week plan (more tentative) — through 2026-06-28
 
-- The per-source custody **convergence theme is closed** (H179/H183/H195/H211/H208/
-  H209 the reads, H206/H210 the self-healing dogfood across both surfaces and both
-  act axes). "Custody reads the same everywhere, and an agent can act on exactly what
-  the pointer names" is now a tested contract on the per-source, action-line,
-  suggestion↔debt-map, and dogfood axes.
-- The fresh horizon **budget/tier custody honesty** (H212–H215, H219) is **closed**:
-  the leanest `index` context tier carries the *fidelity* holdings fact (vision
-  principle 3 — fidelity travels with every result) while honestly *withholding* any
-  drift verdict it read no ledger for (M2 anti-fabrication). H212 is the one production
-  slice; H213 (the cross-tier tie), H214 (the MCP fidelity-line twin), H215 (the CLI M2
-  completeness fold), and H219 (its MCP twin) all shipped — the drift-withholding
-  contract holds on both the CLI and the read an agent reaches over MCP. The
-  truncation/facet scope-honesty pins are the depth-axis follow-ons: **H221** (the
-  `index` `_Fidelity:_` `(of N)` honest under *truncation*, CLI), **H222** (its MCP
-  twin), **H223** (the facet-axis CLI sibling), and **H227** (the MCP twin of H223)
-  **all shipped 2026-06-20**; **H228** (the composition of both axes) and **H232** (its
-  MCP twin) **both shipped 2026-06-20**, so the facet+truncation composition honesty holds
-  on both surfaces. **H229** (the scoped `_Fidelity:_` ≡ `doctor --source` convergence
-  tie) **shipped 2026-06-20**; **H234** (the truncated boundary of that tie), **H235** (the
-  MCP twin of H229 — `get_context_bundle` ≡ `get_library_health`, scoped), and **H236** (the
-  MCP twin of H234 — that boundary under truncation over MCP) remain.
-- Then **portable-bundle round-trip depth** — **H216 and H217 both shipped
-  2026-06-20** (H216 the mixed-fidelity bundle round-trip: portability is
-  *tier-lossless*, not just full-lossless; H217 the event-complete leg: no silently
-  orphaned custody events on import — every imported event resolves to a
-  held-or-imported item or is counted-and-skipped), opening this horizon. **H220**
-  (`import bundle --dry-run` — the read-only preview letting an agent review a shared
-  bundle before merging it) **shipped 2026-06-20**; remaining are **H224** (the
-  whole-library `export items`/`import items` backup sibling of H216 — tier-lossless on
-  the *other* portable surface too), **H225** (the diagnosable half of H217 — name which
-  items the orphan events dangle on), and **H226** (the reviewable half of H220 — name
-  which scrolls are new vs. already held in the preview JSON).
+- **Closed this past week:** the **budget/tier custody honesty** matrix
+  (H212–H249 — the leanest `index` `_Fidelity:_` line and its whole cross-tier ×
+  CLI/MCP × scoped/unscoped × untruncated/truncated convergence) and the
+  **custody-filter family** (the per-item *holdings* and *ledger-claim* axes are
+  now browsable/rankable/actable: `list`/`search`/`verify --fidelity` H250/H251/
+  H252 and `list`/`search`/`verify --drift` H54/H253/H80). Both per-item custody
+  axes are fully filterable on every row, ranked, and act surface.
+- **This week's horizon — custody filters on the *relationship* surface, then the
+  scheduled-maintenance scope.** **H254** (`related --fidelity`/`--drift` + the
+  MCP twins) closes the last un-filtered read surface: `related`/`graph` nodes
+  *carry* the custody axes (H56) but cannot be *scoped* by them. **H255**
+  (`maintain --fidelity`) gives the holdings axis its scheduled-maintenance scope,
+  the act twin of `verify --fidelity` (the genuine work is the audit-scoping
+  decision, not a copy of `--source`). Both are concrete, vision-grounded
+  capabilities (fidelity/provenance travel with every result; custody-vision §2).
+- The **budget/tier convergence guard cells H244–H249** remain valid regression
+  guards but are explicitly **de-prioritized** — take a capability first; close a
+  guard only when no capability is ready, and prefer closing one over appending
+  more of the same combinatorial shape.
 - Consider a bi-temporal framing pass on drift events (captured-at vs
   source-changed-at) *only if* an agent workflow shows the event record is
   insufficient; otherwise keep deferred (MVP "out of scope").
@@ -1367,6 +485,7 @@ The buffer rots if nobody refreshes it. The rule:
 | Per-item + scope custody picture everywhere | cap 1/2/7/8/10 | post-MVP |
 | Per-source custody breakdown + scoped reads/acts | cap 1/2/5/7/8 | post-MVP |
 | Maintenance & dogfood over MCP | cap 1/11 | post-MVP |
+| Custody-filter family (`--fidelity`/`--drift` browse/rank/act) | cap 1/2/7 | post-MVP |
 
 The two obsidian-second-brain adoptions (M1 refresh-safe regeneration, M2
 completeness invariant) were intentionally first in the queue: they are the
