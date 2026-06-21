@@ -442,3 +442,66 @@ def test_whole_library_backup_is_tier_lossless(home, capsys):
     # and the rebuild is clean: an honest partial/reference is not a violation
     assert report["custody"]["score"] == 100
     assert report["issues"] == 0
+
+
+# --- the rebuild is byte-identical across mixed tiers too (H231) --------------
+#
+# `test_export_rebuild_is_byte_identical` (above) proves the rebuilt *scrolls*
+# and compiled `library/` pages are byte-for-byte equal to the source — but only
+# over the all-`full` `_seed_items`, so a `partial` capture's scroll (rendered
+# with *no* `content_hash` to fingerprint it — render.py omits a None field, a
+# strictly different frontmatter byte-shape than a `full` scroll) has never been
+# proven to rebuild byte-for-byte. H224 pinned that a mixed-fidelity backup
+# rebuilds with doctor's `custody.tiers` equal to the source spread (the tier
+# *counts* survive); this is the byte-depth sibling: the rendered *bytes* of a
+# degraded capture survive the round-trip too, not only its tier count.
+
+
+def test_whole_library_backup_rebuilds_byte_identically_across_tiers(home, capsys):
+    """The whole-library backup rebuilds byte-for-byte across *mixed* fidelity
+    tiers, not only the all-`full` `_seed_items`. Reusing H224's mixed-fidelity
+    fixture, the rendered scrolls — including the `partial` capture's
+    `content_hash`-less scroll — and the compiled `library/` pages built over the
+    tier spread rebuild identical after the documented `import items` →
+    `doctor --fix` → `kb` restore in a fresh home. Byte-identity is correct-by-
+    construction (`write_scroll` is deterministic in the item fields, which
+    `import items` carries field-for-field, and `doctor --fix` re-renders only
+    from those rows), so this pins it on the partial tier the all-`full`
+    byte-identity test never reaches — the rendered-bytes sibling of H224's
+    tier-count guarantee."""
+    src = home("source")
+    _build_mixed_library(_mixed_fidelity_seed())
+    capsys.readouterr()  # drain the kb report before capturing the source trees
+
+    # capture the source's rendered scrolls and compiled library trees (bytes)
+    src_scrolls = _read_tree(src.scrolls_dir)
+    src_library = _read_tree(src.library_dir)
+
+    # non-vacuous: the source tree genuinely spans the partial byte-shape. A
+    # `full` scroll carries a `content_hash:` frontmatter line; a `partial`
+    # capture has no hash to fingerprint its body, so render.py omits the line —
+    # a strictly different frontmatter byte-shape. Both shapes are present, so
+    # byte-identity over this tree is a stronger claim than over the all-`full`
+    # one (where every scroll has a `content_hash` line).
+    with_hash = [path for path, body in src_scrolls.items() if b"content_hash" in body]
+    without_hash = [path for path, body in src_scrolls.items() if b"content_hash" not in body]
+    assert with_hash, "expected at least one full scroll (with a content_hash line)"
+    assert without_hash, "expected the partial scroll (rendered with no content_hash)"
+
+    assert main(["export", "items"]) == 0
+    backup = src.root.parent / "backup.jsonl"
+    backup.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    dst = home("rebuilt")
+    assert main(["import", "items", str(backup)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == len(_mixed_fidelity_seed())
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()  # drain the doctor/kb reports
+
+    # the rendered scrolls — including the partial's content_hash-less scroll —
+    # rebuild byte-identically from the imported rows
+    assert _read_tree(dst.scrolls_dir) == src_scrolls
+    # and the compiled library/ pages, built over the mixed-fidelity spread,
+    # rebuild byte-identically too
+    assert _read_tree(dst.library_dir) == src_library
