@@ -66,7 +66,7 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   `kb --stale --source <S>`.
 - **The custody-filter family is complete across both axes and *every* surface —
   read, act, relate, maintain, context bundle, the portable shareable bundle,
-  *and* the whole-library JSONL backup.**
+  the whole-library JSONL backup, *and* the whole-library custody-ledger backup.**
   The two per-item custody axes — *holdings* (`fidelity`, a content-column fact,
   no ledger) and *ledger-claim* (`drift`, the verify-ledger posture) — can now be
   **browsed, ranked, acted on, scoped on the relationship surface, scoped on the
@@ -97,15 +97,25 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   `search`'s before-cap UDF sieve verbatim (threading `fidelity`/`drift` through
   `search_items`/`count_matches`), so its `_Custody:_`/`_Fidelity:_` headline,
   per-excerpt drift tags, and Coverage denominator all describe exactly the kept
-  set. **H259 (this run) closed the family's last *agent-readable* and
-  *whole-library backup* surface** — `export items` threads `fidelity`/`drift`
-  through `list_items` (which already applies both, the H250/H54 primitives), and
-  because the post-SQL sieve preserves saved order the scoped JSONL is the
-  byte-identical subset of the unscoped backup, so `import items` of a
-  custody-scoped backup re-holds exactly the exported rows (the H216 round-trip
-  under a custody scope). **The only export surface left unfiltered is the
-  whole-library custody-ledger backup** (`export events`, H260, the new lead —
-  the custody-sibling of H259).
+  set. **H259 closed the family's `export items` (raw-rows backup)** — threading
+  `fidelity`/`drift` through `list_items` (which already applies both, the
+  H250/H54 primitives), and because the post-SQL sieve preserves saved order the
+  scoped JSONL is the byte-identical subset of the unscoped backup, so `import
+  items` of a custody-scoped backup re-holds exactly the exported rows (the H216
+  round-trip under a custody scope). **H260 (this run) closed the family's *last*
+  surface — `export events --fidelity`/`--drift`, the whole-library
+  custody-ledger backup** — as an **item-set sieve** (the one design choice the
+  slice resolved): the two axes narrow the *item resolution* (the same
+  `list_items` sieve H259 folds), then the **whole ledger** of the selected items
+  travels, exactly as `--source` already scopes events by item — so `--drift
+  drifted` ships a moved item's *entire* custody history (its earlier `unchanged`
+  rows included), the full proof of *when* the source moved for a recapture
+  handoff, not a single per-row match. Composes with `--since` (item-set sieve,
+  then time window) and the durable facets; the drift-scoped backup round-trips
+  losslessly into a fresh library with no leakage of the filtered-out items'
+  events. **With H260 the custody-filter family is closed across every read, act,
+  and export surface; the next theme is the consolidation surface — work-level
+  custody (H261–H263), vision §3.5.**
 - **The scheduled-maintenance pass now scopes on the holdings axis too.**
   `scrolls maintain --fidelity <tier>` (H255) is the act twin of `verify
   --fidelity` (H252): the holdings-axis sibling of `maintain --source` (H165), but
@@ -136,7 +146,7 @@ point, and stop. `→ capN` marks the PRD capability. These are the un-started
 **work** slices; the next checkpoint (H256) follows.
 
 **The horizon, re-derived at this H218 checkpoint (2026-06-21), advanced through
-H259.** Two themes that ran the last ~50 slices are now *closed*: the
+H260.** Two themes that ran the last ~50 slices are now *closed*: the
 **budget/tier custody honesty** theme (H212–H249's leanest-`index`
 `_Fidelity:_` line and its whole cross-tier × CLI/MCP × scoped/unscoped ×
 untruncated/truncated convergence matrix) and — now fully — the
@@ -157,27 +167,43 @@ H258 closed the family's last *shareable-bundle* surface — the
 portable `export bundle --fidelity`/`--drift` — by threading the two axes through
 `_gather_scope` into the same `search_items`/`count_matches` sieve, so a
 custody-scoped briefing travels and `import bundle` of it re-holds exactly the
-exported rows. **H259 (this run) closed the *whole-library JSONL backup*** —
-`export items --fidelity`/`--drift` — the simplest member yet, a pure
-thread-through of both axes into `list_items` (which already applies them, the
-H250/H54 primitives), so the scoped JSONL is the byte-identical subset of the
-unscoped backup and `import items` of it re-holds exactly the exported rows (the
-H216 round-trip under a custody scope). **The only export surface the family has
-not reached is the whole-library custody-ledger backup** — `export events`
-renders no custody filter, so an operator cannot yet "ship only the drifted
-items' custody ledger for a recapture handoff." **H260 (the `export events`
-custody filter) is the new lead** — the custody-sibling of H259, replaying its
-item-resolution thread-through on the events backup. The
+exported rows. **H259 closed the *whole-library JSONL backup*** (`export items
+--fidelity`/`--drift`), and **H260 (this run) closed the family's *last* surface
+— the whole-library custody-ledger backup** (`export events
+--fidelity`/`--drift`) as an **item-set sieve**: both axes narrow the item
+resolution (the same `list_items` sieve H259 folds), then the in-scope items'
+*whole* ledger travels, so `--drift drifted` ships a moved item's full custody
+history for a recapture handoff (its earlier `unchanged` rows included), not a
+per-row match. **With H260 the custody-filter family is closed across every read,
+act, and export surface — there is no un-filtered custody surface left.**
+
+**The new theme is the *consolidation* surface — work-level custody (vision §3.5,
+"canonical works as custody consolidation — continue here").** The custody-filter
+family made the per-*item* custody axes (fidelity, drift) scopable everywhere; the
+unworked shape is custody at the level of a *work* — the canonical cluster of
+many representations (preprint + DOI + PMC, ADR 0095/0096). `works` already
+carries each representation's `fidelity`/`drift`/`last_checked` and a
+representation-scoped `stats.custody` tally, but a **work has no aggregate custody
+posture** ("is this work *safely held* — does at least one representation survive
+at full fidelity, unmoved?") and the custody-filter family never reached the
+consolidation surface. This is a genuinely new custody *shape* (custody-vision
+§2.7), not a filter replay: a work's custody is the *consolidation* of its
+representations'. **H261 (the per-work aggregate custody posture) is the new
+lead**, with H262 (the `works` custody filter) and H263 (the "at-risk works"
+doctor/maintain signal) following — all pure folds over the per-rep custody data
+`works` already computes, no schema change. The
 **budget/tier convergence cells H244–H249 remain valid regression guards but
 explicitly de-prioritized** — the tail of a combinatorial matrix, each
 self-describing as *correct-by-construction*; the last runs correctly preferred
-genuine capability over taking them. Take H259/H260 first; reach for H244–H249 only
-when no capability slice is ready, and prefer closing one rather than appending
-more of the same shape.
+genuine capability over taking them. Take H261–H263 first; reach for H244–H249
+only when no capability slice is ready, and prefer closing one rather than
+appending more of the same shape.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H260 | **`scrolls export events --fidelity <tier>` / `--drift <posture>` — the custody-filter family on the *whole-library custody-ledger backup*, the custody-sibling of H259.** `export events` (the verify-ledger JSONL backup, H72) already scopes by `--source`/`--category`/`--tag`/`--since` (resolve the items, then their events), but carries no custody-axis scope; the missing capability is "ship only the drifted items' custody history for a recapture handoff." Like `export items` it resolves its item set first (then the events for those items), so the slice threads `fidelity`/`drift` into that item resolution — `_cmd_export_events` selects via the same item-facet path, so once H259 establishes the thread-through, this replays on the events backup. **Decide:** whether `--drift <posture>` on the *events* backup filters by the items' *current* posture (the item-resolution sieve, consistent with H259) or by the *event row's* status (a per-row filter) — likely the former (the item-set sieve, so "the drifted items' whole ledger travels," matching how `--source` already scopes events by item). Both axes AND; closed vocab → exit 2; composes with `--since`. Tests in `tests/test_cli.py` / `tests/test_events_export.py`. Precondition: H259 (the `export items` custody filter — establishes the item-resolution thread-through, **shipped this run**), H72 (`export events`, **shipped**). | → cap 9, cap 4, cap 1 |
+| H261 | **`scrolls works` reports a per-work *aggregate custody posture* — the consolidation-level custody verdict, the new-custody-shape lead (vision §3.5, custody-vision §2.7).** Each `Work` already exposes its representations' per-item `fidelity`/`drift`/`last_checked`, but the payload answers no *work-level* custody question: "is this work **safely held** — does at least one representation survive at full fidelity and unmoved (a re-derivable, undrifted copy exists), or has every form degraded (partial/reference-only) or drifted?" The slice folds the existing per-rep custody into one `custody` block per work in `works_payload` — e.g. `{best_fidelity, safest_drift, safely_held}` where `safely_held` is "∃ a representation that is `full` *and* drift ∈ {verified, unverified}" (an unmoved full copy exists) — derived from the same `verdicts` the per-rep `drift` already folds, **no schema change**. So an agent reading a 3-representation work sees not just "the preprint is full, the DOI rotted" per row but the consolidated "this work is safely held (via the preprint)" — the custody promise applied to the work, not just the item. Decide the `safely_held` predicate precisely (full+undrifted is the strong form; whether `partial`+verified also counts is the one judgement — likely no, since partial can't fully re-derive). Tests in `tests/test_works.py` (+ a `stats`/MCP parity check). Precondition: ADR 0095/0096 (canonical works, **shipped**), the per-rep custody fields on `Representation`/`to_payload` (**shipped**). | → cap 1, cap 2, cap 5 |
+| H262 | **`scrolls works --fidelity <tier>` / `--drift <posture>` + the MCP `get_works` twin — the custody-filter family on the *consolidation* surface.** The family reached every per-item read/act/export surface (H250–H260) but never the work cluster. A work is kept if it **has a representation** at the custody value (the cluster "contains" semantics, since a work is a set of forms — the natural read of "show me the works with a drifted representation," i.e. the works needing a recapture decision). Folds the per-rep `fidelity`/`drift` `works` already computes, applied before the `min_representations`/report cut; both axes AND; `stats.custody` (and `stats.custody.by_source`) honor the filter so the tally still partitions the reported set; closed vocab → exit 2. The MCP `get_works(fidelity=, drift=)` twin matches (the `get_related_scrolls` H254 precedent). Tests in `tests/test_works.py` / `tests/test_mcp.py`. Precondition: H261 (the consolidation custody primitive — the filter and the aggregate posture should share one `work_custody` helper). | → cap 1, cap 2, cap 7 |
+| H263 | **The "at-risk works" custody signal on `doctor` + `maintain` — the consolidation-level analogue of the per-source weakest-source `attention` flag.** A work is *at risk* when **no** representation is safely held (every form is degraded or drifted — there is no unmoved full copy of the work anywhere in the library, the H261 `safely_held == false` set). This is a sharper custody alarm than the per-item drift count: an item drifting is survivable if a sibling representation of the same work is still full+verified; a *work* with no safe representation is a real custody loss. Surface a count + the single most-at-risk work in `doctor`'s custody report and as a `maintain` attention pointer (the `_Attention:_` line family), report-only and idempotent (custody §2.4). Tests in `tests/test_doctor.py` / `tests/test_maintain.py`. Precondition: H261 (the `safely_held` per-work primitive this aggregates). | → cap 1, cap 5, cap 8 |
 | H244 | **The custody bundle is reproducible across the round-trip boundary — `export bundle <Q>` from a library rebuilt *from a bundle* is byte-identical to the original `export bundle <Q>`, the bundle-artifact analogue of `test_export_rebuild_is_byte_identical`'s point 2 (export→import→export byte-stability).** H238 (this run) pins the rebuilt *scrolls* + compiled `library/` pages byte-identical across the `export bundle` → `import bundle` boundary; the untested guarantee is that the *bundle artifact itself* re-exports byte-for-byte from the rebuilt library. It is a genuine, distinct claim: the bundle is more than its item block — it carries derived prose (the `custody_headline`, the `_Attention:_`/`_Refresh:_` pointers, the per-source breakdown via `render_custody_by_source`) computed over the rows + ledger, none of it clock-derived (`bundle.py` has no `datetime`/`now()` call). So if the round-trip carries every field those folds read from, re-exporting the *whole* briefing from the rebuilt home reproduces the original byte-for-byte — the M4/cap 9 "self-contained, shareable" briefing is itself reproducible, not just its lossless core. Pin it: over the mixed-fidelity `_mixed_fidelity_scope` (no recorded events → an empty events block on both sides, keeping the slice correct-by-construction), `export bundle "database"` from source A, `import bundle` + `doctor --fix` + `kb` into fresh B, then `export bundle "database"` from B and assert the two bundle texts are byte-identical (and, separately, that the re-exported items block alone is byte-stable — the `dump_items_export`-over-identical-rows guarantee point 2 already covers for `export items`). Implementation path: `build_bundle` folds only row/ledger-derived primitives (`custody_headline`, `custody_counts_by_source`, `_refresh_debt_by_source`) with no clock input, and H238/export-items byte-stability already give row-level byte-identity, so bundle reproducibility is correct-by-construction; the slice pins it on the bundle artifact the scroll/library byte-identity tests never re-export. Test only (`tests/test_bundle.py`, beside the H238 byte-identity test). Precondition: H238 (the bundle scroll/library byte-identity, **shipped this run**), H216 (the mixed-fidelity bundle round-trip). | → cap 9, cap 4 |
 | H245 | **The dry-run's `new`/`held` partition *predicts the real import's per-id write effect* — the identity-level closure of H233's count-level "the preview never drifts from reality."** H233 ties the dry-run's `imported`/`skipped` *counts* to a real import's; the untested guarantee is that the dry-run's reviewable *id sets* name exactly the rows the merge actually moves on disk. The counts could match while the preview names the wrong ids — and an operator confirms a merge by reading `new`/`held`, not by reconciling integer counts. Pin it: over a mixed bundle (would-be-new ids, already-held ids, within-bundle dups), capture each parsed id's pre-import held-state (`get_item is None`), dry-run to read `new`/`held`, then real-import the *same* bundle into the same library; assert every id in `new` was absent before and is held after (a genuine absent→present transition the merge caused) and every id in `held` was held before *and* after (no transition) — so the reviewable surface an operator confirms is exactly the set of rows the merge inserts vs. leaves untouched, not merely the right *number* of them. Mutation-checked: pre-holding one of the `new` ids before the dry-run moves it from `new` to `held` *and* removes it from the post-import absent→present transition set, in lockstep — the prediction tracks the library's real state, never a stale snapshot. Implementation path: the dry-run's `new`/`held` come from the same `get_item(...) is None` test the live import's INSERT OR IGNORE (ADR 0082) acts on, so the prediction is correct-by-construction; the slice pins the identity-level closure H233 left at the count level (the reviewable surface describes the *actual* merge, the M2/cap-9 custody-honesty on the predict-the-write axis). Test only (`tests/test_bundle.py`, beside H239/H233). Precondition: H239 (the partition, **shipped this run**), H233 (the count-level reality tie), H226 (the reviewable lists). | → cap 9, cap 7 |
 | H246 | **The whole budget ladder stays mutually equal under truncation while *together* diverging from the *library-wide* `doctor` audit — the *unscoped* twin of H240 (and the truncated boundary of H213).** H213 ties the unscoped `index` ≡ `connected` ≡ `full` ≡ `doctor` *only* when one query matches the whole library (no truncation); H240 (shipped this run) pins the *scoped* ladder under a cap diverging from `doctor --source <S>`. The untested cell is the *unscoped* ladder under a cap: the no-facet path, where the library-wide audit and the kept-`k` bundle must genuinely differ. Over `_seed_mixed_custody` (four scrolls: full 2, partial 1, reference 1, no source filter), `context --budget {index,connected,full} --limit k` with `k` below the held count renders three fidelity sections all *equal to each other* (the kept-`k` slice) and all `≠` the library-wide `doctor`'s `custody.tiers` (summing to the whole held count `> k`); lifting the cap (`--limit` ≥ held) reconverges all four to the H213 unscoped equality. So the no-facet budget ladder never disagrees *with itself* under a cap, and neither the leanest nor the deeper tiers inflate the bundle-kept holdings to a library-wide claim — H240's cohesion guarantee on the unscoped (no-`--source`) read path. Test only (`tests/test_custody_convergence.py`, beside H240/H213). Implementation path: all three tiers fold `get_fidelity` over the same post-cap `items` (`index` via `render_fidelity_holdings`, `connected`/`full` via `custody_headline`) while unscoped `doctor` folds over every held row, so the cohesion-under-truncation is correct-by-construction; the slice pins the unscoped boundary H213 (untruncated) and H240 (scoped) leave between them. Precondition: H240 (the scoped ladder-under-truncation, **shipped this run**), H213 (the unscoped four-way tie). | → cap 1, cap 2, cap 10 |
@@ -186,29 +212,31 @@ more of the same shape.
 | H249 | **The dry-run's `new`/`held`/`orphaned_items` form a clean *three-way* id-space partition even over a bundle corrupt on *both* axes — the both-axes closure of H239 (which proved the two-way `new`/`held` partition over an items-*only* corrupt bundle).** H239 pins `set(new) ∪ set(held)` = the bundle's distinct item ids and `set(new) ∩ set(held) == ∅`, but only over an items-only corrupt bundle (empty events); the untested cell is whether that reviewable partition stays clean when the *events* block is *also* corrupt (orphan events present), and whether the orphan-item id-space stays disjoint from the item partition. It is a genuine guarantee: `new`/`held` are folded from the items block (`imported_items`) while `orphaned_items` is folded from the events block's unresolved ids (`_orphan_item_ids`), two independent reads of the one parsed bundle, so a naive impl could let an orphan item leak into `new`/`held` (double-classifying an id the merge never writes) or an items-block id vanish from review. Pin it: over the H243 `_spliced_items_and_events_bundle` (a within-bundle item-dup items block *plus* anchored-and-orphan events), dry-run and assert (a) `sorted(new + held)` equals the distinct items-block ids computed independently via `parse_bundle`, (b) `set(new).isdisjoint(held)`, and (c) `set(orphaned_items).isdisjoint(set(new) | set(held))` — three non-overlapping id-spaces, so an operator reviewing the preview never sees one id classified two ways across the item and orphan axes. Mutation-checked: adding a distinct orphan event for a new missing item extends `orphaned_items` by exactly that id and leaves `new`/`held` untouched (the orphan axis never perturbs the item partition). Implementation path: `orphan` item ids are exactly those neither held nor in `known_ids` (`partition_resolvable_events`), so they are disjoint from the items-block ids by construction; the slice pins the cross-axis disjointness H239 (items-only) and H243 (counts, not the id partition) leave open. Test only (`tests/test_bundle.py`, beside H243/H239). Precondition: H243 (the both-axes whole-summary tie + `_spliced_items_and_events_bundle`, **shipped this run**), H239 (the two-way items-only partition). | → cap 9, cap 7 |
 | H256 | **Buffer refresh checkpoint** (maintenance rule; next full refresh due ~2026-06-22). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H260** — `export events --fidelity`/`--drift`, the
-custody-filter family on the *whole-library custody-ledger backup*: the
-custody-sibling of H259 (shipped this run), the **last surface in the family**
-rendering no custody filter. It replays H259's item-resolution thread-through on
-the events backup — `export events` resolves its item set first (then the events
-for those items), so `fidelity`/`drift` thread into that resolution exactly as
-`--source` already does; the one genuine decision is whether `--drift` filters by
-the items' *current* posture (the item-set sieve, consistent with H259 and
-`--source`) or by the *event row's* status (likely the former). With H259 shipped,
-`export items` and the shareable `export bundle` (H258) both scope by custody; H260
-closes the ledger backup, the family's final gap. The **budget/tier convergence
+The next lead slot is **H261** — `scrolls works` reports a per-work *aggregate
+custody posture*, the first slice of the new **work-level custody consolidation**
+theme (vision §3.5, "canonical works as custody consolidation — continue here").
+With the custody-filter family closed across every per-item read/act/export
+surface (H250–H260, H260 shipped this run), the unworked custody shape is custody
+at the level of a *work* — the canonical cluster of representations — rather than
+the item. `works` already exposes each representation's `fidelity`/`drift` but
+answers no work-level "is this work safely held?" question; H261 folds the per-rep
+custody into one aggregate `custody` block per work (no schema change), H262 adds
+the `works --fidelity`/`--drift` filter (the family on the consolidation surface),
+and H263 surfaces an "at-risk works" signal (works with no safely-held
+representation) on `doctor`/`maintain`. All three are pure folds over data `works`
+already computes. The **budget/tier convergence
 cells H244–H249** sit below as **de-prioritized but valid regression guards** —
 each a correct-by-construction cell of the
 cross-tier × CLI/MCP × scoped/unscoped × untruncated/truncated fidelity matrix
 (H244 bundle-artifact reproducibility, H245 dry-run per-id write prediction, H246
 unscoped CLI ladder-under-truncation, H247 unscoped MCP four-way tie, H248 unscoped
 MCP ladder-under-truncation, H249 both-axes three-way id partition). Take the
-capability (H260) first; reach for a guard cell only when no capability is ready.
+capability (H261) first; reach for a guard cell only when no capability is ready.
 Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line in-file
 index (maintenance-rule §4: *git is the changelog*).
 
-**This run (2026-06-21) shipped H259** — `scrolls export items <…> --fidelity <tier>` / `--drift <posture>`, the custody-filter family reaching the **whole-library JSONL backup**, the backup-path sibling of H258's `export bundle`. `_cmd_export_items` already scoped its row selection by `--source`/`--category`/`--tag` (via `list_items`) but carried no custody-axis scope; the slice threads `fidelity`/`drift` straight through the parser → `_cmd_export_items` → `list_items`, which **already accepts both axes** (the `list --fidelity`/`--drift` primitives, H250/H54) — so it is the family's simplest member: a pure thread-through, no new sieve. The post-SQL custody sieve preserves `list_items`' saved order, so the scoped JSONL is the **byte-identical subset** of the unscoped whole-library backup for those rows (`dump_items_export` over the kept rows, the `test_export_items_fidelity_is_byte_identical_to_the_unscoped_subset` guarantee). The lossless round-trip holds over the scope — `import items` of a custody-scoped backup re-holds exactly the exported rows, with no leakage of the filtered-out tiers (the H216 round-trip narrowed to one custody value). Both axes AND (a full-fidelity drifted row vs reference rows in mixed postures); the honest empty intersection is exit 0 with an empty document, never an error. Closed vocab → exit 2 (argparse `choices`) on the CLI; the `_cmd_export_items` programmatic path catches the `list_items` `ValueError` → JSON-on-stderr exit 1 (the `_cmd_export_bundle` precedent). CLI-only (no MCP twin — `export items` is a portable backup artifact, not a structured read surface; the H258 precedent). Tests: 8 in `tests/test_cli.py` (fidelity scope, drift scope, byte-identical-subset, axes-AND + honest-empty, custody-scoped backup round-trip, two exit-2 closed-vocab, the programmatic exit-1). Docs: the custody-scope paragraph + heading in `docs/cli.md`. Full suite green (3403 passed).
+**This run (2026-06-21) shipped H260** — `scrolls export events <…> --fidelity <tier>` / `--drift <posture>`, the custody-filter family reaching its **last** surface, the **whole-library custody-ledger backup**, the custody-sibling of H259's `export items`. `_cmd_export_events` already resolves its item set via `list_items(source/category/tag)` then fetches *their* events; the slice threads `fidelity`/`drift` into that same `list_items` call — which **already accepts both axes** (the H250/H54 primitives) — so like H259 it is a pure thread-through, no new sieve. The one design decision (flagged in the H260 spec) was resolved as an **item-set sieve**, not a per-row event filter: the axes narrow the *item resolution*, then the in-scope items' **whole** ledger travels — exactly how `--source` already scopes events by item — so `--drift drifted` ships a moved item's *entire* custody history (its earlier `unchanged` rows included), the full proof of *when* the source moved for a recapture handoff, never a single matching row. The current-posture read is the natural one for the recapture use case and keeps the slice consistent with `--source`. Composes with `--since` (item-set sieve, then the time window) and the durable facets; both axes AND, the honest empty intersection is exit 0 with an empty document. Closed vocab → exit 2 (argparse `choices`); the `_cmd_export_events` programmatic path catches the `list_items` `ValueError` → JSON-on-stderr exit 1 (the `_cmd_export_items`/`_cmd_export_bundle` precedent, applied after the existing `--since` exit-2 validation). CLI-only (the `export items`/`export bundle` backup-artifact precedent — no MCP twin). The drift-scoped backup round-trips losslessly into a fresh library with no leakage of the filtered-out items' events. Tests: 8 in `tests/test_cli.py` (fidelity scope, the item-set-sieve/whole-ledger drift test, axes-AND + honest-empty, composes-with-`--since`, custody-scoped round-trip, two exit-2 closed-vocab, the programmatic exit-1). Docs: the custody-scope paragraph + heading + example in `docs/cli.md`. Full suite green (3411 passed). **With H260 the custody-filter family is closed across every read, act, and export surface; the new lead is the work-level custody consolidation theme (H261–H263).**
 
 ---
 
@@ -452,6 +480,7 @@ changelog (maintenance-rule §4).
 | H257 | **`scrolls context <query> --fidelity <tier>` / `--drift <posture>` + MCP `get_context_bundle(fidelity=, drift=)` — the custody-filter family on the *agent context bundle*, the one progressive *read* surface it had not reached.** `build_context` already scoped its candidate set by `--source`/`--category`/`--stage`/`--tag`/`--concept` and *rendered* the custody headline but couldn't scope to a tier/posture; the slice threads `fidelity`/`drift` straight through to `search_items`/`count_matches`, which already apply the `scrolls_fidelity`/`scrolls_drift` UDFs ANDed **before** the LIMIT (the H251/H253 search primitives). So the candidate set is sieved before the cap (the `list`-sieve shape) and *everything downstream reads the kept set by construction*: the work-collapse, the budget tiers' depth, the `_Custody:_`/`_Fidelity:_` headline, the Coverage denominator, and the `full`-budget per-excerpt drift tags — the genuine subtlety (sieve runs before the budget tier nests excerpts) satisfied for free. Both axes AND; the scope-note title names the active custody value beside the facet echo; closed vocab → exit 2 (argparse `choices`) / `ValueError` (`build_context`/MCP). A *read* surface, so it gets the MCP twin (unlike the CLI-only `verify`/`maintain --fidelity`). 10 tests in `test_context.py` (keeps-only-tier/posture, sieve-before-cap, axes-AND, scope-note title, describes-kept-set at full/index budget, two `ValueError`s, CLI exit-2 closed-vocab), 3 in `test_mcp.py` (fidelity/drift twins + closed-vocab), 2 convergence invariants in `test_custody_convergence.py` (`--fidelity T` count ≡ tier T's share of the unfiltered `_Fidelity:_` line + lockstep mutation; `--drift P` count ≡ `facets drift`'s P count). Docs: `docs/cli.md` custody-scope paragraph + heading. Full suite 3383 passed. | cap 1, cap 2, cap 7, cap 10 |
 | H258 | **`scrolls export bundle <query> --fidelity <tier>` / `--drift <posture>` — the custody-filter family on the *portable shareable bundle*, the family's last agent-readable surface.** `build_bundle`/`build_bundle_html` scoped by `--source`/`--category`/`--stage`/`--tag`/`--concept` (the shared `_gather_scope`) and rendered the custody headline but couldn't scope to a tier/posture; the slice threads `fidelity`/`drift` through `_gather_scope` to `count_matches`/`search_items`, which already apply the `scrolls_fidelity`/`scrolls_drift` UDFs in SQL (the H251/H253 primitives) — so the whole gathered set (items, ledger verdicts, the portable custody-events block) is sieved at the source and *everything downstream reads the kept set by construction*: the briefing prose, the lossless custody block, and the events block all describe exactly the exported slice. The bundle carries no cap (M2 completeness — every match, no top-N), so there is no before-/after-cap distinction; the sieve simply narrows the complete set. The lossless round-trip holds over the scope — `import bundle` of a custody-scoped bundle re-holds exactly the exported rows + their custody events, no unscoped leakage (the H216 round-trip narrowed to one custody value). Both axes AND; the title scope note echoes the active custody value (provenance of *what slice* was shared); closed vocab → exit 2 (argparse `choices`) / `ValueError` (`build_bundle`/`search_items`). CLI-only (no MCP twin — a portable artifact, not a structured read surface). 12 tests in `test_bundle.py` (keeps-only-tier/posture, axes-AND + AND-empties, scope-in-title, headline-describes-kept-set, the fidelity↔unfiltered-headline + drift↔`facets drift` convergence invariants, lossless round-trip under a drift scope with no leakage, two `ValueError`s, CLI exit-2 closed-vocab, end-to-end CLI fidelity run, HTML-form scope). Docs: `docs/cli.md` custody-scope paragraph + heading. Full suite 3395 passed. | cap 9, cap 4, cap 1 |
 | H259 | **`scrolls export items --fidelity <tier>` / `--drift <posture>` — the custody-filter family on the *whole-library JSONL backup*, the backup-path sibling of H258.** `export items` (the lossless JSONL backup, ADR 0082) scoped by `--source`/`--category`/`--tag` but carried no custody-axis scope; the missing capability was "back up only my full-fidelity holdings" / "ship only the drifted rows for a recapture handoff." The simplest member of the family: a pure thread-through of two args through the parser → `_cmd_export_items` → `list_items`, which **already accepts `fidelity`/`drift`** (the `list --fidelity`/`--drift` primitives, H250/H54) — no new sieve. The post-SQL sieve preserves saved order, so the scoped JSONL is the **byte-identical subset** of the unscoped backup for those rows (`dump_items_export` over the kept rows). Both axes AND; closed vocab → exit 2 (argparse `choices`); the `_cmd_export_items` programmatic path catches the `list_items` `ValueError` → JSON-on-stderr exit 1 (the `_cmd_export_bundle` precedent). The lossless round-trip holds over the scope — `import items` of a custody-scoped backup re-holds exactly the exported rows, no leakage of the filtered-out tiers (the H216 round-trip narrowed to one custody value). CLI-only (no MCP twin — `export items` is a portable backup artifact, not a structured read surface; the H258 precedent). 8 tests in `test_cli.py` (fidelity/drift scope, byte-identical-subset, axes-AND + honest-empty, custody-scoped round-trip, two exit-2 closed-vocab, programmatic exit-1). Docs: `docs/cli.md` custody-scope paragraph + heading. Full suite 3403 passed. | cap 9, cap 4, cap 1 |
+| H260 | **`scrolls export events --fidelity <tier>` / `--drift <posture>` — the custody-filter family on the *whole-library custody-ledger backup*, the family's **last** surface and the custody-sibling of H259.** `export events` (the verify-ledger JSONL backup, H72) resolves its item set via `list_items(source/category/tag)` then exports *their* events; the slice threads `fidelity`/`drift` into that same `list_items` call (which already accepts both, H250/H54) — like H259, a pure thread-through, no new sieve. The one design decision was resolved as an **item-set sieve** (not a per-row event filter): the axes narrow the item resolution, then the in-scope items' *whole* ledger travels — exactly how `--source` scopes events by item — so `--drift drifted` ships a moved item's entire custody history (earlier `unchanged` rows included), the full proof of *when* a source moved for a recapture handoff. Composes with `--since` (item-set sieve, then time window) and the durable facets; both axes AND; honest empty intersection → exit 0/empty doc; closed vocab → exit 2 (argparse `choices`); the `_cmd_export_events` programmatic path catches the `list_items` `ValueError` → exit 1 (after the existing `--since` exit-2 validation). CLI-only (the `export items`/`export bundle` backup-artifact precedent). Drift-scoped backup round-trips losslessly into a fresh library with no leakage. 8 tests in `test_cli.py` (fidelity scope, item-set-sieve/whole-ledger drift, axes-AND + honest-empty, composes-with-`--since`, custody-scoped round-trip, two exit-2 closed-vocab, programmatic exit-1). Docs: `docs/cli.md` custody-scope paragraph + heading + example. Full suite 3411 passed. **Closes the custody-filter family across every read/act/export surface; new lead = work-level custody consolidation (H261–H263).** | cap 9, cap 4, cap 1 |
 
 ---
 
@@ -501,15 +530,22 @@ on a committed, tested, clean stopping point; slips roll forward.
   block all describe exactly the exported slice, and `import bundle` of a
   custody-scoped bundle re-holds exactly those rows (the H216 round-trip under a
   custody scope). 12 tests in `test_bundle.py`; full suite 3395 passed.
-- **Next (2026-06-22 → 2026-06-24):** **H259** — `scrolls export items
-  --fidelity`/`--drift`, the custody-filter family on the *whole-library JSONL
-  backup* (the backup-path sibling of H258): a clean thread-through, since
-  `list_items` already accepts `fidelity`/`drift`, so an operator can "back up
-  only my full-fidelity holdings." **H260** (`export events --fidelity`/`--drift`,
-  the custody-ledger backup) follows as its custody-sibling. If neither is ready,
-  optionally close one de-prioritized convergence guard (H244–H249) rather than
-  starting unrelated work. The **H256 buffer-refresh checkpoint** is due
-  ~2026-06-22 (fold H250–H258 into the compact ledger, prune, re-derive plans).
+- **Day 6 (pulled forward into 2026-06-21):** **Done.** Shipped **H259** then
+  **H260** — `export items` then `export events --fidelity`/`--drift`, the two
+  whole-library backups, **closing the custody-filter family across every read,
+  act, and export surface.** H260 resolved its one design choice as an *item-set
+  sieve* (the in-scope items' whole ledger travels, like `--source`), so a
+  `--drift drifted` backup carries the moved items' full custody history for a
+  recapture handoff. 8 tests; full suite 3411 passed.
+- **Next (2026-06-22 → 2026-06-24):** **H261** — `scrolls works` reports a
+  per-work *aggregate custody posture* ("is this work safely held — does any
+  representation survive at full fidelity, unmoved?"), the first slice of the new
+  **work-level custody consolidation** theme (vision §3.5, the genuinely new
+  custody *shape* now that the per-item filter family is closed). A pure fold over
+  the per-rep `fidelity`/`drift` `works` already computes, no schema change.
+  **H262** (`works --fidelity`/`--drift` filter) and **H263** ("at-risk works"
+  doctor/maintain signal) follow. The **H256 buffer-refresh checkpoint** is due
+  ~2026-06-22 (fold H250–H260 into the compact ledger, prune, re-derive plans).
 
 ---
 
@@ -525,18 +561,21 @@ on a committed, tested, clean stopping point; slips roll forward.
   custody axes are now filterable on **every** read and act surface; **H255 (this
   run) closed the last un-scoped *act* surface** (`maintain --fidelity`), so the
   family spans browse/rank/act/relate/maintain end to end.
-- **This week's horizon — the export-backup surfaces.** With every browse/rank/
-  act/relate/maintain surface and *both* agent-readable bundles
-  custody-filterable (`context` H257, `export bundle` H258 — both **shipped this
-  run**), the only surfaces the family has not reached are the **whole-library
-  JSONL backups**: **H259** (`export items --fidelity`/`--drift`) is the lead and
-  **H260** (`export events --fidelity`/`--drift`) its custody-sibling — so an
-  operator can back up or hand off a custody-scoped slice of the raw rows / verify
-  ledger, not just the whole library. Concrete, vision-grounded capabilities
-  (fidelity/provenance travel with every result; portable custody, custody-vision
-  §2), and the simplest members of the family yet (`list_items` already accepts
-  `fidelity`/`drift`, a pure thread-through). After H259/H260 the custody-filter
-  family is complete across **every** read, act, and export surface.
+- **The custody-filter family is *complete*.** With H259 (`export items`) and
+  H260 (`export events`) **both shipped this run**, the per-item *holdings* and
+  *ledger-claim* axes are scopable on **every** read, act, and export surface —
+  browse/rank/act/relate/maintain, both agent-readable bundles (`context` H257,
+  `export bundle` H258), and both whole-library backups. There is no un-filtered
+  custody surface left.
+- **This week's horizon — work-level custody consolidation (vision §3.5).** The
+  next custody *shape* is custody at the level of a *work* (the canonical cluster
+  of representations, ADR 0095/0096), not the item. `works` already carries each
+  representation's `fidelity`/`drift` but answers no work-level "is this work
+  safely held?" question. **H261** (per-work aggregate custody posture) is the
+  lead, **H262** (`works --fidelity`/`--drift` filter — the family on the
+  consolidation surface) and **H263** ("at-risk works" doctor/maintain signal)
+  follow — all pure folds over data `works` already computes, no schema change,
+  each a genuinely new custody capability rather than a filter replay.
 - The **budget/tier convergence guard cells H244–H249** remain valid regression
   guards but are explicitly **de-prioritized** — take a capability first; close a
   guard only when no capability is ready, and prefer closing one over appending

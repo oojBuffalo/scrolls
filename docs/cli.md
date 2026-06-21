@@ -2052,7 +2052,7 @@ $ scrolls export items --source arxiv
 [exit 0]
 ```
 
-### `scrolls export events [--source S] [--category C] [--tag T] [--since ISO]`
+### `scrolls export events [--source S] [--category C] [--tag T] [--since ISO] [--fidelity T] [--drift P]`
 
 Export the verify ledger (`custody_events`) as a lossless JSON Lines stream —
 **whole-library portable custody** (roadmap H72), the custody sibling of
@@ -2090,6 +2090,33 @@ window is a valid empty document, never an error
 `--since` is a loud usage error, exit 2
 (`test_export_events_malformed_since_is_a_usage_error`).
 
+**Custody scope (`--fidelity` / `--drift`).** Two more filters scope the ledger
+backup by the per-item custody axes (roadmap H260) — the ledger-backup sibling of
+`export items --fidelity`/`--drift` (the item backup, H259). Unlike the item
+backup they are an **item-set sieve**, not a per-row filter: they narrow the
+*item resolution* — the same `list_items` sieve `scrolls list --fidelity`/`--drift`
+fold — then the **whole ledger** of the selected items travels, exactly the way
+`--source` already scopes events by item. `--fidelity`
+(`full`/`partial`/`reference`) keeps only the custody history of holdings at one
+fidelity tier (ADR 0097, no ledger read); `--drift`
+(`verified`/`unverified`/`drifted`/`rotted`/`error`) keeps only the history of
+the items **currently** at one drift posture. The current-posture semantics are
+the load-bearing choice: `--drift drifted` ships a moved item's *entire* custody
+record — including its earlier `unchanged` checks, not just the `drifted` row
+(`test_export_events_drift_is_the_item_set_sieve_carrying_the_whole_ledger`) — so
+a recapture handoff carries the full proof of *when* the source moved, not a
+single event. Both axes AND with each other, with `--since` (which still windows
+the surviving event rows — item-set sieve, then time window), and with the
+durable filters (`test_export_events_custody_axes_and_together`,
+`test_export_events_custody_scope_composes_with_since`). The round-trip holds
+over the scope: `import events` of a drift-scoped backup restores **exactly** the
+moved items' history, no leakage of the filtered-out items' events
+(`test_export_events_custody_scoped_backup_round_trips_into_a_fresh_library`).
+Both are a closed vocabulary — an unknown value is exit 2 (argparse `choices`),
+never a silent empty backup (`test_export_events_rejects_an_unknown_fidelity_tier`);
+the `_cmd_export_events` programmatic path surfaces the `list_items` `ValueError`
+as exit 1 (`test_cmd_export_events_unknown_tier_on_the_programmatic_path_is_exit_1`).
+
 An empty (or pre-`init`) library produces an empty document, never an error
 (`test_export_events_empty_library_is_valid`,
 `test_export_events_before_init_is_an_empty_document`). Restore with
@@ -2101,6 +2128,9 @@ $ scrolls export events --source arxiv
 [exit 0]
 
 $ scrolls export events --since 2026-06-16 >> ledger.jsonl   # append only checks since the last sweep
+[exit 0]
+
+$ scrolls export events --drift drifted > moved.jsonl        # the full custody history of the moved items, for a recapture handoff
 [exit 0]
 ```
 

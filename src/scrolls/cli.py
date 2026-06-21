@@ -586,6 +586,27 @@ def build_parser() -> argparse.ArgumentParser:
         "backup since the last sweep); re-importing the overlapping union "
         "dedups, so it stays idempotent",
     )
+    export_events_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only the custody history of items held at this fidelity tier "
+        "(ADR 0097) — the holdings-axis companion of --drift; the item-set sieve "
+        "selects the items `scrolls list --fidelity` enumerates, then their whole "
+        "ledger travels (e.g. --fidelity full to back up only the custody record "
+        "of holdings you can re-derive offline). ANDs with --drift",
+    )
+    export_events_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only the custody history of items *currently* at this drift posture "
+        "(from the verify ledger) — the ledger-claim-axis companion of --fidelity; "
+        "the item-set sieve selects the items `scrolls list --drift` enumerates, "
+        "then their whole ledger travels, not just the matching event rows (e.g. "
+        "--drift drifted to ship the full custody history of the moved items for a "
+        "recapture handoff). ANDs with --fidelity",
+    )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
         help="Export a scoped, self-contained custody bundle for a query "
@@ -1169,7 +1190,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.export_command == "events":
             return _cmd_export_events(
-                args.source, args.category, args.tag, args.since
+                args.source,
+                args.category,
+                args.tag,
+                args.since,
+                args.fidelity,
+                args.drift,
             )
         if args.export_command == "bundle":
             return _cmd_export_bundle(
@@ -1870,11 +1896,25 @@ def _cmd_export_events(
     category: str | None,
     tag: str | None,
     since: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> int:
     # whole-library portable custody (H72): the verify ledger as a lossless JSONL
     # stream, the custody sibling of `export items`. Scoped by the same
     # item-facet set (source/category/tag) — resolve the items, then their
     # events — so a slice's custody travels with the slice's items.
+    #
+    # `fidelity`/`drift` (H260) add the two custody axes as an *item-set sieve*:
+    # they narrow the item resolution (the same `list --fidelity`/`--drift` H250/
+    # H54 primitives `export items` folds, H259), then the *whole* ledger of those
+    # items travels — "ship the full custody history of the drifted items for a
+    # recapture handoff." This mirrors how `--source` already scopes events by
+    # item (and so `--drift drifted` carries an item's earlier non-drifted rows
+    # too, the item's whole history, not just the matching event row). Both axes
+    # AND with each other and the rest. An unknown value is rejected by argparse
+    # `choices` (exit 2) before reaching here; on the library path `list_items`
+    # raises ValueError (the empty-vocabulary belt-and-braces → exit 1, the
+    # `export items`/`export bundle` precedent).
     #
     # `--since <ISO>` (H75) windows the stream to events at/after the boundary —
     # an incremental backup since the last sweep. Validated first so a malformed
@@ -1886,11 +1926,22 @@ def _cmd_export_events(
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 2
     paths = get_paths()
-    items = (
-        list_items(paths.db_path, source=source, category=category, tag=tag)
-        if paths.db_path.exists()
-        else []
-    )
+    try:
+        items = (
+            list_items(
+                paths.db_path,
+                source=source,
+                category=category,
+                tag=tag,
+                fidelity=fidelity,
+                drift=drift,
+            )
+            if paths.db_path.exists()
+            else []
+        )
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     events = (
         events_for_items(paths.db_path, [item.id for item in items], since=boundary)
         if items

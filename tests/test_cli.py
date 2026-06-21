@@ -4043,6 +4043,185 @@ def test_export_events_since_union_reimports_idempotently(
     assert [e.status for e in restored] == ["drifted", "unchanged"]  # whole ledger, once
 
 
+# --- export events --fidelity / --drift: the custody-filter family on the
+# whole-library custody-ledger backup (H260) ---------------------------------
+
+
+def _seed_events_for_custody_scope():
+    """Two held items spanning a fidelity tier *and* a drift posture, each with a
+    multi-row ledger; library must already exist.
+
+    `web:full` is full-fidelity (extracted body + hash) and currently *drifted*
+    (an `unchanged` recheck then a later `drifted` one); `web:ref` is
+    reference-only (just the pointer) and currently *rotted* (a single 404). The
+    two-row ledger on `web:full` is what proves `--drift drifted` ships its
+    *whole* custody history, not only the matching row. Returns the db path.
+    """
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://ex.com/full",
+        saved_at="2026-06-12T00:00:00+00:00", title="Full + drifted",
+        extracted_text="A re-derivable body.", content_hash="sha256:a",
+        markdown_path="scrolls/web/full.md", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://ex.com/ref",
+        saved_at="2026-06-12T00:00:01+00:00", title="Reference + rotted",
+        stage="detected"))
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-13T00:00:00+00:00", "unchanged", "sha256:a", "sha256:a"),
+        CustodyEvent("web:full", "2026-06-15T00:00:00+00:00", "drifted", "sha256:a", "sha256:b"),
+        CustodyEvent("web:ref", "2026-06-14T00:00:00+00:00", "rotted", "sha256:a", None, "404"),
+    ])
+    return db
+
+
+def test_export_events_fidelity_scopes_to_the_items_custody_history(
+    scrolls_home, capsys
+):
+    # back up only the custody history of items at one fidelity tier — the
+    # item-set sieve selects the items `scrolls list --fidelity` enumerates, then
+    # their whole ledger travels (ADR 0097, the holdings-axis companion of --drift)
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    exit_code = main(["export", "events", "--fidelity", "full"])
+    assert exit_code == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    # only web:full's ledger (both its rows); the reference item's 404 stays home
+    assert {row["item_id"] for row in rows} == {"web:full"}
+    assert [row["status"] for row in rows] == ["unchanged", "drifted"]
+
+    main(["export", "events", "--fidelity", "reference"])
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:ref"}
+    assert [row["status"] for row in rows] == ["rotted"]
+
+
+def test_export_events_drift_is_the_item_set_sieve_carrying_the_whole_ledger(
+    scrolls_home, capsys
+):
+    # the crux of the item-set-vs-per-row decision (H260): `--drift drifted`
+    # selects the items *currently* drifted, then ships their *whole* ledger — so
+    # web:full's earlier `unchanged` row travels too, not just the `drifted` one.
+    # This mirrors how `--source` already scopes events by item ("the drifted
+    # items' full custody history travels, for a recapture handoff").
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    exit_code = main(["export", "events", "--drift", "drifted"])
+    assert exit_code == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:full"}
+    # both rows — including the pre-drift `unchanged` one (NOT a per-row status filter)
+    assert [row["status"] for row in rows] == ["unchanged", "drifted"]
+
+    # the rotted item is reachable by its current posture on the same axis
+    main(["export", "events", "--drift", "rotted"])
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:ref"}
+    assert [row["status"] for row in rows] == ["rotted"]
+
+
+def test_export_events_custody_axes_and_together(scrolls_home, capsys):
+    # both axes AND: --fidelity intersects --drift (and every item facet). The
+    # seed's web:full is full+drifted, web:ref is reference+rotted.
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    # the intersection full *and* drifted is exactly web:full's ledger
+    main(["export", "events", "--fidelity", "full", "--drift", "drifted"])
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:full"}
+
+    # an empty intersection (no full-fidelity rotted item) is the honest empty
+    # document, never an error — the `export items` precedent
+    exit_code = main(["export", "events", "--fidelity", "full", "--drift", "rotted"])
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_events_custody_scope_composes_with_since(scrolls_home, capsys):
+    # window then item-set sieve: --since narrows the event rows, --drift selects
+    # the items whose ledger travels — they compose. web:full's 06-13 unchanged is
+    # before the window, its 06-15 drifted is at it, so only the latter survives.
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    exit_code = main([
+        "export", "events", "--drift", "drifted", "--since", "2026-06-15T00:00:00+00:00",
+    ])
+    assert exit_code == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["item_id"] == "web:full"
+    assert rows[0]["status"] == "drifted"
+
+
+def test_export_events_custody_scoped_backup_round_trips_into_a_fresh_library(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the recapture-handoff contract: `import events` of a drift-scoped backup
+    # restores exactly the moved items' custody history — no leakage of the
+    # filtered-out items' events (the H72 round-trip narrowed to one posture).
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    main(["export", "events", "--drift", "drifted"])
+    out_path = tmp_path / "drifted-ledger.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "events", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"imported": 2, "skipped": 0, "events": 2}
+
+    from scrolls.custody import item_events
+    db = get_paths().db_path
+    # web:full's whole ledger restored, newest-first; web:ref's 404 never travelled
+    assert [e.status for e in item_events(db, "web:full")] == ["drifted", "unchanged"]
+    assert item_events(db, "web:ref") == []
+
+
+def test_export_events_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # fidelity tiers are a closed vocabulary; a typo is exit 2, never a silent
+    # empty backup (the `list --fidelity` / `export items` precedent)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "events", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
+def test_export_events_rejects_an_unknown_drift_posture(scrolls_home):
+    # drift postures are a closed vocabulary; a typo is exit 2, never a silent empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "events", "--drift", "drited"])
+    assert excinfo.value.code == 2
+
+
+def test_cmd_export_events_unknown_tier_on_the_programmatic_path_is_exit_1(
+    scrolls_home, capsys
+):
+    # belt-and-braces below argparse: a direct call past `choices` surfaces the
+    # `list_items` ValueError as a JSON error on stderr, exit 1 (the
+    # `_cmd_export_items` precedent), never a stdout backup
+    from scrolls.cli import _cmd_export_events
+
+    main(["init"])
+    _seed_events_for_custody_scope()
+    capsys.readouterr()
+
+    exit_code = _cmd_export_events(None, None, None, None, "bogus-tier", None)
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
     main(["add", "https://youtu.be/dQw4w9WgXcQ"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
