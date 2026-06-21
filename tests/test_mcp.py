@@ -1065,6 +1065,126 @@ def test_get_related_scrolls_accepts_the_items_url(scrolls_home, fake_wikipedia_
     assert mcp_server.get_related_scrolls("https://en.wikipedia.org/wiki/SQLite") == []
 
 
+# --- H254: get_related_scrolls(fidelity=/drift=) — the custody-filter family twins ---
+
+
+def _related_custody_mix_mcp():
+    """An anchor + three neighbours sharing a concept, spanning the custody axes:
+    a `full` neighbour re-checked unchanged (→ verified), a `partial` one drifted,
+    a `reference` one never re-checked (→ unverified). The MCP twin of
+    `test_related._related_custody_mix`. Library must already exist.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:anchor", source="web", url="https://ex.com/anchor",
+        saved_at="2026-06-12T00:00:00+00:00", title="Anchor", concepts=("ml",),
+        raw_text="<raw>", content_hash="sha256:a", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:full", source="web", url="https://ex.com/full",
+        saved_at="2026-06-12T00:00:01+00:00", title="Full", concepts=("ml",),
+        raw_text="<raw>", content_hash="sha256:f", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:partial", source="web", url="https://ex.com/partial",
+        saved_at="2026-06-12T00:00:02+00:00", title="Partial", concepts=("ml",),
+        extracted_text="body", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://ex.com/ref",
+        saved_at="2026-06-12T00:00:03+00:00", title="Reference", concepts=("ml",),
+        stage="detected"))
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:f", "sha256:f", None),
+        CustodyEvent("web:partial", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:p", "sha256:x", None),
+        # web:ref left with no verdict → unverified
+    ])
+    return db
+
+
+def test_get_related_scrolls_filters_by_fidelity_tier(scrolls_home):
+    # the holdings-axis sieve on the relationship surface — the MCP twin of
+    # `scrolls related --fidelity` and the relationship sibling of
+    # `list_scrolls(fidelity=)`/`search_scrolls(fidelity=)` (ADR 0097, roadmap H254).
+    from scrolls.cli import main
+
+    main(["init"])
+    _related_custody_mix_mcp()
+
+    assert [r["id"] for r in mcp_server.get_related_scrolls("web:anchor", fidelity="full")] == [
+        "web:full"
+    ]
+    assert [
+        r["id"] for r in mcp_server.get_related_scrolls("web:anchor", fidelity="partial")
+    ] == ["web:partial"]
+    assert [
+        r["id"] for r in mcp_server.get_related_scrolls("web:anchor", fidelity="reference")
+    ] == ["web:ref"]
+    # row-shows-≡-filter: every kept hit shows exactly the tier it was selected by
+    for tier in ("full", "partial", "reference"):
+        hits = mcp_server.get_related_scrolls("web:anchor", fidelity=tier)
+        assert hits and all(h["fidelity"] == tier for h in hits)
+
+
+def test_get_related_scrolls_filters_by_drift_posture(scrolls_home):
+    # the ledger-claim-axis sieve on the relationship surface — the MCP twin of
+    # `scrolls related --drift` (roadmap H254). The mix reads verified/drifted/
+    # unverified across its three neighbours.
+    from scrolls.cli import main
+
+    main(["init"])
+    _related_custody_mix_mcp()
+
+    assert [r["id"] for r in mcp_server.get_related_scrolls("web:anchor", drift="verified")] == [
+        "web:full"
+    ]
+    assert [r["id"] for r in mcp_server.get_related_scrolls("web:anchor", drift="drifted")] == [
+        "web:partial"
+    ]
+    assert [
+        r["id"] for r in mcp_server.get_related_scrolls("web:anchor", drift="unverified")
+    ] == ["web:ref"]
+    # a posture no neighbour holds is an honest empty neighbourhood, never an error
+    assert mcp_server.get_related_scrolls("web:anchor", drift="rotted") == []
+    for posture in ("verified", "drifted", "unverified"):
+        hits = mcp_server.get_related_scrolls("web:anchor", drift=posture)
+        assert hits and all(h["drift"] == posture for h in hits)
+
+
+def test_get_related_scrolls_ands_both_custody_axes(scrolls_home):
+    # the two axes AND, the same as the CLI twin: full+verified is web:full alone,
+    # full+drifted is empty (no neighbour is both).
+    from scrolls.cli import main
+
+    main(["init"])
+    _related_custody_mix_mcp()
+
+    assert [
+        r["id"]
+        for r in mcp_server.get_related_scrolls("web:anchor", fidelity="full", drift="verified")
+    ] == ["web:full"]
+    assert (
+        mcp_server.get_related_scrolls("web:anchor", fidelity="full", drift="drifted") == []
+    )
+
+
+def test_get_related_scrolls_rejects_unknown_custody_vocab(scrolls_home):
+    # the same closed vocabulary as the `list_scrolls`/`search_scrolls` twins; a typo
+    # raises rather than silently returning an empty neighbourhood.
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    _related_custody_mix_mcp()
+    with pytest.raises(ValueError):
+        mcp_server.get_related_scrolls("web:anchor", fidelity="ful")
+    with pytest.raises(ValueError):
+        mcp_server.get_related_scrolls("web:anchor", drift="drited")
+
+
 def test_get_link_graph_returns_directed_edges(scrolls_home):
     from scrolls.cli import main
     from scrolls.items import ScrollItem, insert_item

@@ -42,7 +42,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from scrolls.custody import drift_posture, last_checked, latest_events
+from scrolls.custody import (
+    DRIFT_POSTURES,
+    FIDELITY_TIERS,
+    drift_posture,
+    last_checked,
+    latest_events,
+)
 from scrolls.graph import identity_tokens, link_tokens
 from scrolls.items import ScrollItem, get_fidelity, get_item, list_items
 from scrolls.render import slugify
@@ -72,17 +78,39 @@ class RelatedHit:
 
 
 def find_related(
-    db_path: Path, item_id: str, limit: int = DEFAULT_LIMIT
+    db_path: Path,
+    item_id: str,
+    limit: int = DEFAULT_LIMIT,
+    *,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> list[RelatedHit]:
     """The best `limit` items related to `item_id`, best matches first.
 
     The capped public view (the MCP `get_related_scrolls` and bare `scrolls
     related` both read it). Raises ValueError when the item does not exist.
+
+    `fidelity`/`drift` narrow the neighbourhood to one custody value per axis
+    *before* the cap (roadmap H254, the `list`-sieve shape), so the cap returns
+    the top-`limit` neighbours **at that value**, not the matching ones among the
+    top-`limit`. Both fold the same per-hit primitive the field is read off
+    (`get_fidelity`/`drift_posture`), so a neighbour is selected by exactly the
+    custody value it shows; the two axes AND. An unknown tier/posture raises
+    ValueError (closed vocab), the same could-not-check contract `list_items`
+    enforces.
     """
-    return scored_related(db_path, item_id)[:limit]
+    return filter_related(
+        scored_related(db_path, item_id), fidelity=fidelity, drift=drift
+    )[:limit]
 
 
-def count_related(db_path: Path, item_id: str) -> int:
+def count_related(
+    db_path: Path,
+    item_id: str,
+    *,
+    fidelity: str | None = None,
+    drift: str | None = None,
+) -> int:
     """How many items relate to `item_id` at all, ignoring the cap.
 
     The honest denominator behind `scrolls related --stats`' truncation
@@ -90,8 +118,48 @@ def count_related(db_path: Path, item_id: str) -> int:
     `limit` neighbours, so on its own it cannot tell "those are all the
     related items" from "the top N of more". Raises ValueError on an unknown
     id, exactly like `find_related`, so the could-not-check path is identical.
+
+    `fidelity`/`drift` narrow the count to the same custody-filtered neighbourhood
+    `find_related` returns (roadmap H254), so the `--stats` denominator counts the
+    kept set — never the whole scored set when a filter is in play.
     """
-    return len(scored_related(db_path, item_id))
+    return len(
+        filter_related(scored_related(db_path, item_id), fidelity=fidelity, drift=drift)
+    )
+
+
+def filter_related(
+    hits: list[RelatedHit],
+    *,
+    fidelity: str | None = None,
+    drift: str | None = None,
+) -> list[RelatedHit]:
+    """Narrow scored related hits to one custody value per axis (the H254 sieve).
+
+    The relationship-surface twin of `list --fidelity`/`--drift`'s sieve over the
+    browse rows: it folds the *same* per-hit `fidelity`/`drift` the node shape is
+    read off (`get_fidelity`/`drift_posture`, roadmap H56), so a neighbour is kept
+    by exactly the custody value it shows. The two axes AND. Closed vocabulary
+    (`FIDELITY_TIERS`/`DRIFT_POSTURES`) → ValueError, so a typo is a loud
+    could-not-check, never a silent empty neighbourhood (the `list_items` contract).
+    Order is preserved, so a caller slicing `[:limit]` after this still gets the
+    top-`k` neighbours *at that value*.
+    """
+    if fidelity is not None:
+        if fidelity not in FIDELITY_TIERS:
+            raise ValueError(
+                f"unknown fidelity tier {fidelity!r}; "
+                f"choose one of {', '.join(FIDELITY_TIERS)}"
+            )
+        hits = [hit for hit in hits if hit.fidelity == fidelity]
+    if drift is not None:
+        if drift not in DRIFT_POSTURES:
+            raise ValueError(
+                f"unknown drift posture {drift!r}; "
+                f"choose one of {', '.join(DRIFT_POSTURES)}"
+            )
+        hits = [hit for hit in hits if hit.drift == drift]
+    return hits
 
 
 def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:

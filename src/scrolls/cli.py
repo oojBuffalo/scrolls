@@ -123,7 +123,7 @@ from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_i
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
-from scrolls.related import find_related, scored_related
+from scrolls.related import filter_related, scored_related
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
@@ -817,6 +817,25 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Maximum hits to return (default {DEFAULT_RELATED_LIMIT})",
     )
     related_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only neighbours the library holds at this custody-fidelity tier "
+        "(ADR 0097) — the relationship-surface twin of `scrolls list "
+        "--fidelity` / `search --fidelity`; the sieve runs before --limit, so "
+        "you get the top neighbours *at that tier* (e.g. the full-fidelity ones "
+        "you can re-derive offline)",
+    )
+    related_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only neighbours at this custody drift posture (from the verify "
+        "ledger) — the ledger-claim-axis companion of --fidelity; the sieve runs "
+        "before --limit, so you get the top neighbours *at that posture* (e.g. "
+        "--drift drifted to see which neighbours have moved). ANDs with --fidelity",
+    )
+    related_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1147,7 +1166,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "related":
-        return _cmd_related(args.id, args.limit, args.stats)
+        return _cmd_related(
+            args.id, args.limit, args.stats, args.fidelity, args.drift
+        )
     if args.command == "rm":
         return _cmd_rm(args.refs)
     if args.command == "search":
@@ -2753,25 +2774,38 @@ def _cmd_context(
     return 0
 
 
-def _cmd_related(item_id: str, limit: int, stats: bool = False) -> int:
+def _cmd_related(
+    item_id: str,
+    limit: int,
+    stats: bool = False,
+    fidelity: str | None = None,
+    drift: str | None = None,
+) -> int:
     paths = get_paths()
     try:
         resolved = resolve_item_id(item_id)
-        # The full scored set when --stats needs the pre-cap denominator,
-        # else just the capped public view. Both raise the same ValueError on
-        # an unknown id, so the could-not-check path is identical (G1).
-        hits = scored_related(paths.db_path, resolved) if stats else find_related(
-            paths.db_path, resolved, limit=limit
+        # The full custody-filtered scored set (roadmap H254): `filter_related`
+        # narrows to one value per axis *before* the cap, so the bare view's
+        # `[:limit]` returns the top neighbours at that value and the --stats
+        # denominator counts the kept set. An unknown id and an unknown custody
+        # value both raise ValueError, so the could-not-check path is identical
+        # (G1) — though argparse's `choices=` already rejects a bad CLI value
+        # with exit 2 before we get here.
+        hits = filter_related(
+            scored_related(paths.db_path, resolved), fidelity=fidelity, drift=drift
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
     if not stats:
-        print(json.dumps(_related_rows(hits)))
+        print(json.dumps(_related_rows(hits[:limit])))
         return 0
     matched = len(hits)
     rows = _related_rows(hits[:limit])
-    scope = {"item": resolved, "limit": limit}
+    # The custody filters ride the scope echo so a reader holding only the
+    # envelope recovers which neighbourhood it covered (G2); `None` is pruned
+    # by `scope_envelope`, so an unfiltered call keeps the lean scope shape.
+    scope = {"item": resolved, "fidelity": fidelity, "drift": drift, "limit": limit}
     # `stats.custody` (roadmap H99): the custody tally over the matched related
     # *neighbourhood* — the full scored `hits` (pre-cap), each already carrying its
     # own `fidelity`/`drift` (H56), so fold those through the same `tally_custody`

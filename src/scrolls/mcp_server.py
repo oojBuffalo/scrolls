@@ -382,7 +382,10 @@ def get_scroll_history(
 
 
 def get_related_scrolls(
-    item_id: str, limit: int = DEFAULT_RELATED_LIMIT
+    item_id: str,
+    limit: int = DEFAULT_RELATED_LIMIT,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> list[dict[str, Any]]:
     """Items connected to one item — same-work, link edges, shared concepts/tags — with reasons.
 
@@ -393,14 +396,27 @@ def get_related_scrolls(
     Each hit's `reasons` say why it matched and its `fidelity` says at what
     custody tier the library holds the neighbour (full/partial/reference,
     ADR 0097), the same tier `list_scrolls` and `search_scrolls` report.
-    `item_id` is the item's id or the URL that saved it (ADR 0028), resolved
-    like `get_scroll`'s. An unknown item is an error.
+    `fidelity` narrows the neighbourhood to neighbours held at one custody tier
+    and `drift` to neighbours at one verify-ledger posture
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the relationship-surface
+    twin of `list_scrolls`/`search_scrolls`'s `fidelity`/`drift` filters; the
+    sieve runs *before* the cap, so you get the top neighbours *at that value*
+    (e.g. only the full-fidelity neighbours you can re-derive offline, or only the
+    ones that have drifted), and the two axes AND. An unknown tier/posture is an
+    error, never a silent empty neighbourhood. `item_id` is the item's id or the
+    URL that saved it (ADR 0028), resolved like `get_scroll`'s. An unknown item is
+    an error.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
     if not paths.db_path.exists():
         raise ValueError(f"no such item: {resolved}")
-    hits = [dataclasses.asdict(hit) for hit in find_related(paths.db_path, resolved, limit=limit)]
+    hits = [
+        dataclasses.asdict(hit)
+        for hit in find_related(
+            paths.db_path, resolved, limit=limit, fidelity=fidelity, drift=drift
+        )
+    ]
     for hit in hits:
         hit["reasons"] = list(hit["reasons"])
     return hits

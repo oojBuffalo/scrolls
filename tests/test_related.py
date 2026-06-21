@@ -683,3 +683,170 @@ def test_cli_related_stats_attention_is_null_single_source(db, capsys):
     capsys.readouterr()
     main(["related", "web:anchor", "--stats"])
     assert json.loads(capsys.readouterr().out)["stats"]["custody"]["attention"] is None
+
+
+# --- H254: --fidelity/--drift — the custody-filter family on the relationship surface ---
+
+
+def test_find_related_fidelity_filters_the_neighbourhood_by_tier(db):
+    # the holdings-axis sieve on the relationship surface: keep only the neighbours
+    # held at one custody tier, the relationship twin of `list --fidelity`. The
+    # `_related_custody_mix` neighbours span the tiers (full/partial/reference).
+    _related_custody_mix(db)
+    assert [h.id for h in find_related(db, "web:anchor", fidelity="full")] == ["web:full"]
+    assert [h.id for h in find_related(db, "web:anchor", fidelity="partial")] == [
+        "web:partial"
+    ]
+    assert [h.id for h in find_related(db, "web:anchor", fidelity="reference")] == [
+        "web:ref"
+    ]
+    # row-shows-≡-filter: every kept hit shows exactly the tier it was selected by
+    for tier in ("full", "partial", "reference"):
+        hits = find_related(db, "web:anchor", fidelity=tier)
+        assert hits and all(h.fidelity == tier for h in hits)
+
+
+def test_find_related_drift_filters_the_neighbourhood_by_posture(db):
+    # the ledger-claim-axis sieve: keep only the neighbours at one drift posture,
+    # the relationship twin of `list --drift`. The mix's neighbours read verified
+    # (web:full, unchanged), drifted (web:partial), unverified (web:ref).
+    _related_custody_mix(db)
+    assert [h.id for h in find_related(db, "web:anchor", drift="verified")] == [
+        "web:full"
+    ]
+    assert [h.id for h in find_related(db, "web:anchor", drift="drifted")] == [
+        "web:partial"
+    ]
+    assert [h.id for h in find_related(db, "web:anchor", drift="unverified")] == [
+        "web:ref"
+    ]
+    # a posture no neighbour holds is an honest empty neighbourhood, never an error
+    assert find_related(db, "web:anchor", drift="rotted") == []
+    for posture in ("verified", "drifted", "unverified"):
+        hits = find_related(db, "web:anchor", drift=posture)
+        assert hits and all(h.drift == posture for h in hits)
+
+
+def test_find_related_ands_both_custody_axes(db):
+    # the two axes AND: web:full is the only full *and* verified neighbour; full
+    # ANDed with drifted (web:partial is drifted but partial) is empty.
+    _related_custody_mix(db)
+    assert [
+        h.id for h in find_related(db, "web:anchor", fidelity="full", drift="verified")
+    ] == ["web:full"]
+    assert (
+        find_related(db, "web:anchor", fidelity="full", drift="drifted") == []
+    )  # no neighbour is both
+
+
+def _related_fidelity_rank(db):
+    """An anchor + three neighbours whose *score* and *fidelity* deliberately
+    diverge: a reference neighbour outranks both full ones, so a filter that runs
+    *after* the cap would wrongly drop a full neighbour the user asked for.
+
+    `web:refhi` (reference) shares 3 concepts → 9 pts, the top hit overall.
+    `web:fullmid` (full) shares 2 → 6 pts; `web:fulllo` (full) shares 1 → 3 pts.
+    """
+    insert_item(db, make_item(
+        "web:anchor", concepts=("alpha", "beta", "gamma")))
+    insert_item(db, make_item(
+        "web:refhi", concepts=("alpha", "beta", "gamma")))  # reference, top score
+    insert_item(db, make_item(
+        "web:fullmid", concepts=("alpha", "beta"),
+        raw_text="<body>", content_hash="sha256:m"))  # full, mid score
+    insert_item(db, make_item(
+        "web:fulllo", concepts=("alpha",),
+        raw_text="<body>", content_hash="sha256:l"))  # full, low score
+
+
+def test_find_related_fidelity_sieves_before_the_cap(db):
+    # the load-bearing H254 claim (the `list`-sieve shape, not the search
+    # after-LIMIT shape): the filter runs *before* `[:limit]`, so the cap returns
+    # the top-k neighbours *at that tier* — not the matching ones among the top-k.
+    _related_fidelity_rank(db)
+    # unfiltered, the reference neighbour is #1 overall
+    assert find_related(db, "web:anchor", limit=1)[0].id == "web:refhi"
+    # fidelity=full + limit=1 returns the top *full* neighbour, skipping the
+    # higher-scoring reference one — proof the sieve precedes the cap
+    capped = find_related(db, "web:anchor", limit=1, fidelity="full")
+    assert [h.id for h in capped] == ["web:fullmid"]
+    # uncapped, both full neighbours come back in score order
+    assert [h.id for h in find_related(db, "web:anchor", fidelity="full")] == [
+        "web:fullmid",
+        "web:fulllo",
+    ]
+
+
+def test_count_related_honours_the_custody_filter(db):
+    # the --stats denominator: `count_related` counts the *filtered* neighbourhood,
+    # so a `related --fidelity X --stats` truncation marker is honest about X's set.
+    _related_custody_mix(db)
+    assert count_related(db, "web:anchor") == 3  # the whole neighbourhood
+    assert count_related(db, "web:anchor", fidelity="full") == 1
+    assert count_related(db, "web:anchor", drift="drifted") == 1
+    assert count_related(db, "web:anchor", fidelity="full", drift="drifted") == 0
+
+
+def test_find_related_rejects_unknown_custody_vocab(db):
+    # closed vocabulary at the library level (the `list_items` contract): a typo is
+    # a loud could-not-check ValueError, never a silent empty neighbourhood.
+    _related_custody_mix(db)
+    with pytest.raises(ValueError):
+        find_related(db, "web:anchor", fidelity="ful")
+    with pytest.raises(ValueError):
+        find_related(db, "web:anchor", drift="drited")
+    with pytest.raises(ValueError):
+        count_related(db, "web:anchor", fidelity="ful")
+
+
+def test_cli_related_fidelity_filters_the_rows(db, capsys):
+    _related_custody_mix(db)
+    capsys.readouterr()
+    assert main(["related", "web:anchor", "--fidelity", "full"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in rows] == ["web:full"]
+    assert all(r["fidelity"] == "full" for r in rows)
+
+
+def test_cli_related_drift_filters_the_rows(db, capsys):
+    _related_custody_mix(db)
+    capsys.readouterr()
+    assert main(["related", "web:anchor", "--drift", "drifted"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in rows] == ["web:partial"]
+    assert all(r["drift"] == "drifted" for r in rows)
+
+
+def test_cli_related_rejects_unknown_custody_vocab(db):
+    # the CLI's closed vocabulary is enforced by argparse `choices=` → exit 2,
+    # before the command body runs (the `list --fidelity`/`--drift` precedent).
+    for bad in (["--fidelity", "ful"], ["--drift", "drited"]):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["related", "web:anchor", *bad])
+        assert excinfo.value.code == 2
+
+
+def test_cli_related_stats_scope_echoes_the_custody_filters(db, capsys):
+    # G2 scope honesty: a reader holding only the envelope recovers which
+    # custody-filtered neighbourhood it covered, and `matched` counts that set.
+    _related_custody_mix(db)
+    capsys.readouterr()
+    assert main(["related", "web:anchor", "--fidelity", "full", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == {"item": "web:anchor", "fidelity": "full", "limit": 10}
+    assert _core_stats(payload["stats"]) == {
+        "returned": 1,
+        "matched": 1,
+        "truncated": False,
+    }
+
+
+def test_cli_related_unfiltered_scope_omits_the_custody_keys(db, capsys):
+    # the `None`-is-pruned convention (scope_envelope): an unfiltered call keeps the
+    # lean scope shape — `fidelity`/`drift` appear only when honored.
+    _related_custody_mix(db)
+    capsys.readouterr()
+    main(["related", "web:anchor", "--stats"])
+    scope = json.loads(capsys.readouterr().out)["scope"]
+    assert scope == {"item": "web:anchor", "limit": 10}
+    assert "fidelity" not in scope and "drift" not in scope

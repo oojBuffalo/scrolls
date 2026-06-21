@@ -3111,6 +3111,88 @@ def test_stats_custody_family_agrees_with_its_own_per_item_fields(scrolls_home, 
     assert graph_custody["drift"] == node_tally["drift"]
 
 
+def _seed_related_custody_mix(db):
+    """An anchor + four neighbours sharing a tag, spanning *both* custody axes.
+
+    Every scroll carries the `peers` tag so each neighbour relates to the anchor;
+    the four neighbours span the fidelity tiers (full ×2, partial, reference) and
+    the drift postures (verified, drifted, unverified, rotted) independently, so
+    `related --fidelity X`/`--drift X` each have a non-trivial drill target. The
+    anchor is full + never-checked, so a filter that wrongly folded in the anchor
+    would inflate `full`/`unverified` — the related set excludes it.
+    """
+    insert_item(db, _item("web:anchor", "Anchor", tags=("peers",)))
+    insert_item(db, _item(
+        "web:fv", "Full verified", tags=("peers",),
+        raw_text="<raw>fv</raw>", content_hash="sha256:fv"))      # full, verified
+    insert_item(db, _item(
+        "web:fr", "Full rotted", tags=("peers",),
+        raw_text="<raw>fr</raw>", content_hash="sha256:fr"))      # full, rotted
+    insert_item(db, _item(
+        "web:pd", "Partial drifted", tags=("peers",),
+        extracted_text="pd body"))                               # partial, drifted
+    insert_item(db, _item(
+        "web:ru", "Reference unverified", tags=("peers",), stage="detected"))  # ref, unverified
+    record_events(db, [
+        CustodyEvent("web:fv", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:fv", "sha256:fv", None),
+        CustodyEvent("web:fr", "2026-06-14T00:00:00+00:00", "rotted",
+                     "sha256:fr", None, "HTTP Error 404"),
+        CustodyEvent("web:pd", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:pd", "sha256:x", None),
+        # web:ru and web:anchor left unverified
+    ])
+
+
+def test_related_custody_filter_rows_drill_from_the_neighbourhood_tally(scrolls_home, capsys):
+    # roadmap H254: the relationship-surface twin of `list --drift X` totalling
+    # `facets drift`'s X. `related` has no facets analogue (its scope is the anchor's
+    # neighbourhood, not the library), so the drill target is the *same call's*
+    # `--stats` neighbourhood tally: `related --fidelity X` returns exactly the
+    # tier-X count in `related --stats`'s `custody.tiers`, and `--drift X` the
+    # posture-X count in `custody.drift`. Both folds read the per-hit field they
+    # filter on, so a row is selected by exactly the value it shows.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_related_custody_mix(db)
+    capsys.readouterr()
+
+    # the unfiltered neighbourhood tally — the denominator the filters drill into
+    assert main(["related", "web:anchor", "--stats"]) == 0
+    custody = json.loads(capsys.readouterr().out)["stats"]["custody"]
+    assert custody["tiers"] == {"full": 2, "partial": 1, "reference": 1}
+    assert custody["drift"] == {
+        "verified": 1, "unverified": 1, "drifted": 1, "rotted": 1, "error": 0
+    }
+
+    # fidelity axis: the rows `--fidelity X` returns total the tier-X count, and
+    # every returned row shows exactly that tier
+    for tier, count in custody["tiers"].items():
+        assert main(["related", "web:anchor", "--fidelity", tier]) == 0
+        rows = json.loads(capsys.readouterr().out)
+        assert len(rows) == count
+        assert all(row["fidelity"] == tier for row in rows)
+
+    # drift axis: the rows `--drift X` returns total the posture-X count
+    for posture, count in custody["drift"].items():
+        assert main(["related", "web:anchor", "--drift", posture]) == 0
+        rows = json.loads(capsys.readouterr().out)
+        assert len(rows) == count
+        assert all(row["drift"] == posture for row in rows)
+
+    # both axes AND: full ∧ rotted is web:fr alone; full ∧ drifted is empty
+    assert main(["related", "web:anchor", "--fidelity", "full", "--drift", "rotted"]) == 0
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == ["web:fr"]
+    assert main(["related", "web:anchor", "--fidelity", "full", "--drift", "drifted"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+    # the anchor never leaks into any filtered neighbourhood (it is full + unverified,
+    # so a fold that included it would inflate those two filters)
+    for flag in (["--fidelity", "full"], ["--drift", "unverified"]):
+        assert main(["related", "web:anchor", *flag]) == 0
+        assert "web:anchor" not in {r["id"] for r in json.loads(capsys.readouterr().out)}
+
+
 def test_works_stats_custody_agrees_with_its_representations(scrolls_home, capsys):
     # roadmap H101: the works-surface member of the stats.custody family (H100).
     # `works` has no `--stats` flag (its `stats` block is always on) and no facets

@@ -3204,7 +3204,7 @@ The last `--stats` call is the honest empty: nothing matched, but the
 result still names the scope it checked (`query`, `source=arxiv`), so it
 can never be misread as "the library holds nothing about sqlite."
 
-### `scrolls related <id> [--limit N] [--stats]`
+### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--limit N] [--stats]`
 
 Deterministic, explainable connections (IDEAS.md §10,
 `tests/test_related.py`): link edges in either direction (resolved
@@ -3221,10 +3221,29 @@ out from under the capture, *and as of when*: the same per-item custody picture
 the `graph` node shape and the browse rows carry. Default
 limit 10. Unknown id is an error envelope on stderr.
 
+`--fidelity TIER` and `--drift POSTURE` scope the neighbourhood to one custody
+value per axis — the relationship-surface twin of `list`/`search`'s
+`--fidelity`/`--drift` (roadmap H254), completing the custody-filter family
+across the last un-filtered read surface. `--fidelity full` keeps only the
+neighbours you can re-derive offline; `--drift drifted` only the ones whose
+source has moved. Each filter folds the *same* per-hit field it reads off the
+row (`fidelity`/`drift`), so a neighbour is selected by exactly the value it
+shows, and the two axes AND. The sieve runs **before** `--limit` (the `list`
+sieve shape, not `search`'s before-LIMIT ranking), so the cap returns the
+top-`k` neighbours *at that value* — not the matching ones among the top-`k`.
+The vocabulary is closed (`full`/`partial`/`reference`;
+`verified`/`unverified`/`drifted`/`rotted`/`error`); a typo is a usage error
+(exit 2), never a silent empty neighbourhood. With `--stats`, the echoed
+`scope` names the honored filters and `matched` counts the *filtered* set, so
+`related --fidelity X --stats` totals the tier-X count in an unfiltered
+`related --stats`'s neighbourhood tally
+(`test_related_custody_filter_rows_drill_from_the_neighbourhood_tally`).
+
 `--stats` wraps the array in the same scope-honest `{scope, stats,
 results}` envelope `search`/`list` use (the completeness contract G2):
-`scope` names the anchor `item` and the `limit`, and `stats` reports
-`returned`, `matched` (every item that relates, counted past the cap —
+`scope` names the anchor `item`, the `limit`, and any `--fidelity`/`--drift`
+filter honored (pruned when absent), and `stats` reports `returned`, `matched`
+(every item that relates *within the custody filter*, counted past the cap —
 `src/scrolls/related.py` `count_related`), `truncated`, and a `custody`
 tally (roadmap H99) — the same `{tiers, drift}` fidelity-tier/drift-posture
 maps `search`/`list --stats` carry, here folded over the anchor's *related
@@ -3764,7 +3783,7 @@ The tools wrap the same engines as the CLI commands
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
-| `get_related_scrolls(item_id, limit=10)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `item_id` is an id or URL (ADR 0028) |
+| `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
 | `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); `stats.custody` tallies the reported reps (H100) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

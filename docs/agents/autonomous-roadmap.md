@@ -64,19 +64,23 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   `attention` → runs `maintain --source <S>`; the refresh triage reads the
   `context` `_Refresh:_` line → runs the scoped `classify --stale --source <S>` /
   `kb --stale --source <S>`.
-- **The custody-filter family is complete across both axes and all three verbs.**
+- **The custody-filter family is complete across both axes and every read/act surface.**
   The two per-item custody axes — *holdings* (`fidelity`, a content-column fact,
   no ledger) and *ledger-claim* (`drift`, the verify-ledger posture) — can now be
-  **browsed, ranked, and acted on**: `list --fidelity` (H250) / `search --fidelity`
-  (H251) / `verify --fidelity` (H252) on the holdings axis, and `list --drift`
-  (H54) / `search --drift` (H253) / `verify --drift` (H80) on the ledger axis, each
-  with its MCP twin where one exists (`list_scrolls`/`search_scrolls`). Every
-  filter folds the *same* primitive the per-item field is read off
+  **browsed, ranked, acted on, *and* scoped on the relationship surface**:
+  `list --fidelity` (H250) / `search --fidelity` (H251) / `verify --fidelity`
+  (H252) / `related --fidelity` (H254) on the holdings axis, and `list --drift`
+  (H54) / `search --drift` (H253) / `verify --drift` (H80) / `related --drift`
+  (H254) on the ledger axis, each with its MCP twin where one exists
+  (`list_scrolls`/`search_scrolls`/`get_related_scrolls`). Every filter folds the
+  *same* primitive the per-item field is read off
   (`get_fidelity`/`fidelity_tier`, `drift_posture`/`posture_from_status`), so a row
   is selected by exactly the value it shows, and the per-value totals partition the
-  scope (drill-from-`facets fidelity`/`drift`). The ranked surface scopes *before*
-  the cap (UDF-in-SQL, never a post-sieve), so `--stats` truncation counts only the
-  kept set (G2).
+  scope (drill-from-`facets fidelity`/`drift`, or — for `related`, which has no
+  facets analogue — drill-from-the-neighbourhood `--stats` tally). The ranked
+  surface scopes *before* the cap (UDF-in-SQL, never a post-sieve), and the
+  `related` neighbourhood sieve runs *before* the `[:limit]` cap (the `list`-sieve
+  shape over the scored hits), so `--stats` truncation counts only the kept set (G2).
 
 **Per-slice provenance is in git** — every shipped slice's commit subject carries
 its `(H<NN>)` tag, so `git log --oneline | grep '(H183)'` resolves any slice to
@@ -93,31 +97,33 @@ preconditions are shipped), finish it to a committed/tested/clean stopping
 point, and stop. `→ capN` marks the PRD capability. These are the un-started
 **work** slices; the next checkpoint (H256) follows.
 
-**The horizon, re-derived at this H218 checkpoint (2026-06-21).** Two themes
-that ran the last ~50 slices are now *closed*: the **budget/tier custody
-honesty** theme (H212–H249's leanest-`index` `_Fidelity:_` line and its whole
-cross-tier × CLI/MCP × scoped/unscoped × untruncated/truncated convergence
-matrix) and the **custody-filter family** (the per-item *holdings* and
-*ledger-claim* axes are now browsable/rankable/actable across
-`list`/`search`/`verify`, holdings via H250/H251/H252 and ledger via
-H54/H253/H80 — see the snapshot bullet). With both per-item custody axes fully
-filterable on the row, ranked, and act surfaces, the **next genuinely-new
-custody shape** is the *relationship* surface: `related`/`graph` nodes already
-*carry* `fidelity`/`drift` (H56) but cannot be *scoped* by them — you can read a
-neighbor's posture but not ask "show me only the full-fidelity / only the
-drifted neighbors of this scroll." That is the lead capability (H254), with the
-scheduled-maintenance act twin `maintain --fidelity` (H255) behind it. The
-remaining **budget/tier convergence cells H244–H249 are valid regression
-guards but explicitly de-prioritized** — they are the tail of a combinatorial
-matrix, each self-describing as *correct-by-construction*, and the last four
-runs (H250–H253) correctly preferred genuine capability over taking them. Take
-a capability (H254/H255) first; reach for H244–H249 only when no capability
-slice is ready, and prefer closing one rather than appending more of the same
-shape.
+**The horizon, re-derived at this H218 checkpoint (2026-06-21), advanced through
+H254.** Two themes that ran the last ~50 slices are now *closed*: the
+**budget/tier custody honesty** theme (H212–H249's leanest-`index`
+`_Fidelity:_` line and its whole cross-tier × CLI/MCP × scoped/unscoped ×
+untruncated/truncated convergence matrix) and — now fully — the
+**custody-filter family**: the per-item *holdings* and *ledger-claim* axes are
+browsable/rankable/actable *and scopable on the relationship surface* across
+`list`/`search`/`verify`/`related`, holdings via H250/H251/H252/H254 and ledger
+via H54/H253/H80/H254 (see the snapshot bullet). **H254 (this run) closed the
+last un-filtered read surface** — `related --fidelity`/`--drift` + the MCP
+`get_related_scrolls` twins — so a neighbourhood can now be scoped to "only the
+full-fidelity neighbours I can re-derive offline" or "only the ones that have
+drifted," sieving the scored hits *before* the cap (the `list`-sieve shape).
+With every read/act surface now custody-filterable, the **lead capability is
+the scheduled-maintenance *act* twin** `maintain --fidelity` (H255) — scoping a
+custody pass to one holdings tier (recheck-only against `verify --fidelity`'s
+hash-bearing set; audit/regen stay whole-library, null delta; see the H255 row
+for the genuine design subtlety). The remaining **budget/tier convergence cells
+H244–H249 are valid regression guards but explicitly de-prioritized** — they
+are the tail of a combinatorial matrix, each self-describing as
+*correct-by-construction*, and the last five runs (H250–H254) correctly
+preferred genuine capability over taking them. Take H255 first; reach for
+H244–H249 only when no capability slice is ready, and prefer closing one rather
+than appending more of the same shape.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H254 | **`scrolls related --fidelity <tier>` / `--drift <posture>` + the MCP `get_related_scrolls` twins — the custody-filter family on the *relationship* surface, completing it across the last un-filtered read surface.** The capability the H218 horizon names: `related`/`graph` nodes already *carry* per-item `fidelity`/`drift` (H56) — a neighbour shows its custody axes — but no surface lets an agent *scope a neighbourhood* to one custody value: "show me only the full-fidelity neighbours of this scroll" (the ones I can re-derive offline) or "which of this scroll's neighbours have drifted." It is the relationship-surface twin of `list --fidelity`/`--drift` (H250/H54) and `search --fidelity`/`--drift` (H251/H253). **Concrete implementation path (verified):** `find_related` is `scored_related(db_path, item_id)[:limit]` — it scores *every* candidate then caps in Python, and each `RelatedHit` already carries `fidelity` (`get_fidelity(other)`) and `drift` (`drift_posture(verdicts.get(other.id))`, `related.py:178`). So this is the **`list` sieve shape, not the `search` before-LIMIT shape**: filter the scored candidates by `hit.fidelity == tier` / `hit.drift == posture` *before* the `[:limit]` slice (so the cap returns the top-k neighbours *at that value*, not the matching ones among the top-k), folding the same per-hit primitives the field is read off (row-shows-≡-filter). Closed vocab (`FIDELITY_TIERS`/`DRIFT_POSTURES`) → `ValueError`/exit 2; ANDs the two axes; `--stats` count honours it (the `scored_related` denominator, the H99 `related --stats` precedent). Add to the `related` CLI subparser, `_cmd_related`, and `get_related_scrolls` (MCP parity §2.6). Tests in `tests/test_related.py`, `tests/test_cli.py`, `tests/test_mcp.py`, + a fold into the custody-convergence drill (`related --fidelity <T>` rows ≡ the tier's count among the neighbourhood). Precondition: H56 (related/graph carry the custody axes, **shipped**), H253 (the search-surface twin, **shipped this run**). | → cap 1, cap 2, cap 7 |
 | H255 | **`scrolls maintain --fidelity <tier>` — the scheduled-maintenance *act* twin of `verify --fidelity`, scoping a custody pass to one holdings tier.** `maintain --source <S>` (H165) scopes a pass to one source (recheck + audit + by_source narrow, view-regen stays whole-library, delta null — a non-persisting focused triage); the holdings-axis equivalent is missing — "run a maintenance pass over just my full-fidelity holdings." **Design subtlety to resolve (the genuine work, not a copy of `--source`):** the recheck is clean — it targets `verify --fidelity <tier>`'s held, *hash-bearing* subset (H252, the same `get_fidelity`-filtered set, fidelity ⊥ hash-bearing so a no-fingerprint tier is an honest empty no-op). But `maintain`'s **audit** rides `run_doctor(source=)`, which has *source* semantics a fidelity scope does not share: `run_doctor` scopes via `list_items(source=)`, and its `_check_duplicates`, `by_source`-singleton-collapse, and orphan/fts-skip all assume one source. A fidelity tier spans sources, so a fidelity-scoped audit would *not* collapse `by_source` and *would* keep `attention` meaningful. **Decision for the slice:** scope only the **recheck** to the tier (the `verify --fidelity` set) and keep the audit/regenerate **whole-library** with a **null delta** (the non-persisting triage posture `--source` already establishes), rather than adding fidelity scoping to `run_doctor` (a larger, separate change — defer unless the recheck-only shape proves insufficient). Closed vocab → exit 2; composes with `--all`/`--limit`/`--no-recheck`; conflicts with `--history`/`--source` (one scope axis per pass — decide and document). CLI-only (no MCP batch-maintain scope twin, the H252 precedent). Tests in `tests/test_maintain.py`/`test_cli.py`. Precondition: H252 (`verify --fidelity` + its hash-bearing set, **shipped**), H165 (`maintain --source`, **shipped**). | → cap 1, cap 2, cap 7 |
 | H244 | **The custody bundle is reproducible across the round-trip boundary — `export bundle <Q>` from a library rebuilt *from a bundle* is byte-identical to the original `export bundle <Q>`, the bundle-artifact analogue of `test_export_rebuild_is_byte_identical`'s point 2 (export→import→export byte-stability).** H238 (this run) pins the rebuilt *scrolls* + compiled `library/` pages byte-identical across the `export bundle` → `import bundle` boundary; the untested guarantee is that the *bundle artifact itself* re-exports byte-for-byte from the rebuilt library. It is a genuine, distinct claim: the bundle is more than its item block — it carries derived prose (the `custody_headline`, the `_Attention:_`/`_Refresh:_` pointers, the per-source breakdown via `render_custody_by_source`) computed over the rows + ledger, none of it clock-derived (`bundle.py` has no `datetime`/`now()` call). So if the round-trip carries every field those folds read from, re-exporting the *whole* briefing from the rebuilt home reproduces the original byte-for-byte — the M4/cap 9 "self-contained, shareable" briefing is itself reproducible, not just its lossless core. Pin it: over the mixed-fidelity `_mixed_fidelity_scope` (no recorded events → an empty events block on both sides, keeping the slice correct-by-construction), `export bundle "database"` from source A, `import bundle` + `doctor --fix` + `kb` into fresh B, then `export bundle "database"` from B and assert the two bundle texts are byte-identical (and, separately, that the re-exported items block alone is byte-stable — the `dump_items_export`-over-identical-rows guarantee point 2 already covers for `export items`). Implementation path: `build_bundle` folds only row/ledger-derived primitives (`custody_headline`, `custody_counts_by_source`, `_refresh_debt_by_source`) with no clock input, and H238/export-items byte-stability already give row-level byte-identity, so bundle reproducibility is correct-by-construction; the slice pins it on the bundle artifact the scroll/library byte-identity tests never re-export. Test only (`tests/test_bundle.py`, beside the H238 byte-identity test). Precondition: H238 (the bundle scroll/library byte-identity, **shipped this run**), H216 (the mixed-fidelity bundle round-trip). | → cap 9, cap 4 |
 | H245 | **The dry-run's `new`/`held` partition *predicts the real import's per-id write effect* — the identity-level closure of H233's count-level "the preview never drifts from reality."** H233 ties the dry-run's `imported`/`skipped` *counts* to a real import's; the untested guarantee is that the dry-run's reviewable *id sets* name exactly the rows the merge actually moves on disk. The counts could match while the preview names the wrong ids — and an operator confirms a merge by reading `new`/`held`, not by reconciling integer counts. Pin it: over a mixed bundle (would-be-new ids, already-held ids, within-bundle dups), capture each parsed id's pre-import held-state (`get_item is None`), dry-run to read `new`/`held`, then real-import the *same* bundle into the same library; assert every id in `new` was absent before and is held after (a genuine absent→present transition the merge caused) and every id in `held` was held before *and* after (no transition) — so the reviewable surface an operator confirms is exactly the set of rows the merge inserts vs. leaves untouched, not merely the right *number* of them. Mutation-checked: pre-holding one of the `new` ids before the dry-run moves it from `new` to `held` *and* removes it from the post-import absent→present transition set, in lockstep — the prediction tracks the library's real state, never a stale snapshot. Implementation path: the dry-run's `new`/`held` come from the same `get_item(...) is None` test the live import's INSERT OR IGNORE (ADR 0082) acts on, so the prediction is correct-by-construction; the slice pins the identity-level closure H233 left at the count level (the reviewable surface describes the *actual* merge, the M2/cap-9 custody-honesty on the predict-the-write axis). Test only (`tests/test_bundle.py`, beside H239/H233). Precondition: H239 (the partition, **shipped this run**), H233 (the count-level reality tie), H226 (the reviewable lists). | → cap 9, cap 7 |
@@ -127,22 +133,24 @@ shape.
 | H249 | **The dry-run's `new`/`held`/`orphaned_items` form a clean *three-way* id-space partition even over a bundle corrupt on *both* axes — the both-axes closure of H239 (which proved the two-way `new`/`held` partition over an items-*only* corrupt bundle).** H239 pins `set(new) ∪ set(held)` = the bundle's distinct item ids and `set(new) ∩ set(held) == ∅`, but only over an items-only corrupt bundle (empty events); the untested cell is whether that reviewable partition stays clean when the *events* block is *also* corrupt (orphan events present), and whether the orphan-item id-space stays disjoint from the item partition. It is a genuine guarantee: `new`/`held` are folded from the items block (`imported_items`) while `orphaned_items` is folded from the events block's unresolved ids (`_orphan_item_ids`), two independent reads of the one parsed bundle, so a naive impl could let an orphan item leak into `new`/`held` (double-classifying an id the merge never writes) or an items-block id vanish from review. Pin it: over the H243 `_spliced_items_and_events_bundle` (a within-bundle item-dup items block *plus* anchored-and-orphan events), dry-run and assert (a) `sorted(new + held)` equals the distinct items-block ids computed independently via `parse_bundle`, (b) `set(new).isdisjoint(held)`, and (c) `set(orphaned_items).isdisjoint(set(new) | set(held))` — three non-overlapping id-spaces, so an operator reviewing the preview never sees one id classified two ways across the item and orphan axes. Mutation-checked: adding a distinct orphan event for a new missing item extends `orphaned_items` by exactly that id and leaves `new`/`held` untouched (the orphan axis never perturbs the item partition). Implementation path: `orphan` item ids are exactly those neither held nor in `known_ids` (`partition_resolvable_events`), so they are disjoint from the items-block ids by construction; the slice pins the cross-axis disjointness H239 (items-only) and H243 (counts, not the id partition) leave open. Test only (`tests/test_bundle.py`, beside H243/H239). Precondition: H243 (the both-axes whole-summary tie + `_spliced_items_and_events_bundle`, **shipped this run**), H239 (the two-way items-only partition). | → cap 9, cap 7 |
 | H256 | **Buffer refresh checkpoint** (maintenance rule; next full refresh due ~2026-06-22). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H254** — `related --fidelity`/`--drift` + the MCP twins,
-the custody-filter family on the *relationship* surface (the last un-filtered read
-surface; concrete `list`-sieve path verified above), with **H255**
-(`maintain --fidelity`, the scheduled-maintenance act twin) behind it. The
-**budget/tier convergence cells H244–H249** sit below them as **de-prioritized but
-valid regression guards** — each a correct-by-construction cell of the
+The next lead slot is **H255** — `maintain --fidelity`, the scheduled-maintenance
+*act* twin of `verify --fidelity` (scope a custody pass to one holdings tier;
+recheck-only against the hash-bearing set, audit/regen whole-library, null delta —
+see the H255 row for the genuine design subtlety). With H254 shipped, the
+custody-filter family now spans every read/act surface, so H255 is the last
+distinct custody-shape capability in the buffer. The **budget/tier convergence
+cells H244–H249** sit below it as **de-prioritized but valid regression guards** —
+each a correct-by-construction cell of the
 cross-tier × CLI/MCP × scoped/unscoped × untruncated/truncated fidelity matrix
 (H244 bundle-artifact reproducibility, H245 dry-run per-id write prediction, H246
 unscoped CLI ladder-under-truncation, H247 unscoped MCP four-way tie, H248 unscoped
-MCP ladder-under-truncation, H249 both-axes three-way id partition). Take a
-capability first; reach for a guard cell only when no capability is ready.
+MCP ladder-under-truncation, H249 both-axes three-way id partition). Take the
+capability (H255) first; reach for a guard cell only when no capability is ready.
 Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line in-file
 index (maintenance-rule §4: *git is the changelog*).
 
-**This run (2026-06-21, H218 checkpoint) shipped H253** — `scrolls search --drift <posture>` + MCP `search_scrolls(drift=)`, the ledger-claim-axis twin of H251's `search --fidelity`, completing the custody-filter family across both per-item axes and all three verbs (browse/rank/act — see the snapshot bullet). It then ran the **overdue H218 buffer-refresh checkpoint** (deferred since H207): refreshed the status snapshot to 2026-06-21, re-derived the badly-stale 3-day/week plans (they still named the H207 checkpoint and listed long-shipped H213–H236 as “remaining”) with absolute dates, re-grounded the horizon around genuine capability (seeded **H254** `related --fidelity`/`--drift` and **H255** `maintain --fidelity`, de-prioritized the correct-by-construction convergence cells H244–H249), and — per maintenance-rule §6 — **compacted ~850 lines of re-accreted backward-looking “Prior run shipped…” changelog prose** into this note. That prose is redundant: every shipped slice's full description and diff live in git (`git log --oneline | grep '(H<NN>)'`) and its one-line gloss in the **Shipped ledger** below. This doc points *forward* (maintenance-rule §4: *git is the changelog*); it is not a changelog.
+**This run (2026-06-21) shipped H254** — `scrolls related --fidelity <tier>` / `--drift <posture>` + the MCP `get_related_scrolls(fidelity=, drift=)` twins, the custody-filter family on the *relationship* surface, **closing it across the last un-filtered read surface** (browse/rank/act/relate — see the snapshot bullet). It is the `list`-sieve shape over the scored neighbourhood, not the `search` before-LIMIT shape: `filter_related` narrows the scored hits by `hit.fidelity`/`hit.drift` (the same per-hit primitives the node shape is read off, H56) *before* the `[:limit]` cap, so the cap returns the top-`k` neighbours *at that value*; `count_related` honours the filter (the `--stats` denominator); closed vocab → `ValueError`/exit 2; the two axes AND. Tests: 11 in `tests/test_related.py` (sieve-before-cap, AND, denominator, vocab, CLI rows/scope-echo/exit-2), 4 in `tests/test_mcp.py` (the twins + AND + vocab), and a both-axes drill fold in `tests/test_custody_convergence.py` (`related --fidelity/--drift X` rows ≡ the value's count in the `--stats` neighbourhood tally, anchor excluded). Docs: the `scrolls related` section in `docs/cli.md` + the MCP tool table. Full suite green (3355 passed).
 
 ---
 
@@ -381,6 +389,7 @@ changelog (maintenance-rule §4).
 | H243 | The dry-run's *whole top-level summary* `{imported, skipped, items, events}` (sans the dry-run-only `{dry_run, new, held}`) is byte-identical to the real import's over a bundle corrupt on *both* axes at once — within-bundle item dups *and* orphan events — the union of H233 (item counts) and H237 (whole events block) on one bundle (`tests/test_bundle.py`, `test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_corruptions`, beside the H237/H233 twins). H233 pins the item-level `{imported, skipped}` equal under item dups (empty events); H237 pins the whole `events` block equal under orphan events (a single, distinct item). Neither exercises both axes at once, where the item-dedup path (`new_ids`/`held_ids` sets, the read-only twin of INSERT OR IGNORE) and the event-accounting path (`partition_resolvable_events` + `preview_import_events`/`import_events`) both run over the one parsed bundle. Over a `_spliced_items_and_events_bundle` whose items block repeats both a would-be-new id and an already-held id (4 raw → imported 1, skipped 3) *and* whose events block carries a dup'd anchored event on the held item (imported 2, skipped 1) beside three orphan events on two missing items (orphaned 3, orphaned_items 2), dry-run first (writes nothing — asserted via `get_item`/`item_events`) then real import into the same library; the dry-run's entire summary sans `{dry_run, new, held}` equals the real import's *and* the expected non-trivial block — so neither corruption axis silently distorts the other's accounting. Test-only — the item dedup and the event split are two independent folds over the one parsed bundle, correct-by-construction. Sabotage-verified non-vacuous (computing `item_skipped` as `len(held_ids)` instead of `len(items) − item_imported` ignores the within-bundle item dups, so the dry-run reports `skipped 1` while the real import reports `skipped 3` and the whole-summary tie fails). The *both-axes-corrupt analogue of H220's whole-summary byte-identity* | cap 9, cap 7 |
 | H252 | **`scrolls verify --fidelity <tier>` — the holdings-axis *act* surface, the verify-axis twin of H250's `list --fidelity` / H251's `search --fidelity`.** A real capability slice (not a convergence pin): `list`/`search`/MCP could *enumerate/rank* a fidelity tier (H250/H251) and `verify --source`/`--drift` could *act* on the source/ledger axes (H125/H54), but no surface let a worker *re-verify exactly its holdings at one fidelity tier* — "re-check the full-fidelity scrolls I can re-derive offline" (vision §3, fidelity travels with every result, now on the act axis). A new standalone batch selection mirroring `--source`: it folds the same `get_fidelity` primitive the read surfaces count with — a pure function of stored content columns, **no ledger read** (the holdings-fact axis, vs `--drift`'s ledger-claim axis) — over the held, hash-bearing rows. **Key design subtlety vs `--source`:** every batch verify touches only hash-bearing rows (a re-fetch needs a baseline hash to diff), and fidelity ⊥ hash-bearing — a `full` capture held by `raw_text` alone carries no `content_hash`, so it lists `full` (H250) yet has no baseline and is skipped. So `verify --fidelity <tier>` re-checks `list --fidelity <tier>`'s held, *hash-bearing* subset (genuinely narrower than the listing), and a tier with no fingerprint (typically `reference`, which keeps no content) is an honest empty no-op. Closed vocabulary (`full`/`partial`/`reference`, argparse `choices` → exit 2). CLI-only: the batch verify selections have no MCP twin (MCP `verify_scroll` is single-item). 12 new tests (`test_verify_cli.py` ×11: tier selection, full-without-hash skip, list-fidelity hash-bearing convergence, reference empty no-op, ledger write, `--limit` pacing, empty library, unknown-tier exit-2, three mutual-exclusion rejections; `test_custody_convergence.py` ×1: the act ≡ read drill across all three tiers, folded into the verify-selection-family invariant). Full suite 3322 passed. Sabotage-verified non-vacuous (filtering `all_items` instead of `hash_bearing` fails 4 tests — the no-hash full leaks into the recheck). Out-of-queue (alongside the un-taken test-only cells H244–H249), per the H251 steering note: the `--fidelity`-scoped act surface. | cap 1, cap 2, cap 7 |
 | H253 | **`scrolls search --drift <posture>` + MCP `search_scrolls(drift=)` — the ledger-claim-axis filter on the *ranked* surface, the drift twin of H251's `search --fidelity`.** Completes the search filter family to match `list` (`--fidelity` + `--drift` H54) and `verify` (`--fidelity` H252 + `--drift` H80): search could rank a topic's matches and scope them by the *holdings* axis but not the *ledger-claim* axis — "only the matches I have re-verified as still faithful." **Key design difference from `--fidelity`:** a fidelity tier is a pure function of an item's own content columns (the `scrolls_fidelity` UDF), but a drift posture is read from the verify ledger, so it cannot ride a content-column UDF. It instead ANDs a new `scrolls_drift` UDF over the item's *latest `custody_events` verdict* (a correlated subquery for the most-recent row, `NULL`→`unverified`) into both `_QUERY` (before LIMIT) and `_COUNT_QUERY` via `_search_filters` — so the ranked selection is scoped before the cap (not post-sieved like `list --drift` can be, having no cap) and `count_matches` honors it (the `--stats` truncation denominator counts only the kept posture, G2). `scrolls_drift` delegates to a new `custody.posture_from_status` (the status-level core factored out of `drift_posture`) so the filter and the per-hit `drift` field read one rule (row-shows-≡-filter); the per-posture totals partition the matches (drill-from-`facets drift`). ANDs with every facet incl. `--fidelity` (the two custody axes scope independently); closed vocab (`DRIFT_POSTURES`) → exit 2 / `ValueError`. 17 new tests (`test_search.py` ×9, `test_cli.py` ×6, `test_mcp.py` ×2); full suite 3339 passed. Out-of-queue, then ran the H218 checkpoint. | cap 1, cap 2, cap 7 |
+| H254 | **`scrolls related --fidelity <tier>` / `--drift <posture>` + MCP `get_related_scrolls(fidelity=, drift=)` — the custody-filter family on the *relationship* surface, closing it across the last un-filtered read surface.** `related`/`graph` nodes already *carried* per-item `fidelity`/`drift` (H56) but no surface could *scope a neighbourhood* to one custody value; this adds the relationship-surface twin of `list --fidelity`/`--drift` (H250/H54) and `search --fidelity`/`--drift` (H251/H253). **Key design point:** unlike `search`'s before-LIMIT UDF (the ranked surface caps in SQL), `find_related` scores *every* candidate then caps in Python, so this is the **`list`-sieve shape**: a new `related.filter_related(hits, *, fidelity, drift)` narrows the scored hits by `hit.fidelity`/`hit.drift` (the same per-hit primitives the node shape is read off, `get_fidelity`/`drift_posture`, H56 — row-shows-≡-filter) *before* the `[:limit]` slice, so the cap returns the top-`k` neighbours *at that value*, not the matching ones among the top-`k`. `find_related`/`count_related` both thread the filters through `filter_related`, so the `--stats` denominator counts the kept set; the two axes AND; closed vocab → `ValueError`/exit 2; the CLI stats scope echoes the honored filters (`None`-pruned). 15 new tests (`test_related.py` ×11: sieve-before-cap, both-axis AND, denominator, library+CLI vocab, CLI rows/scope-echo/exit-2; `test_mcp.py` ×4: the twins + AND + vocab) + a both-axes drill fold in `test_custody_convergence.py` (`related --fidelity/--drift X` rows ≡ the value's count in the unfiltered `--stats` neighbourhood tally, anchor excluded). Docs: `docs/cli.md` `related` section + MCP tool table. Full suite 3355 passed. | cap 1, cap 2, cap 7 |
 
 ---
 
@@ -395,15 +404,16 @@ on a committed, tested, clean stopping point; slips roll forward.
   axes and all three verbs), then ran the **overdue H218 checkpoint**: refreshed
   the snapshot/plans to absolute dates, re-grounded the horizon, and compacted
   ~850 lines of re-accreted changelog prose (maintenance-rule §6).
-- **Day 2 (2026-06-22):** Take the new lead **H254** — `scrolls related
-  --fidelity <tier>` / `--drift <posture>` + the MCP `get_related_scrolls` twins,
-  the custody-filter family on the *relationship* surface (the last un-filtered
-  read surface). Concrete `list`-sieve path: filter `scored_related(...)` by the
-  per-hit `fidelity`/`drift` *before* the `[:limit]` slice, folding the same
-  primitives the field is read off. Closed vocab → exit 2; ANDs both axes;
-  `--stats` count honors it. Tests in `tests/test_related.py`/`test_cli.py`/
-  `test_mcp.py` + a custody-convergence drill fold.
-- **Day 3 (2026-06-23 → 2026-06-24):** **H255** — `scrolls maintain --fidelity
+- **Day 2 (pulled forward into 2026-06-21):** **Done.** Shipped **H254** —
+  `scrolls related --fidelity <tier>` / `--drift <posture>` + the MCP
+  `get_related_scrolls` twins, the custody-filter family on the *relationship*
+  surface (the last un-filtered read surface). The `list`-sieve path: a new
+  `related.filter_related` narrows `scored_related(...)` by the per-hit
+  `fidelity`/`drift` *before* the `[:limit]` slice, so the cap returns the
+  top-`k` neighbours *at that value*; closed vocab → exit 2; both axes AND;
+  `--stats` count honors it. 15 tests + a both-axes custody-convergence drill
+  fold; full suite 3355 passed.
+- **Day 3 (2026-06-22 → 2026-06-24):** **H255** — `scrolls maintain --fidelity
   <tier>`, the scheduled-maintenance act twin of `verify --fidelity`. The genuine
   work is the audit-scoping decision (recheck the `verify --fidelity` hash-bearing
   set, keep audit/regenerate whole-library + null delta — the non-persisting
@@ -418,19 +428,21 @@ on a committed, tested, clean stopping point; slips roll forward.
 
 - **Closed this past week:** the **budget/tier custody honesty** matrix
   (H212–H249 — the leanest `index` `_Fidelity:_` line and its whole cross-tier ×
-  CLI/MCP × scoped/unscoped × untruncated/truncated convergence) and the
-  **custody-filter family** (the per-item *holdings* and *ledger-claim* axes are
-  now browsable/rankable/actable: `list`/`search`/`verify --fidelity` H250/H251/
-  H252 and `list`/`search`/`verify --drift` H54/H253/H80). Both per-item custody
-  axes are fully filterable on every row, ranked, and act surface.
-- **This week's horizon — custody filters on the *relationship* surface, then the
-  scheduled-maintenance scope.** **H254** (`related --fidelity`/`--drift` + the
-  MCP twins) closes the last un-filtered read surface: `related`/`graph` nodes
-  *carry* the custody axes (H56) but cannot be *scoped* by them. **H255**
-  (`maintain --fidelity`) gives the holdings axis its scheduled-maintenance scope,
-  the act twin of `verify --fidelity` (the genuine work is the audit-scoping
-  decision, not a copy of `--source`). Both are concrete, vision-grounded
-  capabilities (fidelity/provenance travel with every result; custody-vision §2).
+  CLI/MCP × scoped/unscoped × untruncated/truncated convergence) and — now fully —
+  the **custody-filter family**: the per-item *holdings* and *ledger-claim* axes
+  are browsable/rankable/actable *and scopable on the relationship surface*:
+  `list`/`search`/`verify`/`related --fidelity` H250/H251/H252/H254 and
+  `list`/`search`/`verify`/`related --drift` H54/H253/H80/H254. Both per-item
+  custody axes are now filterable on **every** read and act surface; **H254 (this
+  run) closed the last un-filtered one**.
+- **This week's horizon — the scheduled-maintenance scope.** With every read/act
+  surface custody-filterable, **H255** (`maintain --fidelity`) is the lead and the
+  last distinct custody-shape capability in the buffer: it gives the holdings axis
+  its scheduled-maintenance scope, the act twin of `verify --fidelity` (the genuine
+  work is the audit-scoping decision — recheck the hash-bearing set, keep
+  audit/regen whole-library + null delta — not a copy of `--source`). A concrete,
+  vision-grounded capability (fidelity/provenance travel with every result;
+  custody-vision §2).
 - The **budget/tier convergence guard cells H244–H249** remain valid regression
   guards but are explicitly **de-prioritized** — take a capability first; close a
   guard only when no capability is ready, and prefer closing one over appending
