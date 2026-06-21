@@ -2375,6 +2375,148 @@ def test_get_context_bundle_index_fidelity_ties_to_the_deeper_tier_headlines_ove
     assert counts["index"] == counts["connected"] == counts["full"]      # in lockstep on all 3
 
 
+def test_get_context_bundle_budget_ladder_stays_equal_under_truncation_over_mcp(
+    scrolls_home,
+):
+    # roadmap H242 — the *MCP twin of H240* (and the truncated boundary of H241).
+    # H241 ties `index` ≡ `connected` ≡ `full` over MCP *untruncated* (the deeper-tier
+    # cross-rendering tie under scope); H236 pins only the leanest `index` `_Fidelity:_`
+    # line diverging from `get_library_health(source=<S>)`'s `tiers` under truncation over
+    # MCP. The untested cell is the *deeper* MCP tiers under a cap:
+    # `get_context_bundle(query, budget="connected"/"full", source=<S>)`'s `_Custody:_`
+    # headline renders its `fidelity` section via `render_custody_headline` — a *different*
+    # function than the `index` line's `render_fidelity_holdings` — yet all three fold over
+    # the *same* post-cap kept set (`build_context` applies `limit` at `search_items`
+    # regardless of budget). So under truncation the three MCP budget tiers must stay
+    # mutually *equal* (all bundle-kept, summing to the kept slice `k`) even as all three
+    # *together* diverge from the scoped MCP audit (summing to the held count > k) — the
+    # MCP budget ladder never disagrees *with itself* on holdings under a cap, and never
+    # inflates the bundle-kept holdings to a source-wide claim. Lifting the cap (`limit` ≥
+    # held) reconverges all three to the H241/H235 scoped MCP equality, completing the
+    # leanest/cross-tier × untruncated/truncated × CLI/MCP fidelity-convergence matrix.
+    from scrolls.custody import custody_counts_by_source, get_fidelity
+    from scrolls.items import ScrollItem, insert_item, list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    # web spans three tiers (full 2, partial 1, reference 1 → 4 held); one out-of-scope
+    # arxiv `full` lifts the library-wide audit to {full 3, …}, so web's source-wide audit
+    # is a third, distinct number from both the bundle-kept count and the library-wide
+    # holdings — `source="web"` is genuinely exercised. Every title carries "topic" so one
+    # query matches all of web's held items (truncation is then forced only by the cap).
+    def _web(item_id, title, **kw):
+        kw.setdefault("stage", "fetched")
+        return ScrollItem(
+            id=item_id, source="web", url=f"https://web.example/{item_id}",
+            saved_at="2026-06-12T00:00:00+00:00", title=title, **kw)
+
+    insert_item(db, _web("web:full1", "Topic full one",
+                         extracted_text="topic one body",
+                         raw_text="<raw>topic one</raw>", content_hash="sha256:f1"))
+    insert_item(db, _web("web:full2", "Topic full two",
+                         extracted_text="topic two body",
+                         raw_text="<raw>topic two</raw>", content_hash="sha256:f2"))
+    insert_item(db, _web("web:partial", "Topic partial",
+                         extracted_text="topic partial body"))  # no hash/raw → partial
+    insert_item(db, _web("web:ref", "Topic reference pointer",
+                         stage="detected"))  # no content → reference
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T00:00:00+00:00", title="Topic arxiv paper", stage="fetched",
+        extracted_text="topic", raw_text="<raw>topic</raw>", content_hash="sha256:a"))
+
+    def _nonzero(counts):
+        return {tier: n for tier, n in counts.items() if n}
+
+    def _fidelity_counts(line):
+        # tier words (full/partial/reference) never collide with the `(of N)`/`N scroll(s)`
+        # scalars or the drift-posture words, so one parse reads either the `_Fidelity:_`
+        # holdings line or the `_Custody:_` headline's `fidelity` section.
+        return {t: int(n) for t, n in re.findall(r"(full|partial|reference) (\d+)", line)}
+
+    def ladder(limit):
+        # the three budget tiers an agent boots over MCP, scoped to web, at a given cap.
+        # `index` carries the ledger-free `_Fidelity:_` holdings line; `connected`/`full`
+        # carry the `_Custody:_` headline whose `fidelity` section folds the same counts via
+        # a *different* renderer. All three see the one post-cap kept set.
+        bundles = {
+            b: mcp_server.get_context_bundle("topic", budget=b, source="web", limit=limit)
+            for b in ("index", "connected", "full")
+        }
+        index_line = next(
+            l for l in bundles["index"].splitlines() if l.startswith("_Fidelity:"))
+        counts = {"index": _fidelity_counts(index_line)}
+        for b in ("connected", "full"):
+            headline = next(
+                l for l in bundles[b].splitlines() if l.startswith("_Custody:"))
+            counts[b] = _fidelity_counts(headline)
+        scope_n = int(re.search(r"\(of (\d+)\)", index_line).group(1))
+        return bundles, counts, scope_n
+
+    # the canonical *whole-source* audit over MCP: `get_library_health(source="web")` folds
+    # `get_fidelity` over all four held web rows, independent of any query or cap.
+    source_tiers = _nonzero(mcp_server.get_library_health(source="web")["tiers"])
+    assert source_tiers == {"full": 2, "partial": 1, "reference": 1}  # ≥2 tiers, non-vacuous
+    held = sum(source_tiers.values())
+    assert held == 4
+    # tied to the shared per-source primitive too, not independently hardcoded
+    web_tiers = _nonzero(custody_counts_by_source(list_items(db), {})["web"]["tiers"])
+    assert source_tiers == web_tiers
+
+    # --- under truncation: a cap below the source's held count ----------------------
+    cap = 2
+    assert cap < held  # the cap genuinely truncates web's matching items (4 > 2)
+    bundles, capped, scope_n = ladder(cap)
+    # the three MCP budget tiers stay mutually *equal* under the cap — the leanest
+    # `_Fidelity:_` holdings line, and the `connected`/`full` `_Custody:_` headlines, all
+    # fold over the one post-cap kept set, so the budget ladder never disagrees *with
+    # itself* on what it holds in full.
+    assert capped["index"] == capped["connected"] == capped["full"]
+    # and all three sum to the kept slice `k`, never the whole-source held count; the
+    # `index` line's `(of N)` agrees (a *this-bundle* fact over `len(items)`).
+    assert scope_n == cap == 2
+    assert sum(capped["index"].values()) == cap == 2
+    # so the whole MCP ladder *together* diverges from the source-wide audit: no tier — not
+    # the leanest, not the deeper ones — inflates the bundle-kept holdings to a source-wide
+    # custody claim it didn't render.
+    for budget in ("index", "connected", "full"):
+        assert capped[budget] != source_tiers
+        assert sum(capped[budget].values()) < sum(source_tiers.values())
+
+    # the drift-withholding asymmetry stays intact under truncation too (H214/H219): the
+    # leanest `index` tier reads no ledger, so it carries no `_Custody:_` headline and no
+    # drift verdict; the deeper tiers carry one — and *their* drift count is also over the
+    # kept set (the 2 kept items, all unverified), so the deeper tiers stay honest about the
+    # bundle scope on the drift axis as well as the fidelity one.
+    assert "_Custody:" not in bundles["index"]
+    assert "drift" not in bundles["index"]
+    for b in ("connected", "full"):
+        headline = next(
+            l for l in bundles[b].splitlines() if l.startswith("_Custody:"))
+        assert "drift unverified 2" in headline  # over the kept slice, not web's held 4
+
+    # --- lift the cap: the whole MCP ladder reconverges to the H241/H235 equality ----
+    # `limit` ≥ the source's held count keeps every matching web item, so the post-cap kept
+    # set *is* the whole web scope the audit folds over — index ≡ connected ≡ full ≡ the
+    # scoped MCP audit, all four equal again (the gap was exactly the cap, nothing else).
+    _, lifted, scope_n = ladder(held)  # cap == 4 == held → no truncation
+    assert scope_n == held == 4
+    assert lifted["index"] == lifted["connected"] == lifted["full"] == source_tiers
+
+    # the `source="web"` filter is non-vacuous on every read: the *unscoped* MCP audit names
+    # the whole library (arxiv's `full` lifts it), so neither the bundle-kept ladder nor the
+    # source-wide audit is ever the library-wide holdings.
+    whole = _nonzero(mcp_server.get_library_health()["tiers"])
+    assert whole == {"full": 3, "partial": 1, "reference": 1}
+    assert source_tiers != whole
+    for budget in ("index", "connected", "full"):
+        assert capped[budget] != whole
+    # sanity: `get_fidelity` is the shared fold under every surface (web:ref is the
+    # reference tier the audit and the lifted ladder both name).
+    ref = next(it for it in list_items(db) if it.id == "web:ref")
+    assert get_fidelity(ref) == "reference"
+
+
 def test_get_concept_page_round_trips_spelling_via_slug(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     compile_kb(get_paths())
