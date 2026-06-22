@@ -4022,6 +4022,23 @@ page is over rendered items only, its work count can be below `scrolls
 works`'s whole-library count — the rendered-only divergence `graph.md` also
 has from `scrolls graph`.
 
+Beneath each `## <doi>` section's resolver line sits a **per-work
+`_Custody:_` marker** (roadmap H270) —
+`_Custody: best held <tier>, safest drift <posture> — safely held._` (or
+`— at risk._` when no representation is both `full` and unmoved) — the
+works-page analogue of the per-item `· <fidelity> · <drift>` marker on the
+list pages (H89). It is the `render_work_custody_marker` distillation of the
+shared `works.work_custody` fold (H261) over the work's representations and
+the custody ledger, so it reads the *same* aggregate verdict an agent reads
+from `scrolls works`'s per-work `custody` block (convergent by construction)
+and an at-risk section's marker agrees with whether `index.md`'s
+`_At-risk work:_` line / `doctor`'s `custody.works` names that work
+(`test_compiled_works_page_marker_converges_with_scrolls_works`). Like the
+rest of the page body it sits inside the `@generated` sentinel fence
+(ADR 0102), so a recompile refreshes it — a recapture flips a section from
+`at risk` to `safely held` — while a hand annotation outside the fence
+survives.
+
 `--engine llm` (engine `kb-llm-v1`, ADR 0025) first brings the summary
 store up to date via the Anthropic API (network; needs
 `ANTHROPIC_API_KEY`; model from `[classify] llm_model`, overridable via

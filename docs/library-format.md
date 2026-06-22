@@ -530,13 +530,28 @@ bioRxiv/medRxiv preprint — grouped by the **DOI that names the work**.
 Like the graph page it is built over the rendered items only, so every
 representation links to a scroll file (a work whose rendered
 representations drop below two isn't shown). Each work is a `## <doi>`
-section: the `doi.org` resolver link and a representation count, then every
-representation as a bullet linking to its scroll. The page is always
-written, like the index; a library with no DOI held in two-plus
-representations gets a single `No works held in multiple representations
-yet.` line, so the page is a stable entry point
+section: the `doi.org` resolver link and a representation count, a per-work
+custody marker, then every representation as a bullet linking to its scroll.
+The page is always written, like the index; a library with no DOI held in
+two-plus representations gets a single `No works held in multiple
+representations yet.` line, so the page is a stable entry point
 (`test_kb_works_page_clusters_representations_by_shared_doi`,
 `test_kb_works_page_is_empty_when_no_shared_doi`).
+
+Beneath each resolver line sits a **per-work `_Custody:_` marker** (roadmap
+H270) — `_Custody: best held <tier>, safest drift <posture> — safely held._`
+(or `— at risk._` when no representation is both `full` and unmoved) — the
+work-level aggregate verdict, the works-page analogue of the per-item
+`· <fidelity> · <drift>` marker on the list pages. It is the
+`render_work_custody_marker` distillation of the shared `works.work_custody`
+fold (ADR [0095](adr/0095-canonical-representation.md), roadmap H261) over the
+work's representations and the custody ledger, so it reads the *same*
+aggregate `custody` block (`{best_fidelity, safest_drift, safely_held}`) an
+agent reads from `scrolls works` — a human browsing the rollup sees which
+works are safely held vs. at risk without opening the JSON, and an at-risk
+section's marker agrees with whether `index.md`'s `_At-risk work:_` line /
+`doctor`'s `custody.works` names that work
+(`test_compiled_works_page_marker_converges_with_scrolls_works`).
 
 Because the page scopes to *rendered* items while `scrolls works` clusters
 over the whole library, the page's work count can be smaller than the
@@ -561,10 +576,16 @@ record over the preprint, by `Work.canonical`
 ## 10.5555/3295222
 
 [doi.org/10.5555/3295222](https://doi.org/10.5555/3295222) — 2 representations.
+_Custody: best held reference, safest drift unverified — at risk._
 
 - [Attention Is All You Need](../scrolls/arxiv/attention-is-all-you-need.md) — arxiv
 - [Attention Is All You Need](../scrolls/crossref/attention-is-all-you-need.md) — crossref · canonical
 ```
+
+(Both fixtures are bare references — neither carries a captured body — and
+neither has been re-checked, so the work has no `full`-and-unmoved form and
+its marker reads `— at risk._`. A captured, verified representation would flip
+it to `— safely held._`.)
 
 ## Captured media files: `media/`
 

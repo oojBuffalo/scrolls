@@ -449,6 +449,36 @@ def work_custody(
     }
 
 
+def render_work_custody_marker(custody: dict[str, Any]) -> str:
+    """One-line work-level custody marker for the compiled `works.md` rollup (H270).
+
+    The works-page analogue of the per-item `· <fidelity> · <drift>` marker on the
+    compiled list pages (`kb._custody_marker`): distils the H261 `work_custody`
+    aggregate `{best_fidelity, safest_drift, safely_held}` into one readable line
+    beneath a work's resolver line, so a human browsing `library/works.md` reads the
+    same consolidation verdict an agent reads from `scrolls works`'s per-work
+    `custody` block — which form is most re-derivable, which least moved, and whether
+    *the work* is safely held — without opening the JSON:
+
+        _Custody: best held <tier>, safest drift <posture> — safely held._
+        _Custody: best held <tier>, safest drift <posture> — at risk._
+
+    Takes the `work_custody` dict the JSON payload already carries (not the
+    representations), so the compiled marker and the `scrolls works` `custody` block
+    are two renders of the *same* fold — convergent by construction. The trailing
+    clause is the H261 strong-form `safely_held` verdict (∃ a representation that is
+    `full` *and* unmoved), the very predicate `at_risk_signal`'s alarm reads, so an
+    at-risk work's marker here agrees with whether `index.md`'s `_At-risk work:_`
+    line / `doctor`'s `custody.works` names it (the H269 compiled-surface
+    convergence, now per-work).
+    """
+    verdict = "safely held" if custody["safely_held"] else "at risk"
+    return (
+        f"_Custody: best held {custody['best_fidelity']}, "
+        f"safest drift {custody['safest_drift']} — {verdict}._"
+    )
+
+
 def at_risk_signal(
     works: list[Work],
     verdicts: dict[str, CustodyEvent],

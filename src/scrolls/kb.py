@@ -44,7 +44,13 @@ from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
-from scrolls.works import Work, render_at_risk_works, works_over
+from scrolls.works import (
+    Work,
+    render_at_risk_works,
+    render_work_custody_marker,
+    work_custody,
+    works_over,
+)
 
 _GENERATED_DIRS = ("sources", "categories", "concepts", "tags")
 _GENERATED_FILES = ("index.md", "graph.md", "works.md")
@@ -269,7 +275,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         pages += 1
     _write_graph_page(paths, written, components, items_by_id)
     pages += 1
-    _write_works_page(paths, written, works, items_by_id)
+    _write_works_page(paths, written, works, items_by_id, verdicts)
     pages += 1
     _write_index(
         paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
@@ -627,6 +633,7 @@ def _write_works_page(
     written: set[Path],
     works: list[Work],
     items_by_id: dict[str, ScrollItem],
+    verdicts: dict[str, CustodyEvent],
 ) -> None:
     """Write `library/works.md`: scholarly works clustered by shared DOI.
 
@@ -636,11 +643,23 @@ def _write_works_page(
     unrendered drops out, and a work that thereby keeps fewer than two
     representations isn't shown — the same rendered-only rule the graph page
     and the rest of the KB follow). Each work is a `## <doi>` section: the
-    resolver link and a representation count, then every representation as a
-    bullet linking to its scroll — the *canonical* one (`Work.canonical`,
-    ADR 0095) marked, so the form that stands for the work is visible at a
-    glance. Always written, like the index; a library with no DOI held in
-    two-plus representations says so, so the page is a stable entry point.
+    resolver link and a representation count, a work-level custody marker, then
+    every representation as a bullet linking to its scroll — the *canonical* one
+    (`Work.canonical`, ADR 0095) marked, so the form that stands for the work is
+    visible at a glance. Always written, like the index; a library with no DOI
+    held in two-plus representations says so, so the page is a stable entry point.
+
+    The `_Custody:` marker beneath each resolver line (roadmap H270) is the
+    work-level aggregate verdict — the `render_work_custody_marker` distillation of
+    the shared `works.work_custody` fold (H261) over this work's representations and
+    the `verdicts` ledger — so a human browsing the rollup reads which works are
+    *safely held* vs. *at risk* without opening `scrolls works` JSON. It folds the
+    *same* `work_custody` dict the JSON `custody` block carries, so the two converge
+    by construction; an at-risk section's marker agrees with whether `index.md`'s
+    `_At-risk work:_` line / `doctor`'s `custody.works` names that work (the H269
+    compiled-surface convergence, now per-work). Inside the page's `@generated`
+    sentinel fence (M1, ADR 0102) like the rest of the body, so a recompile refreshes
+    it (a recapture flips it to *safely held*) while a hand annotation survives.
     """
     page_dir = "library"
     lines = ["# Scrolls Works", ""]
@@ -653,9 +672,12 @@ def _write_works_page(
         )
         for work in works:
             count = _representation_count(len(work.representations))
+            marker = render_work_custody_marker(
+                work_custody(work.representations, verdicts)
+            )
             lines += [
                 "", f"## {work.doi}", "",
-                f"[doi.org/{work.doi}]({work.url}) — {count}.", "",
+                f"[doi.org/{work.doi}]({work.url}) — {count}.", marker, "",
             ]
             for rep in work.representations:  # already sorted by id
                 item = items_by_id[rep.id]

@@ -590,8 +590,10 @@ def test_kb_group_page_headline_is_refresh_safe(scrolls_home, capsys):
 
 def test_kb_graph_and_works_pages_omit_the_scope_custody_headline(scrolls_home, capsys):
     """The page-scoped headline is on the four group list pages; `graph`/`works`
-    are not member lists, so they carry none. The index carries its own
-    *whole-library* headline (roadmap H96), not a page-scoped one."""
+    are not member lists, so they carry no *scope* headline. The index carries its
+    own *whole-library* headline (roadmap H96), not a page-scoped one. `works.md`
+    does carry per-work `_Custody:` *markers* (roadmap H270) — a different line
+    (`_Custody: best held …`), never the scope headline (`_Custody: N scroll(s) …`)."""
     main(["init"])
     db = get_paths().db_path
     doi_url = "https://doi.org/10.1234/abc"
@@ -606,8 +608,12 @@ def test_kb_graph_and_works_pages_omit_the_scope_custody_headline(scrolls_home, 
     run_kb(capsys)
 
     library = scrolls_home / "library"
+    # the scope headline (`_Custody: N scroll(s) · …`) is absent from both rollups;
+    # `works.md`'s per-work markers (`_Custody: best held …`) carry no `scroll(s)`
     for rollup in ("graph.md", "works.md"):
-        assert "_Custody:" not in (library / rollup).read_text(encoding="utf-8"), rollup
+        assert "scroll(s)" not in (library / rollup).read_text(encoding="utf-8"), rollup
+    # graph carries no `_Custody:` of any kind (not a member list, no works)
+    assert "_Custody:" not in (library / "graph.md").read_text(encoding="utf-8")
     # the group pages and the index landing page do carry a custody headline
     assert "_Custody:" in (library / "categories" / "ml.md").read_text(encoding="utf-8")
     assert "_Custody:" in (library / "index.md").read_text(encoding="utf-8")
@@ -1638,6 +1644,70 @@ def test_kb_recompile_clears_a_stale_work(scrolls_home, capsys):
     works = generated_body(
         (scrolls_home / "library" / "works.md").read_text(encoding="utf-8"))
     assert works == "# Scrolls Works\n\nNo works held in multiple representations yet.\n"
+
+
+# --- per-work custody marker on the compiled works.md rollup (H270) ----------
+# The works-page analogue of the per-item `· <fidelity> · <drift>` marker on the
+# compiled list pages (`_custody_marker`, H89): one `_Custody:` line per `## <doi>`
+# section, folded by the shared `render_work_custody_marker` over the same
+# `work_custody` dict (H261) `scrolls works`'s per-work `custody` block carries, so a
+# human browsing the rollup reads "safely held" vs. "at risk" without opening the JSON.
+
+
+def test_kb_works_page_carries_a_per_work_custody_marker(scrolls_home, capsys):
+    """Each `## <doi>` section carries a work-level `_Custody:` marker beneath its
+    resolver line — the consolidation verdict (safely held vs. at risk) a human reads
+    without opening `scrolls works` JSON (roadmap H270)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)  # at-risk work Z + safely-held work Y
+    capsys.readouterr()
+    run_kb(capsys)
+
+    works = (scrolls_home / "library" / "works.md").read_text(encoding="utf-8")
+    # Z: two reference reps, never checked → no full+unmoved form anywhere → at risk
+    assert "_Custody: best held reference, safest drift unverified — at risk._" in works
+    # Y: a full + never-checked preprint → an unmoved full copy exists → safely held
+    assert "_Custody: best held full, safest drift unverified — safely held._" in works
+    # the marker sits beneath the resolver line, above the representation bullets
+    z = works.split("## 10.3000/z", 1)[1].split("\n## ", 1)[0]
+    assert (z.index("— 2 representations.")
+            < z.index("_Custody: best held reference")
+            < z.index("- ["))
+
+
+def test_kb_works_page_custody_marker_is_refresh_safe(scrolls_home, capsys):
+    """The per-work marker lives inside the `@generated` fence and refreshes on
+    recompile: recapturing a representation flips its work's marker from `at risk` to
+    `safely held`, while an annotation outside the fence survives (H270 × ADR 0102)."""
+    import dataclasses
+
+    from scrolls.items import get_item, update_item
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    works_path = scrolls_home / "library" / "works.md"
+    page = works_path.read_text(encoding="utf-8")
+    # Z's marker is at-risk and inside the fence
+    assert ("best held reference, safest drift unverified — at risk._"
+            in generated_body(page))
+    works_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # recapture one of Z's reps with a full body → the work is now safely held
+    zref = get_item(db, "arxiv:zref")
+    update_item(db, dataclasses.replace(
+        zref, raw_text="<raw>Recaptured.</raw>", content_hash="cafef00d"))
+    run_kb(capsys)
+
+    refreshed = works_path.read_text(encoding="utf-8")
+    z = refreshed.split("## 10.3000/z", 1)[1].split("\n## ", 1)[0]
+    assert "best held full, safest drift unverified — safely held._" in z  # flipped
+    assert "— at risk._" not in refreshed              # both works now safely held
+    assert "_My note._" in refreshed                   # annotation outside fence kept
 
 
 def _category_bullets(scrolls_home, slug):

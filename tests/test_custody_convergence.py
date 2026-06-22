@@ -4203,6 +4203,64 @@ def test_compiled_index_at_risk_line_converges_with_doctor_works(scrolls_home, c
     assert run_doctor(get_paths())["custody"]["works"]["at_risk"] == 0
 
 
+def test_compiled_works_page_marker_converges_with_scrolls_works(scrolls_home, capsys):
+    # roadmap H270: the compiled `works.md` rollup carries a per-work `_Custody:`
+    # marker — the works-page analogue of the per-item fidelity/drift marker on the
+    # list pages (`_custody_marker`, H89). It is folded by the shared `render_work_custody_marker`
+    # over the *same* `work_custody` dict `scrolls works`'s per-work `custody` block
+    # carries, so the compiled marker and the JSON verdict are two renders of one fold
+    # — convergent by construction — and the at-risk section's marker agrees with
+    # `doctor`'s `custody.works.most_at_risk` / `index.md`'s `_At-risk work:_` line.
+    import dataclasses
+
+    from scrolls.works import render_work_custody_marker
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_compiled_at_risk_fixture(db)  # at-risk work Z + safely-held work Y, rendered
+    capsys.readouterr()
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    works_md = (get_paths().library_dir / "works.md").read_text(encoding="utf-8")
+
+    # every work's compiled marker is byte-identical to the render of its own JSON
+    # `custody` block, in its own `## <doi>` section
+    assert len(payload["works"]) == 2
+    for work in payload["works"]:
+        section = works_md.split(f"## {work['doi']}", 1)[1].split("\n## ", 1)[0]
+        assert render_work_custody_marker(work["custody"]) in section, work["doi"]
+
+    # the at-risk work's marker agrees with doctor's custody.works.most_at_risk
+    works_audit = run_doctor(get_paths())["custody"]["works"]
+    assert works_audit["at_risk"] == 1
+    assert works_audit["most_at_risk"]["doi"] == "10.3000/z"
+    z = works_md.split("## 10.3000/z", 1)[1].split("\n## ", 1)[0]
+    y = works_md.split("## 10.2000/y", 1)[1].split("\n## ", 1)[0]
+    assert "— at risk._" in z and "— safely held._" in y
+
+    # mutation in lockstep: recapture Z (give a rep a full re-derivable body) → its
+    # work flips to safely held on *both* the JSON verdict and the compiled marker,
+    # proving the marker re-folds rather than echoing a cached verdict
+    zref = next(it for it in list_items(db) if it.id == "arxiv:zref")
+    assert update_item(db, dataclasses.replace(
+        zref, raw_text="<raw>recaptured</raw>", content_hash="sha256:zr"))
+    capsys.readouterr()
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    assert main(["works"]) == 0
+    refreshed = json.loads(capsys.readouterr().out)
+    z_work = next(w for w in refreshed["works"] if w["doi"] == "10.3000/z")
+    assert z_work["custody"]["safely_held"] is True
+    refreshed_md = (get_paths().library_dir / "works.md").read_text(encoding="utf-8")
+    z = refreshed_md.split("## 10.3000/z", 1)[1].split("\n## ", 1)[0]
+    assert render_work_custody_marker(z_work["custody"]) in z
+    assert "— at risk._" not in refreshed_md  # both works now safely held
+    assert run_doctor(get_paths())["custody"]["works"]["at_risk"] == 0
+
+
 def test_compiled_index_per_source_breakdown_converges_with_doctor_by_source(
     scrolls_home, capsys
 ):
