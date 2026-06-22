@@ -22,6 +22,7 @@ from scrolls.bundle import (
     build_bundle,
     build_bundle_html,
     parse_bundle,
+    parse_bundle_archive,
     parse_bundle_events,
 )
 from scrolls.classify import classify_item, stale_classifications
@@ -91,9 +92,12 @@ from scrolls.works import (
 from scrolls.items import (
     ScrollItem,
     adopt_incoming,
+    archived_records,
     classification_provenance,
+    dump_archive_export,
     get_fidelity,
     get_item,
+    import_archive,
     insert_item,
     item_summary,
     latest_archived,
@@ -101,8 +105,10 @@ from scrolls.items import (
     list_archived,
     list_items,
     merge_item,
+    preview_import_archive,
     update_item,
 )
+from scrolls.archive_export import ArchiveSourceError, load_archive_export
 from scrolls.events_export import EventsSourceError, load_events_export
 from scrolls.items_export import ItemsSourceError
 from scrolls.items_export import dump_items_export, load_items_export
@@ -562,6 +568,15 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="a JSONL custody-events export written by `scrolls export events`",
     )
+    import_archive_parser = import_sub.add_parser(
+        "archive",
+        help="Restore the prior-content archive from a JSONL export, deduped "
+        "(JSON output) — recovers the superseded captures `export archive` carries",
+    )
+    import_archive_parser.add_argument(
+        "path",
+        help="a JSONL archive export written by `scrolls export archive`",
+    )
 
     export_parser = subparsers.add_parser(
         "export", help="Export library data to a portable format (to stdout)"
@@ -670,6 +685,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--drift drifted to ship the full custody history of the moved items for a "
         "recapture handoff). ANDs with --fidelity",
     )
+    export_archive_parser = export_sub.add_parser(
+        "archive",
+        help="Export the prior-content archive (ADR 0106) as a lossless JSONL "
+        "stream (to stdout) — the recovery-store sibling of `export events`",
+    )
+    export_archive_parser.add_argument(
+        "--id",
+        default=None,
+        help="Only the archived prior captures of one item id (or its URL); the "
+        "whole library's recovery store otherwise",
+    )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
         help="Export a scoped, self-contained custody bundle for a query "
@@ -727,6 +753,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="markdown (default): the canonical, lossless, re-importable bundle. "
         "html: a self-contained, browser-readable briefing (export-only — the "
         "Markdown form is the re-import unit)",
+    )
+    export_bundle_parser.add_argument(
+        "--with-archive",
+        action="store_true",
+        help="Also carry the in-scope items' prior-content archive (ADR 0106) — "
+        "the recoverable captures an `import … --accept-incoming` superseded — in a "
+        "third fenced block, so 'take it with me' includes the recovery store and "
+        "`scrolls archive show` works on the rebuilt library. Opt-in: the bundle "
+        "stays lean by default (the `superseded` event already travels documenting "
+        "that an adoption happened); `import bundle` restores any archive block it "
+        "finds. The whole-library JSONL sibling is `scrolls export archive`",
     )
 
     ingest_parser = subparsers.add_parser(
@@ -1309,6 +1346,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.import_command == "events":
             return _cmd_import_events(args.path)
+        if args.import_command == "archive":
+            return _cmd_import_archive(args.path)
         return _cmd_import_fieldtheory(args.root)
     if args.command == "export":
         if args.export_command == "bookmarks":
@@ -1326,6 +1365,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.fidelity,
                 args.drift,
             )
+        if args.export_command == "archive":
+            return _cmd_export_archive(args.id)
         if args.export_command == "bundle":
             return _cmd_export_bundle(
                 args.query,
@@ -1337,6 +1378,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.format,
                 args.fidelity,
                 args.drift,
+                args.with_archive,
             )
         return _cmd_export_opml()
     if args.command == "ingest":
@@ -2185,6 +2227,26 @@ def _cmd_import_events(path: str) -> int:
     return 0
 
 
+def _cmd_import_archive(path: str) -> int:
+    # the portable recovery store (H280): restore the prior-content archive from a
+    # JSONL export through the same idempotent `import_archive` the bundle import
+    # uses, so re-importing a backup (or the overlapping union of two bundles) is a
+    # no-op (dedup by `(item_id, prior_hash)`, never the per-library autoincrement
+    # id). The archive is a standalone recovery store — this only appends to
+    # `item_archive`, never touching a held row.
+    try:
+        records, stats = load_archive_export(Path(path).expanduser())
+    except ArchiveSourceError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    imported, skipped = import_archive(paths.db_path, records)
+    print(json.dumps({"imported": imported, "skipped": skipped, **stats}))
+    return 0
+
+
 def _cmd_export_opml() -> int:
     paths = get_paths()
     subscriptions = (
@@ -2316,6 +2378,33 @@ def _cmd_export_events(
     return 0
 
 
+def _cmd_export_archive(ref: str | None) -> int:
+    # the portable recovery store (H280): the prior-content archive (ADR 0106) as a
+    # lossless JSONL stream, the recovery-store sibling of `export events`. A library
+    # rebuilt from `export items` + `export events` reads *that* an adoption happened
+    # (the `superseded` event travels) but cannot recover the prior bytes; this
+    # carries them, so `scrolls archive show` works on the rebuilt library.
+    #
+    # `--id <ref>` scopes to one item's archived priors (resolving a URL to the id
+    # `add` would mint, the `archive list --id` precedent); the whole library's
+    # recovery store otherwise (the backup case). A bad ref is a loud usage error.
+    item_ids: list[str] | None = None
+    if ref is not None:
+        try:
+            item_ids = [resolve_item_id(ref)]
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+    paths = get_paths()
+    records = (
+        archived_records(paths.db_path, item_ids) if paths.db_path.exists() else []
+    )
+    # the JSONL stream *is* the artifact (the `export items`/`export events` rule) —
+    # `scrolls export archive > archive.jsonl`
+    sys.stdout.write(dump_archive_export(records))
+    return 0
+
+
 def _cmd_export_bundle(
     query: str,
     source: str | None,
@@ -2326,6 +2415,7 @@ def _cmd_export_bundle(
     fmt: str = "markdown",
     fidelity: str | None = None,
     drift: str | None = None,
+    with_archive: bool = False,
 ) -> int:
     paths = get_paths()
     # markdown (default) is the canonical, lossless, re-importable bundle; html
@@ -2335,6 +2425,8 @@ def _cmd_export_bundle(
     # to one custody tier/posture; an unknown value is rejected by argparse
     # `choices` (exit 2) before reaching here, and on the library path by
     # `search_items` (ValueError → exit 1, the empty-vocabulary belt-and-braces).
+    # `--with-archive` (H280) appends the in-scope items' prior-content archive in a
+    # third fenced block (opt-in — the bundle stays lean by default).
     builder = build_bundle_html if fmt == "html" else build_bundle
     try:
         bundle = builder(
@@ -2347,6 +2439,7 @@ def _cmd_export_bundle(
             concept=concept,
             fidelity=fidelity,
             drift=drift,
+            with_archive=with_archive,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -2413,6 +2506,7 @@ def _cmd_import_bundle(
         text = Path(path).expanduser().read_text(encoding="utf-8")
         imported_items = parse_bundle(text)
         imported_events = parse_bundle_events(text)
+        imported_archive = parse_bundle_archive(text)
     except OSError as exc:
         print(json.dumps({"error": f"cannot read {path}: {exc}"}), file=sys.stderr)
         return 1
@@ -2425,7 +2519,11 @@ def _cmd_import_bundle(
 
     if dry_run:
         return _preview_import_bundle(
-            paths, imported_items, imported_events, accept_incoming=accept_incoming
+            paths,
+            imported_items,
+            imported_events,
+            imported_archive,
+            accept_incoming=accept_incoming,
         )
 
     # INSERT OR IGNORE per row (ADR 0082): a scroll the target library already
@@ -2464,6 +2562,14 @@ def _cmd_import_bundle(
     )
     ev_imported, ev_skipped = import_events(paths.db_path, resolvable_events)
     _warn_orphan_events(orphan_events)
+    # restore the prior-content archive (roadmap H280) if the bundle carried one
+    # (a `--with-archive` export, the optional third region). Unconditional —
+    # whatever recovery store travelled is restored, deduped by `(item_id,
+    # prior_hash)`, the events-restore idiom on the archive axis. A lean default
+    # bundle carries no archive block → `imported_archive == []` → a clean (0, 0).
+    # The archive is a standalone recovery store: this only appends to
+    # `item_archive`, never touching a held row (no orphan concept needed).
+    ar_imported, ar_skipped = import_archive(paths.db_path, imported_archive)
     print(json.dumps({
         **counts,
         # the distinct ids whose held copy diverged from the incoming bundle row
@@ -2488,23 +2594,33 @@ def _cmd_import_bundle(
             # Always present (`[]` is the honest "we checked, none dangled").
             "orphaned_items": _orphan_item_ids(orphan_events),
         },
+        # the prior-content archive restore (roadmap H280) — always present, like
+        # `events`: a lean default bundle carries no archive block → a clean
+        # `{imported: 0, skipped: 0}` ("we checked, none travelled"), a
+        # `--with-archive` bundle restores its recovery store (deduped).
+        "archive": {"imported": ar_imported, "skipped": ar_skipped},
     }))
     return 0
 
 
 def _preview_import_bundle(
-    paths, imported_items, imported_events, accept_incoming: bool = False
+    paths,
+    imported_items,
+    imported_events,
+    imported_archive,
+    accept_incoming: bool = False,
 ) -> int:
     """The read-only sibling of the bundle import (roadmap H220, H273).
 
     An agent handed a portable "take it with me" bundle should be able to see
     *exactly* what a merge would add vs. skip — new items, already-held skips,
-    held-copy **conflicts** (H273), custody events added/deduped, and orphan
-    events (H217) — **without writing**. The same summary the live import prints,
-    computed by diffing against the library: the item partition via
-    `_preview_merge_items` (the read-only twin of `_merge_items`, predicting the
-    same conflict set INSERT OR IGNORE would surface), the event-dedup preview,
-    and the orphan-event split.
+    held-copy **conflicts** (H273), custody events added/deduped, orphan
+    events (H217), and the prior-content archive restore (H280) — **without
+    writing**. The same summary the live import prints, computed by diffing against
+    the library: the item partition via `_preview_merge_items` (the read-only twin
+    of `_merge_items`, predicting the same conflict set INSERT OR IGNORE would
+    surface), the event-dedup preview, the orphan-event split, and the
+    archive-restore prediction via `preview_import_archive`.
 
     The bundle's own item ids anchor the event partition (`known_ids`): the live
     import inserts those rows *before* partitioning, so an event for a not-yet-held
@@ -2547,6 +2663,11 @@ def _preview_import_bundle(
     )
     ev_imported, ev_skipped = preview_import_events(paths.db_path, resolvable_events)
     _warn_orphan_events(orphan_events)
+    # predict the archive restore without writing (roadmap H280) — the read-only
+    # twin of `import_archive`, the same `{imported, skipped}` the live path reports
+    # for the same recovery store, so the dry-run never drifts from the real import
+    # (the H220/H233 preview-fidelity discipline on the archive axis).
+    ar_imported, ar_skipped = preview_import_archive(paths.db_path, imported_archive)
     print(json.dumps({
         "dry_run": True,
         **counts,
@@ -2563,6 +2684,9 @@ def _preview_import_bundle(
             # the preview is honest about *which* items orphan, not just how many.
             "orphaned_items": _orphan_item_ids(orphan_events),
         },
+        # the archive-restore prediction (H280), the same shape the live import
+        # carries — `{imported: 0, skipped: 0}` for a lean default bundle.
+        "archive": {"imported": ar_imported, "skipped": ar_skipped},
     }))
     return 0
 

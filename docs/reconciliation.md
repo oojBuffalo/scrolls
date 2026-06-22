@@ -471,8 +471,49 @@ clears the aggregate, idempotent, `archive list`/`show`, the show→import resto
 `tests/test_bundle.py` (`import bundle --accept-incoming` adopts, the dry-run
 predicts without writing).
 
-**Deferred:** the archive in portable bundles, an MCP accept-incoming / `archive`
-twin, `archive prune` / retention, and `archive show --all` / restore-by-version.
-With `--accept-incoming` the conflict-on-import theme is complete on **both**
-resolution directions — keep-held and accept-incoming — across detect → read →
-resolve.
+**Deferred:** ~~the archive in portable bundles~~ (shipped — H280, below), an MCP
+accept-incoming / `archive` twin, `archive prune` / retention, and `archive show
+--all` / restore-by-version. With `--accept-incoming` the conflict-on-import theme
+is complete on **both** resolution directions — keep-held and accept-incoming —
+across detect → read → resolve.
+
+## Shipped: the prior-content archive travels in the portable round-trip (H280)
+
+ADR 0106 made adoption custody-safe *locally* — the superseded prior is archived
+and recoverable via `scrolls archive show` — but left the archive a **local**
+store: a `superseded` event travels in the lossless round-trip while the archived
+prior *bytes* stay behind, so a library rebuilt from a bundle could read *that* an
+adoption happened (the event) but not recover the prior copy. H280 lets the
+recovery store travel:
+
+- **`scrolls export bundle --with-archive`** appends an optional **third
+  `@generated` region** — the in-scope items' `item_archive` snapshots — beside the
+  items and events blocks (`bundle._archive_block`/`parse_bundle_archive`). Opt-in
+  because the archive can be large and the `superseded` event already documents the
+  adoption; **without the flag the bundle is byte-identical to a pre-H280 one**, so
+  the round-trip / byte-identity guarantees are untouched.
+- **`scrolls export archive` / `scrolls import archive`** are the whole-library
+  JSONL siblings of `export events`/`import events` (`items.archived_records`/
+  `dump_archive_export`/`import_archive`, `archive_export.load_archive_export`) — the
+  third member of the lossless backup family (items, events, archive).
+- **`import bundle` restores any archive block unconditionally** (the flag is an
+  export concern only), deduped by `(item_id, prior_hash)` — the H67 events-dedup
+  precedent on the archive identity — so a re-import, or the overlapping union of two
+  bundles, is a no-op. The `--dry-run` predicts the restore without writing.
+
+The records are ordered content-deterministically (`archived_at`, `item_id`,
+`prior_hash`), independent of the per-library autoincrement id, so a re-export from
+a rebuilt library reproduces the block **byte-for-byte** — the lossless-round-trip
+reach of the recovery store. The archive stays a **standalone recovery store** keyed
+by `item_id` with no held-row interaction (it only appends to `item_archive`), so —
+unlike the events restore — it needs no orphan split. **No schema change** (the v8
+`item_archive` table is unchanged); no network.
+
+Tested: `tests/test_items.py` (the `archived_records` reader, `import_archive`
+dedup incl. within-batch + NULL prior_hash, the `preview_import_archive` parity, the
+dump→load→import round-trip); `tests/test_archive_export.py` (the JSONL framing +
+validation + load↔dump round-trip); `tests/test_bundle.py` (the default bundle
+carries no archive block, `--with-archive` carries the scoped priors, the round-trip
+recovers them in a fresh library, the byte-identical re-export, idempotent restore,
+the dry-run prediction, the HTML form); `tests/test_cli.py` (`export archive` /
+`import archive` round-trip, idempotency, `--id` scope, empty/error cases).

@@ -90,14 +90,17 @@ uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML
 uv run scrolls import items <path>  # restore items from a Scrolls JSONL export (lossless), as JSON
 uv run scrolls import items <path> --accept-incoming  # on a content conflict, ADOPT the incoming copy (replace the held one); prior archived & recoverable, recorded as a `superseded` event (H278, ADR 0106), as JSON
 uv run scrolls import events <path>  # restore the verify ledger from a JSONL export, deduped (whole-library portable custody, H72), as JSON
+uv run scrolls import archive <path>  # restore the prior-content recovery store from a JSONL export, deduped by (item_id, prior_hash) (H280), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
 uv run scrolls export bookmarks --source github  # export a scoped slice (--source/--category/--tag), to stdout
 uv run scrolls export items   # export items as a lossless JSONL stream (back up / migrate), to stdout
 uv run scrolls export events  # export the verify ledger (custody events) as a lossless JSONL stream (back up custody, H72), to stdout
 uv run scrolls export events --since 2026-06-16  # incremental backup: only checks since a boundary; the union re-imports idempotently (H75)
+uv run scrolls export archive  # export the prior-content recovery store (captures an --accept-incoming superseded) as a lossless JSONL stream, the backup sibling of export events (H280, ADR 0106), to stdout
 uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block + verify-ledger events, shareable & re-importable
 uv run scrolls export bundle "<query>" --format html > briefing.html  # the same bundle as a self-contained, browser-readable briefing (export-only; Markdown is the re-import unit, H39)
+uv run scrolls export bundle "<query>" --with-archive > briefing.md  # also carry the in-scope items' prior-content recovery store in a third fenced block, so "take it with me" includes recovery (opt-in, H280)
 uv run scrolls import bundle <path>  # restore scrolls AND their custody ledger from a bundle, losslessly (the "take it with me" half); events dedup on re-import (H67), as JSON
 uv run scrolls import bundle <path> --accept-incoming  # on a content conflict, adopt the incoming bundle copy (prior archived); composes with --dry-run (predict the adoptions), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON

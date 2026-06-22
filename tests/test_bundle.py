@@ -10,6 +10,7 @@ from scrolls.bundle import (
     build_bundle,
     build_bundle_html,
     parse_bundle,
+    parse_bundle_archive,
     parse_bundle_events,
 )
 from scrolls.classify import ENGINE as RULES_ENGINE
@@ -26,6 +27,8 @@ from scrolls.custody import (
 from scrolls.doctor import run_doctor
 from scrolls.items import (
     ScrollItem,
+    adopt_incoming,
+    archived_records,
     get_item,
     insert_item,
     item_to_dict,
@@ -1937,6 +1940,9 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         "events": {
             "imported": 2, "skipped": 0, "orphaned": 0, "orphaned_items": [],
         },
+        # a lean default bundle (no `--with-archive`) carries no archive block —
+        # the honest "we checked, none travelled" (H280)
+        "archive": {"imported": 0, "skipped": 0},
     }
 
     # the dry-run wrote nothing — B still holds only the one pre-seeded scroll
@@ -2282,6 +2288,7 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
             "orphaned": 3,
             "orphaned_items": ["arxiv:2401.00001", "wikipedia:en:Ghost"],
         },
+        "archive": {"imported": 0, "skipped": 0},
     }
     _DRY_RUN_ONLY = {"dry_run", "new", "held"}
     assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == expected
@@ -2441,6 +2448,197 @@ def test_import_bundle_dry_run_accept_incoming_predicts_without_writing(
     assert live["adopted"] == preview["adopted"]
     assert get_item(db, "wikipedia:en:SQLite").content_hash == "sha256:moved"
     assert [e.status for e in item_events(db, "wikipedia:en:SQLite")] == ["superseded"]
+
+
+# --- the prior-content archive travels in the portable bundle (H280) ---------
+
+
+def _seed_archived_prior(db, item_id="wikipedia:en:SQLite", *, query_token="database"):
+    """Hold an item, then adopt a divergent capture so one prior is archived.
+
+    Leaves the held copy carrying the incoming content and one recoverable prior
+    in `item_archive` — the recovery store the `--with-archive` bundle carries.
+    Both captures keep `query_token` in their text so the item stays in the bundle
+    scope a query of that token selects.
+    """
+    held = make_item(item_id, "SQLite", f"The original {query_token} capture.",
+                     content_hash="sha256:held")
+    insert_item(db, held)
+    incoming = dataclasses.replace(
+        held, extracted_text=f"A later {query_token} capture.",
+        raw_text=f"<raw>A later {query_token} capture.</raw>",
+        content_hash="sha256:moved",
+    )
+    adopt_incoming(db, incoming, archived_at="2026-06-22T00:00:00+00:00")
+    return held  # the archived prior, recoverable byte-for-byte
+
+
+def test_default_bundle_carries_no_archive_block(scrolls_home):
+    # the lean default (H280): without `--with-archive` the bundle has exactly the
+    # two regions (items, events) a pre-H280 bundle had — so the byte-identity /
+    # round-trip guarantees are untouched, and `parse_bundle_archive` reads []
+    main(["init"])
+    db = get_paths().db_path
+    _seed_archived_prior(db)
+
+    bundle = build_bundle(db, "database")
+    assert bundle.count("@generated scrolls") == 2  # items + events only
+    assert "prior-content archive" not in bundle
+    assert parse_bundle_archive(bundle) == []  # nothing to recover
+
+
+def test_with_archive_bundle_carries_the_scoped_prior_captures(scrolls_home):
+    # the opt-in third region (H280): `--with-archive` appends the in-scope items'
+    # recovery store, recoverable via `parse_bundle_archive` byte-for-byte
+    main(["init"])
+    db = get_paths().db_path
+    prior = _seed_archived_prior(db)
+
+    bundle = build_bundle(db, "database", with_archive=True)
+    assert bundle.count("@generated scrolls") == 3  # items + events + archive
+    assert "prior-content archive" in bundle
+    recovered = parse_bundle_archive(bundle)
+    assert recovered == archived_records(db)  # the same records the store holds
+    assert len(recovered) == 1
+    assert recovered[0].item_id == "wikipedia:en:SQLite"
+    assert recovered[0].prior_hash == "sha256:held"
+    # the snapshot recovers the prior capture byte-for-byte
+    from scrolls.items import item_from_dict
+    assert item_from_dict(recovered[0].snapshot) == prior
+
+
+def test_with_archive_bundle_round_trips_the_recovery_store_to_a_fresh_library(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the heart of H280: "take it with me" includes the recovery store, so a library
+    # rebuilt from a `--with-archive` bundle can recover the prior bytes — not just
+    # read *that* an adoption happened (the `superseded` event)
+    main(["init"])
+    db_a = get_paths().db_path
+    prior = _seed_archived_prior(db_a)
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the import report carries the archive restore, like `events`
+    assert report["archive"] == {"imported": 1, "skipped": 0}
+    # the held copy (the adopted content) AND the recoverable prior both landed
+    assert get_item(db_b, "wikipedia:en:SQLite").content_hash == "sha256:moved"
+    recovered = latest_archived(db_b, "wikipedia:en:SQLite")
+    assert recovered == prior  # the prior capture, recoverable on the rebuilt library
+
+
+def test_with_archive_bundle_re_exports_byte_identically(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the archive block is byte-stable across the round-trip boundary (the H238/H244
+    # byte-identity guarantee, on the archive axis): export → import → re-export
+    # reproduces the same archive block, because the export order is content-determined
+    # (archived_at, item_id, prior_hash), not the per-library autoincrement id
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_archived_prior(db_a, "wikipedia:en:A")
+    _seed_archived_prior(db_a, "wikipedia:en:B")
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    first = capsys.readouterr().out
+    bundle_path = tmp_path / "b.md"
+    bundle_path.write_text(first, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    main(["import", "bundle", str(bundle_path)])
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    second = capsys.readouterr().out
+    # the archive block re-exports byte-for-byte (the lossless round-trip reach)
+    from scrolls.items import dump_archive_export
+    assert dump_archive_export(parse_bundle_archive(first)) == dump_archive_export(
+        parse_bundle_archive(second)
+    )
+
+
+def test_import_bundle_archive_restore_is_idempotent(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # re-importing the same `--with-archive` bundle dedups the archive (no second row)
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_archived_prior(db_a)
+    capsys.readouterr()
+    main(["export", "bundle", "database", "--with-archive"])
+    bundle_path = tmp_path / "b.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    main(["import", "bundle", str(bundle_path)])
+    first = json.loads(capsys.readouterr().out)
+    assert first["archive"] == {"imported": 1, "skipped": 0}
+
+    main(["import", "bundle", str(bundle_path)])
+    second = json.loads(capsys.readouterr().out)
+    assert second["archive"] == {"imported": 0, "skipped": 1}  # deduped
+    assert len(archived_records(get_paths().db_path)) == 1
+
+
+def test_import_bundle_dry_run_predicts_the_archive_restore(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the dry-run names the archive restore it would do, without writing (H280, the
+    # H220/H245 predict-the-write discipline on the archive axis)
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_archived_prior(db_a)
+    capsys.readouterr()
+    main(["export", "bundle", "database", "--with-archive"])
+    bundle_path = tmp_path / "b.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["dry_run"] is True
+    assert preview["archive"] == {"imported": 1, "skipped": 0}
+    assert archived_records(db_b) == []  # the dry-run wrote nothing
+
+    # the live import then restores exactly what the preview predicted
+    main(["import", "bundle", str(bundle_path)])
+    live = json.loads(capsys.readouterr().out)
+    assert live["archive"] == preview["archive"]
+
+
+def test_html_bundle_carries_the_archive_block_only_with_the_flag(scrolls_home):
+    # the HTML form embeds the archive block under `--with-archive` for parity with
+    # the Markdown form (export-only — re-import via the Markdown bundle); omitted by
+    # default, keeping the default HTML lean
+    main(["init"])
+    db = get_paths().db_path
+    _seed_archived_prior(db)
+
+    lean = build_bundle_html(db, "database")
+    assert "Prior-content archive" not in lean
+
+    full = build_bundle_html(db, "database", with_archive=True)
+    assert "Prior-content archive" in full
+    assert "sha256:held" in full  # the archived prior's hash travels in the block
 
 
 def test_import_bundle_dry_run_predicts_the_conflict_set(scrolls_home, tmp_path, capsys):

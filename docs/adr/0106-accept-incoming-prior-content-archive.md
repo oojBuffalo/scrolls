@@ -173,10 +173,16 @@ operator act (custody §2.4), not an ambient MCP capability.
 
 ## Deferred
 
-- **The archive in portable bundles.** Carrying the archived prior captures in
+- **The archive in portable bundles.** ~~Carrying the archived prior captures in
   `export bundle`/`export items` (so "take it with me" includes the recovery
   store) is a clean extension, left until a workflow needs the prior bytes to
-  travel; the `superseded` event already travels with the ledger.
+  travel; the `superseded` event already travels with the ledger.~~ **Shipped
+  (roadmap H280):** `scrolls export bundle --with-archive` carries the in-scope
+  archive in an optional third `@generated` block (opt-in — a default bundle stays
+  byte-identical to a pre-H280 one), `scrolls export archive`/`import archive` are
+  the whole-library JSONL siblings of `export events`/`import events`, and `import
+  bundle` restores any archive block unconditionally, deduped by `(item_id,
+  prior_hash)` (the H67 events-dedup precedent). No schema change.
 - **An MCP `import … --accept-incoming` / `archive` twin.** A custody-changing
   write and its recovery are operator-gated for now (custody §2.4), like
   `reconcile`/`verify`; the read side (`history --status superseded`, the cleared

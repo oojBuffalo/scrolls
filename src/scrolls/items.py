@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -926,3 +927,219 @@ def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
     if row is None:
         return None
     return item_from_dict(json.loads(row[0]))
+
+
+# --- portable prior-content archive (the recovery store travels, roadmap H280) ---
+#
+# ADR 0106 made adoption custody-safe *locally*: the superseded prior is archived
+# and recoverable via `scrolls archive show`. But the archive is a **local** store
+# — a `superseded` event travels in the lossless round-trip while the archived
+# prior *bytes* stay behind, so a library rebuilt from a bundle can read *that an
+# adoption happened* (the event) but cannot recover the prior copy. H280 lets the
+# recovery store travel: `export bundle --with-archive` carries a third
+# sentinel-fenced archive block, and `export archive` is the whole-library JSONL
+# sibling of `export events`, with an idempotent `import` deduped by
+# `(item_id, prior_hash)` — the H67 events-dedup precedent on the archive identity.
+
+
+@dataclass(frozen=True)
+class ArchiveRecord:
+    """One archived prior capture as a portable, re-importable row (roadmap H280).
+
+    The full `item_archive` row minus the per-library autoincrement `id` (never
+    exported, re-numbered on restore, exactly like the custody-event `id`): the
+    metadata an adoption recorded — *which* held copy was replaced, the hash
+    before/after, *when* — plus the model-complete `item_to_dict` ``snapshot`` of
+    the prior capture itself, so a fresh library re-emits the same prior through
+    `archive show`. The export/recovery counterpart of the metadata-only
+    `ArchiveEntry` (`archive list`), which carries no body.
+    """
+
+    item_id: str
+    archived_at: str
+    prior_hash: str | None
+    superseded_by: str | None
+    snapshot: dict[str, Any]
+
+
+def archived_records(
+    db_path: Path, item_ids: Iterable[str] | None = None
+) -> list[ArchiveRecord]:
+    """The archive's prior captures as portable `ArchiveRecord`s — the export read.
+
+    Unlike `list_archived` (metadata only, newest first, for the `archive list`
+    index) this carries each prior's model-complete ``snapshot``, so it is the
+    read behind `export archive` and the bundle's `--with-archive` block. Filtered
+    to a set of ``item_ids`` when given (the bundle scopes the archive to its
+    in-scope items, the items-block symmetry); the whole archive otherwise (the
+    whole-library backup).
+
+    Ordered by ``(archived_at, item_id, prior_hash)`` — fully content-determined,
+    independent of the per-library autoincrement `id` (never exported) — so a
+    re-export after an `import_archive` reproduces the stream **byte-for-byte**
+    regardless of the restored rows' local ids, and within an item the
+    latest-``archived_at`` prior still imports to the highest local id, so
+    `latest_archived`/`archive show` keeps returning the most-recently-superseded
+    copy. Tolerates a pre-v8 library (no archive table) by returning ``[]``.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT item_id, archived_at, prior_hash, superseded_by, snapshot "
+            "FROM item_archive"
+        ).fetchall()
+    except sqlite3.OperationalError:  # pre-v8 library, no archive table
+        return []
+    finally:
+        conn.close()
+    wanted = set(item_ids) if item_ids is not None else None
+    records = [
+        ArchiveRecord(
+            item_id=row["item_id"],
+            archived_at=row["archived_at"],
+            prior_hash=row["prior_hash"],
+            superseded_by=row["superseded_by"],
+            snapshot=json.loads(row["snapshot"]),
+        )
+        for row in rows
+        if wanted is None or row["item_id"] in wanted
+    ]
+    records.sort(key=lambda r: (r.archived_at, r.item_id, r.prior_hash or ""))
+    return records
+
+
+def archive_export_dict(record: ArchiveRecord) -> dict[str, Any]:
+    """One archive row as a JSON-serializable export object (roadmap H280).
+
+    The `snapshot` is embedded as a nested object (not a JSON string-in-string),
+    so the JSONL stays clean and `jq`-friendly, the `event_export_dict` idiom. The
+    inverse is `archive_from_dict`.
+    """
+    return {
+        "item_id": record.item_id,
+        "archived_at": record.archived_at,
+        "prior_hash": record.prior_hash,
+        "superseded_by": record.superseded_by,
+        "snapshot": record.snapshot,
+    }
+
+
+def archive_from_dict(data: dict[str, Any]) -> ArchiveRecord:
+    """Reconstruct an `ArchiveRecord` from an export object — the inverse.
+
+    `prior_hash`/`superseded_by` are nullable (a prior with no content hash, or an
+    adoption that recorded no incoming hash). Unknown keys are tolerated for
+    forward compatibility. The caller validates the required identity fields
+    (`item_id`/`archived_at`/`snapshot`), like `item_from_dict`/`event_from_dict`.
+    """
+    return ArchiveRecord(
+        item_id=data["item_id"],
+        archived_at=data["archived_at"],
+        prior_hash=data.get("prior_hash"),
+        superseded_by=data.get("superseded_by"),
+        snapshot=data["snapshot"],
+    )
+
+
+def dump_archive_export(records: Iterable[ArchiveRecord]) -> str:
+    """Serialize archive records to JSON Lines — the `export archive` / bundle block.
+
+    One JSON object per record per line (newline-terminated), in the given order
+    (`archived_records` already orders content-deterministically). Mirrors
+    `dump_items_export`/`dump_events_export`: an empty iterable produces an empty
+    string — a valid empty document, the shape an un-superseded library's archive
+    block takes.
+    """
+    return "".join(json.dumps(archive_export_dict(r)) + "\n" for r in records)
+
+
+# The content key that identifies an archived prior across libraries — the
+# autoincrement `id` is per-library (never exported) and `superseded_by`/`snapshot`
+# describe the same prior, so neither is part of the identity. Two archive rows
+# with this pair equal are the same recoverable prior capture (roadmap H280's
+# idempotent-restore key, the H67 events-dedup precedent on the archive axis).
+_ARCHIVE_IDENTITY = ("item_id", "prior_hash")
+
+
+def import_archive(
+    db_path: Path, records: Iterable[ArchiveRecord]
+) -> tuple[int, int]:
+    """Restore archived prior captures, deduped by content; return ``(imported, skipped)``.
+
+    The archive-axis sibling of `import_events` (roadmap H280): a record is skipped
+    when the archive already holds a row with the same ``(item_id, prior_hash)`` —
+    so re-importing the same recovery store twice, or the overlapping union of two
+    bundles, is a no-op (the append-only archive would otherwise grow on every
+    re-import). NULL hashes compare NULL-safely (SQLite ``IS``). Within-batch
+    duplicates also dedup: the first insert makes the next iteration's existence
+    check see it.
+
+    Unlike the events restore, the archive is a standalone recovery store keyed by
+    `item_id` with **no** held-row interaction — importing a prior for an id the
+    target does not currently hold is harmless (it simply populates the recovery
+    store), so there is no orphan split here. The held copy is never touched: this
+    only ever appends to `item_archive`.
+    """
+    where = " AND ".join(f"{col} IS ?" for col in _ARCHIVE_IDENTITY)
+    imported = skipped = 0
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            for r in records:
+                identity = (r.item_id, r.prior_hash)
+                exists = conn.execute(
+                    f"SELECT 1 FROM item_archive WHERE {where} LIMIT 1", identity
+                ).fetchone()
+                if exists is not None:
+                    skipped += 1
+                    continue
+                conn.execute(
+                    "INSERT INTO item_archive (item_id, archived_at, prior_hash, "
+                    "superseded_by, snapshot) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        r.item_id,
+                        r.archived_at,
+                        r.prior_hash,
+                        r.superseded_by,
+                        json.dumps(r.snapshot),
+                    ),
+                )
+                imported += 1
+    finally:
+        conn.close()
+    return imported, skipped
+
+
+def preview_import_archive(
+    db_path: Path, records: Iterable[ArchiveRecord]
+) -> tuple[int, int]:
+    """Count how `import_archive` would split `records` *without writing* — the
+    read-only sibling for `import bundle --dry-run` (the `preview_import_events` idiom).
+
+    Mirrors `import_archive`'s dedup exactly: a record is *skipped* when the archive
+    already holds its ``(item_id, prior_hash)`` or an earlier record in this same
+    batch already claimed it; otherwise *imported*. The within-batch dedup the
+    writer gets for free from its prior INSERT is tracked here in a local `seen` set.
+    """
+    where = " AND ".join(f"{col} IS ?" for col in _ARCHIVE_IDENTITY)
+    imported = skipped = 0
+    seen: set[tuple[object, ...]] = set()
+    conn = sqlite3.connect(db_path)
+    try:
+        for r in records:
+            identity = (r.item_id, r.prior_hash)
+            if identity in seen:
+                skipped += 1
+                continue
+            exists = conn.execute(
+                f"SELECT 1 FROM item_archive WHERE {where} LIMIT 1", identity
+            ).fetchone()
+            if exists is not None:
+                skipped += 1
+                continue
+            seen.add(identity)
+            imported += 1
+    finally:
+        conn.close()
+    return imported, skipped

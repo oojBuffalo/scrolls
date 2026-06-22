@@ -2579,7 +2579,51 @@ $ scrolls export events --drift drifted > moved.jsonl        # the full custody 
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--format markdown|html]`
+### `scrolls export archive [--id <id>]`
+
+Export the **prior-content archive** (`item_archive`, ADR 0106) as a lossless
+JSON Lines stream — the **portable recovery store** (roadmap H280), the third
+member of the lossless backup family beside `export items` (the holdings) and
+`export events` (the custody ledger). When an `import … --accept-incoming` adopts
+a peer's diverging capture, the superseded prior is archived first (recoverable
+via `scrolls archive show`); but that archive is a *local* store. A library
+rebuilt from `import items` + `import events` reads *that* an adoption happened
+(the `superseded` event travels in the ledger) yet cannot recover the prior
+*bytes*. This carries them, so `scrolls archive show` works on the rebuilt
+library.
+
+Each line is one archived prior as a JSON object — `item_id`, `archived_at`,
+`prior_hash` (the archived copy's hash), `superseded_by` (the incoming hash that
+replaced it), and the nested **model-complete `snapshot`** (the same lossless
+`item_to_dict` shape `export items` writes), so recovery round-trips through the
+importer the library already trusts. The stream **is** the artifact, so it prints
+raw on stdout (the `export items` exception to the JSON-on-stdout rule); there is
+no path argument. `--id <ref>` scopes to one item's archived priors (an id, or a
+URL resolved to the id `add` would mint — the `archive list --id` precedent); the
+whole library's recovery store otherwise (the backup case). An empty (or pre-`init`)
+library — or an `--id` with no archived prior — produces an empty document, never
+an error (`test_export_archive_empty_library_is_valid`,
+`test_export_archive_unmatched_id_is_an_empty_document`); a malformed URL `--id`
+is a loud error (`test_export_archive_bad_url_id_is_a_usage_error`). Restore with
+`scrolls import archive`.
+
+The records are ordered content-deterministically (by `archived_at`, then
+`item_id`, then `prior_hash`), independent of the per-library autoincrement id, so
+a re-export after `import archive` reproduces the stream byte-for-byte — the
+lossless-round-trip reach of the recovery store. The whole-bundle counterpart is
+`scrolls export bundle --with-archive`, which carries the same records in a third
+fenced block beside the items and events blocks.
+
+```console
+$ scrolls export archive
+{"item_id": "wikipedia:en:SQLite", "archived_at": "2026-06-22T00:00:00+00:00", "prior_hash": "sha256:held", "superseded_by": "sha256:moved", "snapshot": {"id": "wikipedia:en:SQLite", "...": "..."}}
+[exit 0]
+
+$ scrolls export archive --id wikipedia:en:SQLite > sqlite-priors.jsonl   # one item's recovery store
+[exit 0]
+```
+
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--format markdown|html] [--with-archive]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -2634,6 +2678,25 @@ is stable. `import bundle` restores the events with an idempotent, content-keyed
 dedup, so a re-import is a custody no-op
 (`test_custody_events_round_trip_into_a_fresh_library`,
 `test_re_importing_a_bundle_dedups_the_custody_events`).
+
+`--with-archive` appends an **optional third `@generated` region** — the
+in-scope items' **prior-content archive** (`item_archive`, ADR 0106; roadmap
+H280): the recoverable captures an `import … --accept-incoming` superseded. It is
+**opt-in** because the archive can be large (a model-complete prior body per
+adoption) and the `superseded` event already travels in the events block
+documenting *that* an adoption happened — so without the flag the bundle carries
+only the items + events blocks, byte-identical to a pre-H280 bundle (the
+byte-identity / round-trip guarantees untouched —
+`test_default_bundle_carries_no_archive_block`). With it, "take it with me"
+includes the recovery store, so `scrolls archive show` works on the rebuilt
+library (`test_with_archive_bundle_round_trips_the_recovery_store_to_a_fresh_library`).
+The archive records are ordered content-deterministically, so a re-export from a
+rebuilt library reproduces the block byte-for-byte
+(`test_with_archive_bundle_re_exports_byte_identically`). `import bundle` restores
+whatever archive block is present **unconditionally** (deduped by `(item_id,
+prior_hash)` — the flag is an export concern only); a default bundle's absent
+block restores as a clean `{imported: 0, skipped: 0}`. The whole-library JSONL
+sibling is `scrolls export archive`.
 
 It is the shareable complement to `export items` (the whole-library/faceted
 backup) and the re-importable complement to `scrolls context` (a lossy excerpt
@@ -2787,10 +2850,24 @@ the complete loss while the human warning keeps its bounded `(+N more)` tail
 does *not* skip orphans — that path tolerates events restored before their items;
 a bundle is an atomic items+events unit whose events should always anchor.)
 
+The importer also restores the bundle's **prior-content archive block**
+(roadmap H280) when one travelled — the optional third region a `--with-archive`
+export carries. Restore is **unconditional** (whatever recovery store is present
+is restored — the flag is an export concern only) and deduped by `(item_id,
+prior_hash)`, so a re-import is a no-op (`test_import_bundle_archive_restore_is_idempotent`).
+A lean default bundle carries no archive block, restoring as a clean
+`{imported: 0, skipped: 0}` — the honest "we checked, none travelled". After the
+restore, `scrolls archive show <id>` recovers the prior on the rebuilt library
+(`test_with_archive_bundle_round_trips_the_recovery_store_to_a_fresh_library`).
+The archive is a standalone recovery store keyed by `item_id` with no held-row
+interaction (it only appends to `item_archive`), so it has no orphan concept like
+the events restore. `--dry-run` predicts the archive restore without writing
+(`test_import_bundle_dry_run_predicts_the_archive_restore`).
+
 `--dry-run` (roadmap H220) **previews** the merge and writes nothing: an agent
 handed a shared bundle can see *exactly* what an import would add vs. skip — the
-same `{imported, skipped, unchanged, conflict, conflicts, items, events}` summary
-the real import prints, plus a `"dry_run": true` marker — before committing to it.
+same `{imported, skipped, unchanged, conflict, conflicts, items, events, archive}`
+summary the real import prints, plus a `"dry_run": true` marker — before committing to it.
 It is the read-only sibling of the custody-safe import (ADR 0082): the item
 partition is computed by `_preview_merge_items` (the read-only twin of
 `_merge_items`), event counts by the same content-dedup the writer uses
@@ -2837,6 +2914,7 @@ the real import stays terse
 | `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |
 | `events` | `{imported, skipped, orphaned, orphaned_items}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217); `orphaned_items` names the distinct orphan ids (sorted, deduped, uncapped — H230) |
+| `archive` | `{imported, skipped}` — prior-content archive rows restored / deduped from the optional `--with-archive` block (H280); `{0, 0}` when no archive block travelled |
 | `dry_run` | present and `true` only under `--dry-run`; the summary is a preview and nothing was written |
 
 ```console
@@ -2881,6 +2959,45 @@ $ scrolls export events > ledger.jsonl
 
 $ scrolls import events ledger.jsonl
 {"imported": 5, "skipped": 0, "events": 5}
+[exit 0]
+```
+
+### `scrolls import archive <path>`
+
+Restore the **prior-content archive** from a JSONL export — the inverse of
+`scrolls export archive`, the recovery-store sibling of `import items`/`import
+events` (roadmap H280). `path` is a file `export archive` wrote; each line is
+parsed through `archive_from_dict` (required identity
+`item_id`/`archived_at`/`snapshot`, unknown keys — including the per-library
+autoincrement `id` — tolerated) and restored through the idempotent
+`items.import_archive`. Restore is **deduped by `(item_id, prior_hash)`** — never
+the autoincrement id — so re-importing a backup, or the overlapping union of two
+bundles, is a no-op (`test_import_archive_is_idempotent`); the whole-library
+export→import round-trip into a fresh library is verified end to end
+(`test_export_archive_round_trips_into_a_fresh_library`). A missing file or a
+malformed line is a JSON error on stderr naming the line, so a corrupt recovery
+backup fails loudly rather than restoring silently incomplete
+(`test_import_archive_missing_file_is_an_error`).
+
+The archive is a **standalone recovery store keyed by `item_id`** with no
+held-row interaction — importing a prior for an id the target does not currently
+hold simply populates the recovery store (it never touches a held copy, so there
+is no orphan concept like the events restore). After restore, `scrolls archive
+show <id>` re-emits the recovered prior as a re-importable line. Typically you
+restore the holdings and ledger first (`import items`, `import events`), then
+`import archive` to recover the superseded captures — though the order is yours.
+
+| Key | Meaning |
+| --- | --- |
+| `imported` | new archived priors appended |
+| `skipped` | already present (content dedupe working) |
+| `archive` | archived-prior rows read from the export |
+
+```console
+$ scrolls export archive > archive.jsonl
+
+$ scrolls import archive archive.jsonl
+{"imported": 3, "skipped": 0, "archive": 3}
 [exit 0]
 ```
 

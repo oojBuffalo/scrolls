@@ -6,16 +6,24 @@ import pytest
 
 from scrolls.db import init_db
 from scrolls.items import (
+    ArchiveRecord,
     ScrollItem,
     adopt_incoming,
+    archive_export_dict,
+    archive_from_dict,
+    archived_records,
     delete_item,
     get_item,
+    import_archive,
     insert_item,
+    item_from_dict,
+    item_to_dict,
     latest_archived,
     library_counts,
     list_archived,
     list_items,
     make_item_id,
+    preview_import_archive,
     replace_items,
     update_item,
 )
@@ -386,3 +394,128 @@ def test_latest_archived_returns_none_for_a_never_superseded_id(db_path):
     insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
                                    url="https://a.example", content_hash="sha256:x"))
     assert latest_archived(db_path, "web:a") is None
+
+
+# --- portable prior-content archive (the recovery store travels, H280) -------
+
+
+def _archive_a_prior(db_path, item_id, *, old_hash, new_hash, archived_at):
+    """Adopt a divergent capture of `item_id`, archiving its prior — test helper."""
+    prior = make_item(id=item_id, source="web", source_id=None,
+                      url=f"https://{item_id}.example", raw_text="OLD",
+                      content_hash=old_hash, stage="rendered")
+    insert_item(db_path, prior)
+    incoming = dataclasses.replace(prior, raw_text="NEW", content_hash=new_hash)
+    adopt_incoming(db_path, incoming, archived_at=archived_at)
+    return prior
+
+
+def test_archived_records_carries_the_model_complete_prior_snapshot(db_path):
+    prior = _archive_a_prior(db_path, "web:a", old_hash="sha256:old",
+                             new_hash="sha256:new", archived_at="2026-06-22T00:00:00+00:00")
+    records = archived_records(db_path)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.item_id == "web:a"
+    assert rec.prior_hash == "sha256:old"
+    assert rec.superseded_by == "sha256:new"
+    assert rec.archived_at == "2026-06-22T00:00:00+00:00"
+    # the snapshot is the model-complete prior, recoverable byte-for-byte
+    assert item_from_dict(rec.snapshot) == prior
+
+
+def test_archived_records_filters_by_item_id_set(db_path):
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:oa", new_hash="sha256:na",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    _archive_a_prior(db_path, "web:b", old_hash="sha256:ob", new_hash="sha256:nb",
+                     archived_at="2026-06-22T01:00:00+00:00")
+    assert {r.item_id for r in archived_records(db_path)} == {"web:a", "web:b"}
+    assert [r.item_id for r in archived_records(db_path, ["web:a"])] == ["web:a"]
+    # an empty id set selects nothing (the bundle-empty-scope case)
+    assert archived_records(db_path, []) == []
+
+
+def test_archived_records_orders_content_deterministically(db_path):
+    # ordered by (archived_at, item_id, prior_hash), independent of insert/local id —
+    # so a re-export after import reproduces the stream regardless of restored ids
+    _archive_a_prior(db_path, "web:b", old_hash="sha256:2", new_hash="sha256:n2",
+                     archived_at="2026-06-22T02:00:00+00:00")
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:1", new_hash="sha256:n1",
+                     archived_at="2026-06-22T01:00:00+00:00")
+    assert [(r.item_id, r.archived_at) for r in archived_records(db_path)] == [
+        ("web:a", "2026-06-22T01:00:00+00:00"),
+        ("web:b", "2026-06-22T02:00:00+00:00"),
+    ]
+
+
+def test_archived_records_empty_on_pre_v8_library(tmp_path):
+    # tolerates a library with no archive table (the list_archived precedent)
+    legacy = tmp_path / "legacy.sqlite"
+    import sqlite3
+    sqlite3.connect(legacy).close()  # an empty db, no item_archive table
+    assert archived_records(legacy) == []
+
+
+def test_archive_export_round_trips_through_dict(db_path):
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:old", new_hash="sha256:new",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    [rec] = archived_records(db_path)
+    assert archive_from_dict(archive_export_dict(rec)) == rec
+
+
+def test_import_archive_restores_into_a_fresh_library(db_path, tmp_path):
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:old", new_hash="sha256:new",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    records = archived_records(db_path)
+
+    fresh = tmp_path / "fresh.sqlite"
+    init_db(fresh)
+    imported, skipped = import_archive(fresh, records)
+    assert (imported, skipped) == (1, 0)
+    # the prior is recoverable on the fresh library, byte-for-byte
+    assert archived_records(fresh) == records
+    assert latest_archived(fresh, "web:a") == item_from_dict(records[0].snapshot)
+
+
+def test_import_archive_is_idempotent_deduping_by_item_id_and_prior_hash(db_path, tmp_path):
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:old", new_hash="sha256:new",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    records = archived_records(db_path)
+    fresh = tmp_path / "fresh.sqlite"
+    init_db(fresh)
+    assert import_archive(fresh, records) == (1, 0)
+    # a second import of the same recovery store is a no-op (dedup, no second row)
+    assert import_archive(fresh, records) == (0, 1)
+    assert len(archived_records(fresh)) == 1
+
+
+def test_import_archive_dedups_within_a_batch_and_null_safe(db_path, tmp_path):
+    # two records with a NULL prior_hash for the same item are the same prior —
+    # the within-batch dedup uses a NULL-safe identity, not blind append
+    rec = ArchiveRecord(item_id="web:a", archived_at="2026-06-22T00:00:00+00:00",
+                        prior_hash=None, superseded_by="sha256:new",
+                        snapshot=item_to_dict(make_item(id="web:a", source="web",
+                                                        source_id=None,
+                                                        url="https://a.example")))
+    fresh = tmp_path / "fresh.sqlite"
+    init_db(fresh)
+    imported, skipped = import_archive(fresh, [rec, rec])
+    assert (imported, skipped) == (1, 1)
+
+
+def test_preview_import_archive_matches_a_real_import(db_path, tmp_path):
+    # the dry-run twin never drifts from the live restore (the preview_import_events
+    # discipline on the archive axis): same (imported, skipped), and it writes nothing
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:oa", new_hash="sha256:na",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    records = archived_records(db_path)
+    fresh = tmp_path / "fresh.sqlite"
+    init_db(fresh)
+    import_archive(fresh, records[:0])  # ensure table exists, nothing in it
+
+    predicted = preview_import_archive(fresh, records)
+    assert archived_records(fresh) == []  # preview wrote nothing
+    actual = import_archive(fresh, records)
+    assert predicted == actual == (1, 0)
+    # with the row now present, the preview predicts the skip too
+    assert preview_import_archive(fresh, records) == (0, 1)

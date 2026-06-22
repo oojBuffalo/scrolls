@@ -30,9 +30,12 @@ from scrolls.maintain import (
 from scrolls.paths import get_paths
 from scrolls.items import (
     ScrollItem,
+    adopt_incoming,
+    archived_records,
     delete_item,
     get_item,
     insert_item,
+    latest_archived,
     list_items,
     make_item_id,
     update_item,
@@ -4758,6 +4761,133 @@ def test_export_events_since_union_reimports_idempotently(
     from scrolls.custody import item_events
     restored = item_events(get_paths().db_path, "web:demo")
     assert [e.status for e in restored] == ["drifted", "unchanged"]  # whole ledger, once
+
+
+# --- export/import archive: the portable prior-content recovery store (H280) -
+
+
+def _seed_archived_prior(item_id="web:demo", *, archived_at="2026-06-22T00:00:00+00:00"):
+    """Init a library, hold an item, adopt a divergent capture so one prior is
+    archived. Returns (db_path, prior) — the prior recoverable byte-for-byte."""
+    main(["init"])
+    db = get_paths().db_path
+    prior = ScrollItem(
+        id=item_id, source=item_id.split(":")[0], url=f"https://{item_id}.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held", raw_text="OLD",
+        extracted_text="OLD", content_hash="sha256:old",
+        markdown_path=f"scrolls/{item_id}.md", stage="rendered",
+    )
+    insert_item(db, prior)
+    incoming = dataclasses.replace(prior, raw_text="NEW", extracted_text="NEW",
+                                   content_hash="sha256:new")
+    adopt_incoming(db, incoming, archived_at=archived_at)
+    return db, prior
+
+
+def test_export_archive_emits_the_recovery_store_as_jsonl(scrolls_home, capsys):
+    _seed_archived_prior()
+    capsys.readouterr()
+    assert main(["export", "archive"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # raw JSONL on stdout (not a JSON envelope), one row per archived prior
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["item_id"] == "web:demo"
+    assert row["prior_hash"] == "sha256:old"
+    assert row["superseded_by"] == "sha256:new"
+    assert row["archived_at"] == "2026-06-22T00:00:00+00:00"
+    assert row["snapshot"]["content_hash"] == "sha256:old"  # the model-complete prior
+
+
+def test_export_archive_round_trips_into_a_fresh_library(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    _, prior = _seed_archived_prior()
+    capsys.readouterr()
+    main(["export", "archive"])
+    out_path = tmp_path / "archive.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "archive", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "imported": 1, "skipped": 0, "archive": 1
+    }
+    # the prior is recoverable on the restored library, byte-for-byte
+    assert latest_archived(get_paths().db_path, "web:demo") == prior
+
+
+def test_import_archive_is_idempotent(scrolls_home, tmp_path, capsys):
+    _seed_archived_prior()
+    capsys.readouterr()
+    main(["export", "archive"])
+    out_path = tmp_path / "archive.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    # re-importing into the same library dedups by (item_id, prior_hash) — a no-op
+    assert main(["import", "archive", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "imported": 0, "skipped": 1, "archive": 1
+    }
+    assert len(archived_records(get_paths().db_path)) == 1
+
+
+def test_export_archive_id_filter_scopes_to_one_item(scrolls_home, capsys):
+    db, _ = _seed_archived_prior("web:a")
+    # a second held item with its own archived prior
+    other = ScrollItem(
+        id="web:b", source="web", url="https://b.example",
+        saved_at="2026-06-11T00:00:00+00:00", content_hash="sha256:ob",
+        raw_text="x", stage="rendered",
+    )
+    insert_item(db, other)
+    adopt_incoming(db, dataclasses.replace(other, content_hash="sha256:nb", raw_text="y"),
+                   archived_at="2026-06-22T01:00:00+00:00")
+    capsys.readouterr()
+    assert main(["export", "archive", "--id", "web:a"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["item_id"] == "web:a"
+
+
+def test_export_archive_empty_library_is_valid(scrolls_home, capsys):
+    main(["init"])
+    capsys.readouterr()
+    assert main(["export", "archive"]) == 0
+    assert capsys.readouterr().out == ""  # a valid empty JSONL doc, never a crash
+
+
+def test_export_archive_before_init_is_an_empty_document(scrolls_home, capsys):
+    capsys.readouterr()
+    assert main(["export", "archive"]) == 0
+    assert capsys.readouterr().out == ""
+    assert not scrolls_home.exists()  # export never creates a library
+
+
+def test_import_archive_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
+    assert main(["import", "archive", str(tmp_path / "nowhere.jsonl")]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
+def test_export_archive_unmatched_id_is_an_empty_document(scrolls_home, capsys):
+    _seed_archived_prior()  # archives a prior for web:demo
+    capsys.readouterr()
+    # a literal id with no archived prior selects nothing — a valid empty doc
+    assert main(["export", "archive", "--id", "web:never-superseded"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_archive_bad_url_id_is_a_usage_error(scrolls_home, capsys):
+    _seed_archived_prior()
+    capsys.readouterr()
+    # a URL no adapter can handle can't resolve to an item id — a loud error, no output
+    assert main(["export", "archive", "--id", "ftp://example.com/file"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
 
 
 # --- export events --fidelity / --drift: the custody-filter family on the

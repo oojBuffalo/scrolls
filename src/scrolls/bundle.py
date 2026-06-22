@@ -104,9 +104,13 @@ from scrolls.custody import (
 )
 from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
 from scrolls.items import (
+    ArchiveRecord,
     ScrollItem,
+    archive_from_dict,
+    archived_records,
     classification_phrase,
     classification_provenance,
+    dump_archive_export,
     get_fidelity,
     get_item,
     item_from_dict,
@@ -128,6 +132,10 @@ _REGENERATED_BY = "scrolls export bundle"
 # the sibling custody-events block's label, so a reader can tell the two
 # `@generated` regions apart (roadmap H67 — portable custody)
 _EVENTS_REGENERATED_BY = "scrolls export bundle (custody events)"
+# the optional third region's label (roadmap H280 — `--with-archive`): the
+# prior-content archive's recoverable superseded captures, so a reader can tell
+# the three `@generated` regions apart (items, custody events, prior archive)
+_ARCHIVE_REGENERATED_BY = "scrolls export bundle (prior-content archive)"
 
 # An item with no id/source/url/saved_at isn't a Scrolls item — mirror the
 # items-export validation so a corrupt custody block fails loudly, not silently.
@@ -135,6 +143,9 @@ _REQUIRED = ("id", "source", "url", "saved_at")
 # A custody event with no item_id/checked_at/status isn't a ledger row — the
 # minimal identity an event must carry to be restorable (roadmap H67).
 _EVENT_REQUIRED = ("item_id", "checked_at", "status")
+# An archive row with no item_id/archived_at/snapshot isn't a restorable prior —
+# the minimal identity it must carry (roadmap H280, the H67 events shape).
+_ARCHIVE_REQUIRED = ("item_id", "archived_at", "snapshot")
 
 # Inline stylesheet for the HTML briefing (roadmap H39) — kept in the document so
 # the file is self-contained and offline (no external CSS/JS, nothing fetched
@@ -267,6 +278,7 @@ def build_bundle(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    with_archive: bool = False,
 ) -> str:
     """Render the self-contained custody bundle for a query (briefing + block).
 
@@ -292,6 +304,17 @@ def build_bundle(
     it re-holds exactly those rows (the H216 round-trip under a custody scope). An
     unknown tier/posture raises ValueError (closed vocabulary; the CLI also
     rejects it via argparse `choices`).
+
+    `with_archive` (roadmap H280) appends a *third* sentinel-fenced region — the
+    in-scope items' prior-content archive (`item_archive`, ADR 0106): the
+    recoverable superseded captures, so "take it with me" includes the recovery
+    store and `scrolls archive show` works on the rebuilt library. It is **opt-in**
+    because the archive can be large (a model-complete prior body per adoption) and
+    the `superseded` event already travels in the events block documenting *that*
+    an adoption happened; without the flag the bundle carries only the items + events
+    blocks (byte-identical to a pre-H280 bundle). `import bundle` restores whatever
+    archive block is present **unconditionally** (deduped) — the flag is an export
+    concern only.
 
     This is the **canonical, lossless re-import unit**: the Markdown form
     `scrolls import bundle` round-trips against. The browser-readable HTML form
@@ -388,6 +411,13 @@ def build_bundle(
     # byte-identical custody data (the round-trip stays a Markdown property)
     lines += [_items_block(items)]
     lines += [_events_block(events)]
+    # the optional third region (roadmap H280, `--with-archive`): the in-scope
+    # items' prior-content archive, so the recovery store travels. Emitted *only*
+    # under the flag, so a default bundle stays byte-identical to a pre-H280 one
+    # (the items+events two-region shape the round-trip / byte-identity tests pin).
+    if with_archive:
+        archive = archived_records(db_path, [item.id for item in items]) if items else []
+        lines += [_archive_block(archive)]
     return "\n".join(lines) + "\n"
 
 
@@ -411,6 +441,22 @@ def _events_block(events: list[CustodyEvent]) -> str:
     return fence(block, _EVENTS_REGENERATED_BY).rstrip("\n")
 
 
+def _archive_block(records: list[ArchiveRecord]) -> str:
+    """The optional third region (roadmap H280): the in-scope items' prior-content
+    archive (`item_archive`, ADR 0106) as the same JSONL `export archive` writes,
+    inside a code fence, inside the ADR 0102 sentinel.
+
+    Carries the recoverable superseded captures so "take it with me" includes the
+    recovery store — the `superseded` event in the events block above documents
+    *that* an adoption happened, this carries the prior *bytes* so `archive show`
+    works on a rebuilt library. A third `@generated` region (items=0, events=1,
+    archive=2); `import bundle` restores it deduped by `(item_id, prior_hash)`. An
+    archive with nothing in scope is an empty block — the same shape an empty
+    items/events block takes, so the structure stays stable under `--with-archive`."""
+    block = f"```jsonl\n{dump_archive_export(records)}```"
+    return fence(block, _ARCHIVE_REGENERATED_BY).rstrip("\n")
+
+
 def build_bundle_html(
     db_path: Path,
     query: str,
@@ -421,6 +467,7 @@ def build_bundle_html(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    with_archive: bool = False,
 ) -> str:
     """Render the scoped custody bundle as a self-contained, offline HTML briefing.
 
@@ -514,6 +561,17 @@ def build_bundle_html(
     body.append(
         _custody_details_html("Custody events", _events_block(events), len(events))
     )
+    # the optional third block (roadmap H280, `--with-archive`): the in-scope items'
+    # prior-content archive, embedded for parity with the Markdown form so the
+    # recovery store is *present* in the HTML too (export-only — re-import via the
+    # Markdown bundle). Omitted without the flag, keeping the default HTML lean.
+    if with_archive:
+        archive = archived_records(db_path, [item.id for item in items]) if items else []
+        body.append(
+            _custody_details_html(
+                "Prior-content archive", _archive_block(archive), len(archive)
+            )
+        )
     return _html_document(title, body)
 
 
@@ -853,6 +911,50 @@ def parse_bundle_events(text: str) -> list[CustodyEvent]:
             )
         events.append(event_from_dict(data))
     return events
+
+
+def parse_bundle_archive(text: str) -> list[ArchiveRecord]:
+    """Reconstruct the prior-content archive from a bundle's *third* region (H280).
+
+    The recovery-store counterpart of `parse_bundle_events`: reads the **third**
+    `@generated` region (items=0, events=1, archive=2), strips the ` ```jsonl `
+    code fence, and parses each row through `archive_from_dict`. Returns ``[]``
+    when the bundle carries fewer than three regions — a bundle exported *without*
+    `--with-archive` (the lean default, only items + events), so its archive simply
+    does not travel — the same forward/backward-compatible shape `parse_bundle_events`
+    gives a pre-H67 bundle. Raises BundleError on a malformed row, naming the record,
+    so a corrupt recovery store fails loudly rather than silently dropping a prior —
+    losing a superseded capture would lose the only copy of a replaced artifact.
+    """
+    bodies = generated_bodies(text)
+    if len(bodies) < 3:  # items + events only — no archive block travelled
+        return []
+    records: list[ArchiveRecord] = []
+    record_no = 0
+    for raw in bodies[2].splitlines():
+        line = raw.strip()
+        if not line or line.startswith("```"):  # blank or the code-fence lines
+            continue
+        record_no += 1
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise BundleError(
+                f"archive block record {record_no}: not valid JSON ({exc.msg})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise BundleError(
+                f"archive block record {record_no}: expected a JSON object, "
+                f"got {type(data).__name__}"
+            )
+        missing = [name for name in _ARCHIVE_REQUIRED if not data.get(name)]
+        if missing:
+            raise BundleError(
+                f"archive block record {record_no}: missing required field(s): "
+                + ", ".join(missing)
+            )
+        records.append(archive_from_dict(data))
+    return records
 
 
 def _briefing_entry(
