@@ -751,6 +751,83 @@ def test_at_risk_work_line_preserves_the_round_trip(scrolls_home):
     ]
 
 
+def test_bundle_html_carries_an_at_risk_work_line(scrolls_home):
+    # roadmap H271: the HTML briefing carries the same work-level at-risk pointer as
+    # the Markdown `_At-risk work:_` line (H264), from the *same* `at_risk_signal`
+    # over the same lean-scope clustered works — so the two readable forms cannot
+    # desync. Z is all-reference (nothing re-derivable held) → the lowest-ceiling work.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-at-risk">At-risk work: <code>10.3000/z</code> — '
+        "no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 1 work(s) at risk.</p>"
+        in doc
+    )
+    # grouped with the source attention pointer and above the per-source list (the
+    # <p>/<ul> elements, not the always-present CSS rule of the same class name)
+    assert doc.index('<p class="custody-at-risk">') < doc.index(
+        '<ul class="custody-by-source">'
+    )
+
+
+def test_bundle_html_at_risk_line_converges_with_the_markdown_form(scrolls_home):
+    # the HTML <p> and the Markdown `_At-risk work:_` line name the same work,
+    # reason, and at_risk count — two renders of the one `at_risk_signal` fold, so
+    # the HTML twin agrees with `doctor`'s `custody.works` by construction (H264)
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, works_over
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    items = list_items(db)
+    most = at_risk_signal(works_over(items), latest_events(db))["most_at_risk"]
+    assert most["doi"] == "10.3000/z"
+
+    doc = build_bundle_html(db, "database")
+    bundle = build_bundle(db, "database")
+    # both forms name the same work and reason (HTML <code> vs Markdown backticks)
+    assert f"<code>{most['doi']}</code>" in doc
+    assert f"`{most['doi']}`" in bundle
+    assert most["reason"] in doc and most["reason"] in bundle
+
+
+def test_bundle_html_at_risk_line_omitted_when_no_work_at_risk(scrolls_home):
+    # a single safely-held work (full + never-checked) → honest absence, no <p>,
+    # the same no-op the HTML attention line takes
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:yfull", "Ypsilon database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/yfull",
+        links=("https://doi.org/10.2000/y",), content_hash="deadbeef",
+        raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, _ref_item(
+        "crossref:10.2000/y", "Ypsilon database record", "10.2000/y",
+        source="crossref", url="https://doi.org/10.2000/y"))
+    doc = build_bundle_html(db, "database")
+    assert "Custody:" in doc  # the headline still renders
+    assert '<p class="custody-at-risk">' not in doc
+
+
+def test_bundle_html_at_risk_line_omitted_for_single_rep_and_empty_scope(scrolls_home):
+    # a lone representation is no work (the min_representations floor); an empty
+    # scope holds nothing — both are honest no-ops, no <p>
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _ref_item(
+        "arxiv:lone", "Lone database preprint", "10.9000/lone",
+        source="arxiv", url="https://arxiv.org/abs/lone"))
+    assert '<p class="custody-at-risk">' not in build_bundle_html(db, "database")
+    assert '<p class="custody-at-risk">' not in build_bundle_html(
+        db, "nothingmatcheshere"
+    )
+
+
 def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
     # roadmap H159: the HTML briefing carries the same pointer, from the same
     # `weakest_source`, so the two readable forms cannot desync

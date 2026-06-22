@@ -118,7 +118,7 @@ from scrolls.kb_llm import (
 )
 from scrolls.render import slugify
 from scrolls.search import count_matches, search_items
-from scrolls.works import render_at_risk_works
+from scrolls.works import at_risk_signal, render_at_risk_works, works_over
 
 _EXCERPT_CHARS = 600
 _REGENERATED_BY = "scrolls export bundle"
@@ -147,6 +147,7 @@ code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px
        font-size: .9em; }
 .custody-headline { font-weight: 600; }
 .custody-attention { font-weight: 600; color: #b3261e; }
+.custody-at-risk { font-weight: 600; color: #b3261e; }
 .custody-refresh { font-weight: 600; color: #9a6700; }
 .note { color: #6a6a6a; font-size: .85rem; }
 .custody-facts { list-style: none; padding-left: 0; }
@@ -445,6 +446,13 @@ def build_bundle_html(
     # the same per-source map, so the two forms (and the JSON `attention` flag)
     # cannot desync; honest no-op when no source carries actionable loss
     body += _attention_html(items, verdicts)
+    # the readable work-level at-risk pointer (roadmap H271), the HTML twin of the
+    # Markdown `_At-risk work:_` line (H264) — distilled by the *same*
+    # `at_risk_signal` over the same lean-scope clustered works, grouped with the
+    # source `_attention_html` line and above `_refresh_html` (the Markdown order),
+    # so the two forms (and `doctor`'s `custody.works`) name the same work; honest
+    # no-op when no multi-representation work in scope is at risk
+    body += _at_risk_html(items, verdicts)
     # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
     # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
     # the two forms name the same sources; honest no-op when no source carries
@@ -521,6 +529,38 @@ def _attention_html(
         f"<code>{html.escape(flagged['source'])}</code> carries the most drift "
         f"({html.escape(flagged['reason'])}) — recheck with "
         f"<code>{html.escape(flagged['command'])}</code>.</p>"
+    ]
+
+
+def _at_risk_html(
+    items: list[ScrollItem], verdicts: dict[str, CustodyEvent]
+) -> list[str]:
+    """The HTML twin of the Markdown work-level `_At-risk work:_` line (roadmap H271/H264).
+
+    The *consolidation*-level counterpart of the per-source `_attention_html` line:
+    where that names the single source carrying the most actionable per-*item* loss,
+    this names the single **work** no representation safely holds — no copy is both
+    `full` *and* unmoved anywhere in its cluster (the H261 `safely_held == False`), a
+    real custody loss (the only copies are degraded or moved). Distilled by the *same*
+    `at_risk_signal` over the *same* lean-scope clustered works (`works_over` over the
+    gathered item set) the Markdown `render_at_risk_works` folds, so the two readable
+    forms name the same work, reason, and `at_risk` count — and converge with
+    `doctor`'s `custody.works`/`maintain`'s `at_risk_works`/MCP `get_library_health`
+    by construction. Returns [] on honest absence — exactly when `at_risk_signal`'s
+    `most_at_risk` is `None` (no multi-representation work in scope is at risk: a
+    clean, single-representation, or empty scope) — like the `_attention_html` no-op.
+    The doi/reason are controlled tokens (a doi slug, a fixed reason form); escaped
+    for safety regardless, like `_attention_html`.
+    """
+    signal = at_risk_signal(works_over(items), verdicts)
+    entry = signal["most_at_risk"]
+    if entry is None:
+        return []
+    return [
+        '<p class="custody-at-risk">At-risk work: '
+        f"<code>{html.escape(entry['doi'])}</code> — "
+        f"{html.escape(entry['reason'])}; "
+        f"{signal['at_risk']} work(s) at risk.</p>"
     ]
 
 

@@ -531,7 +531,11 @@ lossless `@generated` JSONL fence, so it never touches the round-trip
 `test_context_at_risk_work_line_mcp_parity`). The helper lives in `works.py` beside
 `at_risk_signal` (not in `custody.py` with `render_custody_attention`): `works`
 imports `custody`, so a `custody.render_at_risk_works` calling `at_risk_signal` would
-close an import cycle — the home follows the primitive it distils.
+close an import cycle — the home follows the primitive it distils. The **HTML
+`export bundle` form** carries the same line (roadmap H271) — a red `custody-at-risk`
+paragraph grouped with the `custody-attention` line and above `custody-refresh`,
+distilled from the *same* `at_risk_signal` over the same lean scope — so the two
+bundle forms cannot desync (the `custody-attention` HTML-twin precedent, H39).
 
 That work-level `_At-risk work:_` line also rides the **compiled landing
 `library/index.md`** (roadmap H269) — the consolidation alarm on the static
