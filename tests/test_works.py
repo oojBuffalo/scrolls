@@ -685,6 +685,65 @@ def test_at_risk_signal_matches_work_custody_per_work():
     assert at_risk_signal(works, verdicts)["at_risk"] == expected
 
 
+# --- H264: the readable work-level at-risk `_At-risk work:_` line --------
+# `render_at_risk_works` is the consolidation-level counterpart of the per-source
+# weakest-source `render_custody_attention` line (H159): it distils `at_risk_signal`'s
+# `most_at_risk` over the briefing scope's clustered works into one readable line the
+# `export bundle`/`scrolls context` briefings emit byte-identically.
+
+
+def test_render_at_risk_works_names_the_lowest_ceiling_work():
+    from scrolls.works import render_at_risk_works
+
+    items, verdicts = _two_work_custody_mix()
+    # Z (all-reference) is the lowest-ceiling at-risk work; 2 of 3 works at risk
+    # (X full+drifted + Z all-reference; Y holds a full+verified rep).
+    assert render_at_risk_works(items, verdicts) == [
+        "_At-risk work: `10.3000/z` — no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 2 work(s) at risk._",
+        "",
+    ]
+
+
+def test_render_at_risk_works_converges_with_at_risk_signal():
+    # the line reuses the same `most_at_risk` (doi + reason) and `at_risk` count the
+    # JSON alarm carries, so the readable briefing and `doctor`/`maintain`/MCP name
+    # the same work by construction (not a re-derivation).
+    from scrolls.works import at_risk_signal, render_at_risk_works
+
+    items, verdicts = _two_work_custody_mix()
+    signal = at_risk_signal(works_over(items), verdicts)
+    (line, blank) = render_at_risk_works(items, verdicts)
+    assert blank == ""
+    assert f"`{signal['most_at_risk']['doi']}`" in line
+    assert signal["most_at_risk"]["reason"] in line
+    assert f"{signal['at_risk']} work(s) at risk" in line
+
+
+def test_render_at_risk_works_empty_when_every_work_is_safely_held():
+    # honest absence — exactly the no-op `at_risk_signal` (most_at_risk None) takes
+    from scrolls.works import render_at_risk_works
+
+    items = [
+        _full("arxiv:a", "10.1000/a"), _reference("crossref:ca", "10.1000/a"),
+        _full("biorxiv:b", "10.2000/b"), _reference("crossref:cb", "10.2000/b"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "unchanged"),
+        "biorxiv:b": _verdict("biorxiv:b", "unchanged"),
+    }
+    assert render_at_risk_works(items, verdicts) == []
+
+
+def test_render_at_risk_works_empty_for_a_single_representation_scope():
+    # a lone representation is no work (the min_representations floor), so the
+    # consolidation question does not apply — honest absence, not a false alarm
+    from scrolls.works import render_at_risk_works
+
+    items = [_reference("arxiv:lone", "10.9000/lone", title="Lone")]
+    assert render_at_risk_works(items, {}) == []
+
+
 # --- H262: the custody-filter family on the consolidation surface ------
 # `filter_works` keeps WHOLE works that *contain* a representation at the given
 # custody value(s) — the cluster "contains" semantics (a work is a set of forms),

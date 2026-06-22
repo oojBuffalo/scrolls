@@ -1,5 +1,6 @@
 """Tests for context bundles (IDEAS.md §11, §14 Pass 5)."""
 
+import dataclasses
 import json
 import re
 
@@ -1395,6 +1396,139 @@ def test_context_attention_line_mcp_parity(scrolls_home):
     assert (
         "_Attention: source `web` carries the most drift (1 drifted) — "
         "recheck with `scrolls verify --source web`._" in bundle
+    )
+
+
+# --- readable work-level at-risk `_At-risk work:_` line (roadmap H264) --------
+
+
+def _ref_item(item_id, title, doi, **overrides):
+    """A reference-only representation (no content) of the work named by `doi`."""
+    item = make_item(
+        item_id, title, "ignored", links=(f"https://doi.org/{doi}",), **overrides)
+    return dataclasses.replace(
+        item, raw_text=None, extracted_text=None, summary=None, content_hash=None)
+
+
+def _seed_at_risk_work(db):
+    """One at-risk multi-rep work (Z, all-reference) + one safely-held work (Y).
+
+    Work Z (10.3000/z): two reference-only reps (no full form) → at risk, the lowest
+    custody ceiling. Work Y (10.2000/y): a full + never-checked preprint (unverified
+    ∈ the safe set → safely held) + a reference record. Both titles carry "database"
+    so a `database` query covers the whole scope. 2 works, 1 at risk → Z is named.
+    """
+    insert_item(db, _ref_item(
+        "arxiv:zref", "Zeta database preprint", "10.3000/z",
+        source="arxiv", url="https://arxiv.org/abs/zref"))
+    insert_item(db, _ref_item(
+        "crossref:10.3000/z", "Zeta database record", "10.3000/z",
+        source="crossref", url="https://doi.org/10.3000/z"))
+    insert_item(db, make_item(
+        "arxiv:yfull", "Ypsilon database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/yfull",
+        links=("https://doi.org/10.2000/y",), content_hash="deadbeef",
+        raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, _ref_item(
+        "crossref:10.2000/y", "Ypsilon database record", "10.2000/y",
+        source="crossref", url="https://doi.org/10.2000/y"))
+
+
+def test_context_carries_an_at_risk_work_line(scrolls_home, capsys):
+    # roadmap H264: a model-facing bundle names the single work no representation
+    # safely holds — the consolidation counterpart of the per-source `_Attention:_`.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert (
+        "_At-risk work: `10.3000/z` — no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 1 work(s) at risk._" in out
+    )
+    # skimmed above the per-source map, like the per-source `_Attention:_` line
+    assert out.index("_At-risk work:") < out.index("_By source:_")
+
+
+def test_context_at_risk_work_line_converges_with_at_risk_signal(scrolls_home, capsys):
+    # the line is the shared `render_at_risk_works`/`at_risk_signal` over the bundle
+    # scope's own clustered works, so it names the same work as `doctor`'s
+    # `custody.works`/MCP `get_library_health` by construction
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, render_at_risk_works, works_over
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+
+    out = run_context(capsys, "database")
+    expected = render_at_risk_works(items, verdicts)
+    assert expected  # the seed genuinely carries an at-risk work (non-vacuous)
+    for line in expected:
+        assert line in out
+    assert at_risk_signal(works_over(items), verdicts)["most_at_risk"]["doi"] == "10.3000/z"
+
+
+def test_context_at_risk_work_line_gated_off_index(scrolls_home, capsys):
+    # like the scope headline/attention line, gated to `connected`/`full` — the
+    # leanest `index` tier reads no ledger, so it makes no drift-bearing claim
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_At-risk work:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_at_risk_work_line_present_from_connected_up(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_At-risk work: `10.3000/z`" in out
+
+
+def test_context_at_risk_work_line_omitted_when_no_work_at_risk(scrolls_home, capsys):
+    # a single safely-held work (full + never-checked) → honest absence, no pointer
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:yfull", "Ypsilon database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/yfull",
+        links=("https://doi.org/10.2000/y",), content_hash="deadbeef",
+        raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, _ref_item(
+        "crossref:10.2000/y", "Ypsilon database record", "10.2000/y",
+        source="crossref", url="https://doi.org/10.2000/y"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_At-risk work:" not in out
+
+
+def test_context_at_risk_work_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the line rides MCP
+    # identically (CLI ≡ MCP), the consolidation counterpart of the attention parity
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+
+    bundle = get_context_bundle("database")
+    assert (
+        "_At-risk work: `10.3000/z` — no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 1 work(s) at risk._"
+        in bundle
     )
 
 

@@ -118,6 +118,7 @@ from scrolls.kb_llm import (
 )
 from scrolls.render import slugify
 from scrolls.search import count_matches, search_items
+from scrolls.works import render_at_risk_works
 
 _EXCERPT_CHARS = 600
 _REGENERATED_BY = "scrolls export bundle"
@@ -318,6 +319,17 @@ def build_bundle(
     # actionable loss (single-source / clean / empty scope — [] lines).
     by_source = custody_counts_by_source(items, verdicts)
     lines += render_custody_attention(by_source)
+    # the readable work-level at-risk pointer (roadmap H264): one `_At-risk work:_`
+    # line naming the single work no representation safely holds (the H263 at-risk
+    # alarm's `most_at_risk`) — the *consolidation*-level counterpart of the
+    # per-source `_Attention:_` line above. Distilled by the shared
+    # `at_risk_signal` over the bundle scope's own clustered works (the lean-scope
+    # decision: cluster the *gathered* item set, the same scope the source line and
+    # the `_By source:_` map describe), so it names the same work as `doctor`'s
+    # `custody.works`/`maintain`'s `at_risk_works`/MCP `get_library_health` by
+    # construction; honest no-op when no multi-representation work in scope is at
+    # risk ([] lines).
+    lines += render_at_risk_works(items, verdicts)
     # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
     # naming the source(s) whose classifications/summaries are stale and the exact
     # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-

@@ -68,6 +68,7 @@ from scrolls.items import (
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import stale_summary_counts_by_source
 from scrolls.search import SearchHit, count_matches, search_items
+from scrolls.works import render_at_risk_works
 
 _EXCERPT_CHARS = 700
 DEFAULT_LIMIT = 8
@@ -178,10 +179,20 @@ def build_context(
         drift=drift,
     )
     kept, folded = _collapse_by_work(hits)
-    # (hit, item) pairs in kept order; drop any hit whose row vanished
-    pairs = [(hit, get_item(db_path, hit.id)) for hit in kept]
-    pairs = [(hit, item) for hit, item in pairs if item]
+    # Fetch every matched row once (kept + folded). `items` (the bundle's kept,
+    # collapsed scrolls) drive the headline/excerpts; `scope_items` (the whole
+    # uncollapsed matched set) drive the work-level at-risk signal — a work's
+    # representations are folded into one canonical in `items`, so clustering the
+    # collapsed set would never see a multi-representation work, and a work's
+    # at-risk verdict depends on *all* its representations (a folded full+verified
+    # sibling makes the work safely held even when the kept canonical is a bare
+    # reference). The lean-scope decision (H264): the at-risk line describes the
+    # works the bundle's *matched set* touches, the same raw-match scope Coverage
+    # counts.
+    fetched = {hit.id: get_item(db_path, hit.id) for hit in hits}
+    pairs = [(hit, fetched[hit.id]) for hit in kept if fetched[hit.id]]
     items = [item for _, item in pairs]
+    scope_items = [item for hit in hits if (item := fetched[hit.id])]
 
     title = f"# Scrolls Context Bundle: {query}"
     scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
@@ -240,6 +251,21 @@ def build_context(
         # honest no-op when no source carries actionable loss (single-source /
         # clean / empty scope — [] lines).
         lines += render_custody_attention(by_source)
+        # the readable work-level at-risk pointer (roadmap H264): one `_At-risk
+        # work:_` line naming the single work no representation safely holds (the
+        # H263 alarm's `most_at_risk`) — the *consolidation*-level counterpart of
+        # the per-source `_Attention:_` line above. Distilled by the shared
+        # `at_risk_signal` over the bundle scope's own clustered works (the
+        # lean-scope decision: the *gathered* item set, the same scope the headline
+        # and `_By source:_` map describe), so it names the same work as `doctor`'s
+        # `custody.works`/MCP `get_library_health` by construction. Gated to
+        # `connected`+ with the headline (the `index` tier reads no ledger, so it
+        # makes no drift-bearing claim); honest no-op when no multi-representation
+        # work in scope is at risk ([] lines). Computed over the *uncollapsed*
+        # `scope_items` (not the collapsed `items`): a work's representations are
+        # folded into one canonical in `items`, so its full custody picture — and
+        # whether any representation is safely held — lives in the whole matched set.
+        lines += render_at_risk_works(scope_items, verdicts)
         # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
         # line naming the source(s) whose classifications/summaries are stale and
         # the exact `classify --stale`/`kb --stale --source <S>` refresh — the

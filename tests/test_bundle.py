@@ -1,5 +1,6 @@
 """Tests for shareable custody bundles (ADR 0103, MVP M4)."""
 
+import dataclasses
 import json
 
 import pytest
@@ -622,6 +623,131 @@ def test_attention_line_preserves_the_round_trip(scrolls_home):
     assert "_Attention:" in bundle
     assert sorted(i.id for i in parse_bundle(bundle)) == [
         "arxiv:1", "web:full", "web:moved",
+    ]
+
+
+# --- readable work-level at-risk `_At-risk work:_` line (roadmap H264) --------
+
+
+def _ref_item(item_id, title, doi, **overrides):
+    """A reference-only representation (no content) of the work named by `doi`."""
+    item = make_item(
+        item_id, title, "ignored", links=(f"https://doi.org/{doi}",), **overrides)
+    return dataclasses.replace(
+        item, raw_text=None, extracted_text=None, summary=None, content_hash=None)
+
+
+def _seed_at_risk_work(db):
+    """One at-risk multi-rep work (Z) + one safely-held multi-rep work (Y).
+
+    Work Z (10.3000/z): two reference-only reps (no full form anywhere), so no
+    representation is both full and unmoved → at risk, the lowest custody ceiling.
+    Work Y (10.2000/y): a full + never-checked preprint (unverified ∈ the safe set,
+    so safely held) + a reference record. Both works' titles carry "database" so a
+    `database` query covers the whole scope. 2 works, 1 at risk → Z is named.
+    """
+    insert_item(db, _ref_item(
+        "arxiv:zref", "Zeta database preprint", "10.3000/z",
+        source="arxiv", url="https://arxiv.org/abs/zref"))
+    insert_item(db, _ref_item(
+        "crossref:10.3000/z", "Zeta database record", "10.3000/z",
+        source="crossref", url="https://doi.org/10.3000/z"))
+    insert_item(db, make_item(
+        "arxiv:yfull", "Ypsilon database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/yfull",
+        links=("https://doi.org/10.2000/y",), content_hash="deadbeef",
+        raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, _ref_item(
+        "crossref:10.2000/y", "Ypsilon database record", "10.2000/y",
+        source="crossref", url="https://doi.org/10.2000/y"))
+
+
+def test_bundle_carries_an_at_risk_work_line(scrolls_home):
+    # roadmap H264: one `_At-risk work:_` line names the single work no representation
+    # safely holds (the consolidation counterpart of the per-source `_Attention:_`).
+    # Z is all-reference (nothing re-derivable held) → the lowest-ceiling work.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    bundle = build_bundle(db, "database")
+    assert (
+        "_At-risk work: `10.3000/z` — no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 1 work(s) at risk._"
+        in bundle
+    )
+    # the consolidation pointer is skimmed above the per-source map, like the
+    # per-source `_Attention:_` line (here there is no source loss, so no source line)
+    assert bundle.index("_At-risk work:") < bundle.index("_By source:_")
+
+
+def test_at_risk_work_line_converges_with_at_risk_signal(scrolls_home):
+    # the rendered line comes straight from the shared `render_at_risk_works`/
+    # `at_risk_signal` over the bundle scope's own clustered works, so the readable
+    # line and `doctor`'s `custody.works` JSON alarm name the same work by construction
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, render_at_risk_works, works_over
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    items = list_items(db)
+    verdicts = latest_events(db)
+
+    bundle = build_bundle(db, "database")
+    for line in render_at_risk_works(items, verdicts):
+        assert line in bundle
+    most = at_risk_signal(works_over(items), verdicts)["most_at_risk"]
+    assert most["doi"] == "10.3000/z"
+    assert f"`{most['doi']}`" in bundle
+
+
+def test_at_risk_work_line_omitted_when_no_work_at_risk(scrolls_home):
+    # a single safely-held work (full + never-checked) → honest absence, no pointer
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:yfull", "Ypsilon database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/yfull",
+        links=("https://doi.org/10.2000/y",), content_hash="deadbeef",
+        raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, _ref_item(
+        "crossref:10.2000/y", "Ypsilon database record", "10.2000/y",
+        source="crossref", url="https://doi.org/10.2000/y"))
+    bundle = build_bundle(db, "database")
+    assert "_Custody:" in bundle
+    assert "_At-risk work:" not in bundle
+
+
+def test_at_risk_work_line_omitted_for_a_single_representation_scope(scrolls_home):
+    # a lone representation is no work (the min_representations floor) — even an
+    # all-reference single item carries no consolidation alarm
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _ref_item(
+        "arxiv:lone", "Lone database preprint", "10.9000/lone",
+        source="arxiv", url="https://arxiv.org/abs/lone"))
+    bundle = build_bundle(db, "database")
+    assert "_At-risk work:" not in bundle
+
+
+def test_at_risk_work_line_empty_scope_is_a_no_op(scrolls_home):
+    main(["init"])
+    bundle = build_bundle(get_paths().db_path, "nothingmatcheshere")
+    assert "_Custody: 0 scroll(s)._" in bundle
+    assert "_At-risk work:" not in bundle
+
+
+def test_at_risk_work_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H35/H141/H159 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work(db)
+    bundle = build_bundle(db, "database")
+    assert "_At-risk work:" in bundle
+    assert sorted(i.id for i in parse_bundle(bundle)) == [
+        "arxiv:yfull", "arxiv:zref", "crossref:10.2000/y", "crossref:10.3000/z",
     ]
 
 

@@ -522,6 +522,62 @@ def _most_at_risk_entry(
     }
 
 
+def render_at_risk_works(
+    items: list[ScrollItem],
+    verdicts: dict[str, CustodyEvent],
+    *,
+    min_representations: int = DEFAULT_MIN_REPRESENTATIONS,
+) -> list[str]:
+    """The readable at-risk-works `_At-risk work:_` line for a briefing (roadmap H264).
+
+    The *consolidation*-level counterpart of the per-source weakest-source drift
+    `_Attention:_` line (`custody.render_custody_attention`, H159): where that names
+    the single source carrying the most actionable per-*item* loss, this names the
+    single **work** carrying a consolidation loss — a work no representation *safely
+    holds* (no copy is both `full` and unmoved anywhere in its cluster, the H261
+    `safely_held == False`). So an agent skimming the `export bundle`/`scrolls
+    context` briefing reads "this work is at risk" without re-running `doctor`:
+
+        ``_At-risk work: `<doi>` — no representation is both full and unmoved (best
+        held <tier>, safest drift <posture>); N work(s) at risk._``
+
+    Distilled by the shared `at_risk_signal` over the briefing scope's own clustered
+    works — `works_over` over the *gathered* item set, the **lean-scope** decision
+    (H264): the briefing describes what it *carries*, mirroring how the per-source
+    `by_source` map is the scope's own. So a work counts here only when its
+    multi-representation cluster is visible within the scope (a query matching one
+    lone representation leaves a single-rep cluster, dropped by the
+    `min_representations` floor — the consolidation question needs the siblings).
+    The line names the same work `most_at_risk` does and reuses its `reason`
+    verbatim, so it converges field-for-field with `doctor`'s `custody.works` /
+    `maintain`'s `at_risk_works` / MCP `get_library_health` by construction; the
+    trailing ``N work(s) at risk`` is the `at_risk` count, so a reader knows whether
+    the named work is the only one or merely the worst of several.
+
+    Lives here beside `at_risk_signal` (not in `custody.py` with
+    `render_custody_attention`) because the signal it distils lives here: `works.py`
+    imports `custody`, so a `custody.render_at_risk_works` calling `at_risk_signal`
+    would close an import cycle. The shape is the H159 renderer's — the roadmap's
+    "`custody.render_at_risk_works`-style helper", the home following the primitive.
+
+    Returns ``[line, ""]`` (the line plus a trailing blank) so a caller splices it
+    straight in above the `_Refresh:_`/`_By source:_` lines. Returns ``[]`` on honest
+    absence — exactly when `at_risk_signal`'s `most_at_risk` is `None` (no
+    multi-representation work in scope is at risk: a clean, single-representation, or
+    empty scope), the same no-op the source `_Attention:_` line takes.
+    """
+    works = works_over(items, min_representations=min_representations)
+    signal = at_risk_signal(works, verdicts)
+    entry = signal["most_at_risk"]
+    if entry is None:
+        return []
+    line = (
+        f"_At-risk work: `{entry['doi']}` — {entry['reason']}; "
+        f"{signal['at_risk']} work(s) at risk._"
+    )
+    return [line, ""]
+
+
 def to_payload(
     works: list[Work],
     item_count: int,

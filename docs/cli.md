@@ -502,6 +502,37 @@ is non-trivial) and mutation-checked — perturbing any one field of any surface
 distillation breaks the tie
 (`test_attention_flag_full_shape_converges_field_for_field`).
 
+Directly beneath that per-source drift `_Attention:_` line, the `export bundle` and
+`scrolls context` briefings carry a **work-level `_At-risk work:_` line** (roadmap
+H264) — the *consolidation*-level counterpart of the per-**source** `_Attention:_`
+line, the readable form of the at-risk-works alarm `doctor`'s `custody.works` /
+`maintain`'s `at_risk_works` / MCP `get_library_health` carry as JSON. Where
+`_Attention:_` names the single source with the most per-*item* loss, this names the
+single **work** no representation *safely holds* — `_At-risk work: `<doi>` — no
+representation is both full and unmoved (best held <tier>, safest drift <posture>);
+N work(s) at risk._` — so an agent skimming the briefing reads "this work is at risk"
+without re-running `doctor`. It is distilled by the shared
+`works.render_at_risk_works` over the briefing scope's own clustered works (the same
+`works.at_risk_signal` fold the JSON surfaces read), reusing `most_at_risk`'s `doi`
+and `reason` verbatim, so the line names the same work as the JSON alarm by
+construction; the trailing `N work(s) at risk` is the `at_risk` count, so a reader
+knows whether the named work is the only one or the worst of several. The scope is
+the **lean** reading — the works the briefing's matched set touches: `export bundle`
+clusters its whole gathered item set, while `scrolls context` clusters the
+*uncollapsed* matched scope (its `items` are collapsed to one canonical per work, so
+a work's full custody picture — including a folded full+verified sibling that makes
+it safely held — lives in the whole matched set, not the kept canonicals). Gated to
+`connected`+ on `scrolls context` like the headline (the `index` tier reads no
+ledger), always present on `export bundle`. Honest absence — omitted entirely when
+no multi-representation work in scope is at risk (a clean, single-representation, or
+empty scope), exactly when `most_at_risk` is `null`. The line lives **outside** the
+lossless `@generated` JSONL fence, so it never touches the round-trip
+(`test_at_risk_work_line_preserves_the_round_trip`,
+`test_context_at_risk_work_line_mcp_parity`). The helper lives in `works.py` beside
+`at_risk_signal` (not in `custody.py` with `render_custody_attention`): `works`
+imports `custody`, so a `custody.render_at_risk_works` calling `at_risk_signal` would
+close an import cycle — the home follows the primitive it distils.
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the
