@@ -354,10 +354,61 @@ honest `0` on a clean library, source-scopes to the conflicting source);
 `tests/test_maintain.py` (the `custody_snapshot` primitive records
 `custody.conflicts.items` and defaults to `0` without a `conflicts` block).
 
-**Deferred (the `at_risk` → H267/H268 analogue):** the cross-run `delta` /
+**Shipped in H283 (the `at_risk` → H267/H268 analogue):** the cross-run `delta` /
 `--history` / `--trend` treatment of the conflict scalar and a readable
-`_Conflicts:_` line on the `maintain` report. The scalar is recorded in the
-snapshot today but not yet differenced.
+`_Conflicts:_` line on the `maintain` report (see below). H279 *recorded* the scalar
+on the snapshot; H283 *differences* it.
+
+## Shipped: the conflict-over-time leg — the `_Conflicts:_` `maintain` line + delta/trend (H283)
+
+H279 put the unresolved-conflict count on `status`'s custody snapshot and the shared
+`maintain.custody_snapshot`, but — unlike the at-risk-works count (H267/H268) — it
+was recorded *without* being differenced. H283 lifts the exact at-risk machinery to
+the conflict axis, the clean H267/H268 analogue:
+
+- **`compute_delta`** subtracts the scalar — `delta["conflicts"]` is the
+  cross-run `{before, after, change}` (degrade-safe: a pre-H279 baseline reads `0`,
+  a first run reads `null`, exactly as the other scalars do).
+- **`compute_trend`** differences it across the window — a new `conflicts_change`
+  axis beside `at_risk_change`, telescoping to the per-run deltas a worker reads back
+  from `--history` (pinned in `tests/test_custody_convergence.py`).
+- **`conflicts_headline(count, change, *, span)`** renders the readable line (the
+  conflict twin of `at_risk_headline`): `▲` a rise (more held items carry an
+  unresolved peer divergence — worse), `▼` a fall (a `reconcile`/accept-incoming
+  resolution cleared one — better), `0` the explicit `no change`, and a bare
+  `_Conflicts: N._` when there is no baseline (first run / scoped non-persisting pass
+  / <2-run trend — the H267 honesty).
+
+```text
+scrolls maintain        →  "conflicts_headline": "_Conflicts: 1 (▲1 since last run)._"
+scrolls maintain --trend →  trend.conflicts_headline: "_Conflicts: 0 (▼1 over 3 runs)._"
+```
+
+Like the snapshot scalar it is **resolution-aware** (a `reconcile --keep-held` /
+`import … --accept-incoming` clears it) and **source-scopable** for free
+(`maintain --source <S>` narrows the conflict count to <S> — unlike the
+whole-library-only `at_risk` line, since a held item owns a source). It is recorded
+but **never a `posture` trigger** (a peer divergence moves neither the integrity
+score nor the drift axis — the held copy is never overwritten, custody §2.4 — so the
+posture stays integrity-only, the H115/H267 precedent). The MCP `run_maintenance`
+twin carries the line; like `at_risk_headline` it embeds the delta's signed change,
+so it is run-position-dependent and the MCP↔CLI convergence test strips it beside
+`delta`/`recorded_at` (a documented distinction from the position-independent
+`headline`).
+
+Tested: `tests/test_maintain.py` (the `conflicts_headline` renderer ×5, the
+`compute_delta` conflict axis ×3, the `compute_trend` `conflicts_change`/headline ×5,
+and the integration report/`--history`/`--trend`/`--source` lines ×5);
+`tests/test_custody_convergence.py` (the conflict axis telescopes with drift /
+coverage / staleness / at-risk; the `_audit_fields` MCP-strip); `tests/test_mcp.py`
+(the `conflicts_headline` field rides the `run_maintenance` shape). End-to-end:
+divergent peer import → `_Conflicts: 1 (▲1 since last run)._` → `reconcile
+--keep-held` → `_Conflicts: 0 (▼1 since last run)._`, the `--trend` line distilling
+the window.
+
+**With H283 the conflict-on-import theme's read leg is closed across *every* surface
+including the over-time axis** — JSON status/doctor/MCP, the readable briefings, and
+now the `maintain` delta/trend.
 
 ## Shipped: `--accept-incoming` — the content-bearing resolution that *adopts* the peer's capture (H278, ADR 0106)
 

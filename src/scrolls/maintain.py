@@ -146,8 +146,9 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     source-attributable posture, not `custody.works`'s cross-source one). Read
     defensively like the rest: a report predating H275 (no `conflicts` block) reads the
     honest `0`, never a `KeyError`. The cross-run `delta`/`--trend` treatment of this
-    scalar (the `at_risk` → H267/H268 analogue) is the deferred sibling — recorded in
-    the snapshot today, not yet differenced.
+    scalar (the `at_risk` → H267/H268 analogue) ships in H283: `compute_delta` subtracts
+    it (`delta["conflicts"]`), `compute_trend` differences it (`conflicts_change`), and
+    `conflicts_headline` renders the readable `maintain`/trend `_Conflicts:_` line.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -238,6 +239,53 @@ def at_risk_headline(
     else:
         clause = f"no change {span}"
     return f"_At-risk works: {count} ({clause})._"
+
+
+def conflicts_headline(
+    count: int, change: int | None, *, span: str = "since last run"
+) -> str:
+    """The readable unresolved-import-conflict ``_Conflicts:_`` line (roadmap H283).
+
+    The *conflict-over-time* twin of `at_risk_headline` (H268), closing H279's
+    deferred conflict-trend leg: H279 put the unresolved-conflict **scalar** on the
+    `status`/snapshot custody picture but never *differenced* it, so the cross-run
+    movement was recorded yet invisible. This distils that scalar plus its signed
+    movement into one line a human skims, exactly as `at_risk_headline` does for the
+    consolidation-loss count:
+
+        ``_Conflicts: 3 (▲2 since last run)._``
+
+    `count` is the current unresolved-import-conflict count — the snapshot's
+    `conflicts` scalar (`custody.conflicts.items`, the held items whose latest import
+    conflict still disagrees with the held copy, H275/H279) for the report, the
+    window's last snapshot for the trend. `change` is its signed movement — the
+    delta's `conflicts.change` for the report, the trend's `conflicts_change` for the
+    window: ``▲`` a **rise** (more held items carry an unresolved peer divergence —
+    worse), ``▼`` a **fall** (a `reconcile`/accept-incoming resolution cleared one —
+    better), and a `0` change the explicit ``no change`` (a baseline exists, nothing
+    moved). `span` names what the change is measured against — ``since last run`` for
+    the report's cross-run delta, ``over N runs`` for the trend's window.
+
+    This is the *peer-divergence* counterpart of the at-risk *consolidation-loss*
+    line; like the briefing `_Conflicts:_` line (H277) it counts unresolved import
+    conflicts, but where that names a point-in-time total this embeds the cross-run
+    movement (the run-position-dependent shape `at_risk_headline` carries).
+
+    Degrade-safe (ADR 0082): a `change` of ``None`` — a first run, a scoped
+    non-persisting pass (`delta` ``None``, H165/H255), or a <2-run trend with no
+    trajectory — drops the change clause entirely, the bare ``_Conflicts: N._``,
+    *exactly* when there is no baseline to difference against (the same first-run /
+    missing-axis honesty the snapshot/delta carry).
+    """
+    if change is None:
+        return f"_Conflicts: {count}._"
+    if change > 0:
+        clause = f"▲{change} {span}"
+    elif change < 0:
+        clause = f"▼{abs(change)} {span}"
+    else:
+        clause = f"no change {span}"
+    return f"_Conflicts: {count} ({clause})._"
 
 
 def _finding_present(report: dict[str, Any], category: str) -> bool:
@@ -571,6 +619,11 @@ def compute_delta(
         # zero, never null — the run happened, consolidation health was simply not yet
         # tracked (the missing-axis posture the other scalars carry, ADR 0082).
         "at_risk": scalar("at_risk"),
+        # the unresolved-import-conflict count (H279/H283): a scalar like `at_risk`,
+        # so the delta subtracts it — the conflict-over-time leg H279 deferred. A
+        # baseline lacking it (a pre-H279 snapshot) reads zero, never null — the run
+        # happened, the conflict count was simply not yet tracked (ADR 0082).
+        "conflicts": scalar("conflicts"),
     }
 
 
@@ -643,9 +696,11 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     - else `holding`.
 
     ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115),
-    ``stale_change`` (``{enrichment, summaries}`` net deltas, roadmap H131), and
-    ``at_risk_change`` (the net change in the at-risk-works count, roadmap H267) are
-    *separate* axes the worker reads alongside the posture:
+    ``stale_change`` (``{enrichment, summaries}`` net deltas, roadmap H131),
+    ``at_risk_change`` (the net change in the at-risk-works count, roadmap H267),
+    and ``conflicts_change`` (the net change in the unresolved-import-conflict
+    count, roadmap H279/H283) are *separate* axes the worker reads alongside the
+    posture:
 
     - ``coverage_change`` — "is the library getting more covered?" (Δ``verified``
       up as bounded passes verify the never-checked tail; Δ``total`` up as new
@@ -656,32 +711,42 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     - ``at_risk_change`` — "is *consolidation* health degrading?" (Δ the count of
       works no representation safely holds, H263 — a rising figure means more works
       have lost their last unmoved full copy; the consolidation-loss trajectory).
+    - ``conflicts_change`` — "is *peer-divergence* debt accumulating?" (Δ the count
+      of held items whose latest import conflict still disagrees with the held copy,
+      H275 — a rising figure means more merged peer captures diverged and await a
+      ``reconcile`` decision; the conflict-over-time trajectory H279 deferred).
 
-    All three are **deliberately kept out of `posture`** (the H115 precedent, on the
+    All four are **deliberately kept out of `posture`** (the H115 precedent, on the
     staleness axis too): coverage measures *how much has been checked*, staleness
-    *how much enrichment is re-derivable*, and the at-risk-works count is a
+    *how much enrichment is re-derivable*, the at-risk-works count is a
     *consolidation re-view* of the very `fidelity`/`drift` facts ``score`` and
     ``drift_change`` already move the posture on (a work is at risk because its reps
-    degraded or drifted) — so folding it into `posture` would **double-count** the
-    same integrity loss. A held category produced under a superseded ruleset is still
-    held — rising staleness means a refresh is due, not that custody regressed — so
-    rising coverage is not "improving" integrity, a steady-but-overdue library is not
-    "regressing", and neither growing stale debt nor a moving at-risk count shifts the
+    degraded or drifted), and the conflict count is a *peer-divergence* axis that
+    moves **neither** the integrity ``score`` nor ``drift`` (the held copy is never
+    overwritten — raw is sacred, custody §2.4) — so folding any of them into
+    `posture` would report a non-integrity (or double-counted) event as integrity
+    loss. A held category produced under a superseded ruleset is still held — rising
+    staleness means a refresh is due, not that custody regressed — so rising coverage
+    is not "improving" integrity, a steady-but-overdue library is not "regressing",
+    and neither growing stale debt nor a moving at-risk/conflict count shifts the
     posture. Keeping `posture` integrity-only leaves the H46 rule unchanged; coverage,
-    staleness, and consolidation loss are reported, never posture triggers.
+    staleness, consolidation loss, and peer divergence are reported, never posture
+    triggers.
 
     Honest absence (the H21/H29 posture): a window of fewer than two runs is not
     a trajectory — a single point has no direction — so it carries null deltas
-    (including ``coverage_change``/``stale_change``/``at_risk_change``) and `posture`
-    ``insufficient-history``. A `score` that is ``None`` on either end (an
-    uninitialized-library run) yields a null score `change`, never a fabricated
-    zero; the drift, coverage, staleness, and at-risk movement are still computed
-    (absent counts read 0, so a pre-H115/pre-staleness/pre-H267 endpoint reads 0).
+    (including ``coverage_change``/``stale_change``/``at_risk_change``/``conflicts_change``)
+    and `posture` ``insufficient-history``. A `score` that is ``None`` on either end
+    (an uninitialized-library run) yields a null score `change`, never a fabricated
+    zero; the drift, coverage, staleness, at-risk, and conflict movement are still
+    computed (absent counts read 0, so a pre-H115/pre-staleness/pre-H267/pre-H279
+    endpoint reads 0).
     """
     n = len(runs)
-    # the current at-risk-works count — the window's last snapshot (the trend ends
-    # at the last run, like `score`'s `last`); an empty window reads the honest 0.
+    # the current at-risk-works/conflict counts — the window's last snapshot (the
+    # trend ends at the last run, like `score`'s `last`); an empty window reads 0.
     last_at_risk = runs[-1].get("snapshot", {}).get("at_risk", 0) if runs else 0
+    last_conflicts = runs[-1].get("snapshot", {}).get("conflicts", 0) if runs else 0
     if n < 2:
         return {
             "runs": n,
@@ -691,9 +756,12 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "coverage_change": None,
             "stale_change": None,
             "at_risk_change": None,
-            # a single point has no trajectory → the bare readable line (no clause),
-            # the same honest-absence the null `at_risk_change` carries (H268).
+            "conflicts_change": None,
+            # a single point has no trajectory → the bare readable lines (no clause),
+            # the same honest-absence the null `at_risk_change`/`conflicts_change`
+            # carry (H268/H283).
             "at_risk_headline": at_risk_headline(last_at_risk, None),
+            "conflicts_headline": conflicts_headline(last_conflicts, None),
             "posture": "insufficient-history",
         }
 
@@ -734,6 +802,13 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     # trigger (it re-views the fidelity/drift the score/drift already move on).
     at_risk_change = _stale(last_snap, "at_risk") - _stale(first_snap, "at_risk")
 
+    # the unresolved-import-conflict movement (H279/H283): the net first→last change
+    # in the count of held items whose latest import conflict still disagrees with
+    # the held copy. A scalar like `at_risk_change`, degrade-safe 0 for a pre-H279
+    # endpoint; reported, never a posture trigger (a peer divergence moves neither
+    # the integrity score nor the drift axis — the held copy is never overwritten).
+    conflicts_change = _stale(last_snap, "conflicts") - _stale(first_snap, "conflicts")
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -753,12 +828,20 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "coverage_change": coverage_change,
         "stale_change": stale_change,
         "at_risk_change": at_risk_change,
+        "conflicts_change": conflicts_change,
         # the readable consolidation-loss trend line (roadmap H268): the last run's
         # at-risk count + the net movement across the window, the trend twin of the
         # report's `_At-risk works:_` line (and of the briefing `_At-risk work:_`
         # line H264). The window span replaces the report's "since last run".
         "at_risk_headline": at_risk_headline(
             last_at_risk, at_risk_change, span=f"over {n} runs"
+        ),
+        # the readable peer-divergence trend line (roadmap H283): the last run's
+        # unresolved-conflict count + the net movement across the window, the trend
+        # twin of the report's `_Conflicts:_` line (and the conflict-over-time leg
+        # H279 deferred). The window span replaces the report's "since last run".
+        "conflicts_headline": conflicts_headline(
+            last_conflicts, conflicts_change, span=f"over {n} runs"
         ),
         "posture": posture,
     }
@@ -955,6 +1038,18 @@ def assemble_report(
         "at_risk_headline": at_risk_headline(
             current["at_risk"],
             None if delta is None else delta["at_risk"]["change"],
+        ),
+        # the readable peer-divergence line (roadmap H283): the unresolved-conflict
+        # count + its signed movement since the last run, the readable counterpart of
+        # the snapshot's `conflicts` scalar (H279, the conflict-over-time leg that
+        # snapshot deferred). A scoped non-persisting pass records no baseline
+        # (`delta` is None), so its change clause is dropped — the bare
+        # `_Conflicts: N._`, exactly when the delta has no baseline. Unlike `at_risk`
+        # (whole-library only — works span sources), the conflict count is
+        # source-attributable, so a `--source` pass narrows it to <S> (H279).
+        "conflicts_headline": conflicts_headline(
+            current["conflicts"],
+            None if delta is None else delta["conflicts"]["change"],
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

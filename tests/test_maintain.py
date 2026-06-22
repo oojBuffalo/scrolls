@@ -27,6 +27,7 @@ import scrolls.cli as cli
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
+    conflict_event,
     custody_counts_by_source,
     custody_headline,
     latest_events,
@@ -49,6 +50,7 @@ from scrolls.maintain import (
     at_risk_headline,
     compute_delta,
     compute_trend,
+    conflicts_headline,
     custody_snapshot,
     last_run_boundary,
     load_snapshot,
@@ -260,6 +262,44 @@ def test_at_risk_headline_span_is_parametrized_for_the_trend_twin():
     )
 
 
+# --- conflicts_headline (the readable peer-divergence line, roadmap H283) ---
+
+
+def test_conflicts_headline_renders_a_rise_with_an_up_arrow():
+    # more held items carry an unresolved import conflict since last run — ▲ "worse"
+    assert conflicts_headline(3, 2) == "_Conflicts: 3 (▲2 since last run)._"
+
+
+def test_conflicts_headline_renders_a_fall_with_a_down_arrow():
+    # a reconcile/accept-incoming resolution cleared conflicts — ▼ "better", the
+    # magnitude is the absolute change (never a negative number after the arrow)
+    assert conflicts_headline(1, -2) == "_Conflicts: 1 (▼2 since last run)._"
+
+
+def test_conflicts_headline_renders_no_movement_explicitly():
+    # a baseline exists but nothing moved — an explicit "no change" clause, NOT the
+    # bare line (the bare line is reserved for "no baseline", change None)
+    assert conflicts_headline(3, 0) == "_Conflicts: 3 (no change since last run)._"
+
+
+def test_conflicts_headline_on_no_baseline_is_the_bare_count():
+    # first run / a scoped non-persisting pass (delta None → change None): the bare
+    # line, no change clause, exactly when there is no baseline (degrade-safe, ADR 0082)
+    assert conflicts_headline(2, None) == "_Conflicts: 2._"
+    assert conflicts_headline(0, None) == "_Conflicts: 0._"
+
+
+def test_conflicts_headline_span_is_parametrized_for_the_trend_twin():
+    # the trend reuses the renderer with a window span ("over N runs") instead of
+    # the report's "since last run"
+    assert conflicts_headline(4, 2, span="over 4 runs") == (
+        "_Conflicts: 4 (▲2 over 4 runs)._"
+    )
+    assert conflicts_headline(2, -3, span="over 3 runs") == (
+        "_Conflicts: 2 (▼3 over 3 runs)._"
+    )
+
+
 def test_delta_on_first_run_has_null_befores_and_changes():
     current = custody_snapshot(
         _doctor_report(100, {"full": 3, "partial": 0, "reference": 0}, {"unverified": 3})
@@ -391,6 +431,38 @@ def test_delta_tolerates_a_baseline_lacking_at_risk():
     assert delta["at_risk"] == {"before": 0, "after": 1, "change": 1}
 
 
+def test_delta_reports_conflicts_change_against_a_baseline():
+    """H283: the unresolved-conflict count is a scalar the delta subtracts, so a
+    worker reads whether peer-divergence debt moved since last run — the
+    conflict-over-time leg H279 deferred."""
+    previous = {
+        "recorded_at": "2026-06-20T09:00:00+00:00",
+        "score": 90, "tiers": {"full": 2}, "drift": {"checked": 0}, "conflicts": 1,
+    }
+    current = custody_snapshot(_doctor_report(90, {"full": 2}, {}, conflicts=3))
+    delta = compute_delta(previous, current)
+    # two more held items carry an unresolved import conflict since last run
+    assert delta["conflicts"] == {"before": 1, "after": 3, "change": 2}
+
+
+def test_delta_conflicts_on_first_run_is_null():
+    # no baseline → the conflict before/change is null, never a fabricated zero
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {}, conflicts=2))
+    delta = compute_delta(None, current)
+    assert delta["conflicts"] == {"before": None, "after": 2, "change": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_conflicts():
+    """A pre-H279 baseline (no `conflicts` axis) reads as zero for that axis, never
+    null — the run happened, the conflict count was simply not yet tracked (ADR 0082)."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `conflicts` key
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {"checked": 2},
+                                              conflicts=1))
+    delta = compute_delta(previous, current)
+    assert delta["conflicts"] == {"before": 0, "after": 1, "change": 1}
+
+
 def test_snapshot_round_trips_and_missing_reads_as_none(tmp_path):
     path = tmp_path / ".maintenance" / "last-run.json"
     assert load_snapshot(path) is None  # no file yet → first run
@@ -504,6 +576,7 @@ def _run(
     enrichment_stale=0,
     summaries_stale=0,
     at_risk=0,
+    conflicts=0,
 ):
     return {
         "recorded_at": recorded_at,
@@ -514,6 +587,7 @@ def _run(
             "enrichment_stale": enrichment_stale,
             "summaries_stale": summaries_stale,
             "at_risk": at_risk,
+            "conflicts": conflicts,
         },
         "delta": {},
     }
@@ -528,6 +602,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["coverage_change"] is None  # no direction from one point
         assert trend["stale_change"] is None  # nor an enrichment/summary debt direction
         assert trend["at_risk_change"] is None  # nor a consolidation-loss direction
+        assert trend["conflicts_change"] is None  # nor a peer-divergence direction
         assert trend["runs"] == len(window)
 
 
@@ -745,6 +820,59 @@ def test_trend_at_risk_line_is_bare_under_two_runs():
     assert one["at_risk_headline"] == "_At-risk works: 3._"
     empty = compute_trend([])
     assert empty["at_risk_headline"] == "_At-risk works: 0._"
+
+
+# --- the conflict-over-time trend axis (roadmap H283) ----------------------
+
+
+def test_trend_conflicts_reads_zero_for_a_pre_h279_endpoint():
+    """A window endpoint recorded before the snapshot tracked `conflicts` (a pre-H279
+    schema) reads 0 for the missing axis, so the movement is still computed, never a
+    crash (the missing-axis-zero posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, conflicts=2)])
+    assert trend["conflicts_change"] == 2
+
+
+def test_trend_carries_the_readable_conflicts_line_over_the_window():
+    """H283: the trend summary distils the unresolved-conflict trajectory into one
+    readable line — the last run's count + the net movement across the window — so a
+    human reads the peer-divergence trend without parsing `conflicts_change`. The span
+    is the window ("over N runs"), the trend twin of the report's "since last run"."""
+    trend = compute_trend([_run("t1", 100, conflicts=2), _run("t3", 90, conflicts=4)])
+    assert trend["conflicts_change"] == 2
+    # last count 4, net +2 across the 2-run window
+    assert trend["conflicts_headline"] == "_Conflicts: 4 (▲2 over 2 runs)._"
+
+
+def test_trend_conflicts_line_renders_a_fall_when_conflicts_resolve():
+    """A negative net movement reads ▼ — a `reconcile`/accept-incoming resolution
+    cleared conflicts across the window (the line tracks `conflicts_change`'s sign)."""
+    trend = compute_trend(
+        [_run("t1", 100, conflicts=3), _run("t2", 100, conflicts=2),
+         _run("t3", 100, conflicts=1)]
+    )
+    assert trend["conflicts_change"] == -2
+    assert trend["conflicts_headline"] == "_Conflicts: 1 (▼2 over 3 runs)._"
+
+
+def test_trend_conflicts_line_reads_no_change_when_steady():
+    """A steady conflict count over the window reads the explicit "no change" clause
+    (a baseline exists), not the bare line."""
+    trend = compute_trend([_run("t1", 100, conflicts=2), _run("t2", 100, conflicts=2)])
+    assert trend["conflicts_change"] == 0
+    assert trend["conflicts_headline"] == "_Conflicts: 2 (no change over 2 runs)._"
+
+
+def test_trend_conflicts_line_is_bare_under_two_runs():
+    """A <2-run window has no trajectory: the line carries the current count with no
+    change clause — the bare `_Conflicts: N._`, the same honest absence the null
+    `conflicts_change` takes. An empty window reads the honest 0."""
+    one = compute_trend([_run("t1", 100, conflicts=3)])
+    assert one["conflicts_change"] is None
+    assert one["conflicts_headline"] == "_Conflicts: 3._"
+    empty = compute_trend([])
+    assert empty["conflicts_headline"] == "_Conflicts: 0._"
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -2892,6 +3020,133 @@ def test_maintain_report_at_risk_line_is_bare_under_a_scope(home, capsys):
     assert fid["delta"] is None  # still non-persisting (a fidelity triage, H255)
     assert fid["custody"]["at_risk"] == 2  # but the audit stayed whole-library
     assert fid["at_risk_headline"] == "_At-risk works: 2._"  # bare: no baseline
+
+
+# --- the conflict-over-time leg on the maintain report (roadmap H283) -----------
+#
+# The peer-divergence twin of the at-risk-works lines above: H279 put the
+# unresolved-conflict scalar on the snapshot but never differenced it; H283 adds the
+# cross-run delta, the `--history`/`--trend` `conflicts_change` axis, and the readable
+# `_Conflicts:_` line — the clean H267/H268 analogue on the conflict axis.
+
+
+def _record_conflict(home, item_id, incoming="sha256:peer-divergent"):
+    """Append an unresolved import-conflict event to one held item (the H283 fixture).
+
+    Mirrors what `import items` records on a divergent merge (H274): a `conflict`
+    event whose `observed_hash` differs from the held copy's `content_hash`, so
+    `unresolved_conflicts` counts it. The held copy is never touched (raw is sacred)."""
+    held = get_item(home.db_path, item_id)
+    record_events(home.db_path, [
+        conflict_event(item_id, held_hash=held.content_hash,
+                       incoming_hash=incoming, now="2026-06-21T00:00:00+00:00"),
+    ])
+
+
+def test_maintain_report_carries_the_readable_conflicts_line(home, capsys):
+    """H283: the report distils the unresolved-conflict count into one readable line,
+    so a human reads the peer-divergence debt without parsing the delta JSON. First
+    run → no baseline → the bare line, converging with the snapshot scalar, the JSON
+    `custody.conflicts`, and the delta by construction (the same count each carries)."""
+    _build(_held_topic())
+    _record_conflict(home, "arxiv:1706.03762")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # first run, no baseline → the bare line, no change clause
+    assert report["conflicts_headline"] == "_Conflicts: 1._"
+    # converges with the snapshot scalar and the rendered helper
+    assert report["custody"]["conflicts"] == 1
+    assert report["conflicts_headline"] == conflicts_headline(
+        report["custody"]["conflicts"], report["delta"]["conflicts"]["change"]
+    )
+    # first run → the delta's conflict axis is the honest null (no baseline)
+    assert report["delta"]["conflicts"] == {"before": None, "after": 1, "change": None}
+
+
+def test_maintain_report_conflicts_line_shows_the_rise_since_last_run(home, capsys):
+    """A peer divergence recorded between two persisting passes reads ▲ — the readable
+    counterpart of the delta's signed `conflicts.change` (H279→H283)."""
+    _build(_held_topic())
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # first run, clean
+    first = json.loads(capsys.readouterr().out)
+    assert first["conflicts_headline"] == "_Conflicts: 0._"  # no baseline yet
+
+    # a divergent peer capture is merged → one held item carries an open conflict
+    _record_conflict(home, "arxiv:1706.03762")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["custody"]["conflicts"] == 1
+    assert second["delta"]["conflicts"]["change"] == 1
+    assert second["conflicts_headline"] == "_Conflicts: 1 (▲1 since last run)._"
+
+
+def test_maintain_history_carries_the_conflicts_scalar_and_delta(home, capsys):
+    """The recorded `conflicts` scalar rides `--history`: each run's snapshot carries
+    the count and its delta the cross-run change, so a worker reads the peer-divergence
+    trend from the log (the H283 conflict-over-time leg, the at_risk-trend twin)."""
+    _build(_held_topic())
+    _record_conflict(home, "arxiv:1706.03762")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # first run
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # second run, same conflict
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert [run["snapshot"]["conflicts"] for run in runs] == [1, 1]
+    # the second run's delta differences the scalar against the first (steady → 0)
+    assert runs[1]["delta"]["conflicts"] == {"before": 1, "after": 1, "change": 0}
+
+
+def test_maintain_trend_carries_the_conflicts_line_over_the_window(home, capsys):
+    """`--trend` distils the conflict trajectory across the window into one readable
+    line, the trend twin of the report's line (span "over N runs"). A conflict cleared
+    between runs reads ▼ — the resolution-aware predicate drops the resolved item."""
+    _build(_held_topic())
+    _record_conflict(home, "arxiv:1706.03762")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # run 1: 1 conflict
+
+    # the operator affirms the held copy → the conflict resolves (clears the count)
+    assert main(["reconcile", "arxiv:1706.03762", "--keep-held"]) == 0
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # run 2: 0 conflicts
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    envelope = json.loads(capsys.readouterr().out)
+    trend = envelope["trend"]
+    assert trend["conflicts_change"] == -1  # 1 → 0 across the window
+    assert trend["conflicts_headline"] == "_Conflicts: 0 (▼1 over 2 runs)._"
+
+
+def test_maintain_report_conflicts_line_under_a_scope(home, capsys):
+    """Unlike `at_risk` (whole-library only — works span sources), the conflict count
+    is *source-attributable*, so a `--source` pass narrows it to <S> (H279). The pass
+    is still non-persisting (delta None), so the line drops the change clause — the
+    bare `_Conflicts: N._` where N is the scoped count."""
+    _build(_held_topic())
+    _record_conflict(home, "arxiv:1706.03762")  # the lone arxiv item
+    capsys.readouterr()
+
+    # scoped to arxiv: the held conflict is in scope → counted, but non-persisting
+    assert main(["maintain", "--source", "arxiv", "--no-recheck"]) == 0
+    arxiv = json.loads(capsys.readouterr().out)
+    assert arxiv["delta"] is None  # focused triage, no baseline
+    assert arxiv["custody"]["conflicts"] == 1
+    assert arxiv["conflicts_headline"] == "_Conflicts: 1._"  # bare: scoped, no baseline
+
+    # scoped to web: arxiv's conflict is out of scope → the honest 0
+    capsys.readouterr()
+    assert main(["maintain", "--source", "web", "--no-recheck"]) == 0
+    web = json.loads(capsys.readouterr().out)
+    assert web["custody"]["conflicts"] == 0
+    assert web["conflicts_headline"] == "_Conflicts: 0._"
 
 
 # --- `scrolls maintain --source <S>` — the scoped pass (roadmap H165) ----------
