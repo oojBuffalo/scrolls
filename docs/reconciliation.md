@@ -75,11 +75,11 @@ detection, replace auto-overwrite with surfacing a conflict for review — surfa
 don't silently rewrite.** The first concrete enactment of that posture is at the
 **import boundary**, where two libraries' captures actually collide.
 
-`scrolls import items` (and, next, `scrolls import bundle`) no longer treats a
-skipped row as opaque. Every row goes through `items.merge_item`, which keeps the
-`INSERT OR IGNORE` custody guarantee (the held copy is never overwritten) but
-classifies the skip on the `content_hash` — the same captured-content fingerprint
-the verify ledger drifts on (ADR 0098):
+**Both lossless importers** — `scrolls import items` (H272) and `scrolls import
+bundle` (H273) — no longer treat a skipped row as opaque. Every row goes through
+`items.merge_item`, which keeps the `INSERT OR IGNORE` custody guarantee (the held
+copy is never overwritten) but classifies the skip on the `content_hash` — the
+same captured-content fingerprint the verify ledger drifts on (ADR 0098):
 
 - `unchanged` — the held copy has the same content (an idempotent re-import).
 - `conflict` — the held copy has *different* captured content for the same id (a
@@ -91,9 +91,16 @@ the verify ledger drifts on (ADR 0098):
 
 This is reconciliation *detection* made custody-safe: it answers "these two
 captures of the same id disagree" without choosing a winner or rewriting anything.
-A future slice can lift the conflict into a custody ledger *event* (the bi-temporal
-captured-at vs source-changed-at framing) and offer an explicit, reviewed
-resolution (`reconcile`), but the load-bearing primitive — *surface, don't
-overwrite* — ships first and is tested
+On the bundle importer the `--dry-run` preview also **predicts** the conflict set
+the live merge would surface (the same `content_hash` compare, simulated without
+writing), so an operator merging a peer's bundle can review the divergences before
+committing — and a within-bundle duplicate that disagrees with itself classifies
+identically on both paths (H273).
+
+A future slice (H274) can lift the conflict into a custody ledger *event* (the
+bi-temporal captured-at vs source-changed-at framing) and offer an explicit,
+reviewed resolution (`reconcile`), but the load-bearing primitive — *surface,
+don't overwrite* — ships first and is tested
 (`test_import_items_surfaces_a_content_conflict` and siblings in
-`tests/test_cli.py`).
+`tests/test_cli.py`; `test_import_bundle_surfaces_a_content_conflict` and the
+dry-run-prediction / within-bundle-dup siblings in `tests/test_bundle.py`).

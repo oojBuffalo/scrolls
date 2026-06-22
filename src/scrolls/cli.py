@@ -1884,6 +1884,63 @@ def _warn_conflicts(conflict_ids: list[str]) -> None:
     )
 
 
+def _preview_merge_items(
+    db_path: Path, items: list[ScrollItem]
+) -> tuple[dict[str, int], list[str], list[str], list[str]]:
+    """Predict `_merge_items` without writing — the read-only twin of the merge.
+
+    The dry-run sibling of `_merge_items` (the H233/H239 "the preview never drifts
+    from reality" discipline, now on the conflict axis): it returns the *same*
+    ``{imported, skipped, unchanged, conflict}`` counts and the *same* sorted
+    ``conflicts`` list a real `_merge_items` of the identical batch would, plus the
+    reviewable, library-relative ``new``/``held`` partition (H226/H239).
+
+    The catch is the **within-batch duplicate**. The live `merge_item` does INSERT
+    OR IGNORE, so a bundle that repeats an id sees its own prior insert — the first
+    occurrence is the kept copy and every later one is classified against *it*. The
+    preview writes nothing, so `get_item` never reflects a within-batch insert; we
+    simulate it with ``kept_hash``, recording the first occurrence's
+    ``content_hash`` so a later occurrence with a different hash is the *same*
+    ``conflict`` the live path would surface (a bundle repeating an id with
+    divergent content is itself conflicting). ``new``/``held`` stay **library**-
+    relative — an id absent from the library before the import is ``new`` even if it
+    repeats (H239/H245), so a within-batch dup of a new id never leaks into
+    ``held`` — while the unchanged/conflict split tracks the live merge's
+    batch-aware view.
+    """
+    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0}
+    conflict_ids: set[str] = set()
+    new_ids: set[str] = set()
+    held_ids: set[str] = set()
+    kept_hash: dict[str, str | None] = {}  # id -> the kept copy's content_hash
+    for item in items:
+        held = get_item(db_path, item.id)
+        if held is not None:
+            # already in the library — INSERT OR IGNORE would skip; classify
+            # against the held copy (which is never overwritten)
+            held_ids.add(item.id)
+            baseline, present = held.content_hash, True
+        elif item.id in kept_hash:
+            # a within-batch dup of a not-yet-held id: the live insert kept the
+            # first occurrence, so classify this one against it
+            baseline, present = kept_hash[item.id], True
+        else:
+            # the first occurrence of a library-absent id — the inserted copy
+            new_ids.add(item.id)
+            kept_hash[item.id] = item.content_hash
+            present = False
+        if not present:
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+            if baseline != item.content_hash:
+                counts["conflict"] += 1
+                conflict_ids.add(item.id)
+            else:
+                counts["unchanged"] += 1
+    return counts, sorted(conflict_ids), sorted(new_ids), sorted(held_ids)
+
+
 def _cmd_import_items(path: str) -> int:
     try:
         imported_items, stats = load_items_export(Path(path).expanduser())
@@ -2163,15 +2220,16 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     if dry_run:
         return _preview_import_bundle(paths, imported_items, imported_events)
 
-    counts = {"imported": 0, "skipped": 0}
-    for item in imported_items:
-        # INSERT OR IGNORE (ADR 0082): a scroll the target library already holds
-        # is never overwritten — custody-safe re-import. Derived artifacts rebuild
-        # from these rows via `doctor --fix` / `kb`, as `import items` relies on.
-        if insert_item(paths.db_path, item):
-            counts["imported"] += 1
-        else:
-            counts["skipped"] += 1
+    # INSERT OR IGNORE per row (ADR 0082): a scroll the target library already
+    # holds is never overwritten — custody-safe re-import. But the skip is no
+    # longer opaque (roadmap H273, the H272 partition lifted to the bundle
+    # importer): an identical re-import is `unchanged`, a same-id row with a
+    # different `content_hash` is a surfaced `conflict` (a peer's bundle of a
+    # source that has since drifted — custody vision §2.4, drift/conflict is a
+    # recorded event, never an overwrite). Derived artifacts rebuild from these
+    # rows via `doctor --fix` / `kb`, as `import items` relies on.
+    counts, conflicts = _merge_items(paths.db_path, imported_items)
+    _warn_conflicts(conflicts)
     # restore the portable custody ledger (roadmap H67), deduped by content so a
     # re-import is a custody no-op — the verify-axis sibling of the items'
     # INSERT OR IGNORE. Events ride for *every* in-scope item, whether its row was
@@ -2193,6 +2251,13 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     _warn_orphan_events(orphan_events)
     print(json.dumps({
         **counts,
+        # the distinct ids whose held copy diverged from the incoming bundle row
+        # (H273) — sorted, deduped, **uncapped**: the structured, machine-complete
+        # twin of the bounded `_warn_conflicts` stderr line. `[]` is the honest
+        # clean re-import (no divergence), and `conflict == len(conflicts)` unless
+        # a within-bundle dup names one id twice (then `conflict` counts the raw
+        # occurrences while `conflicts` names the distinct divergent id once).
+        "conflicts": conflicts,
         "items": len(imported_items),
         "events": {
             "imported": ev_imported,
@@ -2209,15 +2274,16 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
 
 
 def _preview_import_bundle(paths, imported_items, imported_events) -> int:
-    """The read-only sibling of the bundle import (roadmap H220).
+    """The read-only sibling of the bundle import (roadmap H220, H273).
 
     An agent handed a portable "take it with me" bundle should be able to see
     *exactly* what a merge would add vs. skip — new items, already-held skips,
-    custody events added/deduped, and orphan events (H217) — **without writing**.
-    The same summary the live import prints, computed by diffing against the
-    library: item existence via `get_item` (the read-only twin of the import's
-    custody-safe INSERT OR IGNORE, ADR 0082), the event-dedup preview, and the
-    orphan-event split.
+    held-copy **conflicts** (H273), custody events added/deduped, and orphan
+    events (H217) — **without writing**. The same summary the live import prints,
+    computed by diffing against the library: the item partition via
+    `_preview_merge_items` (the read-only twin of `_merge_items`, predicting the
+    same conflict set INSERT OR IGNORE would surface), the event-dedup preview,
+    and the orphan-event split.
 
     The bundle's own item ids anchor the event partition (`known_ids`): the live
     import inserts those rows *before* partitioning, so an event for a not-yet-held
@@ -2225,28 +2291,28 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
     otherwise a fresh-library preview would mis-flag every event as an orphan.
     """
     bundle_item_ids = {item.id for item in imported_items}
-    # INSERT OR IGNORE imports an item iff the library does not already hold it,
-    # seeing its own prior inserts within a batch — so a within-bundle duplicate id
-    # (a corrupt bundle) lands once. `new_ids` mirrors that so the preview count is
-    # exact, not just `get_item`-based; `held_ids` names the already-in-library set.
+    # Predict the live merge without writing (roadmap H273): `_preview_merge_items`
+    # is the read-only twin of `_merge_items`, returning the same
+    # `{imported, skipped, unchanged, conflict}` counts, the same `conflicts` list,
+    # and the reviewable `new`/`held` partition. It simulates INSERT OR IGNORE's
+    # within-batch view (a bundle that repeats an id sees its own prior insert) so a
+    # within-bundle dup classifies identically to the live path, while `new`/`held`
+    # stay library-relative (H239/H245).
     #
     # `new`/`held` are the *reviewable* half of the preview (roadmap H226): the
     # counts say how much a merge would change, these name *what* — the distinct
-    # ids an operator can confirm before committing. Sorted + deduped (sets), and
+    # ids an operator can confirm before committing. Sorted + deduped, and
     # **uncapped** (the structured channel carries the complete sets; only the human
-    # orphan warning bounds its tail — M2: structured completeness vs. human
-    # readability). A within-bundle repeat of a new id lands once in `new`; a repeat
-    # of a held id once in `held`; so over a well-formed bundle (no repeats)
+    # orphan/conflict warnings bound their tails — M2: structured completeness vs.
+    # human readability). A within-bundle repeat of a new id lands once in `new`; a
+    # repeat of a held id once in `held`; so over a well-formed bundle (no repeats)
     # `len(new) == imported` and `len(held) == skipped`.
-    new_ids: set[str] = set()
-    held_ids: set[str] = set()
-    for item in imported_items:
-        if get_item(paths.db_path, item.id) is not None:
-            held_ids.add(item.id)
-        else:
-            new_ids.add(item.id)
-    item_imported = len(new_ids)
-    item_skipped = len(imported_items) - item_imported
+    counts, conflicts, new_ids, held_ids = _preview_merge_items(
+        paths.db_path, imported_items
+    )
+    # the conflict warning is loud in the preview too (the `_warn_orphan_events`
+    # idiom), so the dry-run faithfully shows what the real import would flag
+    _warn_conflicts(conflicts)
 
     resolvable_events, orphan_events = partition_resolvable_events(
         paths.db_path, imported_events, known_ids=bundle_item_ids
@@ -2255,11 +2321,11 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
     _warn_orphan_events(orphan_events)
     print(json.dumps({
         "dry_run": True,
-        "imported": item_imported,
-        "skipped": item_skipped,
+        **counts,
+        "conflicts": conflicts,
         "items": len(imported_items),
-        "new": sorted(new_ids),
-        "held": sorted(held_ids),
+        "new": new_ids,
+        "held": held_ids,
         "events": {
             "imported": ev_imported,
             "skipped": ev_skipped,

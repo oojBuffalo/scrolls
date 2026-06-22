@@ -2459,6 +2459,20 @@ rebuild from the rows via `scrolls doctor --fix` / `scrolls kb`, as with
 library is verified end to end
 (`test_export_import_round_trips_across_a_fresh_library`).
 
+But a skip is not opaque: like `import items` (the H272 partition lifted here by
+roadmap H273), the bundle importer splits every skip on the captured-content
+`content_hash` into `unchanged` (an identical re-import — a true custody no-op)
+and `conflict` (a held id whose incoming copy **disagrees** — e.g. a peer's
+bundle of a source that has since drifted). The held copy is still kept — raw is
+sacred, a conflict is a *recorded, surfaced* event, never an overwrite (custody
+vision §2.4; the obsidian reconcile adoption *surface, don't silently rewrite*).
+The diverging ids ride the structured `conflicts` list (sorted, deduped,
+uncapped) **and** a bounded `{"warning": …}` on stderr naming them (the shared
+`_merge_items`/`_warn_conflicts` helpers, the same as `import items`).
+`skipped == unchanged + conflict` is the coherence invariant
+(`test_import_bundle_surfaces_a_content_conflict`,
+`test_import_bundle_dry_run_conflict_partition_matches_a_real_import`).
+
 The importer also restores the bundle's **custody-events block** (roadmap H67)
 into the target's verify ledger, deduped by content — the 5-tuple
 `(item_id, checked_at, status, prior_hash, observed_hash)`, *not* the
@@ -2498,12 +2512,13 @@ a bundle is an atomic items+events unit whose events should always anchor.)
 
 `--dry-run` (roadmap H220) **previews** the merge and writes nothing: an agent
 handed a shared bundle can see *exactly* what an import would add vs. skip — the
-same `{imported, skipped, items, events}` summary the real import prints, plus a
-`"dry_run": true` marker — before committing to it. It is the read-only sibling of
-the custody-safe import (ADR 0082): item counts are computed by `get_item`
-existence (the read-only twin of `INSERT OR IGNORE`), event counts by the same
-content-dedup the writer uses (`custody.preview_import_events`), and the orphan
-split by `partition_resolvable_events`. The bundle's own item ids anchor the event
+same `{imported, skipped, unchanged, conflict, conflicts, items, events}` summary
+the real import prints, plus a `"dry_run": true` marker — before committing to it.
+It is the read-only sibling of the custody-safe import (ADR 0082): the item
+partition is computed by `_preview_merge_items` (the read-only twin of
+`_merge_items`), event counts by the same content-dedup the writer uses
+(`custody.preview_import_events`), and the orphan split by
+`partition_resolvable_events`. The bundle's own item ids anchor the event
 partition, because a real import inserts those rows *before* partitioning — so a
 preview into an *empty* library still resolves the bundle's events instead of
 mis-flagging every one as an orphan. Orphan events warn on stderr in the preview
@@ -2512,6 +2527,18 @@ import prints (sans the dry-run-only fields), pinned so the preview never drifts
 from reality (`test_import_bundle_dry_run_counts_match_a_real_import`,
 `test_import_bundle_dry_run_previews_without_writing`,
 `test_import_bundle_dry_run_previews_orphan_events`).
+
+The dry-run also **predicts the conflict set** (roadmap H273): the same
+`content_hash` compare the live merge runs, so the `conflict`/`conflicts` an
+operator reads in the preview name exactly the held copies a real import would
+surface as diverging — and the conflict warning is loud on stderr in the preview
+too. The prediction simulates `INSERT OR IGNORE`'s within-batch view, so a bundle
+that *repeats* an id with divergent content (a splice of two captures) classifies
+identically on both paths: the first occurrence is the kept copy, a later one
+conflicts against it, and the id rides `new` (library-absent) *and* `conflicts`
+(the bundle disagrees with itself) at once
+(`test_import_bundle_dry_run_predicts_the_conflict_set`,
+`test_import_bundle_within_bundle_dup_with_divergent_content_conflicts_on_both`).
 
 The dry-run also names *which* scrolls are new vs. already held (roadmap H226), so
 the counts ("2 new") become reviewable ("`new`: which two") — an operator can
@@ -2524,7 +2551,10 @@ the real import stays terse
 | Key | Meaning |
 | --- | --- |
 | `imported` | new scrolls inserted (would-be-inserted under `--dry-run`) |
-| `skipped` | already present (id collision is the dedupe working) |
+| `skipped` | already present and not inserted (`== unchanged + conflict`, H273) |
+| `unchanged` | skipped: held copy has the **same** `content_hash` (an idempotent re-import, H273) |
+| `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept, H273) |
+| `conflicts` | the distinct ids whose held copy diverged from the incoming bundle row — sorted, deduped, uncapped (H273); `[]` on a clean import |
 | `items` | scroll records read from the custody block |
 | `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |

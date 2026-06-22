@@ -1798,6 +1798,11 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         "dry_run": True,
         "imported": 1,
         "skipped": 1,
+        # the held SQLite is re-imported with the *same* content — an idempotent
+        # no-op (`unchanged`), not a `conflict` (H273)
+        "unchanged": 1,
+        "conflict": 0,
+        "conflicts": [],
         "items": 2,
         # the reviewable id lists (H226) — dry-run-only, alongside `dry_run`
         "new": ["arxiv:1706.03762"],
@@ -2136,6 +2141,12 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
     expected = {
         "imported": 1,
         "skipped": 3,
+        # every skip here re-imports the *same* content (the dup'd new id and the
+        # dup'd held id all share the default `content_hash`), so all three are
+        # idempotent `unchanged` no-ops, none a `conflict` (H273)
+        "unchanged": 3,
+        "conflict": 0,
+        "conflicts": [],
         "items": 4,
         "events": {
             "imported": 2,
@@ -2170,6 +2181,208 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
     ]
     assert item_events(db, "wikipedia:en:Ghost") == []
     assert item_events(db, "arxiv:2401.00001") == []
+
+
+# --- import bundle conflict-on-import (roadmap H273) -----------------------
+# The H272 partition (`merge_item`/`_merge_items`/`_warn_conflicts`) lifted to the
+# bundle importer: a held id re-imported from a bundle with a *different*
+# `content_hash` is a surfaced `conflict`, never a silent `skipped` — and the
+# `--dry-run` *predicts* the conflict set the live import would surface (the
+# H233/H239 "the preview never drifts from reality" discipline on the conflict
+# axis). The held copy is never overwritten (raw is sacred; a conflict is a
+# recorded, surfaced event — custody vision §2.4).
+
+
+def test_import_bundle_surfaces_a_content_conflict(scrolls_home, tmp_path, capsys):
+    # the live importer no longer lumps a divergent held id into an opaque
+    # `skipped`: a bundle whose copy of a held id carries a different
+    # `content_hash` (a peer's capture of a source that has since drifted) is
+    # surfaced as a `conflict`, with a loud stderr warning — and the held copy is
+    # kept byte-for-byte (never overwritten).
+    main(["init"])
+    db = get_paths().db_path
+    # the library holds the original capture…
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    # …the bundle carries a divergent capture of the *same id* (different content)
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    out, err = capsys.readouterr()
+    report = json.loads(out)
+    # imported nothing, the lone skip partitioned into a surfaced conflict
+    assert report["imported"] == 0
+    assert report["skipped"] == 1
+    assert report["unchanged"] == 0
+    assert report["conflict"] == 1
+    assert report["conflicts"] == ["wikipedia:en:SQLite"]
+    # the held copy is preserved — surfaced, never overwritten (raw is sacred)
+    kept = get_item(db, "wikipedia:en:SQLite")
+    assert kept.content_hash == "sha256:held"
+    assert kept.extracted_text == "The original capture."
+    # loud, not silent: the stderr warning names the diverging id (the
+    # `_warn_conflicts` idiom, the bundle twin of `import items`' H272 warning)
+    warning = json.loads(err)
+    assert "wikipedia:en:SQLite" in warning["warning"]
+    assert "conflict" in warning["warning"].lower()
+
+
+def test_import_bundle_dry_run_predicts_the_conflict_set(scrolls_home, tmp_path, capsys):
+    # the genuinely new H273 leg: the `--dry-run` preview *predicts* the conflict
+    # the live merge would surface — the H245-style "predict the write effect"
+    # closure on the conflict axis. It writes nothing (the held copy is untouched)
+    # yet names the would-be-conflicting id under `conflicts`, and warns on stderr
+    # exactly as the live import would.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    out, err = capsys.readouterr()
+    preview = json.loads(out)
+    assert preview["dry_run"] is True
+    # the preview predicts the same conflict partition the live import surfaces
+    assert preview["imported"] == 0
+    assert preview["skipped"] == 1
+    assert preview["unchanged"] == 0
+    assert preview["conflict"] == 1
+    assert preview["conflicts"] == ["wikipedia:en:SQLite"]
+    # a conflicting held id is named under `held` (it is already in the library),
+    # the reviewable surface an operator confirms before committing
+    assert preview["held"] == ["wikipedia:en:SQLite"]
+    assert preview["new"] == []
+    # the conflict warning is loud in the preview too (the orphan-warning idiom)
+    assert "conflict" in err.lower()
+    # …but nothing was written — the held copy is byte-for-byte untouched
+    kept = get_item(db, "wikipedia:en:SQLite")
+    assert kept.content_hash == "sha256:held"
+    assert kept.extracted_text == "The original capture."
+
+
+def test_import_bundle_dry_run_conflict_partition_matches_a_real_import(
+    scrolls_home, tmp_path, capsys
+):
+    # the live≡preview convergence the slice must hold (the conflict-axis analogue
+    # of test_import_bundle_dry_run_counts_match_a_real_import): over a mixed bundle
+    # — a would-be-new id, an identical re-import of a held id, and a divergent copy
+    # of another held id — the dry-run's *entire* top-level summary (sans the
+    # dry-run-only {dry_run, new, held}) equals what the subsequent real import
+    # prints, so the preview's `unchanged`/`conflict`/`conflicts` never drift from
+    # the merge's.
+    new = make_item(
+        "arxiv:1706.03762", "Attention", "A new attention paper.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+        content_hash="sha256:new",
+    )
+    same = make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:sqlite",
+    )
+    divergent = make_item(
+        "wikipedia:en:Postgres", "Postgres", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(
+        _items_only_bundle([new, same, divergent]), encoding="utf-8"
+    )
+
+    main(["init"])
+    db = get_paths().db_path
+    # the library already holds an identical SQLite and an *older* Postgres capture
+    insert_item(db, same)
+    insert_item(db, make_item(
+        "wikipedia:en:Postgres", "Postgres", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    capsys.readouterr()
+
+    # dry-run first (writes nothing), then the real import into the same library
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    _DRY_RUN_ONLY = {"dry_run", "new", "held"}
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    # the whole summary converges (sans the reviewable, dry-run-only id lists)
+    assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == live
+    # concretely: one import, one unchanged, one surfaced conflict
+    assert live["imported"] == 1
+    assert live["unchanged"] == 1
+    assert live["conflict"] == 1
+    assert live["conflicts"] == ["wikipedia:en:Postgres"]
+    assert live["skipped"] == live["unchanged"] + live["conflict"]
+    # the divergent held copy was kept, the new one inserted (the merge is real on
+    # disk, exactly as both summaries agreed)
+    assert get_item(db, "wikipedia:en:Postgres").extracted_text == "The original capture."
+    assert get_item(db, "arxiv:1706.03762") is not None
+
+
+def test_import_bundle_within_bundle_dup_with_divergent_content_conflicts_on_both(
+    scrolls_home, tmp_path, capsys
+):
+    # the within-bundle-dup parity the slice must hold: a bundle that *repeats* an
+    # id with divergent content (a splice of two overlapping exports captured at
+    # different times) classifies identically on both paths. The live `merge_item`
+    # sees its own prior insert (the first occurrence is kept, the second compared
+    # against it → conflict); the dry-run must *simulate* that within-batch view
+    # without writing — so both report the same `conflict`/`conflicts`, and the
+    # repeated id rides `new` (library-absent) *and* `conflicts` (the bundle
+    # disagrees with itself) at once.
+    first = make_item(
+        "wikipedia:en:SQLite", "SQLite", "The first capture.",
+        content_hash="sha256:first",
+    )
+    second = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A divergent second capture.",
+        content_hash="sha256:second",
+    )
+    bundle_path = tmp_path / "spliced.md"
+    bundle_path.write_text(_items_only_bundle([first, second]), encoding="utf-8")
+
+    main(["init"])  # an empty library — the id is library-absent
+    db = get_paths().db_path
+    capsys.readouterr()
+
+    # dry-run: the first occurrence would import, the second conflicts against it
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["imported"] == 1
+    assert preview["skipped"] == 1
+    assert preview["unchanged"] == 0
+    assert preview["conflict"] == 1
+    assert preview["conflicts"] == ["wikipedia:en:SQLite"]
+    # the repeated id is library-absent → `new`, yet the bundle disagrees with
+    # itself → also `conflicts` (an honest both-at-once; `new`/`held` stay
+    # library-relative and disjoint, H239)
+    assert preview["new"] == ["wikipedia:en:SQLite"]
+    assert preview["held"] == []
+
+    # the live import of the same spliced bundle classifies identically…
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    live = json.loads(capsys.readouterr().out)
+    _DRY_RUN_ONLY = {"dry_run", "new", "held"}
+    assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == live
+    # …and the kept copy on disk is the *first* occurrence (INSERT OR IGNORE keeps
+    # it; the divergent second was surfaced, never overwritten)
+    assert get_item(db, "wikipedia:en:SQLite").extracted_text == "The first capture."
 
 
 # --- scope, completeness, honesty ------------------------------------------
