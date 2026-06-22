@@ -4124,6 +4124,85 @@ def test_compiled_library_pages_agree_on_the_scope_custody_headline(scrolls_home
         assert _library_headline((library / rollup).read_text(encoding="utf-8")) is None
 
 
+def _seed_compiled_at_risk_fixture(db):
+    """A rendered at-risk multi-rep work (Z, all-reference) + a safely-held one (Y).
+
+    Work Z (10.3000/z): two reference reps across two sources → no full+unmoved
+    representation anywhere → at risk, the lowest custody ceiling. Work Y
+    (10.2000/y): a full + never-checked preprint (unverified ∈ the safe set → safely
+    held) + a reference record. Every representation is rendered (`markdown_path`
+    set), so the compiled `index.md` heads the whole library and converges with
+    `doctor`'s `custody.works` over it. 2 works, 1 at risk → Z is named.
+    """
+    insert_item(db, _item(
+        "arxiv:zref", "Zeta preprint", source="arxiv", stage="rendered",
+        markdown_path="scrolls/arxiv/zref.md",
+        links=("https://doi.org/10.3000/z",)))
+    insert_item(db, _item(
+        "crossref:zrec", "Zeta record", source="crossref", stage="rendered",
+        markdown_path="scrolls/crossref/zrec.md",
+        links=("https://doi.org/10.3000/z",)))
+    insert_item(db, _item(
+        "arxiv:yfull", "Ypsilon preprint", source="arxiv", stage="rendered",
+        markdown_path="scrolls/arxiv/yfull.md",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:y",
+        links=("https://doi.org/10.2000/y",)))
+    insert_item(db, _item(
+        "crossref:yrec", "Ypsilon record", source="crossref", stage="rendered",
+        markdown_path="scrolls/crossref/yrec.md",
+        links=("https://doi.org/10.2000/y",)))
+
+
+def test_compiled_index_at_risk_line_converges_with_doctor_works(scrolls_home, capsys):
+    # roadmap H269: the consolidation at-risk alarm reaches the static compiled
+    # surface. The `_At-risk work:_` line on the landing `index.md` is folded by the
+    # shared `render_at_risk_works` over the rendered library, so it names the same
+    # work `doctor`'s `custody.works.most_at_risk` does — the parse-it-back tie the
+    # compiled custody headlines already hold (H97), lifted to the work-level alarm.
+    from scrolls.works import render_at_risk_works
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_compiled_at_risk_fixture(db)
+    capsys.readouterr()
+
+    items = list_items(db)  # every item rendered → index scope == whole library == doctor
+    verdicts = latest_events(db)
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    index = (get_paths().library_dir / "index.md").read_text(encoding="utf-8")
+    works = run_doctor(get_paths())["custody"]["works"]
+    most = works["most_at_risk"]
+    # the alarm fired on a genuine consolidation loss
+    assert works["at_risk"] == 1
+    assert most["doi"] == "10.3000/z"
+    # the compiled line names doctor's work and reuses its reason verbatim
+    line = (
+        f"_At-risk work: `{most['doi']}` — {most['reason']}; "
+        f"{works['at_risk']} work(s) at risk._"
+    )
+    assert line in index
+    # ...and is byte-identical to the shared renderer over the same rendered library
+    for rendered_line in render_at_risk_works(items, verdicts):
+        assert rendered_line in index
+
+    # mutation in lockstep: recapture Z (give a rep a full re-derivable body) → the
+    # work becomes safely held, so the alarm clears on *both* the compiled surface and
+    # the audit, proving the compiled line re-folds rather than echoing a cached count
+    import dataclasses
+
+    zref = next(it for it in items if it.id == "arxiv:zref")
+    assert update_item(db, dataclasses.replace(
+        zref, raw_text="<raw>recaptured</raw>", content_hash="sha256:zr"))
+    capsys.readouterr()
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    refreshed = (get_paths().library_dir / "index.md").read_text(encoding="utf-8")
+    assert "_At-risk work:" not in refreshed
+    assert run_doctor(get_paths())["custody"]["works"]["at_risk"] == 0
+
+
 def test_compiled_index_per_source_breakdown_converges_with_doctor_by_source(
     scrolls_home, capsys
 ):

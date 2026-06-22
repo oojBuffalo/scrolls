@@ -533,6 +533,30 @@ lossless `@generated` JSONL fence, so it never touches the round-trip
 imports `custody`, so a `custody.render_at_risk_works` calling `at_risk_signal` would
 close an import cycle — the home follows the primitive it distils.
 
+That work-level `_At-risk work:_` line also rides the **compiled landing
+`library/index.md`** (roadmap H269) — the consolidation alarm on the static
+compiled surface, the at-risk counterpart of the whole-library `_Custody:_` headline
+(H96). It sits directly beneath the headline, grouped with the per-source
+`_Attention:_` line and above the `_Refresh:_`/`_By source:_` map — the same
+`export bundle`/`scrolls context` order — through the *same* shared
+`works.render_at_risk_works` over the rendered library, so a human browsing the
+compiled library reads the same alarm an agent reads from `doctor`. Unlike the
+per-**source** `_Attention:_`/`_Refresh:_` lines (which ride every multi-source group
+page over its own members), the at-risk line rides **only `index.md`**: the
+consolidation alarm is **non-source-attributable** — a work spans sources, so a
+scoped group page would fragment its representations into single-rep clusters
+(dropped by the `min_representations` floor) and could not converge with the
+library-wide audit, exactly why `doctor`'s `custody.works` is *skipped* under
+`--source`. The line sits **inside** the page's `@generated` sentinel fence (ADR
+0102) — regenerated content like the headline and `_By source:_`, so a recompile
+refreshes it (a recapture clears it) while a hand annotation outside the fence
+survives. It converges with `doctor`'s `custody.works` over the whole rendered
+library by construction (the parse-it-back tie the compiled custody headlines hold,
+H97), and honest absence — no line — when no multi-representation work is at risk
+(`test_compiled_index_at_risk_line_converges_with_doctor_works`,
+`test_kb_group_pages_omit_the_at_risk_work_line`,
+`test_kb_at_risk_work_line_is_refresh_safe`).
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the

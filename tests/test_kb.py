@@ -1086,6 +1086,175 @@ def test_kb_action_lines_are_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed  # annotation outside the fence preserved
 
 
+# --- work-level at-risk `_At-risk work:_` line on the compiled `index.md` (H269) ---
+# The consolidation alarm on the static compiled surface — the at-risk counterpart of
+# the whole-library `_Custody:_` headline (H96). Folded by the shared
+# `render_at_risk_works` over the rendered library, so the line names the same work
+# `doctor`'s `custody.works` does; only the whole-library `index.md` carries it (the
+# alarm is non-source-attributable — a scoped group page would fragment works).
+
+
+def _seed_at_risk_work_rendered(db):
+    """One at-risk multi-rep work (Z) + one safely-held multi-rep work (Y), rendered.
+
+    Work Z (10.3000/z): two reference-only reps (no full form anywhere) → no
+    representation is both full and unmoved → at risk, the lowest custody ceiling.
+    Work Y (10.2000/y): a full + never-checked preprint (unverified ∈ the safe set,
+    so safely held) + a reference record. Every rep is rendered (`make_rendered`
+    gives a `markdown_path`), so all four appear in the compiled library. 2 works,
+    1 at risk → Z is named.
+    """
+    insert_item(db, make_rendered(
+        "arxiv:zref", "arxiv", "Zeta preprint",
+        links=("https://doi.org/10.3000/z",)))
+    insert_item(db, make_rendered(
+        "crossref:zrec", "crossref", "Zeta record",
+        links=("https://doi.org/10.3000/z",)))
+    insert_item(db, make_rendered(
+        "arxiv:yfull", "arxiv", "Ypsilon preprint",
+        links=("https://doi.org/10.2000/y",),
+        raw_text="<raw>A full body.</raw>", content_hash="deadbeef"))
+    insert_item(db, make_rendered(
+        "crossref:yrec", "crossref", "Ypsilon record",
+        links=("https://doi.org/10.2000/y",)))
+
+
+def test_kb_index_carries_an_at_risk_work_line(scrolls_home, capsys):
+    """The landing `index.md` carries the consolidation `_At-risk work:_` alarm —
+    naming the single work no representation safely holds (roadmap H269)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert (
+        "_At-risk work: `10.3000/z` — no representation is both full and unmoved "
+        "(best held reference, safest drift unverified); 1 work(s) at risk._"
+        in header
+    )
+    # beneath the whole-library headline, above the per-source map (no source drift
+    # here, so no `_Attention:_` line precedes it)
+    assert (header.index("_Custody:") < header.index("_At-risk work:")
+            < header.index("_By source:_"))
+
+
+def test_kb_index_at_risk_line_converges_with_render_at_risk_works(scrolls_home, capsys):
+    """The rendered line is byte-identical to the shared `render_at_risk_works` over
+    the rendered library, so it names the same work `at_risk_signal` does (H269)."""
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, render_at_risk_works, works_over
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    rendered = [i for i in list_items(db) if i.markdown_path]
+    verdicts = latest_events(db)
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    for line in render_at_risk_works(rendered, verdicts):
+        assert line in index
+    most = at_risk_signal(works_over(rendered), verdicts)["most_at_risk"]
+    assert most["doi"] == "10.3000/z"
+    assert f"`{most['doi']}`" in index
+
+
+def test_kb_index_groups_at_risk_line_with_the_loss_pointers(scrolls_home, capsys):
+    """The at-risk line groups with the custody-loss pointers: beneath the headline,
+    after the per-source `_Attention:_` line, before `_Refresh:_`/`_By source:_` —
+    the `export bundle`/`context` briefing order (roadmap H269)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_action_debt(db)            # web:a full+drifted+stale, arxiv:1, Models stale
+    _seed_at_risk_work_rendered(db)  # at-risk work Z + safely-held Y
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert (header.index("_Custody:") < header.index("_Attention:")
+            < header.index("_At-risk work:") < header.index("_Refresh:")
+            < header.index("_By source:_"))
+
+
+def test_kb_index_omits_at_risk_line_when_no_work_at_risk(scrolls_home, capsys):
+    """A library whose every multi-rep work is safely held shows no at-risk line —
+    honest absence, the same no-op the briefings take (roadmap H269)."""
+    main(["init"])
+    db = get_paths().db_path
+    # one safely-held multi-rep work (full + reference) → nothing at risk
+    insert_item(db, make_rendered(
+        "arxiv:yfull", "arxiv", "Ypsilon preprint",
+        links=("https://doi.org/10.2000/y",),
+        raw_text="<raw>A full body.</raw>", content_hash="deadbeef"))
+    insert_item(db, make_rendered(
+        "crossref:yrec", "crossref", "Ypsilon record",
+        links=("https://doi.org/10.2000/y",)))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "_Custody:" in index
+    assert "_At-risk work:" not in index
+
+
+def test_kb_group_pages_omit_the_at_risk_work_line(scrolls_home, capsys):
+    """The consolidation alarm rides only the whole-library `index.md`; the scoped
+    group pages omit it (a work spans sources — a scoped page fragments works and
+    could not converge with the library-wide audit, roadmap H269)."""
+    main(["init"])
+    db = get_paths().db_path
+    # give the at-risk reps a shared category so a category page exists over them
+    insert_item(db, make_rendered(
+        "arxiv:zref", "arxiv", "Zeta preprint", category="ml",
+        links=("https://doi.org/10.3000/z",)))
+    insert_item(db, make_rendered(
+        "crossref:zrec", "crossref", "Zeta record", category="ml",
+        links=("https://doi.org/10.3000/z",)))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    assert "_At-risk work:" in (library / "index.md").read_text(encoding="utf-8")
+    for page in ("sources/arxiv.md", "sources/crossref.md", "categories/ml.md"):
+        assert "_At-risk work:" not in (library / page).read_text(encoding="utf-8"), page
+
+
+def test_kb_at_risk_work_line_is_refresh_safe(scrolls_home, capsys):
+    """The at-risk line lives inside the `@generated` fence and refreshes on recompile;
+    an annotation outside the fence survives, and a recapture clears the line
+    (roadmap H269 × ADR 0102)."""
+    import dataclasses
+
+    from scrolls.items import get_item, update_item
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index_path = scrolls_home / "library" / "index.md"
+    page = index_path.read_text(encoding="utf-8")
+    assert "_At-risk work: `10.3000/z`" in generated_body(page)  # inside the fence
+    index_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # recapture Z: give one of its reps a full body → the work is now safely held
+    zref = get_item(db, "arxiv:zref")
+    update_item(db, dataclasses.replace(
+        zref, raw_text="<raw>Recaptured.</raw>", content_hash="cafef00d"))
+    run_kb(capsys)
+
+    refreshed = index_path.read_text(encoding="utf-8")
+    assert "_At-risk work:" not in refreshed       # the alarm cleared on recompile
+    assert "_My note._" in refreshed               # annotation outside the fence kept
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path

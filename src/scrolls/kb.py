@@ -44,7 +44,7 @@ from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import ScrollItem, get_fidelity, list_items
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
-from scrolls.works import Work, works_over
+from scrolls.works import Work, render_at_risk_works, works_over
 
 _GENERATED_DIRS = ("sources", "categories", "concepts", "tags")
 _GENERATED_FILES = ("index.md", "graph.md", "works.md")
@@ -294,6 +294,8 @@ def _custody_scope_block(
     items: list[ScrollItem],
     verdicts: dict[str, CustodyEvent],
     summaries: dict[str, ConceptSummary],
+    *,
+    at_risk_lines: list[str] | None = None,
 ) -> list[str]:
     """The readable scope-custody block under a compiled page's headline (roadmap H184).
 
@@ -308,6 +310,16 @@ def _custody_scope_block(
     construction. Each renderer ends its present block with a trailing blank (or is
     `[]` on honest absence), so a caller splices the block straight in.
 
+    `at_risk_lines` is the optional work-level `_At-risk work:_` pointer (roadmap
+    H269), spliced directly beneath the source `_Attention:_` line so the two
+    custody-loss pointers — per-source (H159) then per-work (H264) — group above the
+    `_Refresh:_`/`_By source:_` map, exactly the `export bundle`/`context` briefing
+    order. Only the whole-library `index.md` passes it (`render_at_risk_works` over
+    the rendered library): the consolidation alarm is a non-source-attributable
+    whole-library signal (`doctor`'s `custody.works` skips under `--source`), so a
+    *scoped* group page would fragment works and could not converge with the
+    library-wide audit. Defaults to `[]` (omitted on every group page).
+
     The refresh debt is computed over this page's *own* members (the
     scope-consistent posture H178 took): a whole-library `index.md` over every
     rendered item, a group page over its members — so a single-source `sources/*`
@@ -321,6 +333,7 @@ def _custody_scope_block(
     by_source = custody_counts_by_source(items, verdicts)
     return (
         render_custody_attention(by_source)
+        + (at_risk_lines or [])
         + render_custody_refresh(
             stale_classification_counts_by_source(items),
             stale_summary_counts_by_source(items, summaries),
@@ -350,15 +363,24 @@ def _write_index(
         custody_headline(items, verdicts),
     ]
     # the readable scope-custody block under the headline (roadmap H184): the
-    # weakest-source `_Attention:_` pointer (H159), the per-source `_Refresh:_`
-    # pointer (H178), then the `_By source:_` breakdown (H145) — the compiled
-    # landing-page counterpart of the `export bundle`/`context` briefings, over the
-    # same shared renderers so the lines read byte-identical across surfaces and
-    # converge with JSON `status` (H133) + `doctor`'s debt maps by construction.
-    # An empty/single-source clean library is the honest no-op (the block is []).
-    # The block's trailing spacer is dropped: `## Sources` always follows when
-    # items exist and supplies the separator.
-    custody_block = _custody_scope_block(items, verdicts, summaries)
+    # weakest-source `_Attention:_` pointer (H159), the work-level `_At-risk work:_`
+    # pointer (H269), the per-source `_Refresh:_` pointer (H178), then the
+    # `_By source:_` breakdown (H145) — the compiled landing-page counterpart of the
+    # `export bundle`/`context` briefings, over the same shared renderers so the
+    # lines read byte-identical across surfaces and converge with JSON `status`
+    # (H133) + `doctor`'s debt maps by construction. The work-level at-risk line
+    # (H269) is the consolidation alarm on the static compiled surface — the at-risk
+    # counterpart of the whole-library `_Custody:_` headline (H96), folded by the
+    # shared `render_at_risk_works` over the rendered library so it names the same
+    # work `doctor`'s `custody.works` does; only the whole-library `index.md` carries
+    # it (the alarm is non-source-attributable — group pages would fragment works).
+    # An empty/single-source clean library with no at-risk work is the honest no-op
+    # (the block is []). The block's trailing spacer is dropped: `## Sources` always
+    # follows when items exist and supplies the separator.
+    custody_block = _custody_scope_block(
+        items, verdicts, summaries,
+        at_risk_lines=render_at_risk_works(items, verdicts),
+    )
     if custody_block:
         lines += [""] + custody_block[:-1]
     if by_source:
