@@ -965,6 +965,34 @@ The live `at_risk_works` block rides the maintain pass only, but its **count**
 time* axis (`at_risk_change`, above) and `status`'s `custody.at_risk` reads it for the
 current pass — the at-risk counterpart of recording recheck `coverage` in the snapshot.
 
+The custody block also carries a `conflicts` sub-block (roadmap H275, ADR 0104) —
+the scope-level **import-conflict aggregate**, the *read-aggregate sibling of
+`drift`* over the other provenance-of-divergence axis. Where `drift` folds the
+latest `scrolls verify` verdict per held item ("has the live source moved?"), this
+folds the latest recorded import-`conflict` event per held item ("did a peer's
+capture of this id disagree with mine when I merged a bundle?", recorded by
+[`import items`](#scrolls-import-bundlefile) / `import bundle`, readable per-item via
+[`history --status conflict`](#scrolls-history-id)). It holds `{basis, as_of, items,
+events}`: `basis` is `import_ledger` (read from the recorded events, not live this
+run), `items` the count of currently-held items carrying an **unresolved** conflict,
+`as_of` the freshest unresolved conflict's timestamp (`null` when none), and `events`
+the latest unresolved conflict per affected item (`id`/`status`/`checked_at`/
+`prior_hash` (the held copy) / `observed_hash` (the incoming capture that disagreed)).
+A conflict is **unresolved** while that latest event's `observed_hash` still differs
+from the held copy's current `content_hash` — the held copy is never auto-overwritten
+(raw is sacred), so every recorded conflict is unresolved today, but the predicate is
+resolution-aware so a future `reconcile` (H276) that adopts the incoming content clears
+it with no special "resolved" event (the `latest_events` held-filter precedent). The two
+axes never mix — a conflict never inflates `drift` and a drift verdict never appears here
+(`latest_conflict_events` reads only the `conflict` rows, `latest_events` only the verify
+verdicts). Held-filtered like `drift` (a conflict on a since-deleted id is dropped) and,
+unlike `custody.works`, **source-attributable** — so `--source S` scopes it for free (a
+held item owns a source). Report-only, never `issues`/`fixed`/the exit code
+(`test_doctor_custody_conflicts_surfaces_an_unresolved_import_conflict` and the
+clean/held-filter/source-scope siblings in `tests/test_cli.py`); the MCP
+[`get_library_health`](#mcp-tools) twin carries it for free, converging field-for-field
+with this block.
+
 `--source S` scopes the **whole** audit to one source's held items (roadmap H162)
 — the audit-side counterpart of the per-source act commands
 [`verify --source`](#scrolls-verify-id) (H125) and

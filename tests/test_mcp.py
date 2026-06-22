@@ -2091,6 +2091,34 @@ def test_mcp_read_surface_shape_contract(scrolls_home):
     assert "get_library_health" not in _STATS_OBJECT_TWINS
 
 
+def test_get_library_health_carries_the_conflicts_aggregate(scrolls_home):
+    """H275: the import-conflict aggregate (`custody.conflicts`) rides the MCP
+    `get_library_health` twin for free (the tool returns `run_doctor`'s whole custody
+    block), so an agent operating purely over MCP can read the scope-level conflict
+    count — and it converges with the CLI `doctor` by construction."""
+    from scrolls.custody import conflict_event, record_events
+    from scrolls.doctor import run_doctor
+
+    _seed_verifiable_item(content_hash="sha256:held")
+    # a peer's capture of the held id disagreed at import — a recorded conflict event
+    record_events(get_paths().db_path, [
+        conflict_event(
+            "web:demo", held_hash="sha256:held", incoming_hash="sha256:incoming",
+            now="2026-06-22T00:00:00+00:00",
+        )
+    ])
+
+    health = mcp_server.get_library_health()["conflicts"]
+    assert health["items"] == 1
+    assert [e["id"] for e in health["events"]] == ["web:demo"]
+    assert health["events"][0]["observed_hash"] == "sha256:incoming"
+    # the drift axis stays disjoint — a conflict never inflates the MCP drift counts
+    assert health["events"][0]["status"] == "conflict"
+    assert mcp_server.get_library_health()["drift"]["checked"] == 0
+    # converges field-for-field with the CLI doctor (the audit-twin guarantee)
+    assert health == run_doctor(get_paths())["custody"]["conflicts"]
+
+
 def _seed_string_twin_pages(db):
     """A rendered, concept- and tag-bearing pair so a compiled library has a
     concept page and a tag page for the string twins to serve.

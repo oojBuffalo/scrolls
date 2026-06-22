@@ -26,8 +26,10 @@ from scrolls.classify import (
 from scrolls.custody import (
     CUSTODY_STATUSES,
     custody_counts_by_source,
+    latest_conflict_events,
     latest_events,
     recheck_coverage,
+    unresolved_conflicts,
     unverified_items,
 )
 from scrolls.kb import load_concept_summaries
@@ -133,6 +135,22 @@ def run_doctor(
                 "coverage": {"verified": 0, "total": 0},
                 "events": [],
             },
+            "conflicts": {
+                # The import-conflict aggregate (roadmap H275, ADR 0104) — the
+                # read-aggregate sibling of the drift block, over the *other*
+                # provenance-of-divergence axis. ``basis`` names the source of the
+                # view: these are read from the recorded import-conflict ledger
+                # events, not confirmed live this run. ``items`` is the count of
+                # currently-held items carrying an *unresolved* conflict (the latest
+                # conflict's incoming hash still disagrees with the held copy);
+                # ``events`` lists the latest unresolved conflict per affected item.
+                # A report view only — never feeds ``issues``/``fixed`` or the exit
+                # code (doctor cannot repair a divergence it must not overwrite).
+                "basis": "import_ledger",
+                "as_of": None,
+                "items": 0,
+                "events": [],
+            },
             "enrichment": {
                 "basis": "ruleset_fingerprint",
                 "current_ruleset": RULESET_FINGERPRINT,
@@ -186,6 +204,7 @@ def run_doctor(
         _check_at_risk_works(paths, report, items)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
+    _check_custody_conflicts(paths, report, items)
     _check_enrichment_provenance(report, items)
     _check_summary_provenance(paths, report, items)
     return report
@@ -502,6 +521,54 @@ def _check_custody_drift(
         }
         for _, event in sorted(latest.items())
         if event.status in ("drifted", "rotted")
+    ]
+
+
+def _check_custody_conflicts(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem]
+) -> None:
+    """Aggregate the import-conflict ledger into a scope-level read (roadmap H275).
+
+    The read-aggregate sibling of `_check_custody_drift`, over the *other*
+    provenance-of-divergence axis (ADR 0104). The drift block folds the latest
+    *verify* verdict per held item ("has the live source moved?"); this folds the
+    latest *import-conflict* event per held item ("did a peer's capture of this id
+    disagree with mine when I merged a bundle?"). The two read disjoint ledger
+    slices — `latest_conflict_events` reads only the `conflict` rows, `latest_events`
+    only the verify verdicts — so a conflict never inflates the drift counts and a
+    drift verdict never appears here.
+
+    A conflict is reported as **unresolved** while the latest conflict's incoming
+    hash still disagrees with the held copy's current `content_hash`
+    (`unresolved_conflicts`, the resolution-aware predicate): the held copy is never
+    auto-overwritten (raw is sacred), so every recorded conflict is unresolved today,
+    but the predicate already clears an item a future `reconcile` (H276) resolves —
+    no read change needed. Held-filtered like the drift block (a conflict on a
+    since-deleted id is not this library's divergence), so the count doctor reports
+    is exactly the set a `reconcile` would act on.
+
+    A **report view only** (ADR 0104, custody §2.4): like the drift block it never
+    feeds the structural `issues`/`fixed` or the exit code — doctor cannot repair a
+    divergence it must not silently overwrite. Because the fold runs over the
+    (possibly `--source`-scoped) `items`, the aggregate scopes by source for free,
+    exactly as `custody.drift` does — a held item owns a source, so an import
+    conflict is source-attributable (unlike the cross-source `custody.works` alarm).
+    """
+    conflicts = report["custody"]["conflicts"]
+    unresolved = unresolved_conflicts(items, latest_conflict_events(paths.db_path))
+    conflicts["items"] = len(unresolved)
+    conflicts["as_of"] = max(
+        (e.checked_at for e in unresolved.values()), default=None
+    )
+    conflicts["events"] = [
+        {
+            "id": event.item_id,
+            "status": event.status,
+            "checked_at": event.checked_at,
+            "prior_hash": event.prior_hash,
+            "observed_hash": event.observed_hash,
+        }
+        for _, event in sorted(unresolved.items())
     ]
 
 

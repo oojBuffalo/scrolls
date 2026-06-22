@@ -632,6 +632,59 @@ def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
     return {row["item_id"]: _from_row(row) for row in rows}
 
 
+def latest_conflict_events(db_path: Path) -> dict[str, CustodyEvent]:
+    """The most recent *import-conflict* event per item, keyed by item id (H275).
+
+    The conflict-axis sibling of `latest_events`: where that reads the MAX(id) per
+    item over the *verify verdicts* (`CUSTODY_STATUSES`) for the drift posture, this
+    reads the MAX(id) per item over the `conflict` rows (`CONFLICT_STATUS`) for the
+    `doctor` conflict aggregate (`custody.conflicts`). The two never mix — an import
+    conflict is a distinct provenance-of-divergence axis (ADR 0104), so the drift
+    posture and the conflict view fold disjoint ledger slices. A re-observed
+    divergence (a higher-`id` conflict event) supersedes the earlier one, exactly as
+    `latest_events` keeps the latest verify verdict. An item carrying *only* a
+    conflict event appears here yet stays absent from `latest_events` (its drift
+    posture reads `unverified` — never re-checked).
+    """
+    rows = _query_events(
+        db_path,
+        "SELECT * FROM custody_events WHERE id IN "
+        "(SELECT MAX(id) FROM custody_events WHERE status = ? GROUP BY item_id)",
+        (CONFLICT_STATUS,),
+    )
+    return {row["item_id"]: _from_row(row) for row in rows}
+
+
+def unresolved_conflicts(
+    items: list[ScrollItem], conflicts: dict[str, CustodyEvent]
+) -> dict[str, CustodyEvent]:
+    """Held items whose latest import-conflict is still unresolved (roadmap H275).
+
+    A recorded conflict is *unresolved* while the latest `conflict` event's
+    ``observed_hash`` (the incoming capture that disagreed) still differs from the
+    held item's current ``content_hash`` — the divergence the importer surfaced has
+    not been closed. Because the held copy is never auto-overwritten (ADR 0104; raw
+    is sacred), every freshly recorded conflict is unresolved; the predicate is
+    deliberately *resolution-aware* so a future `reconcile` (roadmap H276) that
+    adopts the incoming content — the held hash becomes the observed hash — clears
+    the item with **no** special "resolved" event, exactly the `latest_events`
+    held-filter precedent (read the latest event, compare it to the current state).
+
+    Held-filtered like the drift aggregate (`doctor._check_custody_drift`): a
+    conflict on a since-deleted id is not this library's divergence, so an item
+    absent from ``{item.id for item in items}`` is excluded — and, because ``items``
+    may be a ``--source``-scoped slice, the conflict aggregate scopes by source for
+    free (a held item owns a source, so the divergence is source-attributable).
+    """
+    by_id = {item.id: item for item in items}
+    unresolved: dict[str, CustodyEvent] = {}
+    for item_id, event in conflicts.items():
+        item = by_id.get(item_id)
+        if item is not None and event.observed_hash != item.content_hash:
+            unresolved[item_id] = event
+    return unresolved
+
+
 def posture_from_status(status: str | None) -> str:
     """The reader-facing custody posture for a raw latest-verdict status.
 

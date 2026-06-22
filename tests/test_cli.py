@@ -30,6 +30,7 @@ from scrolls.maintain import (
 from scrolls.paths import get_paths
 from scrolls.items import (
     ScrollItem,
+    delete_item,
     get_item,
     insert_item,
     list_items,
@@ -3769,6 +3770,96 @@ def test_import_items_clean_reimport_records_no_event(scrolls_home, tmp_path, ca
     assert payload["unchanged"] == 1 and payload["conflict"] == 0
     # an idempotent re-import is a custody no-op — nothing recorded
     assert item_events(db, "arxiv:1706.03762") == []
+
+
+def _import_a_divergent_copy(scrolls_home, tmp_path):
+    """Seed an item, then `import items` a copy with a different content hash so the
+    held item carries one recorded (unresolved) import conflict — the H275 fixture."""
+    from scrolls.items_export import dump_items_export
+
+    seeded = _seed_rich_item(scrolls_home)
+    held = get_item(get_paths().db_path, seeded.id)
+    divergent = dataclasses.replace(
+        held, content_hash="sha256:moved", extracted_text="A different capture…"
+    )
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    assert main(["import", "items", str(out_path)]) == 0
+    return seeded
+
+
+def test_doctor_custody_conflicts_surfaces_an_unresolved_import_conflict(
+    scrolls_home, tmp_path, capsys
+):
+    """H275: `doctor`'s `custody.conflicts` is the scope-level read of the recorded
+    import-conflict events (the read-aggregate sibling of `custody.drift`). After a
+    divergent re-import, the held item carries one unresolved conflict the aggregate
+    counts and lists with held-vs-incoming hashes — and it stays a *report* view
+    (never `issues`/`fixed`/the exit code), wholly disjoint from the drift axis."""
+    _import_a_divergent_copy(scrolls_home, tmp_path)
+    capsys.readouterr()
+
+    report = run_doctor(get_paths(), fix=False)
+    conflicts = report["custody"]["conflicts"]
+    assert conflicts["basis"] == "import_ledger"
+    assert conflicts["items"] == 1
+    assert conflicts["as_of"] is not None
+    assert [e["id"] for e in conflicts["events"]] == ["arxiv:1706.03762"]
+    event = conflicts["events"][0]
+    assert event["status"] == "conflict"
+    assert event["prior_hash"] == "sha256:abc"  # the held copy (kept, never overwritten)
+    assert event["observed_hash"] == "sha256:moved"  # the incoming capture that disagreed
+
+    # the conflict axis never bleeds into the drift axis (ADR 0104) — drift is empty
+    assert report["custody"]["drift"]["checked"] == 0
+    assert report["custody"]["drift"]["drifted"] == 0
+    # and it is a report view, disjoint from the integrity-findings axis that drives
+    # `custody.issues`/`score`: a conflict is never a per-item custody *finding*
+    conflict_findings = [
+        f for f in report["custody"]["findings"] if "conflict" in f["issues"]
+    ]
+    assert conflict_findings == []
+
+
+def test_doctor_custody_conflicts_clean_library_is_empty(scrolls_home, capsys):
+    """No recorded conflict ⇒ an honest empty aggregate (the drift block's
+    zeroed-default shape), not a fabricated count."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    conflicts = run_doctor(get_paths(), fix=False)["custody"]["conflicts"]
+    assert conflicts["items"] == 0
+    assert conflicts["events"] == []
+    assert conflicts["as_of"] is None
+
+
+def test_doctor_custody_conflicts_excludes_a_since_deleted_item(
+    scrolls_home, tmp_path, capsys
+):
+    """Held-filtered like the drift block: a conflict on an id no longer held is not
+    this library's divergence, so removing the item clears the aggregate even though
+    the ledger row survives (the `latest_events` held-filter precedent)."""
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    capsys.readouterr()
+    assert run_doctor(get_paths(), fix=False)["custody"]["conflicts"]["items"] == 1
+
+    assert delete_item(get_paths().db_path, seeded.id) is True
+    conflicts = run_doctor(get_paths(), fix=False)["custody"]["conflicts"]
+    assert conflicts["items"] == 0
+    assert conflicts["events"] == []
+
+
+def test_doctor_custody_conflicts_scopes_by_source(scrolls_home, tmp_path, capsys):
+    """The aggregate folds over the (possibly `--source`-scoped) item set, so it
+    scopes by source for free — a held item owns a source, so a conflict is
+    source-attributable (unlike the cross-source `custody.works` alarm)."""
+    _import_a_divergent_copy(scrolls_home, tmp_path)
+    capsys.readouterr()
+    # the conflicting item is an arxiv capture: the matching scope sees it…
+    assert run_doctor(get_paths(), source="arxiv")["custody"]["conflicts"]["items"] == 1
+    # …a disjoint source scope sees none (no arxiv item in its frame)
+    other = run_doctor(get_paths(), source="github")["custody"]["conflicts"]
+    assert other["items"] == 0
+    assert other["events"] == []
 
 
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):

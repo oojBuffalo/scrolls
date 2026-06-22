@@ -520,6 +520,96 @@ def test_item_history_status_filters_to_conflict_events(tmp_path):
     ]
 
 
+# --- the conflict aggregate primitives (the doctor `custody.conflicts` read, H275) ---
+
+
+def test_latest_conflict_events_reads_the_max_id_per_item_over_conflict_rows(tmp_path):
+    # the conflict-axis sibling of `latest_events`: it folds the MAX(id) per item
+    # over the *conflict* rows only, so a re-observed divergence (a higher-id
+    # conflict event) supersedes the earlier one. The two axes never mix.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h2", now="2026-06-20T00:00:00+00:00"
+        ),
+    ])
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h3", now="2026-06-22T00:00:00+00:00"
+        ),
+        custody.conflict_event(
+            "web:b", held_hash="x", incoming_hash="y", now="2026-06-22T00:00:00+00:00"
+        ),
+    ])
+    latest = custody.latest_conflict_events(db_path)
+    assert set(latest) == {"web:a", "web:b"}
+    # the later (higher-id) conflict event wins for web:a
+    assert latest["web:a"].observed_hash == "h3"
+    assert latest["web:b"].observed_hash == "y"
+
+
+def test_latest_conflict_events_ignores_verify_verdicts(tmp_path):
+    # a drift/unchanged verdict is on the *other* axis — it never appears in the
+    # conflict read (the mirror of `latest_events` ignoring conflict rows).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-20T00:00:00+00:00", "drifted", "h", "h2"),
+    ])
+    assert custody.latest_conflict_events(db_path) == {}
+
+
+def test_unresolved_conflicts_keeps_a_held_divergence(tmp_path):
+    # a held item whose latest conflict's observed_hash still differs from the held
+    # copy's current content_hash is *unresolved* — the divergence the importer
+    # surfaced has not been closed (the held copy is never auto-overwritten).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-22T00:00:00+00:00",
+        ),
+    ])
+    items = [_item("web:a", content_hash="held")]
+    unresolved = custody.unresolved_conflicts(items, custody.latest_conflict_events(db_path))
+    assert set(unresolved) == {"web:a"}
+    assert unresolved["web:a"].observed_hash == "incoming"
+
+
+def test_unresolved_conflicts_clears_when_the_held_copy_now_matches_the_incoming(tmp_path):
+    # the resolution-aware predicate (the decision the slice resolves, ADR 0104): if
+    # the held copy's current content_hash equals the latest conflict's observed_hash
+    # — a future `reconcile` adopted the incoming content — the divergence is closed
+    # with *no* special "resolved" event (the `latest_events` held-filter precedent).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-22T00:00:00+00:00",
+        ),
+    ])
+    # the held copy now carries what was the incoming hash → resolved
+    items = [_item("web:a", content_hash="incoming")]
+    assert custody.unresolved_conflicts(items, custody.latest_conflict_events(db_path)) == {}
+
+
+def test_unresolved_conflicts_excludes_a_since_deleted_item(tmp_path):
+    # held-filtered like the drift aggregate: a conflict on an id no longer held is
+    # not this library's divergence (so a `--source` slice scopes the read for free).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-22T00:00:00+00:00",
+        ),
+    ])
+    assert custody.unresolved_conflicts([], custody.latest_conflict_events(db_path)) == {}
+
+
 # --- last_checked primitive (the time axis of the per-item picture, H84) ---
 
 

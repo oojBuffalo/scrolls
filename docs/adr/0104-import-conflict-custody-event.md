@@ -121,10 +121,21 @@ importers where `content_hash` is model-complete.
   deferred for `verify` ("re-capture-on-accept"). The conflict event gives that
   future slice a queryable home to act on.
 
-- **A `doctor` conflict aggregate.** `doctor` aggregates verify drift into
+- **A `doctor` conflict aggregate.** ~~`doctor` aggregates verify drift into
   `custody.drift`; a parallel `custody.conflicts` roll-up (how many items carry an
   unresolved import conflict) is a natural next read but waits on a workflow that
-  needs the scope-level count rather than the per-item `history`.
+  needs the scope-level count rather than the per-item `history`.~~ **Shipped
+  (roadmap H275).** `scrolls doctor` (and the MCP `get_library_health` twin, for
+  free) now carries `custody.conflicts` `{basis, as_of, items, events}` — the
+  read-aggregate sibling of `custody.drift`. A conflict is counted **unresolved**
+  while the *latest* conflict event's `observed_hash` still differs from the held
+  copy's current `content_hash` (the resolution-aware predicate: a future
+  `reconcile` that adopts the incoming content clears it with no special "resolved"
+  event — the `latest_events` held-filter precedent). Held-filtered and
+  `--source`-scopable like the drift block; a **report view only**, never
+  `issues`/`fixed`/the exit code. `latest_conflict_events` reads only the `conflict`
+  rows and `latest_events` only the verify verdicts, so the two axes stay disjoint
+  by construction. A readable `_Conflicts:_` briefing line is the next adjacent read.
 
 - **Bi-temporal storage.** The event records *observed-at-import* via `checked_at`
   and the two hashes; a richer captured-at vs source-changed-at schema stays

@@ -1023,6 +1023,11 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             "coverage": {"verified": 0, "total": 1},
             "events": [],
         },
+        "conflicts": {
+            # no recorded import conflict — the honest all-zero aggregate, the
+            # read-aggregate sibling of the drift block (H275, ADR 0104)
+            "basis": "import_ledger", "as_of": None, "items": 0, "events": [],
+        },
         "enrichment": {
             # the seeded item carries no engine classification, so nothing to
             # measure for ruleset staleness — an honest, all-zero block

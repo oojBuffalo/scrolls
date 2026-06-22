@@ -135,6 +135,59 @@ The earlier *surface, don't overwrite* primitive remains tested by
 `tests/test_cli.py`; `test_import_bundle_surfaces_a_content_conflict` and the
 dry-run-prediction / within-bundle-dup siblings in `tests/test_bundle.py`.
 
-A reviewed `reconcile` resolution (choose a winner, record the supersession) and
-a `doctor` scope-level conflict aggregate remain deferred (ADR 0104): detection
-ships first, the obsidian *surface, don't rewrite* posture.
+## Shipped: a `doctor` scope-level conflict aggregate (H275, ADR 0104)
+
+Recording each conflict per-item (H274) gives a queryable per-item history, but
+an operator who merged several peer bundles had **no library-scope view** — no
+way to ask "how many of my held items carry an unresolved import conflict, and
+which?" without scanning every item's `history`. `scrolls doctor` now carries a
+`custody.conflicts` block — the **read-aggregate sibling of `custody.drift`**,
+over the *other* provenance-of-divergence axis:
+
+```jsonc
+"conflicts": {
+  "basis": "import_ledger",   // read from the recorded conflict events, not live
+  "as_of": "2026-06-22T…",    // the freshest unresolved conflict's checked_at (null if none)
+  "items": 1,                 // currently-held items carrying an unresolved conflict
+  "events": [                 // the latest unresolved conflict per affected held item
+    {"id": "web:demo", "status": "conflict", "checked_at": "…",
+     "prior_hash": "sha256:held", "observed_hash": "sha256:moved"}
+  ]
+}
+```
+
+The design decision the slice resolves: a conflict is **unresolved** while the
+*latest* conflict event's `observed_hash` (the incoming capture that disagreed)
+still differs from the held copy's current `content_hash`. The held copy is never
+auto-overwritten (ADR 0104; raw is sacred), so every recorded conflict is
+unresolved today — but the predicate is deliberately **resolution-aware**: a
+future `reconcile` (H276) that adopts the incoming content (the held hash becomes
+the observed hash) clears the item with **no** special "resolved" event, exactly
+the `latest_events` held-filter precedent (read the latest event, compare to the
+current state). Held-filtered like the drift block — a conflict on a since-deleted
+id is not this library's divergence — so the count `doctor` reports is exactly the
+set a `reconcile` would act on, and a `--source` audit scopes the aggregate for
+free (a held item owns a source, so an import conflict is source-attributable,
+unlike the cross-source `custody.works` alarm).
+
+It is a **report view only** (custody §2.4): like the drift block it never feeds
+the structural `issues`/`fixed` or the exit code — `doctor` cannot repair a
+divergence it must not silently overwrite. The two ledger axes never mix:
+`latest_conflict_events` reads only the `conflict` rows, `latest_events` only the
+verify verdicts, so a conflict never inflates `custody.drift` and a drift verdict
+never appears here. The MCP `get_library_health` twin carries it for free (the
+tool returns `run_doctor`'s whole custody block), converging field-for-field with
+the CLI `doctor` by construction.
+
+Tested: `test_latest_conflict_events_reads_the_max_id_per_item_over_conflict_rows`
+and `test_unresolved_conflicts_clears_when_the_held_copy_now_matches_the_incoming`
+(the primitives, incl. the resolution-aware clear) and their siblings in
+`tests/test_custody.py`;
+`test_doctor_custody_conflicts_surfaces_an_unresolved_import_conflict` and the
+clean/held-filter/source-scope siblings in `tests/test_cli.py`;
+`test_get_library_health_carries_the_conflicts_aggregate` in `tests/test_mcp.py`.
+
+A reviewed `reconcile` resolution (choose a winner, record the supersession)
+remains deferred (ADR 0104, roadmap H276): detection → read ship first, the
+obsidian *surface, don't rewrite* posture; a readable `_Conflicts:_` briefing line
+is the next adjacent read.
