@@ -77,12 +77,32 @@ RESOLVED_STATUS = "resolved"
 # The human detail stamped on a resolution event — self-describing on the timeline.
 _RESOLVED_DETAIL = "import conflict resolved: held copy affirmed (keep-held)"
 
-# The conflict axis: an import divergence (`conflict`) and its operator resolution
-# (`resolved`). `latest_conflict_events` reads the MAX(id) over this axis so a
-# resolution supersedes the conflict it closes, exactly as a re-observed conflict
-# supersedes an earlier one. Disjoint from the verify verdicts the drift posture
-# folds (`CUSTODY_STATUSES`) — ADR 0104/0105.
-CONFLICT_AXIS_STATUSES = (CONFLICT_STATUS, RESOLVED_STATUS)
+# The operator-driven *adoption* of a diverging incoming capture (roadmap H278):
+# `scrolls import … --accept-incoming` replaces the held copy with the peer's
+# capture — the first import-path write that changes a held capture (ADR 0106).
+# Like `RESOLVED_STATUS` it is a *conflict-axis* event that supersedes the open
+# conflict it closes, but the two are distinct decisions: `resolved` affirms the
+# held copy (no content change), `superseded` adopts the incoming one (the held
+# content becomes the incoming, the prior capture archived for recovery — raw is
+# never destroyed, custody §2.4). `prior_hash` is the *archived* prior copy (now
+# recoverable via `scrolls archive show`), `observed_hash` the adopted incoming
+# copy (the new held content), so once recorded the held `content_hash` equals the
+# event's `observed_hash` — the H275 hash gate clears it too (both gates agree).
+SUPERSEDED_STATUS = "superseded"
+
+# The human detail stamped on a supersession event — self-describing on the timeline.
+_SUPERSEDED_DETAIL = (
+    "import conflict resolved: incoming capture adopted (accept-incoming); "
+    "prior copy archived"
+)
+
+# The conflict axis: an import divergence (`conflict`) and the two operator
+# resolutions that supersede it — affirm the held copy (`resolved`, ADR 0105) or
+# adopt the incoming one (`superseded`, ADR 0106). `latest_conflict_events` reads
+# the MAX(id) over this axis so the latest decision wins, exactly as a re-observed
+# conflict supersedes an earlier one. Disjoint from the verify verdicts the drift
+# posture folds (`CUSTODY_STATUSES`) — ADR 0104/0105/0106.
+CONFLICT_AXIS_STATUSES = (CONFLICT_STATUS, RESOLVED_STATUS, SUPERSEDED_STATUS)
 
 # Every status that can appear in a ledger row — the four verify verdicts plus the
 # two conflict-axis events (import `conflict` and its `resolved` supersession). The
@@ -276,6 +296,54 @@ def resolution_event(
         prior_hash=held_hash,
         observed_hash=incoming_hash,
         detail=_RESOLVED_DETAIL,
+    )
+
+
+def supersession_event(
+    item_id: str,
+    *,
+    prior_hash: str | None,
+    incoming_hash: str | None,
+    now: str,
+) -> CustodyEvent:
+    """Build the custody event recording an accept-incoming adoption (H278).
+
+    The adopt-axis counterpart of `resolution_event`: where keep-held affirms the
+    held copy without touching content, accept-incoming *adopts* the peer's
+    capture — the held content is replaced by the incoming one and the prior copy
+    is archived (ADR 0106). Pure and deterministic given `now`, like every other
+    event builder, so the construction is testable without a clock; the CLI edge
+    stamps the wall time and performs the archive+replace transaction.
+
+    It reuses the verify-event field semantics verbatim, so every serializer
+    (`event_payload`, `event_export_dict`) and the export/import round-trip carry
+    it with no special-casing:
+
+    - ``prior_hash`` = the *archived* prior copy's `content_hash` — what we held
+      before the adoption (now recoverable via `scrolls archive show`, never
+      destroyed — custody §2.4);
+    - ``observed_hash`` = the *adopted* incoming `content_hash` — what we hold now,
+      so ``history --status superseded`` reads "I replaced ``prior_hash`` with
+      ``observed_hash`` (and kept ``prior_hash`` recoverable)".
+
+    ``status`` is `SUPERSEDED_STATUS`, a *conflict-axis* status outside the verify
+    verdicts: it rides the per-item `scrolls history` timeline and **supersedes**
+    the open `conflict` it closes (`latest_conflict_events` reads the MAX(id) over
+    the conflict axis), yet never enters the drift posture `latest_events` derives
+    (it reads only `CUSTODY_STATUSES`) — the ADR 0104 isolation, kept on the adopt
+    axis. Because the held content is now the incoming, the held `content_hash`
+    equals this event's ``observed_hash``, so `unresolved_conflicts` clears the
+    item on *both* gates (the status gate — latest axis event is not a `conflict` —
+    and the hash gate). The original `conflict` event, if any, is never removed
+    (append-only); this is a new row, so the divergence stays on the timeline.
+    """
+    return CustodyEvent(
+        item_id=item_id,
+        checked_at=now,
+        status=SUPERSEDED_STATUS,
+        prior_hash=prior_hash,
+        observed_hash=incoming_hash,
+        detail=_SUPERSEDED_DETAIL,
     )
 
 
@@ -740,13 +808,17 @@ def unresolved_conflicts(
     paths coexist, both folded over the *latest* conflict-axis event
     (`latest_conflict_events`, read the latest event vs. the current state):
 
-    - the **explicit-resolution** path (H276): the latest event is a `resolved`
-      (`reconcile <id> --keep-held` — the operator affirmed the held copy), skipped
-      on the *status gate* regardless of its hashes; and
-    - the **hash** path (H275, the future `--accept-incoming`): the latest event is
-      still a `conflict` but the held copy's current ``content_hash`` now equals its
-      ``observed_hash`` (the incoming content was adopted), skipped on the *hash
-      gate* with no special event — the `latest_events` held-filter precedent.
+    - the **explicit-resolution** path (H276/H278): the latest event is a
+      `resolved` (`reconcile <id> --keep-held` — the operator affirmed the held
+      copy) or a `superseded` (`import … --accept-incoming` — the operator adopted
+      the incoming copy), skipped on the *status gate* regardless of its hashes
+      (the gate keeps an item only while its latest axis event is a `conflict`); and
+    - the **hash** path (H275): the latest event is still a `conflict` but the held
+      copy's current ``content_hash`` now equals its ``observed_hash`` (the incoming
+      content was adopted), skipped on the *hash gate* — the `latest_events`
+      held-filter precedent. After an `--accept-incoming` adoption *both* gates
+      agree: the latest axis event is a `superseded` (status gate) and the held
+      hash equals the adopted hash (hash gate).
 
     Because the held copy is never auto-overwritten (ADR 0104; raw is sacred), a
     freshly recorded conflict is unresolved until one of these closes it — and a

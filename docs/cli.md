@@ -6,7 +6,7 @@ consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
 Every example below is real output captured from `scrolls 0.1.0`
-(schema version 7) on this branch — see
+(schema version 8) on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
 `tests/test_cli.py`.
@@ -1466,10 +1466,10 @@ act, not an ambient MCP capability — like `verify`.
 
 `--keep-held` is **required**: a bare `reconcile <id>` is a loud usage error (exit
 2, nothing written) because the resolution is a decision, not a default. (The
-sibling `--accept-incoming` — *adopt* the peer's capture — is **deferred**: the
-conflict event records only the incoming *hash*, never the incoming content, so
-adopting it requires re-supplying the content plus custody-safe prior-content
-archival — the first import-path write that changes a held capture, ADR 0105.)
+sibling resolution — *adopt* the peer's capture — is the **import-path**
+`import items`/`import bundle --accept-incoming` below, not a `reconcile` flag: at
+`reconcile` time the incoming content is gone, only its hash was recorded, so
+adopting it must re-supply the content at merge time, ADR 0105/0106.)
 
 The command is **idempotent** and **dry-run-able**. A second `reconcile
 --keep-held` after a resolution is an honest no-op (`{"resolved": false, "reason":
@@ -1499,6 +1499,42 @@ $ scrolls reconcile web:demo                          # a resolution is required
 {"error": "reconcile needs a resolution: --keep-held (affirm the held copy). --accept-incoming (adopt the peer's capture) is deferred — the incoming content is not retained (ADR 0105)"}
 [exit 2]
 ```
+
+### `scrolls archive list [--id <id>]`
+
+The **recovery index** for the accept-incoming resolution (ADR 0106, cited tests in
+`tests/test_cli.py`). When `import items`/`import bundle --accept-incoming` adopts a
+peer's diverging capture, the held copy it replaced is **archived first** — raw is
+never destroyed (custody §2.4) — and `archive list` is how you see what was
+superseded: each prior capture's item id, its `content_hash` (`prior_hash`), the
+incoming hash that replaced it (`superseded_by`), and when. Newest first; `--id`
+(an id or its URL) scopes to one item. Lightweight metadata only — the
+model-complete prior snapshot is fetched on demand by `archive show`. A library that
+never adopted anything honestly holds nothing (`{"count": 0, "archived": []}`).
+
+```console
+$ scrolls archive list
+{"count": 1, "archived": [{"item_id": "web:demo", "prior_hash": "sha256:9c20…", "superseded_by": "sha256:7b41…", "archived_at": "2026-06-22T17:19:13+00:00"}]}
+[exit 0]
+```
+
+### `scrolls archive show <id>`
+
+**Recovers** one item's latest archived prior capture, emitting it as a
+re-importable `export items` JSONL line on stdout (ADR 0106). Because the line is
+the model-complete snapshot, restoring the prior copy is the **symmetric round-trip**
+— pipe it back through `import items --accept-incoming` and the held copy is the
+original again (the incoming archived in turn):
+
+```console
+$ scrolls archive show web:demo | scrolls import items /dev/stdin --accept-incoming
+{"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": ["web:demo"], "conflicts": [], "items": 1}
+[exit 0]
+```
+
+An id with no archived prior (never superseded) or an unknown id is a loud
+could-not-recover (exit 1), the `verify`/`reconcile` empty-vs-error split. Like
+`reconcile`, `archive` is **CLI-only** — recovery is an explicit operator act.
 
 ### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend] [--source S]`
 
@@ -2224,29 +2260,53 @@ peer disagreeing is no evidence the live *source* moved — the M2 honesty). A c
 re-import records nothing (`test_import_items_records_a_conflict_as_a_custody_event`,
 `test_import_items_clean_reimport_records_no_event`).
 
+**`--accept-incoming` *adopts* the diverging copy** (roadmap H278, ADR 0106) — the
+content-bearing resolution `reconcile` cannot do (at `reconcile` time the incoming
+content is gone, only its hash was recorded; the import path has it in hand). On a
+conflict it **replaces** the held copy with the incoming one and records a
+`superseded` conflict-axis event — the *first import-path write that changes a held
+capture*. It stays custody-safe: the prior copy is **archived first** (recoverable
+via `scrolls archive show`, never destroyed — custody §2.4), and the adoption clears
+the conflict across `doctor`/`status`/the `_Conflicts:_` line (both the status gate —
+the latest axis event is now `superseded` — and the hash gate — the held copy *is*
+the incoming). Opt-in (without the flag a conflict is surfaced and the held copy
+kept), **idempotent** by construction (a re-import of an already-adopted capture is
+`unchanged` — the held copy now equals the incoming), and loud on stderr (a held
+copy was replaced). The adopted ids ride the structured `adopted` list
+(`test_import_items_accept_incoming_adopts_and_archives_the_prior`,
+`test_import_items_accept_incoming_clears_the_conflict_aggregate`,
+`test_import_items_accept_incoming_is_idempotent`).
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new items inserted |
 | `skipped` | already present and not inserted (`== unchanged + conflict`) |
 | `unchanged` | skipped: held copy has the same `content_hash` (idempotent) |
 | `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept) |
-| `conflicts` | the distinct ids whose held copy diverged (sorted, uncapped) |
+| `conflicts` | the distinct ids whose held copy diverged and was *kept* (sorted, uncapped) |
+| `adopted` | the distinct ids whose held copy was *replaced* by the incoming under `--accept-incoming` (prior archived); `[]` otherwise |
 | `items` | item records read from the file (blank lines excluded) |
 
 ```console
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 6, "skipped": 0, "unchanged": 0, "conflict": 0, "conflicts": [], "items": 6}
+{"imported": 6, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": [], "conflicts": [], "items": 6}
 [exit 0]
 
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 0, "skipped": 6, "unchanged": 6, "conflict": 0, "conflicts": [], "items": 6}
+{"imported": 0, "skipped": 6, "unchanged": 6, "conflict": 0, "adopted": [], "conflicts": [], "items": 6}
 [exit 0]
 
 # an incoming copy of a held id with different captured content — surfaced,
 # not silently dropped; the held copy is kept (custody §2.4)
 $ scrolls import items /tmp/diverged.jsonl
 {"warning": "1 item(s) in this import conflict with a held copy (different content — kept the held copy, not overwritten): `github:sqlite/sqlite`"}   # stderr
-{"imported": 0, "skipped": 1, "unchanged": 0, "conflict": 1, "conflicts": ["github:sqlite/sqlite"], "items": 1}
+{"imported": 0, "skipped": 1, "unchanged": 0, "conflict": 1, "adopted": [], "conflicts": ["github:sqlite/sqlite"], "items": 1}
+[exit 0]
+
+# adopt the diverging copy instead — the held copy is replaced, the prior archived
+$ scrolls import items /tmp/diverged.jsonl --accept-incoming
+{"warning": "1 held copy(ies) replaced by the incoming capture (accept-incoming — prior archived, recoverable via `scrolls archive show`): `github:sqlite/sqlite`"}   # stderr
+{"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": ["github:sqlite/sqlite"], "conflicts": [], "items": 1}
 [exit 0]
 ```
 
@@ -2643,6 +2703,18 @@ the conflict but, being read-only, records nothing
 (`test_import_bundle_records_a_conflict_as_a_custody_event`,
 `test_import_bundle_dry_run_records_no_conflict_event`).
 
+**`--accept-incoming` *adopts* the diverging bundle copy** (roadmap H278, ADR 0106),
+exactly as `import items --accept-incoming` does (the shared `_merge_items`): on a
+conflict the held copy is **replaced** by the bundle's, its prior capture **archived
+first** (recoverable via `scrolls archive show`, never destroyed — custody §2.4), and
+a `superseded` event clears the conflict across `doctor`/`status`/the `_Conflicts:_`
+line. The adopted ids ride a structured `adopted` list; it composes with `--dry-run`,
+which then **predicts** the held→incoming adoptions and writes nothing (the
+predict-the-write discipline on the adopt axis). Opt-in and idempotent — a re-import
+of an already-adopted bundle is `unchanged`
+(`test_import_bundle_accept_incoming_adopts_and_archives`,
+`test_import_bundle_dry_run_accept_incoming_predicts_without_writing`).
+
 The importer also restores the bundle's **custody-events block** (roadmap H67)
 into the target's verify ledger, deduped by content — the 5-tuple
 `(item_id, checked_at, status, prior_hash, observed_hash)`, *not* the
@@ -2724,7 +2796,8 @@ the real import stays terse
 | `skipped` | already present and not inserted (`== unchanged + conflict`, H273) |
 | `unchanged` | skipped: held copy has the **same** `content_hash` (an idempotent re-import, H273) |
 | `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept, H273) |
-| `conflicts` | the distinct ids whose held copy diverged from the incoming bundle row — sorted, deduped, uncapped (H273); `[]` on a clean import |
+| `conflicts` | the distinct ids whose held copy diverged from the incoming bundle row and was *kept* — sorted, deduped, uncapped (H273); `[]` on a clean import |
+| `adopted` | the distinct ids whose held copy was *replaced* by the incoming bundle row under `--accept-incoming` (prior archived, H278); `[]` otherwise |
 | `items` | scroll records read from the custody block |
 | `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |

@@ -7,10 +7,13 @@ import pytest
 from scrolls.db import init_db
 from scrolls.items import (
     ScrollItem,
+    adopt_incoming,
     delete_item,
     get_item,
     insert_item,
+    latest_archived,
     library_counts,
+    list_archived,
     list_items,
     make_item_id,
     replace_items,
@@ -296,3 +299,90 @@ def test_library_counts_scopes_to_one_source(db_path):
         "by_source": {},
         "unclassified": 0,
     }
+
+
+# --- prior-content archive + accept-incoming adoption (ADR 0106) -------------
+
+
+def test_adopt_incoming_replaces_the_held_copy_and_archives_the_prior(db_path):
+    # the one custody-safe overwrite (H278): the held body becomes the incoming
+    # one, while the prior capture is archived (recoverable), not destroyed.
+    prior = make_item(id="web:a", source="web", source_id=None,
+                      url="https://a.example", raw_text="OLD body",
+                      content_hash="sha256:old", stage="rendered")
+    insert_item(db_path, prior)
+    incoming = dataclasses.replace(prior, raw_text="NEW body", content_hash="sha256:new")
+
+    returned = adopt_incoming(db_path, incoming, archived_at="2026-06-22T00:00:00+00:00")
+
+    # the held row now carries the incoming content
+    held = get_item(db_path, "web:a")
+    assert held.raw_text == "NEW body" and held.content_hash == "sha256:new"
+    # the prior is returned (so the caller can record the supersession event)
+    assert returned.content_hash == "sha256:old"
+    # …and archived, recoverable byte-for-byte
+    recovered = latest_archived(db_path, "web:a")
+    assert recovered == prior
+
+
+def test_adopt_incoming_records_an_archive_index_entry(db_path):
+    prior = make_item(id="web:a", source="web", source_id=None,
+                      url="https://a.example", content_hash="sha256:old",
+                      raw_text="x", stage="rendered")
+    insert_item(db_path, prior)
+    incoming = dataclasses.replace(prior, content_hash="sha256:new", raw_text="y")
+    adopt_incoming(db_path, incoming, archived_at="2026-06-22T00:00:00+00:00")
+
+    entries = list_archived(db_path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.item_id == "web:a"
+    assert entry.prior_hash == "sha256:old"
+    assert entry.superseded_by == "sha256:new"
+    assert entry.archived_at == "2026-06-22T00:00:00+00:00"
+
+
+def test_adopt_incoming_is_a_no_op_for_an_absent_id(db_path):
+    # defensive: nothing held to supersede → no archive row, no write, returns None
+    incoming = make_item(id="web:ghost", source="web", source_id=None,
+                         url="https://ghost.example", content_hash="sha256:x")
+    assert adopt_incoming(db_path, incoming,
+                          archived_at="2026-06-22T00:00:00+00:00") is None
+    assert get_item(db_path, "web:ghost") is None
+    assert list_archived(db_path) == []
+
+
+def test_archive_round_trip_restores_the_prior_capture(db_path):
+    # the symmetric recovery the whole design rests on: adopt B over A (A archived),
+    # then adopt the archived A back over B — the held copy is A again, B archived.
+    a = make_item(id="web:a", source="web", source_id=None, url="https://a.example",
+                  raw_text="A body", content_hash="sha256:a", stage="rendered")
+    b = dataclasses.replace(a, raw_text="B body", content_hash="sha256:b")
+    insert_item(db_path, a)
+    adopt_incoming(db_path, b, archived_at="2026-06-22T00:00:00+00:00")
+    assert get_item(db_path, "web:a").content_hash == "sha256:b"
+
+    recovered_a = latest_archived(db_path, "web:a")  # the archived prior == A
+    adopt_incoming(db_path, recovered_a, archived_at="2026-06-22T01:00:00+00:00")
+    assert get_item(db_path, "web:a") == a  # held copy is A again, byte-for-byte
+    # both directions retained: two archive rows now (A, then B)
+    assert [e.prior_hash for e in list_archived(db_path)] == ["sha256:b", "sha256:a"]
+
+
+def test_list_archived_filters_by_item_id(db_path):
+    for ident in ("web:a", "web:b"):
+        prior = make_item(id=ident, source="web", source_id=None,
+                          url=f"https://{ident}.example", content_hash="sha256:old",
+                          raw_text="x", stage="rendered")
+        insert_item(db_path, prior)
+        adopt_incoming(db_path, dataclasses.replace(prior, content_hash="sha256:new",
+                                                    raw_text="y"),
+                       archived_at="2026-06-22T00:00:00+00:00")
+    assert {e.item_id for e in list_archived(db_path)} == {"web:a", "web:b"}
+    assert [e.item_id for e in list_archived(db_path, item_id="web:a")] == ["web:a"]
+
+
+def test_latest_archived_returns_none_for_a_never_superseded_id(db_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", content_hash="sha256:x"))
+    assert latest_archived(db_path, "web:a") is None

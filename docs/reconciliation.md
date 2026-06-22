@@ -313,10 +313,11 @@ untouched, idempotent re-run, `--dry-run` predicts without recording, a missing
 resolution flag is exit 2, an unknown id is exit 1, a no-conflict held item is a
 no-op, the `conflict` row survives on `history` beside the `resolved` row).
 
-**Deferred:** `--accept-incoming` (a content-bearing, re-import-driven supersession
-with prior-content archival — the first held-capture write) and an MCP `reconcile`
-twin. With keep-held the conflict-on-import theme is complete on the detect → read
-→ **resolve** arc for the safe direction.
+**Deferred at the time:** `--accept-incoming` (a content-bearing, re-import-driven
+supersession with prior-content archival — the first held-capture write) and an MCP
+`reconcile` twin. With keep-held the conflict-on-import theme was complete on the
+detect → read → **resolve** arc for the safe direction; `--accept-incoming` then
+shipped (H278, ADR 0106 — see below), closing both resolution directions.
 
 ## Shipped: a conflict scalar on `scrolls status`'s JSON custody snapshot (H279)
 
@@ -357,3 +358,70 @@ honest `0` on a clean library, source-scopes to the conflicting source);
 `--history` / `--trend` treatment of the conflict scalar and a readable
 `_Conflicts:_` line on the `maintain` report. The scalar is recorded in the
 snapshot today but not yet differenced.
+
+## Shipped: `--accept-incoming` — the content-bearing resolution that *adopts* the peer's capture (H278, ADR 0106)
+
+`reconcile --keep-held` (H276) shipped the **safe** direction — affirm the held
+copy. The other direction, **adopt the peer's capture**, was deferred (ADR 0105)
+for a concrete reason: the conflict event records only *hashes*, never the incoming
+*content* (the importer discarded the bytes — the held copy was never overwritten),
+so at `reconcile` time the incoming content is gone. Adopting it must **re-supply**
+the content — which is in hand only at the **merge**. So `--accept-incoming` is an
+**import-path** flag, not a `reconcile` flag:
+
+```bash
+scrolls import items <file>  --accept-incoming             # adopt diverging items
+scrolls import bundle <file> --accept-incoming             # adopt diverging bundle scrolls
+scrolls import bundle <file> --accept-incoming --dry-run   # predict the adoptions, write nothing
+```
+
+On a content conflict, `--accept-incoming` **replaces** the held copy with the
+incoming one and records a `superseded` conflict-axis event — the *first
+import-path write that changes a held capture*. It stays custody-safe because **raw
+is sacred** (§2.4): the prior copy is **archived first** into the new `item_archive`
+table (schema v8), recoverable, never destroyed. The adoption clears the conflict
+across every surface at once (`doctor`'s `custody.conflicts`, the `_Conflicts:_`
+line on both bundle forms + `context`, `status`'s scalar, the MCP twin) because the
+held copy now *is* the incoming and the latest conflict-axis event is a `superseded`
+— both gates of the shared `unresolved_conflicts` predicate agree.
+
+The decisive design choices (ADR 0106):
+
+- **The archive, not an overwrite.** `items.adopt_incoming` snapshots the prior row
+  (model-complete `item_to_dict` JSON) into `item_archive` and updates the items row
+  in **one transaction** (archive before replace, so a crash never loses the prior).
+  The `superseded` event records `prior_hash` (the archived copy) and `observed_hash`
+  (the adopted incoming), staying off the drift axis (the ADR 0104 isolation).
+- **Idempotent by construction.** Once adopted, the held copy equals the incoming, so
+  a re-import is `unchanged` — no second archive, no second event, no special-casing.
+- **Recovery is symmetric.** `scrolls archive list` is the recovery index (the prior
+  captures an adoption replaced, with before/after hashes); `scrolls archive show
+  <id>` re-emits the latest archived prior as a re-importable `export items` line, so
+  restoring it is just `archive show <id> | import items /dev/stdin
+  --accept-incoming` — accept-incoming of the archived snapshot re-adopts the prior
+  (archiving the current copy in turn).
+- **Opt-in, loud, CLI-only.** Without the flag a conflict is surfaced and the held
+  copy kept (the H272–H274 default); with it, the adoption rides a structured
+  `adopted` list and a loud stderr warning (a held copy was replaced). Like
+  `verify`/`reconcile`, the write and its recovery are operator-gated, not ambient MCP.
+
+The archive is a **local recovery store**, not part of the lossless round-trip: the
+`superseded` event travels in `export items`/`export bundle` (documenting the
+adoption and its prior hash), while the archived prior *bytes* stay local (carrying
+them in bundles is a deferred extension).
+
+Tested: `tests/test_db.py` (the v8 migration preserves the ledger);
+`tests/test_custody.py` (the `supersession_event` shape + serializer round-trip, off
+the drift axis, supersedes the conflict, clears `unresolved_conflicts` on both
+gates); `tests/test_items.py` (`adopt_incoming` archives + replaces atomically, the
+`list_archived`/`latest_archived` recovery reads, the symmetric round-trip);
+`tests/test_cli.py` (`import items --accept-incoming` adopts + archives + records +
+clears the aggregate, idempotent, `archive list`/`show`, the show→import restore);
+`tests/test_bundle.py` (`import bundle --accept-incoming` adopts, the dry-run
+predicts without writing).
+
+**Deferred:** the archive in portable bundles, an MCP accept-incoming / `archive`
+twin, `archive prune` / retention, and `archive show --all` / restore-by-version.
+With `--accept-incoming` the conflict-on-import theme is complete on **both**
+resolution directions — keep-held and accept-incoming — across detect → read →
+resolve.

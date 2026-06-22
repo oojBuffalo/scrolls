@@ -24,7 +24,14 @@ from scrolls.custody import (
     record_events,
 )
 from scrolls.doctor import run_doctor
-from scrolls.items import ScrollItem, get_item, insert_item, item_to_dict
+from scrolls.items import (
+    ScrollItem,
+    get_item,
+    insert_item,
+    item_to_dict,
+    latest_archived,
+    list_archived,
+)
 from scrolls.kb import ConceptSummary, save_concept_summary
 from scrolls.kb_llm import ENGINE as SUMMARY_ENGINE
 from scrolls.kb_llm import members_hash
@@ -1921,6 +1928,7 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         # no-op (`unchanged`), not a `conflict` (H273)
         "unchanged": 1,
         "conflict": 0,
+        "adopted": [],
         "conflicts": [],
         "items": 2,
         # the reviewable id lists (H226) — dry-run-only, alongside `dry_run`
@@ -2265,6 +2273,7 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
         # idempotent `unchanged` no-ops, none a `conflict` (H273)
         "unchanged": 3,
         "conflict": 0,
+        "adopted": [],
         "conflicts": [],
         "items": 4,
         "events": {
@@ -2352,6 +2361,86 @@ def test_import_bundle_surfaces_a_content_conflict(scrolls_home, tmp_path, capsy
     warning = json.loads(err)
     assert "wikipedia:en:SQLite" in warning["warning"]
     assert "conflict" in warning["warning"].lower()
+
+
+def test_import_bundle_accept_incoming_adopts_and_archives(scrolls_home, tmp_path, capsys):
+    # H278: `import bundle --accept-incoming` adopts a peer's diverging capture — the
+    # held copy is replaced by the bundle's, the prior archived (recoverable, never
+    # destroyed), recorded as a `superseded` event that clears the conflict surfaces.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--accept-incoming"]) == 0
+    out, err = capsys.readouterr()
+    report = json.loads(out)
+    assert report["adopted"] == ["wikipedia:en:SQLite"]
+    assert report["conflict"] == 0 and report["conflicts"] == []
+    # the held copy now carries the bundle's content (the adoption happened)
+    adopted = get_item(db, "wikipedia:en:SQLite")
+    assert adopted.content_hash == "sha256:moved"
+    assert adopted.extracted_text == "A different, later capture."
+    # …recorded as a `superseded` event; the prior is archived, recoverable
+    assert [e.status for e in item_events(db, "wikipedia:en:SQLite")] == ["superseded"]
+    recovered = latest_archived(db, "wikipedia:en:SQLite")
+    assert recovered.content_hash == "sha256:held"
+    assert recovered.extracted_text == "The original capture."
+    # the conflict aggregate clears (both gates agree) — never on the drift axis
+    report_doctor = run_doctor(get_paths(), fix=False)
+    assert report_doctor["custody"]["conflicts"]["items"] == 0
+    assert report_doctor["custody"]["drift"]["checked"] == 0
+    # loud on stderr — a held copy was replaced
+    assert "wikipedia:en:SQLite" in json.loads(err)["warning"]
+
+
+def test_import_bundle_dry_run_accept_incoming_predicts_without_writing(
+    scrolls_home, tmp_path, capsys
+):
+    # the predict-the-write discipline (H245/H273) on the adopt axis: the dry-run
+    # names the held→incoming adoption set under `adopted` yet writes nothing, and
+    # the live run then adopts exactly that set.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(
+        ["import", "bundle", str(bundle_path), "--accept-incoming", "--dry-run"]
+    ) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["dry_run"] is True
+    assert preview["adopted"] == ["wikipedia:en:SQLite"]
+    assert preview["conflict"] == 0 and preview["conflicts"] == []
+    # nothing written — the held copy is byte-for-byte untouched, no archive, no event
+    assert get_item(db, "wikipedia:en:SQLite").content_hash == "sha256:held"
+    assert list_archived(db, "wikipedia:en:SQLite") == []
+    assert item_events(db, "wikipedia:en:SQLite") == []
+
+    # the live run adopts exactly what the preview predicted
+    assert main(["import", "bundle", str(bundle_path), "--accept-incoming"]) == 0
+    live = json.loads(capsys.readouterr().out)
+    assert live["adopted"] == preview["adopted"]
+    assert get_item(db, "wikipedia:en:SQLite").content_hash == "sha256:moved"
+    assert [e.status for e in item_events(db, "wikipedia:en:SQLite")] == ["superseded"]
 
 
 def test_import_bundle_dry_run_predicts_the_conflict_set(scrolls_home, tmp_path, capsys):

@@ -50,6 +50,7 @@ from scrolls.custody import (
     recheck_order,
     record_events,
     resolution_event,
+    supersession_event,
     tally_custody,
     tally_custody_by_source,
     unverified_items,
@@ -89,12 +90,15 @@ from scrolls.works import (
 )
 from scrolls.items import (
     ScrollItem,
+    adopt_incoming,
     classification_provenance,
     get_fidelity,
     get_item,
     insert_item,
     item_summary,
+    latest_archived,
     library_counts,
+    list_archived,
     list_items,
     merge_item,
     update_item,
@@ -518,6 +522,16 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="a JSONL items export written by `scrolls export items`",
     )
+    import_items_parser.add_argument(
+        "--accept-incoming",
+        dest="accept_incoming",
+        action="store_true",
+        help="On a content conflict (a held id with a different captured content), "
+        "*adopt* the incoming copy instead of keeping the held one — the held "
+        "capture is archived first (recoverable via `scrolls archive show`) and "
+        "the adoption recorded as a `superseded` custody event (ADR 0106). Opt-in; "
+        "without it a conflict is surfaced and the held copy kept",
+    )
     import_bundle_parser = import_sub.add_parser(
         "bundle",
         help="Import scrolls from a custody bundle, losslessly (JSON output)",
@@ -530,6 +544,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="preview what an import would add vs. skip, writing nothing (JSON output)",
+    )
+    import_bundle_parser.add_argument(
+        "--accept-incoming",
+        dest="accept_incoming",
+        action="store_true",
+        help="On a content conflict, adopt the incoming bundle copy (archiving the "
+        "held capture, recoverable) instead of keeping the held one — recorded as a "
+        "`superseded` event (ADR 0106). Composes with --dry-run, which then predicts "
+        "the held→incoming adoptions without writing. Opt-in",
     )
     import_events_parser = import_sub.add_parser(
         "events",
@@ -965,6 +988,31 @@ def build_parser() -> argparse.ArgumentParser:
         "same decision payload the live run would emit, plus dry_run: true",
     )
 
+    archive_parser = subparsers.add_parser(
+        "archive",
+        help="Inspect the prior-content archive — captures superseded by "
+        "accept-incoming (JSON output)",
+    )
+    archive_sub = archive_parser.add_subparsers(dest="archive_command", required=True)
+    archive_list_parser = archive_sub.add_parser(
+        "list",
+        help="List archived prior captures (newest first), the recovery index",
+    )
+    archive_list_parser.add_argument(
+        "--id",
+        dest="item_id",
+        default=None,
+        help="Only the archived prior captures of one item id (or its URL)",
+    )
+    archive_show_parser = archive_sub.add_parser(
+        "show",
+        help="Emit one item's latest archived prior capture as a re-importable "
+        "JSONL line (to stdout)",
+    )
+    archive_show_parser.add_argument(
+        "id", help="Item id (e.g. web:demo), or the item's URL, with an archived prior"
+    )
+
     related_parser = subparsers.add_parser(
         "related", help="Find items related to one item (JSON output)"
     )
@@ -1238,6 +1286,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_history(args.id, args.limit, args.since, args.status)
     if args.command == "reconcile":
         return _cmd_reconcile(args.id, args.keep_held, args.dry_run)
+    if args.command == "archive":
+        if args.archive_command == "show":
+            return _cmd_archive_show(args.id)
+        return _cmd_archive_list(args.item_id)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -1248,9 +1300,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.import_command == "opml":
             return _cmd_import_opml(args.path)
         if args.import_command == "items":
-            return _cmd_import_items(args.path)
+            return _cmd_import_items(args.path, accept_incoming=args.accept_incoming)
         if args.import_command == "bundle":
-            return _cmd_import_bundle(args.path, dry_run=args.dry_run)
+            return _cmd_import_bundle(
+                args.path,
+                dry_run=args.dry_run,
+                accept_incoming=args.accept_incoming,
+            )
         if args.import_command == "events":
             return _cmd_import_events(args.path)
         return _cmd_import_fieldtheory(args.root)
@@ -1857,8 +1913,8 @@ _MAX_CONFLICT_IDS = 5
 
 
 def _merge_items(
-    db_path: Path, items: list[ScrollItem]
-) -> tuple[dict[str, int], list[str]]:
+    db_path: Path, items: list[ScrollItem], *, accept_incoming: bool = False
+) -> tuple[dict[str, int], list[str], list[str]]:
     """Insert items custody-safely, partitioning each skip into unchanged vs conflict.
 
     The shared core of the **lossless** importers (`import items`, and the bundle
@@ -1868,13 +1924,14 @@ def _merge_items(
     and the skip is classified: an identical re-import is ``unchanged`` (a true
     no-op), a same-id/different-``content_hash`` row is a ``conflict`` (the incoming
     copy disagrees with what we hold — surfaced, never an overwrite, custody vision
-    §2.4). Returns ``(counts, conflicts)`` where ``counts`` is
-    ``{imported, skipped, unchanged, conflict}`` with ``skipped == unchanged +
-    conflict`` by construction, and ``conflicts`` is the sorted, deduped,
-    **uncapped** distinct ids whose held copy diverged — the M2 structured-
-    completeness twin of the bounded `_warn_conflicts` stderr line.
+    §2.4). Returns ``(counts, conflicts, adopted)`` where ``counts`` is
+    ``{imported, skipped, unchanged, conflict, adopted}`` with ``skipped ==
+    unchanged + conflict`` by construction, ``conflicts`` is the sorted, deduped,
+    **uncapped** distinct ids whose held copy diverged and was *kept* — the M2
+    structured-completeness twin of the bounded `_warn_conflicts` stderr line — and
+    ``adopted`` the sorted distinct ids whose held copy was *replaced* (accept mode).
 
-    Each conflict is also **recorded** as a custody event on the held item (roadmap
+    Each kept conflict is **recorded** as a custody event on the held item (roadmap
     H274): a divergence is no longer just a transient warning the next import
     re-detects from scratch — it joins the append-only ledger as a typed ``conflict``
     event (held vs incoming `content_hash`, stamped at import time), queryable on the
@@ -1884,15 +1941,42 @@ def _merge_items(
     evidence the live source moved. A clean import records nothing (`record_events`
     no-ops on the empty list); this is the live, writing path, so the read-only
     `_preview_merge_items` deliberately does **not** record.
+
+    With ``accept_incoming`` (roadmap H278, ADR 0106), a divergence is *adopted*
+    instead of merely surfaced: the held copy is replaced by the incoming one via
+    `adopt_incoming` (which archives the prior capture first — recoverable, never
+    destroyed), and a ``superseded`` event supersedes the open conflict. An adopted
+    row counts under ``adopted`` (not ``skipped``/``conflict``), so the disposition
+    buckets ``imported`` + ``unchanged`` + ``adopted`` total the input. Once adopted,
+    a re-import is ``unchanged`` (the held copy now *is* the incoming) — the slice is
+    idempotent by construction, no special-casing.
     """
-    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0}
+    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": 0}
     conflict_ids: set[str] = set()
+    adopted_ids: set[str] = set()
     events: list[CustodyEvent] = []
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for item in items:
         outcome = merge_item(db_path, item)
         if outcome == "imported":
             counts["imported"] += 1
+        elif outcome == "conflict" and accept_incoming:
+            # adopt the incoming capture (ADR 0106): archive the held (prior) copy,
+            # replace the row with the incoming one, and record the supersession —
+            # the prior stays recoverable via `scrolls archive show`. The held copy
+            # is *not* counted as skipped; it was replaced.
+            prior = adopt_incoming(db_path, item, archived_at=now)
+            counts["adopted"] += 1
+            adopted_ids.add(item.id)
+            if prior is not None:
+                events.append(
+                    supersession_event(
+                        item.id,
+                        prior_hash=prior.content_hash,
+                        incoming_hash=item.content_hash,
+                        now=now,
+                    )
+                )
         else:
             counts["skipped"] += 1
             counts[outcome] += 1
@@ -1913,7 +1997,7 @@ def _merge_items(
                     )
                 )
     record_events(db_path, events)
-    return counts, sorted(conflict_ids)
+    return counts, sorted(conflict_ids), sorted(adopted_ids)
 
 
 def _warn_conflicts(conflict_ids: list[str]) -> None:
@@ -1944,46 +2028,83 @@ def _warn_conflicts(conflict_ids: list[str]) -> None:
     )
 
 
+def _warn_adopted(adopted_ids: list[str]) -> None:
+    """Surface accept-incoming adoptions on stderr (the `_warn_conflicts` idiom).
+
+    Under ``--accept-incoming`` a held copy is *replaced* by the incoming one — the
+    first import-path write that changes a held capture (ADR 0106). That is a custody
+    signal an operator should see even though they asked for it: it rides stderr
+    beside the structured ``adopted`` field, naming the replaced ids and pointing at
+    the recovery path (the prior capture is archived, never destroyed). Bounded with a
+    ``(+N more)`` tail like `_warn_conflicts`; no-op when nothing was adopted.
+    """
+    if not adopted_ids:
+        return
+    named = ", ".join(f"`{item_id}`" for item_id in adopted_ids[:_MAX_CONFLICT_IDS])
+    if len(adopted_ids) > _MAX_CONFLICT_IDS:
+        named += f" (+{len(adopted_ids) - _MAX_CONFLICT_IDS} more)"
+    print(
+        json.dumps({
+            "warning": (
+                f"{len(adopted_ids)} held copy(ies) replaced by the incoming capture "
+                f"(accept-incoming — prior archived, recoverable via "
+                f"`scrolls archive show`): {named}"
+            )
+        }),
+        file=sys.stderr,
+    )
+
+
 def _preview_merge_items(
-    db_path: Path, items: list[ScrollItem]
-) -> tuple[dict[str, int], list[str], list[str], list[str]]:
+    db_path: Path, items: list[ScrollItem], *, accept_incoming: bool = False
+) -> tuple[dict[str, int], list[str], list[str], list[str], list[str]]:
     """Predict `_merge_items` without writing — the read-only twin of the merge.
 
     The dry-run sibling of `_merge_items` (the H233/H239 "the preview never drifts
     from reality" discipline, now on the conflict axis): it returns the *same*
-    ``{imported, skipped, unchanged, conflict}`` counts and the *same* sorted
-    ``conflicts`` list a real `_merge_items` of the identical batch would, plus the
-    reviewable, library-relative ``new``/``held`` partition (H226/H239).
+    ``{imported, skipped, unchanged, conflict, adopted}`` counts and the *same*
+    sorted ``conflicts``/``adopted`` lists a real `_merge_items` of the identical
+    batch would, plus the reviewable, library-relative ``new``/``held`` partition
+    (H226/H239).
 
     The catch is the **within-batch duplicate**. The live `merge_item` does INSERT
     OR IGNORE, so a bundle that repeats an id sees its own prior insert — the first
     occurrence is the kept copy and every later one is classified against *it*. The
     preview writes nothing, so `get_item` never reflects a within-batch insert; we
-    simulate it with ``kept_hash``, recording the first occurrence's
-    ``content_hash`` so a later occurrence with a different hash is the *same*
-    ``conflict`` the live path would surface (a bundle repeating an id with
-    divergent content is itself conflicting). ``new``/``held`` stay **library**-
-    relative — an id absent from the library before the import is ``new`` even if it
-    repeats (H239/H245), so a within-batch dup of a new id never leaks into
-    ``held`` — while the unchanged/conflict split tracks the live merge's
-    batch-aware view.
+    track the kept content per id in ``kept_hash`` so a later occurrence with a
+    different hash is the *same* ``conflict``/``adopted`` the live path would
+    produce. ``new``/``held`` stay **library**-relative — an id absent from the
+    library before the import is ``new`` even if it repeats (H239/H245), so a
+    within-batch dup of a new id never leaks into ``held`` — while the
+    unchanged/conflict/adopted split tracks the live merge's batch-aware view.
+
+    With ``accept_incoming`` (ADR 0106), a divergence is predicted as *adopted*
+    (the held copy would be replaced) rather than *conflict* (kept), and the kept
+    content is advanced to the incoming hash so a subsequent same-batch occurrence
+    compares against what the live adoption would have left behind — keeping the
+    held→incoming transition prediction faithful to the live write.
     """
-    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0}
+    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": 0}
     conflict_ids: set[str] = set()
+    adopted_ids: set[str] = set()
     new_ids: set[str] = set()
     held_ids: set[str] = set()
-    kept_hash: dict[str, str | None] = {}  # id -> the kept copy's content_hash
+    kept_hash: dict[str, str | None] = {}  # id -> the current kept copy's content_hash
     for item in items:
         held = get_item(db_path, item.id)
-        if held is not None:
+        if item.id in kept_hash:
+            # a within-batch occurrence (or an already-adopted one this batch):
+            # classify against the content the prior occurrences would have left
+            baseline, present = kept_hash[item.id], True
+            if held is None:
+                new_ids.add(item.id)  # library-absent id, even if it repeats
+            else:
+                held_ids.add(item.id)
+        elif held is not None:
             # already in the library — INSERT OR IGNORE would skip; classify
-            # against the held copy (which is never overwritten)
+            # against the held copy
             held_ids.add(item.id)
             baseline, present = held.content_hash, True
-        elif item.id in kept_hash:
-            # a within-batch dup of a not-yet-held id: the live insert kept the
-            # first occurrence, so classify this one against it
-            baseline, present = kept_hash[item.id], True
         else:
             # the first occurrence of a library-absent id — the inserted copy
             new_ids.add(item.id)
@@ -1991,17 +2112,30 @@ def _preview_merge_items(
             present = False
         if not present:
             counts["imported"] += 1
-        else:
-            counts["skipped"] += 1
-            if baseline != item.content_hash:
+        elif baseline != item.content_hash:
+            if accept_incoming:
+                # the held copy would be replaced; the kept content advances to
+                # the incoming one (the live adoption's effect)
+                counts["adopted"] += 1
+                adopted_ids.add(item.id)
+                kept_hash[item.id] = item.content_hash
+            else:
+                counts["skipped"] += 1
                 counts["conflict"] += 1
                 conflict_ids.add(item.id)
-            else:
-                counts["unchanged"] += 1
-    return counts, sorted(conflict_ids), sorted(new_ids), sorted(held_ids)
+        else:
+            counts["skipped"] += 1
+            counts["unchanged"] += 1
+    return (
+        counts,
+        sorted(conflict_ids),
+        sorted(new_ids),
+        sorted(held_ids),
+        sorted(adopted_ids),
+    )
 
 
-def _cmd_import_items(path: str) -> int:
+def _cmd_import_items(path: str, accept_incoming: bool = False) -> int:
     try:
         imported_items, stats = load_items_export(Path(path).expanduser())
     except ItemsSourceError as exc:
@@ -2017,9 +2151,19 @@ def _cmd_import_items(path: str) -> int:
     # drift/conflict is a recorded event, never an overwrite). Derived artifacts
     # rebuild from these rows: `doctor --fix` rewrites missing scrolls and the FTS
     # index, `kb` recompiles the library.
-    counts, conflicts = _merge_items(paths.db_path, imported_items)
+    #
+    # `--accept-incoming` (roadmap H278, ADR 0106) opts into *adopting* a diverging
+    # incoming capture: the held copy is replaced by the incoming one (its prior
+    # capture archived, recoverable), recorded as a `superseded` event. Opt-in only —
+    # without the flag a conflict is surfaced and the held copy kept.
+    counts, conflicts, adopted = _merge_items(
+        paths.db_path, imported_items, accept_incoming=accept_incoming
+    )
     _warn_conflicts(conflicts)
-    print(json.dumps({**counts, "conflicts": conflicts, **stats}))
+    _warn_adopted(adopted)
+    print(json.dumps(
+        {**counts, "conflicts": conflicts, "adopted": adopted, **stats}
+    ))
     return 0
 
 
@@ -2262,7 +2406,9 @@ def _warn_orphan_events(orphan_events: list) -> None:
     )
 
 
-def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
+def _cmd_import_bundle(
+    path: str, dry_run: bool = False, accept_incoming: bool = False
+) -> int:
     try:
         text = Path(path).expanduser().read_text(encoding="utf-8")
         imported_items = parse_bundle(text)
@@ -2278,7 +2424,9 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     ensure_library(paths)
 
     if dry_run:
-        return _preview_import_bundle(paths, imported_items, imported_events)
+        return _preview_import_bundle(
+            paths, imported_items, imported_events, accept_incoming=accept_incoming
+        )
 
     # INSERT OR IGNORE per row (ADR 0082): a scroll the target library already
     # holds is never overwritten — custody-safe re-import. But the skip is no
@@ -2288,8 +2436,15 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     # source that has since drifted — custody vision §2.4, drift/conflict is a
     # recorded event, never an overwrite). Derived artifacts rebuild from these
     # rows via `doctor --fix` / `kb`, as `import items` relies on.
-    counts, conflicts = _merge_items(paths.db_path, imported_items)
+    #
+    # `--accept-incoming` (roadmap H278, ADR 0106) adopts a diverging incoming
+    # capture: the held copy is replaced (its prior capture archived, recoverable),
+    # recorded as a `superseded` event. Opt-in only.
+    counts, conflicts, adopted = _merge_items(
+        paths.db_path, imported_items, accept_incoming=accept_incoming
+    )
     _warn_conflicts(conflicts)
+    _warn_adopted(adopted)
     # restore the portable custody ledger (roadmap H67), deduped by content so a
     # re-import is a custody no-op — the verify-axis sibling of the items'
     # INSERT OR IGNORE. Events ride for *every* in-scope item, whether its row was
@@ -2318,6 +2473,10 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
         # a within-bundle dup names one id twice (then `conflict` counts the raw
         # occurrences while `conflicts` names the distinct divergent id once).
         "conflicts": conflicts,
+        # the distinct ids whose held copy was *replaced* by the incoming capture
+        # (H278, accept-incoming) — `[]` unless `--accept-incoming` was given; the
+        # prior copies are archived (recoverable via `scrolls archive`).
+        "adopted": adopted,
         "items": len(imported_items),
         "events": {
             "imported": ev_imported,
@@ -2333,7 +2492,9 @@ def _cmd_import_bundle(path: str, dry_run: bool = False) -> int:
     return 0
 
 
-def _preview_import_bundle(paths, imported_items, imported_events) -> int:
+def _preview_import_bundle(
+    paths, imported_items, imported_events, accept_incoming: bool = False
+) -> int:
     """The read-only sibling of the bundle import (roadmap H220, H273).
 
     An agent handed a portable "take it with me" bundle should be able to see
@@ -2367,12 +2528,19 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
     # human readability). A within-bundle repeat of a new id lands once in `new`; a
     # repeat of a held id once in `held`; so over a well-formed bundle (no repeats)
     # `len(new) == imported` and `len(held) == skipped`.
-    counts, conflicts, new_ids, held_ids = _preview_merge_items(
-        paths.db_path, imported_items
+    #
+    # Under `--accept-incoming` (H278) the preview predicts the *adopted* set — the
+    # held copies a live merge would replace with the incoming capture — instead of
+    # surfacing them as kept conflicts (the held→incoming transition prediction, the
+    # H245/H273 "predict the write effect" discipline on the adopt axis).
+    counts, conflicts, new_ids, held_ids, adopted = _preview_merge_items(
+        paths.db_path, imported_items, accept_incoming=accept_incoming
     )
-    # the conflict warning is loud in the preview too (the `_warn_orphan_events`
-    # idiom), so the dry-run faithfully shows what the real import would flag
+    # the conflict/adoption warnings are loud in the preview too (the
+    # `_warn_orphan_events` idiom), so the dry-run faithfully shows what the real
+    # import would flag
     _warn_conflicts(conflicts)
+    _warn_adopted(adopted)
 
     resolvable_events, orphan_events = partition_resolvable_events(
         paths.db_path, imported_events, known_ids=bundle_item_ids
@@ -2383,6 +2551,7 @@ def _preview_import_bundle(paths, imported_items, imported_events) -> int:
         "dry_run": True,
         **counts,
         "conflicts": conflicts,
+        "adopted": adopted,
         "items": len(imported_items),
         "new": new_ids,
         "held": held_ids,
@@ -3631,6 +3800,69 @@ def _cmd_reconcile(ref: str, keep_held: bool, dry_run: bool = False) -> int:
             )],
         )
     print(json.dumps(decision))
+    return 0
+
+
+def _cmd_archive_list(ref: str | None = None) -> int:
+    """List archived prior captures — the accept-incoming recovery index (H278).
+
+    Every held copy an `import … --accept-incoming` replaced was archived first
+    (raw is never destroyed — custody §2.4, ADR 0106); this is the queryable index
+    of what was superseded, newest first: the item id, the hash before/after, and
+    when. ``--id`` scopes to one item (an id or its URL). Lightweight metadata only
+    — the model-complete prior snapshot is fetched on demand by `archive show`.
+    A pre-v8 / uninitialized library honestly holds nothing (empty list).
+    """
+    paths = get_paths()
+    item_id: str | None = None
+    if ref is not None:
+        try:
+            item_id = resolve_item_id(ref)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+    entries = list_archived(paths.db_path, item_id) if paths.db_path.exists() else []
+    print(json.dumps({
+        "count": len(entries),
+        "archived": [
+            {
+                "item_id": entry.item_id,
+                "prior_hash": entry.prior_hash,
+                "superseded_by": entry.superseded_by,
+                "archived_at": entry.archived_at,
+            }
+            for entry in entries
+        ],
+    }))
+    return 0
+
+
+def _cmd_archive_show(ref: str) -> int:
+    """Emit one item's latest archived prior capture as a re-importable JSONL line (H278).
+
+    The recovery read (ADR 0106): the most-recently superseded copy of the item,
+    serialized in the exact `export items` JSONL shape, so restoring it is just
+    ``scrolls archive show <id> | scrolls import items /dev/stdin --accept-incoming``
+    (the symmetric round-trip — accept-incoming of the archived snapshot re-adopts
+    it, archiving the current copy in turn). The line *is* the artifact, like
+    `export items`, so it prints raw to stdout. Exit 1 when the id has no archived
+    prior (never superseded) or is unknown — the could-not-recover signal.
+    """
+    paths = get_paths()
+    try:
+        item_id = resolve_item_id(ref)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
+    prior = latest_archived(paths.db_path, item_id) if paths.db_path.exists() else None
+    if prior is None:
+        suffix = f" (from {ref})" if item_id != ref else ""
+        print(
+            json.dumps({"error": f"no archived prior capture for {item_id}{suffix}"}),
+            file=sys.stderr,
+        )
+        return 1
+    sys.stdout.write(dump_items_export([prior]))
     return 0
 
 

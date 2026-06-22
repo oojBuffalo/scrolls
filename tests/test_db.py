@@ -3,7 +3,9 @@
 v1 pinned the `meta` table with a schema version; v2 adds the `items`
 table (Pass 2 storage); v3 the FTS index; v4 the `subscriptions` table
 (feed sync, ADR 0017); v5 its HTTP cache validator columns (ADR 0019);
-v6 the `concept_summaries` table (LLM concept engine, ADR 0025).
+v6 the `concept_summaries` table (LLM concept engine, ADR 0025); v7 the
+`custody_events` ledger (drift detection, ADR 0098); v8 the `item_archive`
+prior-content store (accept-incoming reconcile, ADR 0106).
 `init_db` must bring both fresh and older databases to SCHEMA_VERSION.
 """
 
@@ -70,6 +72,48 @@ def test_init_db_creates_concept_summaries_table(tmp_path):
         "model",
         "generated_at",
     } <= _table_columns(db_path, "concept_summaries")
+
+
+def test_init_db_creates_item_archive_table(tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    assert {
+        "id",
+        "item_id",
+        "archived_at",
+        "prior_hash",
+        "superseded_by",
+        "snapshot",
+    } <= _table_columns(db_path, "item_archive")
+
+
+def test_init_db_migrates_v7_database(tmp_path):
+    """A pre-archive library gains item_archive without losing custody events."""
+    db_path = tmp_path / "db.sqlite"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        for version in (1, 2, 3, 4, 5, 6, 7):
+            for statement in MIGRATIONS[version]:
+                conn.execute(statement)
+        conn.execute(
+            "INSERT INTO custody_events (item_id, checked_at, status, prior_hash, "
+            "observed_hash, detail) VALUES ('web:a', '2026-06-22T00:00:00+00:00', "
+            "'conflict', 'h', 'h2', 'import conflict')"
+        )
+        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '7')")
+    conn.close()
+
+    init_db(db_path)
+    assert read_schema_version(db_path) == SCHEMA_VERSION
+    assert "snapshot" in _table_columns(db_path, "item_archive")
+    conn = sqlite3.connect(db_path)
+    try:
+        # the existing ledger row survives the migration untouched
+        count = conn.execute("SELECT COUNT(*) FROM custody_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert count == 1
 
 
 def test_init_db_migrates_v5_database(tmp_path):

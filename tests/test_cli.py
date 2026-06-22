@@ -37,6 +37,7 @@ from scrolls.items import (
     make_item_id,
     update_item,
 )
+from scrolls.items_export import dump_items_export
 from scrolls.render import write_scroll
 
 
@@ -3552,6 +3553,7 @@ def test_export_items_round_trips_through_import(
         "skipped": 0,
         "unchanged": 0,
         "conflict": 0,
+        "adopted": [],
         "conflicts": [],
         "items": 1,
     }
@@ -3575,6 +3577,7 @@ def test_import_items_is_idempotent(scrolls_home, tmp_path, capsys):
         "skipped": 1,
         "unchanged": 1,
         "conflict": 0,
+        "adopted": [],
         "conflicts": [],
         "items": 1,
     }
@@ -3641,6 +3644,7 @@ def test_import_items_surfaces_a_content_conflict(scrolls_home, tmp_path, capsys
         "skipped": 1,
         "unchanged": 0,
         "conflict": 1,
+        "adopted": [],
         "conflicts": ["arxiv:1706.03762"],
         "items": 1,
     }
@@ -4011,6 +4015,182 @@ def test_reconcile_keeps_the_conflict_on_history_beside_the_resolved_row(
     assert json.loads(capsys.readouterr().out) == []  # never on the drift axis
 
 
+# --- import --accept-incoming (H278, ADR 0106): the content-bearing reconcile
+# resolution that *adopts* the peer's capture — the first import-path write that
+# changes a held capture, the held copy archived (recoverable) not destroyed. ---
+
+
+def test_import_items_accept_incoming_adopts_and_archives_the_prior(
+    scrolls_home, tmp_path, capsys
+):
+    """`import items --accept-incoming` replaces the held copy with the diverging
+    incoming one — the held body becomes the incoming, a `superseded` event is
+    recorded, and the prior capture is archived (recoverable), never destroyed
+    (custody §2.4)."""
+    from scrolls.custody import item_events
+
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    held = get_item(db, seeded.id)
+    divergent = dataclasses.replace(
+        held, content_hash="sha256:moved", extracted_text="A different capture…"
+    )
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload["adopted"] == ["arxiv:1706.03762"]
+    assert payload["conflict"] == 0 and payload["conflicts"] == []
+    # imported + unchanged + adopted totals the input; nothing left as a kept conflict
+    assert payload["imported"] + payload["unchanged"] + len(payload["adopted"]) == 1
+    # the held copy now carries the incoming content (the adoption happened)
+    now_held = get_item(db, seeded.id)
+    assert now_held.content_hash == "sha256:moved"
+    assert now_held.extracted_text == "A different capture…"
+    # …recorded as a `superseded` conflict-axis event (held→incoming hash)
+    assert [e.status for e in item_events(db, seeded.id)] == ["superseded"]
+    superseded = item_events(db, seeded.id)[0]
+    assert superseded.prior_hash == "sha256:abc"       # the archived prior copy
+    assert superseded.observed_hash == "sha256:moved"  # the adopted incoming copy
+    # the prior capture is archived, recoverable byte-for-byte
+    assert main(["archive", "show", seeded.id]) == 0
+    recovered = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert recovered["content_hash"] == "sha256:abc"
+    assert recovered["extracted_text"] == seeded.extracted_text
+    # loud on stderr — a held copy was replaced (the operator asked, but it is a write)
+    assert "arxiv:1706.03762" in json.loads(err)["warning"]
+
+
+def test_import_items_accept_incoming_clears_the_conflict_aggregate(
+    scrolls_home, tmp_path, capsys
+):
+    """Adopting the incoming capture clears `doctor`'s `custody.conflicts` and the
+    `status` scalar — both gates agree (the latest axis event is `superseded`, and
+    the held hash now equals the adopted one) — while the drift axis stays empty."""
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    db = get_paths().db_path
+    # the divergence is open before the adoption
+    assert run_doctor(get_paths(), fix=False)["custody"]["conflicts"]["items"] == 1
+
+    # re-supply the same divergent content with --accept-incoming → adopt it
+    held_now = get_item(db, seeded.id)  # still the original held copy
+    divergent = dataclasses.replace(
+        held_now, content_hash="sha256:moved", extracted_text="A different capture…"
+    )
+    out_path = tmp_path / "incoming2.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    capsys.readouterr()
+
+    report = run_doctor(get_paths(), fix=False)
+    assert report["custody"]["conflicts"]["items"] == 0  # cleared on both gates
+    assert report["custody"]["drift"]["checked"] == 0     # never on the drift axis
+    # the original `conflict` event survives beside the `superseded` (append-only)
+    assert main(["history", seeded.id]) == 0
+    statuses = [e["status"] for e in json.loads(capsys.readouterr().out)]
+    assert "conflict" in statuses and "superseded" in statuses
+
+
+def test_import_items_accept_incoming_is_idempotent(scrolls_home, tmp_path, capsys):
+    """Once adopted, re-importing the same content with --accept-incoming is an
+    `unchanged` no-op — the held copy *is* the incoming now (no second archive,
+    no second event). Idempotency falls out of the content-hash compare."""
+    from scrolls.items import list_archived
+    from scrolls.custody import item_events
+
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    held = get_item(db, seeded.id)
+    divergent = dataclasses.replace(held, content_hash="sha256:moved", raw_text="peer")
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    json.loads(capsys.readouterr().out)
+    # second --accept-incoming of the identical content: a clean no-op
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["adopted"] == [] and second["unchanged"] == 1
+    # exactly one archive row and one supersession event — no churn on the no-op
+    assert len(list_archived(db, seeded.id)) == 1
+    assert [e.status for e in item_events(db, seeded.id)] == ["superseded"]
+
+
+def test_archive_show_round_trips_back_through_accept_incoming(
+    scrolls_home, tmp_path, capsys
+):
+    """The symmetric recovery the design rests on: after adopting the incoming, pipe
+    `archive show` back through `import items --accept-incoming` to *restore* the
+    prior capture — the held copy is the original again, the incoming now archived."""
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    held = get_item(db, seeded.id)
+    divergent = dataclasses.replace(
+        held, content_hash="sha256:peer", extracted_text="peer body"
+    )
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    capsys.readouterr()
+    assert get_item(db, seeded.id).content_hash == "sha256:peer"
+
+    # recover the archived prior, write it out, and re-adopt it
+    assert main(["archive", "show", seeded.id]) == 0
+    restore_path = tmp_path / "restore.jsonl"
+    restore_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert main(["import", "items", str(restore_path), "--accept-incoming"]) == 0
+    capsys.readouterr()
+
+    # the held copy is the original again, byte-for-byte
+    assert get_item(db, seeded.id) == seeded
+
+
+def test_archive_list_indexes_superseded_captures(scrolls_home, tmp_path, capsys):
+    """`scrolls archive list` is the recovery index — the prior captures an
+    accept-incoming replaced, with before/after hashes; `--id` scopes to one item.
+    A clean library honestly holds nothing."""
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    capsys.readouterr()
+    # honest empty on a library that never adopted anything
+    assert main(["archive", "list"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"count": 0, "archived": []}
+
+    held = get_item(db, seeded.id)
+    divergent = dataclasses.replace(held, content_hash="sha256:peer", raw_text="peer")
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+    assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    capsys.readouterr()
+
+    assert main(["archive", "list"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["count"] == 1
+    entry = listed["archived"][0]
+    assert entry["item_id"] == seeded.id
+    assert entry["prior_hash"] == "sha256:abc"        # what was archived
+    assert entry["superseded_by"] == "sha256:peer"    # what replaced it
+    # --id scopes; an unrelated id has no archived priors
+    assert main(["archive", "list", "--id", seeded.id]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 1
+
+
+def test_archive_show_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
+    """`archive show` for an id with no archived prior (never superseded) exits 1 —
+    the could-not-recover signal, like `verify`/`reconcile` on a missing target."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["archive", "show", "arxiv:1706.03762"]) == 1
+    err = json.loads(capsys.readouterr().err)
+    assert "no archived prior" in err["error"]
+
+
 # --- status custody.conflicts scalar (H279): the JSON-status counterpart of the
 # readable `_Conflicts:_` briefing line (H277), folding the same
 # `unresolved_conflicts` doctor's `custody.conflicts` reads into the machine
@@ -4251,6 +4431,7 @@ def test_export_items_custody_scoped_backup_round_trips_through_import(
         "skipped": 0,
         "unchanged": 0,
         "conflict": 0,
+        "adopted": [],
         "conflicts": [],
         "items": 2,
     }

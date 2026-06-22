@@ -88,6 +88,7 @@ uv run scrolls import bookmarks <path>  # bulk-import a browser bookmarks HTML e
 uv run scrolls import pocket <path>  # bulk-import a Pocket CSV data export, as JSON
 uv run scrolls import opml <path>  # bulk-import feed subscriptions from an OPML file (RSS-reader export), as JSON
 uv run scrolls import items <path>  # restore items from a Scrolls JSONL export (lossless), as JSON
+uv run scrolls import items <path> --accept-incoming  # on a content conflict, ADOPT the incoming copy (replace the held one); prior archived & recoverable, recorded as a `superseded` event (H278, ADR 0106), as JSON
 uv run scrolls import events <path>  # restore the verify ledger from a JSONL export, deduped (whole-library portable custody, H72), as JSON
 uv run scrolls export opml    # export feed subscriptions as an OPML document, to stdout
 uv run scrolls export bookmarks  # export items as a Netscape bookmark file, to stdout
@@ -98,6 +99,7 @@ uv run scrolls export events --since 2026-06-16  # incremental backup: only chec
 uv run scrolls export bundle "<query>" > briefing.md  # scoped, self-contained custody bundle: readable briefing + lossless block + verify-ledger events, shareable & re-importable
 uv run scrolls export bundle "<query>" --format html > briefing.html  # the same bundle as a self-contained, browser-readable briefing (export-only; Markdown is the re-import unit, H39)
 uv run scrolls import bundle <path>  # restore scrolls AND their custody ledger from a bundle, losslessly (the "take it with me" half); events dedup on re-import (H67), as JSON
+uv run scrolls import bundle <path> --accept-incoming  # on a content conflict, adopt the incoming bundle copy (prior archived); composes with --dry-run (predict the adoptions), as JSON
 uv run scrolls follow <url>   # subscribe to an RSS/Atom feed (validated by fetching it once), as JSON
 uv run scrolls follow         # list feed subscriptions, as JSON
 uv run scrolls sync           # register new items from followed feeds, as JSON
@@ -123,8 +125,10 @@ uv run scrolls search <query> --tag rust --concept "full text search"  # members
 uv run scrolls search <query> --limit 20 --stats  # scope-honest {scope, stats, results} envelope: names the scope + marks truncation (completeness contract G2)
 uv run scrolls show <id>      # print one item in full, as JSON
 uv run scrolls verify [id | --all | --unverified | --stale-before ISO | --drift POSTURE | --source S] [--limit N]  # re-capture held items and record a drift/rot custody event; selections re-check the whole library, only the never-checked, only those stale since a boundary, only those at a drift posture, or only one source (H51, H79, H80, H125); as JSON
-uv run scrolls history <id> [--limit N] [--since ISO] [--status V]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; three filter axes applied verdict → window → cap: --status (unchanged/drifted/rotted/error/conflict/resolved), --since (time), --limit (count); [] when never verified (H66, H69, H71, H77)
+uv run scrolls history <id> [--limit N] [--since ISO] [--status V]  # the item's custody-ledger timeline (every verify check, newest first), as JSON; three filter axes applied verdict → window → cap: --status (unchanged/drifted/rotted/error/conflict/resolved/superseded), --since (time), --limit (count); [] when never verified (H66, H69, H71, H77)
 uv run scrolls reconcile <id> --keep-held [--dry-run]  # resolve a recorded import conflict by affirming the held copy (records a `resolved` event; held copy never overwritten, original conflict kept on the timeline); clears doctor's custody.conflicts / the _Conflicts:_ line; idempotent, --dry-run predicts without writing (H276, ADR 0105)
+uv run scrolls archive list [--id <id>]  # the accept-incoming recovery index: prior captures a `--accept-incoming` adoption replaced, with before/after hashes (H278, ADR 0106), as JSON
+uv run scrolls archive show <id>  # recover one item's latest archived prior capture as a re-importable JSONL line; restore via `archive show <id> | import items /dev/stdin --accept-incoming`, to stdout
 uv run scrolls related <id> [--limit N] [--stats]  # items connected to one item, with reasons, as JSON (default 10); --stats adds the scope-honest envelope (G2)
 uv run scrolls graph [--all]  # the whole-library link graph (nodes + directed edges), as JSON
 uv run scrolls works [ref] [--min N]  # scholarly works clustered by DOI; echoes its scope (the --min floor or ref anchor) so the payload is completeness-honest (G2); with an id/URL, that item's work + siblings (ADR 0069, 0072)

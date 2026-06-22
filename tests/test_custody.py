@@ -625,7 +625,10 @@ def test_resolved_status_is_a_first_class_ledger_status():
     assert custody.RESOLVED_STATUS == "resolved"
     assert "resolved" in custody.LEDGER_STATUSES
     assert "resolved" not in custody.CUSTODY_STATUSES
-    assert custody.CONFLICT_AXIS_STATUSES == ("conflict", "resolved")
+    # the conflict axis carries the import divergence and its two operator
+    # resolutions — affirm the held copy (`resolved`, H276) or adopt the incoming
+    # one (`superseded`, H278)
+    assert custody.CONFLICT_AXIS_STATUSES == ("conflict", "resolved", "superseded")
 
 
 def test_resolution_event_records_affirmed_vs_rejected_hash():
@@ -756,6 +759,92 @@ def test_current_conflict_is_the_per_item_reconcile_target(tmp_path):
         "web:a", held_hash="held", incoming_hash="incoming",
         now="2026-06-22T00:00:01+00:00")])
     assert custody.current_conflict(db_path, item) is None  # resolved
+
+
+def test_supersession_event_records_archived_vs_adopted_hash():
+    # the adopt-axis counterpart of resolution_event (H278): pure given `now`, it
+    # stamps a `superseded` status with prior_hash = the archived prior copy and
+    # observed_hash = the adopted incoming capture — the verify-event field
+    # semantics reused, so every serializer carries it unchanged.
+    event = custody.supersession_event(
+        "web:a",
+        prior_hash="sha256:prior",
+        incoming_hash="sha256:adopted",
+        now="2026-06-22T00:00:00+00:00",
+    )
+    assert event.item_id == "web:a"
+    assert event.status == custody.SUPERSEDED_STATUS == "superseded"
+    assert event.prior_hash == "sha256:prior"  # the archived copy, recoverable
+    assert event.observed_hash == "sha256:adopted"  # the adopted incoming copy
+    assert event.checked_at == "2026-06-22T00:00:00+00:00"
+    assert event.detail and "adopted" in event.detail.lower()
+    assert event_from_dict(event_export_dict(event)) == event
+
+
+def test_superseded_status_is_on_the_conflict_axis_not_the_drift_axis():
+    # the ADR 0104 isolation, kept on the adopt axis: `superseded` joins the
+    # conflict axis (so it supersedes the conflict it closes) but never the verify
+    # verdicts (so it never enters the drift posture).
+    assert custody.SUPERSEDED_STATUS in custody.CONFLICT_AXIS_STATUSES
+    assert custody.SUPERSEDED_STATUS not in custody.CUSTODY_STATUSES
+    assert custody.SUPERSEDED_STATUS in custody.LEDGER_STATUSES
+
+
+def test_supersession_event_is_excluded_from_the_drift_posture(tmp_path):
+    # a conflict-then-supersession item: `latest_events` (drift) reads only the
+    # verify verdicts, so it reads `unverified` — never re-checked — not a drift
+    # posture; yet both axis events ride the timeline (append-only).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h2", now="2026-06-20T00:00:00+00:00"
+        ),
+        custody.supersession_event(
+            "web:a", prior_hash="h", incoming_hash="h2", now="2026-06-22T00:00:00+00:00"
+        ),
+    ])
+    assert "web:a" not in latest_events(db_path)  # neither event is a drift verdict
+    assert custody.drift_posture(latest_events(db_path).get("web:a")) == "unverified"
+    assert [e.status for e in item_events(db_path, "web:a")] == ["superseded", "conflict"]
+
+
+def test_unresolved_conflicts_clears_after_an_accept_incoming_supersession(tmp_path):
+    # the accept-incoming mechanism (ADR 0106): the held copy is *replaced* by the
+    # incoming, so the held content_hash becomes the adopted hash AND the latest
+    # axis event is a `superseded` — both gates clear the conflict.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [custody.conflict_event(
+        "web:a", held_hash="held", incoming_hash="incoming",
+        now="2026-06-20T00:00:00+00:00")])
+    # before the adoption: held copy is "held", incoming "incoming" — unresolved
+    held_items = [_item("web:a", content_hash="held")]
+    assert set(custody.unresolved_conflicts(
+        held_items, custody.latest_conflict_events(db_path))) == {"web:a"}
+    record_events(db_path, [custody.supersession_event(
+        "web:a", prior_hash="held", incoming_hash="incoming",
+        now="2026-06-22T00:00:00+00:00")])
+    # after the adoption the held copy *is* the incoming ("incoming")
+    adopted_items = [_item("web:a", content_hash="incoming")]
+    assert custody.unresolved_conflicts(
+        adopted_items, custody.latest_conflict_events(db_path)) == {}
+
+
+def test_latest_conflict_events_returns_the_supersession_when_it_is_latest(tmp_path):
+    # the MAX(id) over the conflict axis includes `superseded`, so an adoption
+    # recorded after a conflict is the latest axis event.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [custody.conflict_event(
+        "web:a", held_hash="held", incoming_hash="incoming",
+        now="2026-06-20T00:00:00+00:00")])
+    record_events(db_path, [custody.supersession_event(
+        "web:a", prior_hash="held", incoming_hash="incoming",
+        now="2026-06-22T00:00:00+00:00")])
+    latest = custody.latest_conflict_events(db_path)
+    assert set(latest) == {"web:a"}
+    assert latest["web:a"].status == "superseded"
 
 
 # --- render_custody_conflicts: the readable `_Conflicts:_` line (roadmap H277) ---

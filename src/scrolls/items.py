@@ -792,3 +792,137 @@ def _from_row(row: sqlite3.Row) -> ScrollItem:
         if data[name] is not None:
             data[name] = json.loads(data[name])
     return ScrollItem(**data)
+
+
+# --- prior-content archive (accept-incoming recovery, ADR 0106) -------------
+
+
+@dataclass(frozen=True)
+class ArchiveEntry:
+    """One archived prior capture an adoption superseded — a recovery-index row.
+
+    The metadata an operator scans (`scrolls archive list`): *which* held copy was
+    replaced, the hash before/after, and when. The model-complete prior snapshot
+    itself is fetched on demand by `latest_archived` (so listing many entries does
+    not parse every body).
+    """
+
+    archive_id: int
+    item_id: str
+    archived_at: str
+    prior_hash: str | None
+    superseded_by: str | None
+
+
+def adopt_incoming(
+    db_path: Path, incoming: ScrollItem, *, archived_at: str
+) -> ScrollItem | None:
+    """Replace the held copy of `incoming.id` with `incoming`, archiving the prior (ADR 0106).
+
+    The one custody-safe overwrite in Scrolls — the accept-incoming reconcile
+    resolution (roadmap H278). It is **not** a destructive overwrite: before the
+    held row is replaced, its model-complete snapshot is appended to `item_archive`,
+    so the superseded capture stays recoverable (raw is never destroyed — custody
+    §2.4). The archive insert and the items UPDATE commit in **one transaction**, so
+    a crash never leaves the row replaced with the prior capture unsaved.
+
+    Reads the currently-held (prior) row; returns ``None`` without writing when the
+    id is absent (a defensive no-op — nothing to supersede). Otherwise returns the
+    prior `ScrollItem`, so the caller can record the `superseded` custody event with
+    the archived ``prior_hash``. The held body — every column — becomes the incoming
+    one; the prior is reachable only through the archive from here on.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            prior_row = conn.execute(
+                "SELECT * FROM items WHERE id = ?", (incoming.id,)
+            ).fetchone()
+            if prior_row is None:
+                return None
+            prior = _from_row(prior_row)
+            conn.execute(
+                "INSERT INTO item_archive (item_id, archived_at, prior_hash, "
+                "superseded_by, snapshot) VALUES (?, ?, ?, ?, ?)",
+                (
+                    prior.id,
+                    archived_at,
+                    prior.content_hash,
+                    incoming.content_hash,
+                    json.dumps(item_to_dict(prior)),
+                ),
+            )
+            row = _to_row(incoming)
+            value_names = tuple(name for name in _FIELD_NAMES if name != "id")
+            assignments = ", ".join(f"{name} = ?" for name in value_names)
+            conn.execute(
+                f"UPDATE items SET {assignments} WHERE id = ?",
+                tuple(row[name] for name in value_names) + (incoming.id,),
+            )
+        return prior
+    finally:
+        conn.close()
+
+
+def list_archived(db_path: Path, item_id: str | None = None) -> list[ArchiveEntry]:
+    """Archived prior captures, newest first — the recovery index (`scrolls archive list`).
+
+    Optionally filtered to one ``item_id``. Returns lightweight `ArchiveEntry`
+    metadata (no body), so an operator can see *what* an adoption replaced and
+    *when* before fetching the snapshot. Tolerates a pre-v8 library (no archive
+    table) by returning an empty list.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if item_id is None:
+            rows = conn.execute(
+                "SELECT id, item_id, archived_at, prior_hash, superseded_by "
+                "FROM item_archive ORDER BY id DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, item_id, archived_at, prior_hash, superseded_by "
+                "FROM item_archive WHERE item_id = ? ORDER BY id DESC",
+                (item_id,),
+            ).fetchall()
+    except sqlite3.OperationalError:  # pre-v8 library, no archive table
+        return []
+    finally:
+        conn.close()
+    return [
+        ArchiveEntry(
+            archive_id=row["id"],
+            item_id=row["item_id"],
+            archived_at=row["archived_at"],
+            prior_hash=row["prior_hash"],
+            superseded_by=row["superseded_by"],
+        )
+        for row in rows
+    ]
+
+
+def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
+    """The most recently archived prior capture for `item_id`, or ``None``.
+
+    The recovery read behind `scrolls archive show <id>`: parses the model-complete
+    snapshot of the latest (highest-`id`) archived copy back into a `ScrollItem`, so
+    it re-emits as a re-importable `export items` line — restoring it is then just
+    `import items … --accept-incoming` of that line (the symmetric round-trip).
+    Returns ``None`` when the id has no archived prior (never superseded).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT snapshot FROM item_archive WHERE item_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (item_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:  # pre-v8 library, no archive table
+        return None
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return item_from_dict(json.loads(row[0]))

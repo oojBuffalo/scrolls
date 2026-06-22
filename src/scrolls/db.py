@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -128,6 +128,28 @@ CREATE TABLE custody_events (
     "CREATE INDEX custody_events_item ON custody_events(item_id)",
 )
 
+# Prior-content archive for the accept-incoming reconcile resolution (ADR 0106).
+# `scrolls import … --accept-incoming` adopts a peer's diverging capture of an
+# already-held id, but raw is sacred (custody §2.4): before the held row is
+# replaced, its model-complete snapshot is appended here, so the superseded
+# capture stays recoverable (`scrolls archive show <id>` re-emits it as a
+# re-importable JSONL line). Append-only, like the custody ledger — every prior
+# capture an adoption replaced is retained, the monotonic `id` orders them. The
+# `snapshot` is `json.dumps(item_to_dict(prior))`, so recovery round-trips through
+# the same `import items` path the library already trusts.
+_ITEM_ARCHIVE_TABLE = (
+    """\
+CREATE TABLE item_archive (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    prior_hash TEXT,
+    superseded_by TEXT,
+    snapshot TEXT NOT NULL
+)""",
+    "CREATE INDEX item_archive_item ON item_archive(item_id)",
+)
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
@@ -136,6 +158,7 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
     5: _SUBSCRIPTION_VALIDATORS,
     6: (_CONCEPT_SUMMARIES_TABLE,),
     7: _CUSTODY_EVENTS_TABLE,
+    8: _ITEM_ARCHIVE_TABLE,
 }
 
 
