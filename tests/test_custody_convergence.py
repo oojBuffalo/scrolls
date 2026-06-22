@@ -6333,12 +6333,15 @@ def test_maintain_all_recheck_ignores_the_boundary(scrolls_home, monkeypatch, ca
 _DRIFT_KEYS = ("checked", "unverified", "unchanged", "drifted", "rotted", "error")
 
 
-def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries):
+def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
+              at_risk=0):
     """A custody snapshot in the `custody_snapshot` shape the trend/delta read.
 
     Only the axes the trend and delta compare are populated meaningfully; `tiers`
-    is irrelevant to the trend's three count axes and the scalar score, so it is
-    left empty (the delta diffs it, but this invariant asserts the trend axes).
+    is irrelevant to the trend's count axes and the scalar score, so it is left
+    empty (the delta diffs it, but this invariant asserts the trend axes). `at_risk`
+    is the consolidation-loss scalar the trend telescopes alongside drift/coverage/
+    staleness (roadmap H267).
     """
     return {
         "score": score,
@@ -6347,6 +6350,7 @@ def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries)
         "coverage": {"verified": verified, "total": total},
         "enrichment_stale": enrichment,
         "summaries_stale": summaries,
+        "at_risk": at_risk,
     }
 
 
@@ -6356,8 +6360,9 @@ def _telescoped(snapshots):
     The step-by-step history a worker reads: `compute_delta(snapshots[i-1],
     snapshots[i])` for every adjacent pair, summed per axis. `compute_trend` reads
     only the endpoints; this sums every recorded step, so the two must agree (the
-    telescoping identity). Returns the count-axis sums plus the deltas themselves
-    (so a caller can telescope the scalar score when no endpoint is null).
+    telescoping identity). Returns the four count-axis sums (drift, coverage, stale,
+    at-risk) plus the deltas themselves (so a caller can telescope the scalar score
+    when no endpoint is null).
     """
     deltas = [compute_delta(snapshots[i - 1], snapshots[i]) for i in range(1, len(snapshots))]
     drift = sum(
@@ -6371,7 +6376,8 @@ def _telescoped(snapshots):
         "enrichment": sum(d["enrichment_stale"]["change"] for d in deltas),
         "summaries": sum(d["summaries_stale"]["change"] for d in deltas),
     }
-    return drift, coverage, stale, deltas
+    at_risk = sum(d["at_risk"]["change"] for d in deltas)
+    return drift, coverage, stale, at_risk, deltas
 
 
 def _trend_window(snapshots):
@@ -6384,14 +6390,14 @@ def _trend_window(snapshots):
 
 
 # A four-run window that moves *non-monotonically* on every axis — drift rises
-# then falls, score falls then rises, enrichment rises then falls — so the
-# telescoping is a genuine sum of signed intermediate steps, not an endpoint
-# coincidence a monotone window would also satisfy.
+# then falls, score falls then rises, enrichment rises then falls, at-risk works
+# rise/fall/rise — so the telescoping is a genuine sum of signed intermediate
+# steps, not an endpoint coincidence a monotone window would also satisfy.
 _TREND_SNAPSHOTS = [
-    _snapshot(score=100, drifted=0, rotted=0, verified=1, total=4, enrichment=0, summaries=0),
-    _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0),
-    _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1),
-    _snapshot(score=85, drifted=0, rotted=1, verified=4, total=5, enrichment=1, summaries=1),
+    _snapshot(score=100, drifted=0, rotted=0, verified=1, total=4, enrichment=0, summaries=0, at_risk=0),
+    _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0, at_risk=2),
+    _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1, at_risk=1),
+    _snapshot(score=85, drifted=0, rotted=1, verified=4, total=5, enrichment=1, summaries=1, at_risk=3),
 ]
 
 
@@ -6400,7 +6406,7 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     # the per-run `compute_delta` changes, on every axis — so the trajectory and
     # the step-by-step history are the same numbers.
     trend = compute_trend(_trend_window(_TREND_SNAPSHOTS))
-    drift, coverage, stale, deltas = _telescoped(_TREND_SNAPSHOTS)
+    drift, coverage, stale, at_risk, deltas = _telescoped(_TREND_SNAPSHOTS)
 
     # the scalar score telescopes (last − first == Σ per-run changes)
     first_score = _TREND_SNAPSHOTS[0]["score"]
@@ -6408,10 +6414,11 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     assert trend["score"]["change"] == last_score - first_score
     assert trend["score"]["change"] == sum(d["score"]["change"] for d in deltas)
 
-    # the three count axes telescope
+    # the four count axes telescope
     assert trend["drift_change"] == drift
     assert trend["coverage_change"] == coverage
     assert trend["stale_change"] == stale
+    assert trend["at_risk_change"] == at_risk
 
     # non-vacuous: the window genuinely moves on every axis (else the identity is
     # trivially 0 == 0), and the intermediate steps are signed (a real telescope)
@@ -6419,7 +6426,9 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     assert trend["drift_change"] == 1
     assert trend["coverage_change"] == {"verified": 3, "total": 1}
     assert trend["stale_change"] == {"enrichment": 1, "summaries": 1}
+    assert trend["at_risk_change"] == 3
     assert [d["drift"]["drifted"]["change"] for d in deltas] == [1, 0, -1]  # up then down
+    assert [d["at_risk"]["change"] for d in deltas] == [2, -1, 2]  # up, down, up
 
 
 def test_perturbing_one_endpoint_moves_trend_and_telescope_together():
@@ -6430,9 +6439,10 @@ def test_perturbing_one_endpoint_moves_trend_and_telescope_together():
 
     # add one more `rotted` at the *last* endpoint (one step's worth of drift loss)
     perturbed = [*_TREND_SNAPSHOTS[:-1], _snapshot(
-        score=85, drifted=0, rotted=2, verified=4, total=5, enrichment=1, summaries=1)]
+        score=85, drifted=0, rotted=2, verified=4, total=5, enrichment=1, summaries=1,
+        at_risk=3)]
     perturbed_trend = compute_trend(_trend_window(perturbed))
-    p_drift, _, _, _ = _telescoped(perturbed)
+    p_drift, _, _, _, _ = _telescoped(perturbed)
 
     # the perturbation moved the value (so the test has teeth) …
     assert perturbed_trend["drift_change"] == base_trend["drift_change"] + 1
@@ -6482,6 +6492,7 @@ def test_recorded_history_deltas_telescope_to_the_trend(scrolls_home, capsys):
         "enrichment": sum(s["enrichment_stale"]["change"] for s in steps),
         "summaries": sum(s["summaries_stale"]["change"] for s in steps),
     }
+    assert trend["at_risk_change"] == sum(s["at_risk"]["change"] for s in steps)
     assert trend["score"]["change"] == sum(s["score"]["change"] for s in steps)
 
 
@@ -6497,7 +6508,7 @@ def test_trend_telescopes_on_count_axes_with_a_null_score_endpoint():
         _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1),
     ]
     trend = compute_trend(_trend_window(snapshots))
-    drift, coverage, stale, deltas = _telescoped(snapshots)
+    drift, coverage, stale, at_risk, deltas = _telescoped(snapshots)
 
     # the score change is the honest null (a None endpoint has no scalar movement)
     assert trend["score"]["change"] is None
@@ -6510,6 +6521,7 @@ def test_trend_telescopes_on_count_axes_with_a_null_score_endpoint():
     assert trend["drift_change"] == drift == 2
     assert trend["coverage_change"] == coverage == {"verified": 3, "total": 5}
     assert trend["stale_change"] == stale == {"enrichment": 2, "summaries": 1}
+    assert trend["at_risk_change"] == at_risk == 0  # at-risk steady, telescopes to 0
 
 
 def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
@@ -6525,8 +6537,9 @@ def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
         assert trend["drift_change"] is None
         assert trend["coverage_change"] is None
         assert trend["stale_change"] is None
+        assert trend["at_risk_change"] is None
         # no adjacent pairs → no per-run deltas to sum (the empty telescope)
-        _, _, _, deltas = _telescoped(snapshots)
+        _, _, _, _, deltas = _telescoped(snapshots)
         assert deltas == []
 
 

@@ -187,10 +187,14 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   by construction; **no schema change beyond stats, no extra ledger read.** **With H266
   the consolidation theme is complete across every *point-in-time* axis — work-level
   custody is readable (H261), filterable (H262), alarmed (H263), readable-briefing
-  (H264), browsable (H265), and stats-summarized (H266).** The next leg is
-  *consolidation loss over time* — the at-risk-works count in the `maintain`
-  snapshot/trend (H267) and its readable line (H268) — and the *compiled surface* (the
-  at-risk alarm on `library/index.md`, H269).
+  (H264), browsable (H265), and stats-summarized (H266).** **H267 (this run) opened the
+  *consolidation-loss-over-time* leg** — the at-risk-works count now rides the
+  `maintain` `custody_snapshot`, its cross-run `delta`, and `--history`/`--trend`'s new
+  `at_risk_change` axis (and `status`'s `custody.at_risk`, the shared primitive), a
+  scalar like recheck `coverage` (H115), reported but never a `posture` trigger (it
+  re-views the `fidelity`/`drift` the score/drift already move on). The remaining legs
+  are its **readable line** (H268, `_At-risk works: N (▲M)_` on the report/`--trend`)
+  and the **compiled surface** (the at-risk alarm on `library/index.md`, H269).
 - **The scheduled-maintenance pass now scopes on the holdings axis too.**
   `scrolls maintain --fidelity <tier>` (H255) is the act twin of `verify
   --fidelity` (H252): the holdings-axis sibling of `maintain --source` (H165), but
@@ -295,7 +299,6 @@ is ready, and prefer closing one rather than appending more of the same shape.
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H267 | **The at-risk-works count rides the `maintain` custody snapshot, its cross-run `delta`, and `--history`/`--trend` — the *consolidation-loss-over-time* axis, the at-risk counterpart of recording recheck `coverage` in the snapshot (H115).** The at-risk-works alarm reaches every *point-in-time* surface — `doctor`/`maintain`/`get_library_health` JSON (H263), the briefings (H264), the works stats (H266, **this run**) — but not the **trend**: `maintain`'s live pass reports `at_risk_works` (H263), yet `custody_snapshot` records only `score`/`tiers`/`drift`/`coverage`/`enrichment_stale`/`summaries_stale`, so `--history`/`--trend` cannot show whether consolidation health is improving or degrading. This adds an `at_risk` scalar to `custody_snapshot` (read from the doctor report's `custody.works.at_risk`, degrade-safe `0` for an older snapshot or a `status: skipped` works block — the module's degrade-safely posture), folds it into the cross-run `delta` with the same first-run/missing-axis tolerance the other axes carry, and renders it in `--history`/`--trend`. So an operator reading the trend sees "2 → 4 works at risk over the last 5 runs" without re-auditing each. Like `coverage`, it rides only the **fully-unscoped** persisting pass — a `--source`/`--fidelity` focused triage records drift events but a null delta (H165/H255), never stamping the trend as a whole-library sweep. The one design choice: store the scalar `at_risk` count (a snapshot axis is a scalar the delta subtracts) vs. the whole `{total, at_risk, most_at_risk}` signal (the JSON-surface shape) — lean the **scalar** (`at_risk`), since the snapshot is a comparable-scalars record and `most_at_risk`'s entry is not a quantity a delta can difference (the live pass already carries the named work). Tests in `tests/test_maintain.py`. Precondition: H263 (`custody.works` on the doctor report `maintain` reads), H266 (the works-stats at-risk summary, **shipped this run**), H115 (the coverage-in-snapshot precedent), H46 (the `--trend` derived summary). | → cap 1, maintenance framing |
 | H268 | **The at-risk-works count is readable in the `maintain` report and the `--trend` summary — a `_At-risk works: N (▲M since last run)_` line, the readable counterpart of H267's snapshot scalar (and the trend twin of the at-risk `_At-risk work:_` briefing line H264).** H267 records the at-risk count in the snapshot/delta as JSON; this distils it to the one readable line the `maintain` report and `--trend` summary emit, so a human skimming the maintenance output reads the consolidation-loss trend without parsing the delta JSON — the at-risk-works analogue of the `snapshot_headline` custody line (H103/H142) and the per-source readable `_Attention:_` line (H159). Reuses the snapshot's `at_risk` scalar and the delta's signed change (degrade-safe on a first run / missing axis → the bare `_At-risk works: N_` with no change clause, exactly when the delta has no baseline). Tests in `tests/test_maintain.py`. Precondition: H267 (the snapshot scalar + delta), H142 (the `snapshot_headline` renderer precedent), H159 (the readable `_Attention:_` line precedent). | → cap 1, maintenance framing |
 | H269 | **The compiled `library/` landing page carries the at-risk-works alarm — the consolidation alarm reaches the *static compiled* surface, the at-risk counterpart of the library-wide custody headline on `index.md` (H96).** The KB compiler writes the whole-library `custody_headline` in the compiled `index.md` header (H96) and the per-source weakest-source picture rides the compiled pages, but the *consolidation* alarm — "N works at risk" — appears only on the agent JSON/briefing surfaces, never on the human-browsable compiled library. This emits the shared `works.render_at_risk_works` line (H264) over the whole rendered library beneath the `index.md` custody headline, inside the sentinel fence so a re-compile never clobbers hand annotations (M1, ADR 0102) and an honest no-op (no line) when no multi-rep work is at risk. So a human browsing the compiled library reads the same consolidation alarm an agent reads from `doctor`. Converges with `doctor`'s `custody.works` over the whole library by construction (the parse-it-back invariant the compiled custody headlines already hold, H97). Tests in `tests/test_kb.py` / `tests/test_custody_convergence.py`. Precondition: H264 (`render_at_risk_works`), H96 (the compiled `index.md` custody headline), H1/M1 (the sentinel-fence regeneration). | → cap 1, cap 2, cap 6 |
 | H244 | **The custody bundle is reproducible across the round-trip boundary — `export bundle <Q>` from a library rebuilt *from a bundle* is byte-identical to the original `export bundle <Q>`, the bundle-artifact analogue of `test_export_rebuild_is_byte_identical`'s point 2 (export→import→export byte-stability).** H238 (this run) pins the rebuilt *scrolls* + compiled `library/` pages byte-identical across the `export bundle` → `import bundle` boundary; the untested guarantee is that the *bundle artifact itself* re-exports byte-for-byte from the rebuilt library. It is a genuine, distinct claim: the bundle is more than its item block — it carries derived prose (the `custody_headline`, the `_Attention:_`/`_Refresh:_` pointers, the per-source breakdown via `render_custody_by_source`) computed over the rows + ledger, none of it clock-derived (`bundle.py` has no `datetime`/`now()` call). So if the round-trip carries every field those folds read from, re-exporting the *whole* briefing from the rebuilt home reproduces the original byte-for-byte — the M4/cap 9 "self-contained, shareable" briefing is itself reproducible, not just its lossless core. Pin it: over the mixed-fidelity `_mixed_fidelity_scope` (no recorded events → an empty events block on both sides, keeping the slice correct-by-construction), `export bundle "database"` from source A, `import bundle` + `doctor --fix` + `kb` into fresh B, then `export bundle "database"` from B and assert the two bundle texts are byte-identical (and, separately, that the re-exported items block alone is byte-stable — the `dump_items_export`-over-identical-rows guarantee point 2 already covers for `export items`). Implementation path: `build_bundle` folds only row/ledger-derived primitives (`custody_headline`, `custody_counts_by_source`, `_refresh_debt_by_source`) with no clock input, and H238/export-items byte-stability already give row-level byte-identity, so bundle reproducibility is correct-by-construction; the slice pins it on the bundle artifact the scroll/library byte-identity tests never re-export. Test only (`tests/test_bundle.py`, beside the H238 byte-identity test). Precondition: H238 (the bundle scroll/library byte-identity, **shipped this run**), H216 (the mixed-fidelity bundle round-trip). | → cap 9, cap 4 |
@@ -306,33 +309,71 @@ is ready, and prefer closing one rather than appending more of the same shape.
 | H249 | **The dry-run's `new`/`held`/`orphaned_items` form a clean *three-way* id-space partition even over a bundle corrupt on *both* axes — the both-axes closure of H239 (which proved the two-way `new`/`held` partition over an items-*only* corrupt bundle).** H239 pins `set(new) ∪ set(held)` = the bundle's distinct item ids and `set(new) ∩ set(held) == ∅`, but only over an items-only corrupt bundle (empty events); the untested cell is whether that reviewable partition stays clean when the *events* block is *also* corrupt (orphan events present), and whether the orphan-item id-space stays disjoint from the item partition. It is a genuine guarantee: `new`/`held` are folded from the items block (`imported_items`) while `orphaned_items` is folded from the events block's unresolved ids (`_orphan_item_ids`), two independent reads of the one parsed bundle, so a naive impl could let an orphan item leak into `new`/`held` (double-classifying an id the merge never writes) or an items-block id vanish from review. Pin it: over the H243 `_spliced_items_and_events_bundle` (a within-bundle item-dup items block *plus* anchored-and-orphan events), dry-run and assert (a) `sorted(new + held)` equals the distinct items-block ids computed independently via `parse_bundle`, (b) `set(new).isdisjoint(held)`, and (c) `set(orphaned_items).isdisjoint(set(new) | set(held))` — three non-overlapping id-spaces, so an operator reviewing the preview never sees one id classified two ways across the item and orphan axes. Mutation-checked: adding a distinct orphan event for a new missing item extends `orphaned_items` by exactly that id and leaves `new`/`held` untouched (the orphan axis never perturbs the item partition). Implementation path: `orphan` item ids are exactly those neither held nor in `known_ids` (`partition_resolvable_events`), so they are disjoint from the items-block ids by construction; the slice pins the cross-axis disjointness H239 (items-only) and H243 (counts, not the id partition) leave open. Test only (`tests/test_bundle.py`, beside H243/H239). Precondition: H243 (the both-axes whole-summary tie + `_spliced_items_and_events_bundle`, **shipped this run**), H239 (the two-way items-only partition). | → cap 9, cap 7 |
 | H256 | **Buffer refresh checkpoint** (maintenance rule; next full refresh due ~2026-06-22). Mark shipped slices into the ledger, prune overtaken slices, keep ≥6 un-started work slots, and re-derive the 3-day/week plans with absolute dates. Re-confirm the week plan still maps to `docs/product/mvp.md`. Bi-temporal drift framing stays deferred unless an agent workflow shows the event record insufficient. | maintenance |
 
-The next lead slot is **H267** — the at-risk-works count rides the `maintain`
-custody snapshot, its cross-run `delta`, and `--history`/`--trend`: the
-*consolidation-loss-over-time* axis, the at-risk counterpart of recording recheck
-`coverage` in the snapshot (H115). The consolidation theme (H261–H266) put the
-at-risk-works alarm on every **point-in-time** surface — JSON read
-(`doctor`/`maintain`/`get_library_health`), readable briefing (H264), and now the
-works stats (H266) — but the **trend** doesn't track it: `custody_snapshot` records
-`score`/`tiers`/`drift`/`coverage`/`enrichment_stale`/`summaries_stale`, never the
-at-risk-works count, so an operator cannot see whether consolidation health is
-improving or degrading. H267 adds the scalar to the snapshot (degrade-safe from the
-doctor report's `custody.works.at_risk`), folds it into the delta, and renders it in
-`--history`/`--trend`; **H268** distils it to a readable `_At-risk works: N (▲M)_`
-line; **H269** carries the alarm onto the compiled `library/index.md`. **With H266
-work-level custody is complete across every *point-in-time* axis** — readable (H261),
-filterable (H262), alarmed (H263 JSON), readable-briefing (H264), browsable (H265),
-and stats-summarized (H266); the consolidation theme's next leg is *trend over time*
-(H267–H268) and the *compiled surface* (H269). The **budget/tier
+The next lead slot is **H268** — the at-risk-works count is **readable** in the
+`maintain` report and the `--trend` summary (a `_At-risk works: N (▲M since last run)_`
+line), the readable counterpart of H267's snapshot scalar (and the trend twin of the
+at-risk `_At-risk work:_` briefing line H264). H267 (**this run**) recorded the count
+in the snapshot/delta/trend as JSON; H268 distils it to the one readable line a human
+skimming the maintenance output reads without parsing the delta JSON — the at-risk
+analogue of the `snapshot_headline` custody line (H103/H142) and the per-source
+readable `_Attention:_` line (H159). **H269** then carries the alarm onto the compiled
+`library/index.md`. **With H266 work-level custody is complete across every
+*point-in-time* axis** — readable (H261), filterable (H262), alarmed (H263 JSON),
+readable-briefing (H264), browsable (H265), and stats-summarized (H266); **H267
+(this run) opened the *trend-over-time* leg** — the at-risk count now rides the
+`maintain` snapshot/delta/`--trend` (and `status`'s `custody.at_risk`), with H268
+(readable line) and H269 (compiled surface) the remaining legs. The **budget/tier
 convergence cells H244–H249** sit below as **de-prioritized but valid regression
 guards** — each a correct-by-construction cell of the cross-tier × CLI/MCP ×
 scoped/unscoped × untruncated/truncated fidelity matrix (H244 bundle-artifact
 reproducibility, H245 dry-run per-id write prediction, H246 unscoped CLI
 ladder-under-truncation, H247 unscoped MCP four-way tie, H248 unscoped MCP
 ladder-under-truncation, H249 both-axes three-way id partition). Take the capability
-H267 first; reach for a guard cell only when no capability is ready.
+H268 first; reach for a guard cell only when no capability is ready.
 Per-slice provenance for every *shipped* slot lives in git
 (`git log --oneline | grep '(H<NN>)'`); the **Shipped ledger** below is the one-line in-file
 index (maintenance-rule §4: *git is the changelog*).
+
+**This run (2026-06-22) shipped H267** — the at-risk-works count now rides the
+`maintain` custody snapshot, its cross-run `delta`, and `--history`/`--trend`: the
+**consolidation-loss-over-time** axis, the at-risk counterpart of recording recheck
+`coverage` in the snapshot (H115). The consolidation theme (H261–H266) put the
+at-risk-works alarm on every *point-in-time* surface (JSON read, readable briefing,
+works stats), but the **trend** didn't track it — `custody_snapshot` recorded
+`score`/`tiers`/`drift`/`coverage`/`enrichment_stale`/`summaries_stale`, never the
+at-risk count, so an operator couldn't see whether consolidation health was improving
+or degrading. H267 adds an `at_risk` scalar to `custody_snapshot` (read from the
+doctor report's `custody.works.at_risk`, degrade-safe `0` for an absent `works` block
+or a `status: skipped` `--source` pass), folds it into the cross-run `delta` with the
+same first-run/missing-axis tolerance the other scalars carry, and adds the
+`at_risk_change` net-delta axis to `compute_trend`. So an operator reading `--trend`
+sees "2 → 4 works at risk" without re-auditing each run. The **decisive design
+choices**, both resolved as the spec leaned: (1) **store the scalar `at_risk` count**,
+not the whole `{total, at_risk, most_at_risk}` block — the snapshot is a
+comparable-scalars record, and `most_at_risk`'s named work is not a quantity a delta
+can difference (the live `at_risk_works` block already carries it, live-pass only);
+(2) **`at_risk_change` is a reported axis, never a `posture` trigger** (the
+`coverage_change`/`stale_change` precedent) — it re-views the very `fidelity`/`drift`
+the `score` and `drift_change` already move the posture on (a work is at risk because
+its reps degraded or drifted), so folding it into `posture` would **double-count** the
+same integrity loss. A second consequence falls out of the shared primitive:
+`custody_snapshot` is also `scrolls status`'s `custody` block, so `status` gains
+`custody.at_risk` for free — the documented "status can never disagree with a
+maintenance snapshot" convergence (H38/H103). Only the **fully-unscoped** persisting
+pass records the snapshot, so a recorded `at_risk` is always the whole-library count
+(a `--source`/`--fidelity` triage is non-persisting, null delta — H165/H255). The
+H143 trend≡telescoped-deltas invariant gained the `at_risk` axis (the four-run
+non-monotone window now moves at-risk up/down/up, telescoping +3). 14 tests: 11 in
+`tests/test_maintain.py` (snapshot records the count + degrades to 0; delta against a
+baseline / first-run null / pre-H267-baseline-zero; trend movement / posture-
+independence / clears / pre-H267-endpoint-zero; `<2`-run null; the recorded-snapshot
+== live-block convergence; `--history` carries the scalar + cross-run delta), 3 in
+`tests/test_custody_convergence.py` (the telescoping invariant extended to the at-risk
+axis on all three of its forms). Docs: `docs/cli.md` trend-layer paragraph, the
+`custody.works`/`status` field rows, and every `status`/`maintain`/`--trend` example
+JSON. Full suite green (3504 passed). **H267 opens the consolidation theme's
+trend-over-time leg; the next lead is H268 (the readable `_At-risk works: N (▲M)_`
+line on the `maintain` report and `--trend` summary).**
 
 **This run (2026-06-22) shipped H266** — the `scrolls works` *stats* carry a
 scope-level at-risk-works summary at `stats.custody.at_risk`, the works-surface
@@ -625,6 +666,7 @@ changelog (maintenance-rule §4).
 | H264 | **The readable work-level `_At-risk work:_` line on the `export bundle` + `scrolls context` briefings — the consolidation-level counterpart of the per-source weakest-source `_Attention:_` line (H159).** H263 put the at-risk-works alarm on every JSON read surface; H264 distils the *same* `works.at_risk_signal` fold into a readable line — ``_At-risk work: `<doi>` — no representation is both full and unmoved (best held <tier>, safest drift <posture>); N work(s) at risk._`` — naming the work `most_at_risk` names and reusing its `reason` verbatim, so the briefing line and `doctor`'s `custody.works`/`maintain`/`get_library_health` converge by construction. New shared `works.render_at_risk_works(items, verdicts)` (clusters via `works_over`, folds `at_risk_signal`; `[line, ""]` or `[]` on honest absence). Decisions: (1) helper lives in `works.py` beside `at_risk_signal` (not `custody.py` — `works` imports `custody`, so `custody.render_at_risk_works` calling `at_risk_signal` is a cycle; home follows the primitive); (2) lean scope — `context` clusters the **uncollapsed** matched scope (`scope_items`, kept + folded reps) so a folded full+verified sibling correctly marks a work safely held, not the lone kept canonical (ADR 0101 collapse); (3) placed directly beneath the source `_Attention:_` line (the two loss pointers grouped), gated `connected`+ on `context`, always present on the bundle. 16 tests (4 unit `test_works.py`, 6 `test_bundle.py`, 6 `test_context.py` incl. MCP parity). Docs: `docs/cli.md` `_At-risk work:_` paragraph. Full suite 3472 passed. **Completes the readable side of the consolidation alarm; next lead H265 (`scrolls works --at-risk`).** | cap 1, cap 9, cap 10 |
 | H265 | **`scrolls works --at-risk` + the MCP `get_works(at_risk=True)` twin — browse only the works no representation safely holds, the at-risk-works alarm (H263) as a *browse predicate*.** A genuinely new predicate, **not** a `--fidelity`/`--drift` value: "no rep is safely held" is the **negation of ∃(full ∧ unmoved)** (the consolidation analogue of `list --drift`). Extends the shared `works.filter_works` with an `at_risk` boolean keeping the works whose `work_custody` `safely_held == False` — the *same* set `at_risk_signal` counts (one rule, three reads: the aggregate `custody` block H261, the JSON alarm H263, this browse) — gated behind the `not at_risk` early-exit so the unfiltered path reads no ledger and stays the H262 identity. **ANDs** with `--fidelity`/`--drift`: `--at-risk --fidelity full` surfaces the **recapture candidates** whose content is in hand but whose work is at risk (the full copy drifted). Boolean predicate → rides the `scope` echo via `or None` (present only when set, G2); composes with the per-item `ref` lens; `stats.custody` partitions the kept set (the H262 sieve shape, before-the-cut). 12 tests: 5 unit `filter_works(at_risk=)` (`test_works.py` — keeps-unsafe, `at_risk_signal`-set parity, whole-work, ANDs-with-filters, false-is-identity), 4 CLI (`test_works.py` — browse, scope-omit-when-unset, ANDs, ref-lens), 3 MCP (`test_mcp.py` — browse, ANDs, CLI↔MCP parity). Docs: `docs/cli.md` `--at-risk` paragraph + heading + MCP table row. Full suite 3484 passed. **Closes the consolidation theme's browse leg — work-level custody is now readable (H261), filterable (H262), alarmed (H263), readable-briefing (H264), and browsable (H265); next lead H266 (the works-stats at-risk summary).** | cap 1, cap 7 |
 | H266 | **`scrolls works` stats carry a scope-level at-risk-works summary at `stats.custody.at_risk` (CLI + MCP `get_works`) — the works-surface counterpart of the `doctor`/`maintain`/`get_library_health` at-risk-works alarm (H263), closing the consolidation theme's point-in-time axes.** Adds the whole `at_risk_signal` fold `{total, at_risk, most_at_risk}` over the **reported** (post-filter) works to the works `stats.custody` block, beside `attention` in the same loss-summary family (`attention` is itself a scope-level custody-loss summary, a source flag not a rep tally — the precedent the spec named). Field-identical to `doctor`'s `custody.works` (minus `status`), so it converges with it / MCP `get_library_health` **by construction** over the unscoped default 2+ clustering (pinned on both CLI and MCP). A pure fold over the reported works → composes with the H262/H265 filters (under `--at-risk` `at_risk == total`; under `--fidelity full` the at-risk subset of the kept works), `at_risk.total == stats.works` by construction, honest zeroed fold on an empty scope. **No schema change beyond stats, no extra ledger read** (reuses the `verdicts` the per-rep `drift` folds), riding MCP `get_works` for free. The two existing `stats.custody` convergence tests + the `test_works_stats_custody_agrees_with_its_representations` invariant gained the works-only `at_risk` member (the shared `_tally_rows` per-rep fold, used by the no-`at_risk` browse surfaces, left untouched). 10 tests (7 `test_works.py`, 2 `test_mcp.py`) + 1 convergence-test update. Docs: `docs/cli.md` `stats.custody.at_risk` paragraph + MCP table row. Full suite 3493 passed. **Closes the consolidation theme's point-in-time axes; next lead H267 (the at-risk-works count in the `maintain` snapshot/trend — consolidation loss over time).** | cap 1, cap 2, cap 7 |
+| H267 | **The at-risk-works count rides the `maintain` custody snapshot, its cross-run `delta`, and `--history`/`--trend` (and `status`'s `custody.at_risk`) — the consolidation-loss-*over-time* axis, the at-risk counterpart of recording recheck `coverage` in the snapshot (H115).** Adds an `at_risk` scalar to `custody_snapshot` (read from the doctor report's `custody.works.at_risk`, degrade-safe `0` for an absent `works` block or a `status: skipped` `--source` pass), folds it into the cross-run `delta` with the other scalars' first-run/missing-axis tolerance, and adds the `at_risk_change` net-delta axis to `compute_trend`. So an operator reading `--trend` sees "2 → 4 works at risk" without re-auditing each run. **Decisions:** (1) store the **scalar count**, not the whole `{total, at_risk, most_at_risk}` block (the snapshot is a comparable-scalars record; `most_at_risk`'s named work is not a quantity a delta can difference — the live `at_risk_works` block carries it, live-pass only); (2) `at_risk_change` is a **reported axis, never a `posture` trigger** (the `coverage_change`/`stale_change` precedent) — it re-views the `fidelity`/`drift` the `score`/`drift_change` already move on, so folding it in double-counts. `custody_snapshot` is shared with `scrolls status`, so `status` gains `custody.at_risk` for free (the H38/H103 "status can't disagree with a snapshot" convergence). Only the fully-unscoped persisting pass records it (a `--source`/`--fidelity` triage is non-persisting, null delta — H165/H255). The H143 trend≡telescoped-deltas invariant gained the `at_risk` axis. 14 tests (11 `test_maintain.py`, 3 `test_custody_convergence.py`). Docs: `docs/cli.md` trend-layer paragraph + `custody.works`/`status` field rows + every `status`/`maintain`/`--trend` example JSON. Full suite 3504 passed. **Opens the consolidation trend-over-time leg; next lead H268 (the readable `_At-risk works: N (▲M)_` line).** | cap 1, maintenance framing |
 
 ---
 
@@ -681,15 +723,18 @@ on a committed, tested, clean stopping point; slips roll forward.
   sieve* (the in-scope items' whole ledger travels, like `--source`), so a
   `--drift drifted` backup carries the moved items' full custody history for a
   recapture handoff. 8 tests; full suite 3411 passed.
-- **Next (2026-06-22 → 2026-06-24):** **H261** — `scrolls works` reports a
-  per-work *aggregate custody posture* ("is this work safely held — does any
-  representation survive at full fidelity, unmoved?"), the first slice of the new
-  **work-level custody consolidation** theme (vision §3.5, the genuinely new
-  custody *shape* now that the per-item filter family is closed). A pure fold over
-  the per-rep `fidelity`/`drift` `works` already computes, no schema change.
-  **H262** (`works --fidelity`/`--drift` filter) and **H263** ("at-risk works"
-  doctor/maintain signal) follow. The **H256 buffer-refresh checkpoint** is due
-  ~2026-06-22 (fold H250–H260 into the compact ledger, prune, re-derive plans).
+- **Done (2026-06-21 → 2026-06-22):** the **work-level custody consolidation**
+  theme's point-in-time axes — **H261** (per-work aggregate custody posture),
+  **H262** (`works --fidelity`/`--drift` filter), **H263** (the at-risk-works
+  doctor/maintain alarm), **H264** (readable `_At-risk work:_` briefing line),
+  **H265** (`works --at-risk` browse), **H266** (works-stats at-risk summary) — and
+  **H267 (this run)** opened the *trend-over-time* leg (the at-risk count in the
+  `maintain` snapshot/delta/`--trend` + `status`'s `custody.at_risk`).
+- **Next (2026-06-22 → 2026-06-24):** **H268** — the readable `_At-risk works:
+  N (▲M since last run)_` line on the `maintain` report and `--trend` summary (the
+  readable counterpart of H267's scalar), then **H269** — the at-risk alarm on the
+  compiled `library/index.md`. The **H256 buffer-refresh checkpoint** is due
+  ~2026-06-22 (fold H261–H267 into the compact ledger, prune, re-derive plans).
 
 ---
 

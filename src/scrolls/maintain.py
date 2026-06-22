@@ -118,6 +118,19 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     not just on a single pass's report (H109). Read defensively (the module's
     degrade-safely posture): a report whose drift block predates H113 reads the
     honest zeroed `{verified: 0, total: 0}`, never a `KeyError`.
+
+    Includes the **at-risk-works count** (`custody.works.at_risk`, roadmap
+    H263/H267) — the works no representation safely holds, the consolidation-level
+    custody loss the live pass surfaces as the whole `at_risk_works` block (H263). The
+    snapshot records only the *scalar* `at_risk` count (the comparable-scalars record
+    the delta subtracts; `most_at_risk`'s named work is not a quantity a delta can
+    difference, and the live pass already carries it), so `--history`/`--trend` show
+    whether *consolidation* health is improving or degrading — the at-risk counterpart
+    of recording recheck `coverage`. Read defensively like the rest: a report without a
+    `works` block (an older schema), or one a `--source` pass left `status: "skipped"`
+    (a scoped item set fragments works → `at_risk: 0`), reads the honest `0`, never a
+    `KeyError`. Only the **fully-unscoped** persisting pass records the snapshot
+    (`run_maintain`), so a recorded `at_risk` is always the whole-library count.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -128,6 +141,7 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "coverage": dict(drift.get("coverage", {"verified": 0, "total": 0})),
         "enrichment_stale": custody["enrichment"]["stale"],
         "summaries_stale": custody["summaries"]["stale"],
+        "at_risk": custody.get("works", {}).get("at_risk", 0),
     }
 
 
@@ -494,6 +508,11 @@ def compute_delta(
         "coverage": mapping("coverage"),
         "enrichment_stale": scalar("enrichment_stale"),
         "summaries_stale": scalar("summaries_stale"),
+        # the at-risk-works count (H267): a scalar like `score`/`enrichment_stale`,
+        # so the delta subtracts it. A baseline lacking it (a pre-H267 snapshot) reads
+        # zero, never null — the run happened, consolidation health was simply not yet
+        # tracked (the missing-axis posture the other scalars carry, ADR 0082).
+        "at_risk": scalar("at_risk"),
     }
 
 
@@ -565,8 +584,9 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     - else a *rise* in `score` or *fewer* drifted/rotted is `improving`;
     - else `holding`.
 
-    ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115) and
-    ``stale_change`` (``{enrichment, summaries}`` net deltas, roadmap H131) are
+    ``coverage_change`` (``{verified, total}`` net deltas, roadmap H115),
+    ``stale_change`` (``{enrichment, summaries}`` net deltas, roadmap H131), and
+    ``at_risk_change`` (the net change in the at-risk-works count, roadmap H267) are
     *separate* axes the worker reads alongside the posture:
 
     - ``coverage_change`` — "is the library getting more covered?" (Δ``verified``
@@ -575,24 +595,30 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     - ``stale_change`` — "is re-derivable enrichment debt accumulating?" (Δ the
       stale-classification count, H25, and Δ the stale-summary count, H29 — a
       rising figure means a ``classify --stale`` / ``kb --stale`` refresh is due).
+    - ``at_risk_change`` — "is *consolidation* health degrading?" (Δ the count of
+      works no representation safely holds, H263 — a rising figure means more works
+      have lost their last unmoved full copy; the consolidation-loss trajectory).
 
-    Both are **deliberately kept out of `posture`** (the H115 precedent, on the
-    staleness axis too): coverage measures *how much has been checked* and
-    staleness *how much enrichment is re-derivable*, neither *how faithfully we
-    hold what we have*. A held category produced under a superseded ruleset is
-    still held — rising staleness means a refresh is due, not that custody
-    regressed — so rising coverage is not "improving" integrity, a steady-but-
-    overdue library is not "regressing", and growing stale debt does not move the
-    posture. Keeping `posture` integrity-only leaves the H46 rule unchanged;
-    coverage and staleness are reported, never posture triggers.
+    All three are **deliberately kept out of `posture`** (the H115 precedent, on the
+    staleness axis too): coverage measures *how much has been checked*, staleness
+    *how much enrichment is re-derivable*, and the at-risk-works count is a
+    *consolidation re-view* of the very `fidelity`/`drift` facts ``score`` and
+    ``drift_change`` already move the posture on (a work is at risk because its reps
+    degraded or drifted) — so folding it into `posture` would **double-count** the
+    same integrity loss. A held category produced under a superseded ruleset is still
+    held — rising staleness means a refresh is due, not that custody regressed — so
+    rising coverage is not "improving" integrity, a steady-but-overdue library is not
+    "regressing", and neither growing stale debt nor a moving at-risk count shifts the
+    posture. Keeping `posture` integrity-only leaves the H46 rule unchanged; coverage,
+    staleness, and consolidation loss are reported, never posture triggers.
 
     Honest absence (the H21/H29 posture): a window of fewer than two runs is not
     a trajectory — a single point has no direction — so it carries null deltas
-    (including ``coverage_change``/``stale_change``) and `posture`
+    (including ``coverage_change``/``stale_change``/``at_risk_change``) and `posture`
     ``insufficient-history``. A `score` that is ``None`` on either end (an
     uninitialized-library run) yields a null score `change`, never a fabricated
-    zero; the drift, coverage, and staleness movement are still computed (absent
-    counts read 0, so a pre-H115/pre-staleness-tracking endpoint reads 0).
+    zero; the drift, coverage, staleness, and at-risk movement are still computed
+    (absent counts read 0, so a pre-H115/pre-staleness/pre-H267 endpoint reads 0).
     """
     n = len(runs)
     if n < 2:
@@ -603,6 +629,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "drift_change": None,
             "coverage_change": None,
             "stale_change": None,
+            "at_risk_change": None,
             "posture": "insufficient-history",
         }
 
@@ -637,6 +664,12 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         - _stale(first_snap, "summaries_stale"),
     }
 
+    # the at-risk-works movement (H267): the net first→last change in the count of
+    # works no representation safely holds. A scalar like `drift_change`, read with
+    # the same degrade-safe 0 for a pre-H267 endpoint; reported, never a posture
+    # trigger (it re-views the fidelity/drift the score/drift already move on).
+    at_risk_change = _stale(last_snap, "at_risk") - _stale(first_snap, "at_risk")
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -655,6 +688,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "drift_change": drift_change,
         "coverage_change": coverage_change,
         "stale_change": stale_change,
+        "at_risk_change": at_risk_change,
         "posture": posture,
     }
 

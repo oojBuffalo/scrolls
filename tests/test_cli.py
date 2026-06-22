@@ -145,6 +145,8 @@ def _custody_headline(score):
         "coverage": {"verified": 0, "total": 0},
         "enrichment_stale": 0,
         "summaries_stale": 0,
+        # the at-risk-works count (H267): no multi-rep work held → none at risk
+        "at_risk": 0,
     }
 
 

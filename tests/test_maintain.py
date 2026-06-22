@@ -70,11 +70,13 @@ from scrolls.render import write_scroll
 
 
 def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
-                   coverage=None):
+                   coverage=None, at_risk=0):
     """A minimal doctor report shaped like `run_doctor`'s custody block.
 
     `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
     member (roadmap H113); defaults to the honest zero when not specified.
+    `at_risk` mirrors the `custody.works.at_risk` consolidation-alarm count
+    (roadmap H263/H267); defaults to zero (no work at risk).
     """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
@@ -89,6 +91,8 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
             "drift": full_drift,
             "enrichment": {"stale": enrichment_stale},
             "summaries": {"stale": summaries_stale},
+            "works": {"status": "ok", "total": at_risk, "at_risk": at_risk,
+                      "most_at_risk": None},
         }
     }
 
@@ -101,6 +105,7 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         enrichment_stale=2,
         summaries_stale=1,
         coverage={"verified": 2, "total": 4},
+        at_risk=2,
     )
     snap = custody_snapshot(report)
     assert snap == {
@@ -113,6 +118,9 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         "coverage": {"verified": 2, "total": 4},
         "enrichment_stale": 2,
         "summaries_stale": 1,
+        # the consolidation-loss scalar (H267): the at-risk-works count, not the
+        # whole `at_risk_works` block — a comparable scalar the delta subtracts
+        "at_risk": 2,
     }
 
 
@@ -122,6 +130,30 @@ def test_custody_snapshot_coverage_defaults_to_zero_on_a_pre_h113_drift_block():
     report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
     del report["custody"]["drift"]["coverage"]
     assert custody_snapshot(report)["coverage"] == {"verified": 0, "total": 0}
+
+
+def test_custody_snapshot_records_the_at_risk_works_count():
+    # H267: the snapshot carries the at-risk-works count (the consolidation-loss
+    # scalar) read off `custody.works.at_risk`, so `--history`/`--trend` can show
+    # whether consolidation health is degrading without re-auditing each run.
+    report = _doctor_report(80, {"full": 2, "partial": 0, "reference": 1}, {},
+                            at_risk=1)
+    assert custody_snapshot(report)["at_risk"] == 1
+
+
+def test_custody_snapshot_at_risk_defaults_to_zero_without_a_works_block():
+    # A report without a `works` block (an older schema) or one a --source pass left
+    # `status: skipped` (a scoped item set fragments works → at_risk 0) reads the
+    # honest 0, never a KeyError — the module's degrade-safely posture (ADR 0082).
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["works"]
+    assert custody_snapshot(report)["at_risk"] == 0
+    # a skipped works block (the --source default) reads its honest 0 too
+    skipped = _doctor_report(100, {"full": 1}, {"checked": 1})
+    skipped["custody"]["works"] = {
+        "status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None,
+    }
+    assert custody_snapshot(skipped)["at_risk"] == 0
 
 
 # --- snapshot_headline (the one-line custody picture, roadmap H103) --------
@@ -263,6 +295,37 @@ def test_delta_tolerates_a_baseline_lacking_coverage():
     assert delta["coverage"]["total"] == {"before": 0, "after": 2, "change": 2}
 
 
+def test_delta_reports_at_risk_change_against_a_baseline():
+    """The at-risk-works count is a scalar the delta subtracts (H267), so a worker
+    reads whether consolidation health moved since last run."""
+    previous = {
+        "recorded_at": "2026-06-20T09:00:00+00:00",
+        "score": 90, "tiers": {"full": 2}, "drift": {"checked": 0}, "at_risk": 1,
+    }
+    current = custody_snapshot(_doctor_report(80, {"full": 2}, {}, at_risk=3))
+    delta = compute_delta(previous, current)
+    # two more works lost their last safe representation since last run
+    assert delta["at_risk"] == {"before": 1, "after": 3, "change": 2}
+
+
+def test_delta_at_risk_on_first_run_is_null():
+    # no baseline → the at-risk before/change is null, never a fabricated zero
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {}, at_risk=2))
+    delta = compute_delta(None, current)
+    assert delta["at_risk"] == {"before": None, "after": 2, "change": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_at_risk():
+    """A pre-H267 baseline (no `at_risk` axis) reads as zero for that axis, never
+    null — the run happened, consolidation was simply not yet tracked (ADR 0082)."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `at_risk` key
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {"checked": 2},
+                                              at_risk=1))
+    delta = compute_delta(previous, current)
+    assert delta["at_risk"] == {"before": 0, "after": 1, "change": 1}
+
+
 def test_snapshot_round_trips_and_missing_reads_as_none(tmp_path):
     path = tmp_path / ".maintenance" / "last-run.json"
     assert load_snapshot(path) is None  # no file yet → first run
@@ -375,6 +438,7 @@ def _run(
     total=0,
     enrichment_stale=0,
     summaries_stale=0,
+    at_risk=0,
 ):
     return {
         "recorded_at": recorded_at,
@@ -384,6 +448,7 @@ def _run(
             "coverage": {"verified": verified, "total": total},
             "enrichment_stale": enrichment_stale,
             "summaries_stale": summaries_stale,
+            "at_risk": at_risk,
         },
         "delta": {},
     }
@@ -397,6 +462,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["score"] is None and trend["drift_change"] is None
         assert trend["coverage_change"] is None  # no direction from one point
         assert trend["stale_change"] is None  # nor an enrichment/summary debt direction
+        assert trend["at_risk_change"] is None  # nor a consolidation-loss direction
         assert trend["runs"] == len(window)
 
 
@@ -536,6 +602,43 @@ def test_trend_staleness_reads_zero_for_a_pre_tracking_endpoint():
     pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
     trend = compute_trend([pre, _run("t2", 100, enrichment_stale=2, summaries_stale=1)])
     assert trend["stale_change"] == {"enrichment": 2, "summaries": 1}
+
+
+def test_trend_reports_at_risk_works_movement_first_to_last():
+    """The consolidation-loss trajectory (H267): the net first→last change in the
+    count of works no representation safely holds, so a worker reading `--trend`
+    sees whether consolidation health is degrading ("2 → 4 works at risk")."""
+    trend = compute_trend([_run("t1", 100, at_risk=2), _run("t3", 90, at_risk=4)])
+    # two more works lost their last safe representation across the span
+    assert trend["at_risk_change"] == 2
+
+
+def test_trend_at_risk_movement_is_independent_of_the_posture():
+    """A rising at-risk-works count re-views the fidelity/drift the score/drift
+    already move on, so folding it into `posture` would double-count: a steady
+    score with no drift movement is still `holding` even as works go at risk
+    (the H115 coverage rule, on the consolidation axis) — `at_risk_change` is
+    reported, never a `posture` trigger."""
+    trend = compute_trend([_run("t1", 100, at_risk=0), _run("t2", 100, at_risk=3)])
+    assert trend["at_risk_change"] == 3
+    assert trend["posture"] == "holding"
+
+
+def test_trend_at_risk_can_clear_across_the_window():
+    """A recapture between runs restores a work's safe copy: a negative
+    `at_risk_change` is the honest 'fewer works at risk' direction."""
+    trend = compute_trend([_run("t1", 100, at_risk=3), _run("t2", 100, at_risk=1)])
+    assert trend["at_risk_change"] == -2
+    assert trend["posture"] == "holding"
+
+
+def test_trend_at_risk_reads_zero_for_a_pre_h267_endpoint():
+    """A window endpoint recorded before the snapshot tracked `at_risk` (a pre-H267
+    schema) reads 0 for the missing axis, so the movement is still computed, never a
+    crash (the missing-axis-zero posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, at_risk=2)])
+    assert trend["at_risk_change"] == 2
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -2575,6 +2678,46 @@ def test_maintain_history_does_not_carry_at_risk_works(home, capsys):
     assert runs and all("at_risk_works" not in run for run in runs)
     assert all("at_risk_works" not in run["snapshot"] for run in runs)
     assert all("at_risk_works" not in run for run in read_log(log_path(home)))
+
+
+def test_maintain_records_the_at_risk_works_count_in_the_snapshot(home, capsys):
+    """H267: the live pass surfaces the whole `at_risk_works` block, but the recorded
+    snapshot keeps the scalar `at_risk` count — and the two converge by construction
+    (the snapshot's scalar IS the live block's `at_risk`), so a recorded run carries
+    the consolidation-loss figure `--history`/`--trend` read back."""
+    _build_works_mix(home)  # X (full+drifted) and Z (all reference) at risk; Y safe
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # the live block names two at-risk works (the H263 alarm) …
+    assert report["at_risk_works"]["at_risk"] == 2
+    # … and the recorded snapshot keeps exactly that count as its scalar `at_risk`
+    snap = load_snapshot(snapshot_path(home))
+    assert snap["at_risk"] == 2
+    assert snap["at_risk"] == report["at_risk_works"]["at_risk"]
+    # the live report's own custody snapshot carries it too (the shared primitive)
+    assert report["custody"]["at_risk"] == 2
+    # first run → the delta's at-risk axis is the honest null (no baseline)
+    assert report["delta"]["at_risk"] == {"before": None, "after": 2, "change": None}
+
+
+def test_maintain_history_carries_the_at_risk_scalar_in_each_snapshot(home, capsys):
+    """The recorded `at_risk` scalar rides `--history` (unlike the live-pass-only
+    `at_risk_works` block): each run's snapshot carries the count, and the delta its
+    cross-run change, so a worker reads the consolidation-loss trend from the log."""
+    _build_works_mix(home)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # first run
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # second run, same fixture
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert [run["snapshot"]["at_risk"] for run in runs] == [2, 2]
+    # the second run's delta differences the scalar against the first (steady → 0)
+    assert runs[1]["delta"]["at_risk"] == {"before": 2, "after": 2, "change": 0}
 
 
 # --- `scrolls maintain --source <S>` — the scoped pass (roadmap H165) ----------
