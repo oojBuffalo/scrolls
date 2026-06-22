@@ -2506,10 +2506,18 @@ def test_mcp_run_maintenance_scoped_suggestions_name_exactly_the_refresh_debt_so
 
     def _audit_fields(report):
         # Both surfaces compose `assemble_report` identically: only the trend-position
-        # bookkeeping differs by run order — `recorded_at` (the timestamp) and `delta`
+        # bookkeeping differs by run order — `recorded_at` (the timestamp), `delta`
         # (a whole-library pass records a snapshot, so the second run sees the first's
-        # as its baseline; ADR 0082). Everything else is the deterministic audit.
-        return {k: v for k, v in report.items() if k not in ("recorded_at", "delta")}
+        # as its baseline; ADR 0082), and `at_risk_headline` (H268: it embeds the
+        # delta's signed change, so a first run reads the bare `_At-risk works: N._`
+        # and a later run the `(no change since last run)` clause — unlike the
+        # snapshot-only `headline`, which is position-independent and stays compared).
+        # Everything else is the deterministic audit.
+        return {
+            k: v
+            for k, v in report.items()
+            if k not in ("recorded_at", "delta", "at_risk_headline")
+        }
 
     # --- the whole-library MCP pass: its OWN suggestions ≡ its OWN debt maps -------
     # The MCP tool returns a dict (no print/capsys), so capsys stays clean for the

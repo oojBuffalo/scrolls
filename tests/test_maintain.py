@@ -46,6 +46,7 @@ from scrolls.items import (
 )
 from scrolls.maintain import (
     append_log_entry,
+    at_risk_headline,
     compute_delta,
     compute_trend,
     custody_snapshot,
@@ -193,6 +194,44 @@ def test_snapshot_headline_tolerates_a_snapshot_missing_an_axis():
     # missing axes as zero — the module's forward-compatible posture (ADR 0082).
     line = snapshot_headline({"tiers": {"full": 2}, "drift": {"unchanged": 2}})
     assert line == "_Custody: 2 scroll(s) · fidelity full 2 · drift verified 2._"
+
+
+# --- at_risk_headline (the readable consolidation-loss line, roadmap H268) ---
+
+
+def test_at_risk_headline_renders_a_rise_with_an_up_arrow():
+    # more works lost their last safe copy since the last run — ▲ is "worse"
+    assert at_risk_headline(4, 2) == "_At-risk works: 4 (▲2 since last run)._"
+
+
+def test_at_risk_headline_renders_a_fall_with_a_down_arrow():
+    # a recapture restored a work's safe copy — ▼ is "better", the magnitude is
+    # the absolute change (never a negative number after the arrow)
+    assert at_risk_headline(1, -2) == "_At-risk works: 1 (▼2 since last run)._"
+
+
+def test_at_risk_headline_renders_no_movement_explicitly():
+    # a baseline exists but nothing moved — an explicit "no change" clause, NOT the
+    # bare line (the bare line is reserved for "no baseline", change None)
+    assert at_risk_headline(3, 0) == "_At-risk works: 3 (no change since last run)._"
+
+
+def test_at_risk_headline_on_no_baseline_is_the_bare_count():
+    # first run / a scoped non-persisting pass (delta None → change None): the bare
+    # line, no change clause, exactly when there is no baseline (degrade-safe, ADR 0082)
+    assert at_risk_headline(2, None) == "_At-risk works: 2._"
+    assert at_risk_headline(0, None) == "_At-risk works: 0._"
+
+
+def test_at_risk_headline_span_is_parametrized_for_the_trend_twin():
+    # the trend reuses the renderer with a window span ("over N runs") instead of
+    # the report's "since last run"
+    assert at_risk_headline(4, 2, span="over 4 runs") == (
+        "_At-risk works: 4 (▲2 over 4 runs)._"
+    )
+    assert at_risk_headline(2, -3, span="over 3 runs") == (
+        "_At-risk works: 2 (▼3 over 3 runs)._"
+    )
 
 
 def test_delta_on_first_run_has_null_befores_and_changes():
@@ -639,6 +678,47 @@ def test_trend_at_risk_reads_zero_for_a_pre_h267_endpoint():
     pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
     trend = compute_trend([pre, _run("t2", 100, at_risk=2)])
     assert trend["at_risk_change"] == 2
+
+
+def test_trend_carries_the_readable_at_risk_line_over_the_window():
+    """H268: the trend summary distils the at-risk-works trajectory into one
+    readable line — the last run's count + the net movement across the window —
+    so a human reads the consolidation-loss trend without parsing `at_risk_change`.
+    The span is the window ("over N runs"), the trend twin of the report's
+    "since last run" and converging with `at_risk_change` by construction."""
+    trend = compute_trend([_run("t1", 100, at_risk=2), _run("t3", 90, at_risk=4)])
+    assert trend["at_risk_change"] == 2
+    # last count 4, net +2 across the 2-run window
+    assert trend["at_risk_headline"] == "_At-risk works: 4 (▲2 over 2 runs)._"
+
+
+def test_trend_at_risk_line_renders_a_fall_when_works_recover():
+    """A negative net movement reads ▼ — a recapture restored safe copies across
+    the window (the line tracks `at_risk_change`'s sign)."""
+    trend = compute_trend(
+        [_run("t1", 100, at_risk=3), _run("t2", 100, at_risk=2), _run("t3", 100, at_risk=1)]
+    )
+    assert trend["at_risk_change"] == -2
+    assert trend["at_risk_headline"] == "_At-risk works: 1 (▼2 over 3 runs)._"
+
+
+def test_trend_at_risk_line_reads_no_change_when_steady():
+    """A steady at-risk count over the window reads the explicit "no change" clause
+    (a baseline exists), not the bare line."""
+    trend = compute_trend([_run("t1", 100, at_risk=2), _run("t2", 100, at_risk=2)])
+    assert trend["at_risk_change"] == 0
+    assert trend["at_risk_headline"] == "_At-risk works: 2 (no change over 2 runs)._"
+
+
+def test_trend_at_risk_line_is_bare_under_two_runs():
+    """A <2-run window has no trajectory: the line carries the current count with no
+    change clause — the bare `_At-risk works: N._`, the same honest absence the null
+    `at_risk_change` takes. An empty window reads the honest 0."""
+    one = compute_trend([_run("t1", 100, at_risk=3)])
+    assert one["at_risk_change"] is None
+    assert one["at_risk_headline"] == "_At-risk works: 3._"
+    empty = compute_trend([])
+    assert empty["at_risk_headline"] == "_At-risk works: 0._"
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -2718,6 +2798,74 @@ def test_maintain_history_carries_the_at_risk_scalar_in_each_snapshot(home, caps
     assert [run["snapshot"]["at_risk"] for run in runs] == [2, 2]
     # the second run's delta differences the scalar against the first (steady → 0)
     assert runs[1]["delta"]["at_risk"] == {"before": 2, "after": 2, "change": 0}
+
+
+def test_maintain_report_carries_the_readable_at_risk_line(home, capsys):
+    """H268: the report distils the at-risk-works count into one readable line, so a
+    human reads the consolidation loss without parsing the delta JSON. First run →
+    no baseline → the bare line, and it converges with the JSON alarm/snapshot/delta
+    by construction (the same count the `at_risk_works` block and snapshot carry)."""
+    _build_works_mix(home)  # X (full+drifted) and Z (all reference) at risk → 2
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # first run, no baseline → the bare line, no change clause
+    assert report["at_risk_headline"] == "_At-risk works: 2._"
+    # converges with the JSON alarm, the snapshot scalar, and the rendered helper
+    assert report["at_risk_works"]["at_risk"] == 2
+    assert report["custody"]["at_risk"] == 2
+    assert report["at_risk_headline"] == at_risk_headline(
+        report["custody"]["at_risk"], report["delta"]["at_risk"]["change"]
+    )
+
+
+def test_maintain_report_at_risk_line_shows_the_rise_since_last_run(home, capsys):
+    """A work going at risk between two persisting passes reads ▲ — the readable
+    counterpart of the delta's signed `at_risk.change` (H267→H268)."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    # one 2-rep work, full+unverified copy → safely held → 0 at risk
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),
+        _rep("crossref:ca", "10.1000/a", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["at_risk_headline"] == "_At-risk works: 0._"  # first run, no baseline
+
+    # the full copy drifts → no representation is both full and unmoved → at risk
+    record_events(home.db_path, [
+        CustodyEvent("arxiv:a", "2026-06-15T00:00:00+00:00", "drifted", "h:a", "h:b"),
+    ])
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["custody"]["at_risk"] == 1
+    assert second["delta"]["at_risk"]["change"] == 1
+    assert second["at_risk_headline"] == "_At-risk works: 1 (▲1 since last run)._"
+
+
+def test_maintain_report_at_risk_line_is_bare_under_a_scope(home, capsys):
+    """A scoped pass is non-persisting (delta None → no baseline), so its at-risk
+    line drops the change clause — the bare `_At-risk works: N._`. A `--source` pass
+    skips the whole-work alarm (count 0); a `--fidelity` pass audits whole-library so
+    the count is real (2), but it is still a focused triage with no trend baseline."""
+    _build_works_mix(home)
+    capsys.readouterr()
+    assert main(["maintain", "--source", "arxiv", "--no-recheck"]) == 0
+    scoped = json.loads(capsys.readouterr().out)
+    assert scoped["delta"] is None  # non-persisting focused triage
+    assert scoped["at_risk_headline"] == "_At-risk works: 0._"  # works skipped under --source
+
+    capsys.readouterr()
+    assert main(["maintain", "--fidelity", "full", "--no-recheck"]) == 0
+    fid = json.loads(capsys.readouterr().out)
+    assert fid["delta"] is None  # still non-persisting (a fidelity triage, H255)
+    assert fid["custody"]["at_risk"] == 2  # but the audit stayed whole-library
+    assert fid["at_risk_headline"] == "_At-risk works: 2._"  # bare: no baseline
 
 
 # --- `scrolls maintain --source <S>` — the scoped pass (roadmap H165) ----------

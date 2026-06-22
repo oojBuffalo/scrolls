@@ -182,6 +182,46 @@ def snapshot_headline(snapshot: dict[str, Any]) -> str:
     return render_custody_headline(sum(tiers.values()), tiers, postures)
 
 
+def at_risk_headline(
+    count: int, change: int | None, *, span: str = "since last run"
+) -> str:
+    """The readable at-risk-works ``_At-risk works:_`` line (roadmap H268).
+
+    The *consolidation-loss* counterpart of the `snapshot_headline` custody line
+    (H103/H142) and the per-source readable `_Attention:_` line (H159): one line
+    distilling the at-risk-works **scalar** H267 records (the works no
+    representation safely holds) plus its signed movement, so a human skimming the
+    `maintain` report or the `--trend` summary reads the consolidation-loss trend
+    without parsing the delta JSON:
+
+        ``_At-risk works: 4 (▲2 since last run)._``
+
+    `count` is the current at-risk-works count — the snapshot's `at_risk` scalar
+    for the report, the window's last snapshot for the trend. `change` is its
+    signed movement — the delta's `at_risk.change` for the report, the trend's
+    `at_risk_change` for the window: ``▲`` is a **rise** (more works lost their
+    last safe copy — worse), ``▼`` a **fall** (a recapture restored one — better),
+    and a `0` change reads the explicit ``no change`` (a baseline exists, nothing
+    moved). `span` names what the change is measured against — ``since last run``
+    for the report's cross-run delta, ``over N runs`` for the trend's window.
+
+    Degrade-safe (ADR 0082): a `change` of ``None`` — a first run, a scoped
+    non-persisting pass (`delta` ``None``, H165/H255), or a <2-run trend with no
+    trajectory — drops the change clause entirely, the bare ``_At-risk works: N._``,
+    *exactly* when there is no baseline to difference against (the same first-run /
+    missing-axis honesty the snapshot/delta carry).
+    """
+    if change is None:
+        return f"_At-risk works: {count}._"
+    if change > 0:
+        clause = f"▲{change} {span}"
+    elif change < 0:
+        clause = f"▼{abs(change)} {span}"
+    else:
+        clause = f"no change {span}"
+    return f"_At-risk works: {count} ({clause})._"
+
+
 def _finding_present(report: dict[str, Any], category: str) -> bool:
     """Whether a doctor report carries this repairable finding category.
 
@@ -621,6 +661,9 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     (absent counts read 0, so a pre-H115/pre-staleness/pre-H267 endpoint reads 0).
     """
     n = len(runs)
+    # the current at-risk-works count — the window's last snapshot (the trend ends
+    # at the last run, like `score`'s `last`); an empty window reads the honest 0.
+    last_at_risk = runs[-1].get("snapshot", {}).get("at_risk", 0) if runs else 0
     if n < 2:
         return {
             "runs": n,
@@ -630,6 +673,9 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "coverage_change": None,
             "stale_change": None,
             "at_risk_change": None,
+            # a single point has no trajectory → the bare readable line (no clause),
+            # the same honest-absence the null `at_risk_change` carries (H268).
+            "at_risk_headline": at_risk_headline(last_at_risk, None),
             "posture": "insufficient-history",
         }
 
@@ -689,6 +735,13 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "coverage_change": coverage_change,
         "stale_change": stale_change,
         "at_risk_change": at_risk_change,
+        # the readable consolidation-loss trend line (roadmap H268): the last run's
+        # at-risk count + the net movement across the window, the trend twin of the
+        # report's `_At-risk works:_` line (and of the briefing `_At-risk work:_`
+        # line H264). The window span replaces the report's "since last run".
+        "at_risk_headline": at_risk_headline(
+            last_at_risk, at_risk_change, span=f"over {n} runs"
+        ),
         "posture": posture,
     }
 
@@ -876,6 +929,15 @@ def assemble_report(
         "compiled": dataclasses.asdict(compiled),
         "custody": current,
         "headline": snapshot_headline(current),
+        # the readable consolidation-loss line (roadmap H268): the at-risk-works
+        # count + its signed movement since the last run, the readable counterpart
+        # of the snapshot's `at_risk` scalar (H267). A scoped non-persisting pass
+        # records no baseline (`delta` is None), so its change clause is dropped —
+        # the bare `_At-risk works: N._`, exactly when the delta has no baseline.
+        "at_risk_headline": at_risk_headline(
+            current["at_risk"],
+            None if delta is None else delta["at_risk"]["change"],
+        ),
         "by_source": by_source,
         "attention": weakest_source(by_source),
         # the consolidation-level custody alarm (roadmap H263): the works no
