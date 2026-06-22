@@ -1752,6 +1752,55 @@ def test_get_works_filter_matches_the_cli_twin(scrolls_home, capsys):
     assert mcp_server.get_works(fidelity="full", drift="verified") == cli_payload
 
 
+def test_get_works_at_risk_browses_the_unsafely_held_works(scrolls_home):
+    # the at-risk browse predicate on the consolidation surface — the MCP twin of
+    # `scrolls works --at-risk` (roadmap H265), the `get_library_health` at-risk-works
+    # alarm as a browse predicate.
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    payload = mcp_server.get_works(at_risk=True)
+    # X (full+drifted) and Z (all-reference) are at risk; Y (full+verified) is safe
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x", "10.3000/z"]
+    # the whole work travels (contains semantics): X's drifted full preprint + sibling
+    assert [r["id"] for r in payload["works"][0]["representations"]] == [
+        "arxiv:x", "crossref:cx"]
+    # the boolean predicate rides the scope echo, present only when set (G2)
+    assert payload["scope"] == {"min_representations": 2, "at_risk": True}
+    # unset → pruned, like the CLI twin
+    assert "at_risk" not in mcp_server.get_works()["scope"]
+
+
+def test_get_works_at_risk_ands_with_the_custody_filters(scrolls_home):
+    # `at_risk` ANDs with the per-rep contains-filters, the same as the CLI twin:
+    # at-risk AND holds a full rep → X only (the recapture candidate); Z is at risk
+    # but all-reference, so it drops under fidelity="full".
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    assert [
+        w["doi"] for w in mcp_server.get_works(at_risk=True, fidelity="full")["works"]
+    ] == ["10.1000/x"]
+    # at-risk AND verified → empty: the only verified rep is Y's, and Y is safely held
+    assert mcp_server.get_works(at_risk=True, drift="verified")["works"] == []
+
+
+def test_get_works_at_risk_matches_the_cli_twin(scrolls_home, capsys):
+    # CLI↔MCP parity: the same at-risk-scoped works payload on both surfaces
+    # (both route through `filter_works(at_risk=True)` + `works.to_payload`).
+    main(["init"])
+    _works_custody_mix_mcp()
+    capsys.readouterr()  # drain the `init` output so only the `works` JSON remains
+
+    assert main(["works", "--at-risk", "--fidelity", "full"]) == 0
+    cli_payload = json.loads(capsys.readouterr().out)
+    assert mcp_server.get_works(at_risk=True, fidelity="full") == cli_payload
+
+
 def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(scrolls_home):
     # roadmap H163: the CLI `search`/`list --stats` envelope carries a per-source
     # `stats.custody.by_source` split (H155), but the MCP `search_scrolls`/

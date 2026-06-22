@@ -453,6 +453,7 @@ def get_works(
     min_representations: int = DEFAULT_MIN_REPRESENTATIONS,
     fidelity: str | None = None,
     drift: str | None = None,
+    at_risk: bool = False,
 ) -> dict[str, Any]:
     """Scholarly works the library holds more than one representation of.
 
@@ -486,6 +487,14 @@ def get_works(
     siblings intact; the two axes AND on the *same* representation. An unknown
     tier/posture is an error, never a silent empty result.
 
+    `at_risk=True` keeps only the works **no representation safely holds** — no copy is
+    both full and unmoved anywhere in the cluster (the `get_library_health` at-risk-works
+    alarm as a browse predicate, the consolidation analogue of `list_scrolls(drift=)`).
+    It is a distinct predicate, not a `fidelity`/`drift` value: it is the negation of "a
+    full, unmoved copy exists", so it cannot be expressed as a single per-rep filter. It
+    ANDs with `fidelity`/`drift` (e.g. `at_risk=True, fidelity="full"` for the recapture
+    candidates whose content is still in hand but whose work is at risk).
+
     Pass `item` (an id or URL) for the *per-item* lens — the work(s) that one
     item represents, with every saved sibling representation: an item that
     found one form (a search hit) learns which other forms of the same work
@@ -495,19 +504,30 @@ def get_works(
     """
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
+    # `at_risk` is a boolean predicate, not a vocabulary value, so it rides the scope
+    # echo only when set (`or None` → pruned by `to_payload` like an unset facet, G2).
+    at_risk_scope = at_risk or None
     if item is not None:
         resolved = resolve_item_id(item)
         works = works_for_item(items, resolved)
-        scope: dict[str, Any] = {"ref": resolved, "fidelity": fidelity, "drift": drift}
+        scope: dict[str, Any] = {
+            "ref": resolved,
+            "fidelity": fidelity,
+            "drift": drift,
+            "at_risk": at_risk_scope,
+        }
     else:
         works = works_over(items, min_representations=min_representations)
         scope = {
             "min_representations": min_representations,
             "fidelity": fidelity,
             "drift": drift,
+            "at_risk": at_risk_scope,
         }
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
-    works = filter_works(works, verdicts, fidelity=fidelity, drift=drift)
+    works = filter_works(
+        works, verdicts, fidelity=fidelity, drift=drift, at_risk=at_risk
+    )
     return works_payload(works, len(items), scope=scope, verdicts=verdicts)
 
 

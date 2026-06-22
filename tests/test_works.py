@@ -847,6 +847,70 @@ def test_filter_works_rejects_an_unknown_drift_posture():
         filter_works(works, drift="moved")
 
 
+# --- H265: the at-risk browse predicate on the consolidation surface ----
+# `filter_works(at_risk=True)` keeps the works NO representation safely holds — the
+# H261 `work_custody` `safely_held == False` set the H263 alarm counts. It is a
+# genuinely new predicate (the negation of ∃(full ∧ safe)), NOT a single
+# fidelity/drift value, and ANDs with the per-rep contains-filters.
+
+
+def test_filter_works_at_risk_keeps_the_unsafely_held_works():
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    # X (full+drifted, no full-and-unmoved rep) and Z (all-reference) are at risk;
+    # Y holds a full+verified rep → safely held, dropped
+    assert _dois(filter_works(works, verdicts, at_risk=True)) == [
+        "10.1000/x", "10.3000/z"]
+
+
+def test_filter_works_at_risk_matches_the_at_risk_signal_set():
+    # the predicate is exactly H263's `safely_held == False` set — one rule, two reads
+    from scrolls.works import at_risk_signal, work_custody
+
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    expected = [
+        w.doi
+        for w in works
+        if not work_custody(w.representations, verdicts)["safely_held"]
+    ]
+    assert _dois(filter_works(works, verdicts, at_risk=True)) == expected
+    assert len(expected) == at_risk_signal(works, verdicts)["at_risk"]
+
+
+def test_filter_works_at_risk_keeps_the_whole_work_not_just_a_loss():
+    # the cluster "contains" shape: an at-risk work travels with every rep, so a reader
+    # sees the (degraded/moved) forms it does hold — here X's drifted full preprint AND
+    # its bare reference sibling
+    items, verdicts = _two_work_custody_mix()
+    kept = filter_works(works_over(items), verdicts, at_risk=True)
+    x = next(w for w in kept if w.doi == "10.1000/x")
+    assert [rep.id for rep in x.representations] == ["arxiv:x", "crossref:cx"]
+
+
+def test_filter_works_at_risk_ands_with_the_per_rep_filters():
+    # `at_risk` ANDs with the contains-filters. at-risk AND holds a full rep → X only
+    # (the recapture candidate: content in hand but the work is at risk); Z is at risk
+    # but all-reference, so it drops under --fidelity full.
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    assert _dois(filter_works(works, verdicts, at_risk=True, fidelity="full")) == [
+        "10.1000/x"]
+    # at-risk AND has a drifted rep → X (Z is at risk but has no drifted rep)
+    assert _dois(filter_works(works, verdicts, at_risk=True, drift="drifted")) == [
+        "10.1000/x"]
+    # at-risk AND has a verified rep → empty: the only verified rep is Y's, and Y is
+    # safely held, so it is not in the at-risk set at all
+    assert filter_works(works, verdicts, at_risk=True, drift="verified") == []
+
+
+def test_filter_works_at_risk_false_is_the_unfiltered_identity():
+    works = works_over(_two_work_custody_mix()[0])
+    # at_risk defaults False; with no other axis it is the input list unchanged, no
+    # ledger read needed (the H262 identity, now guarding the `not at_risk` early exit)
+    assert filter_works(works, at_risk=False) is works
+
+
 def _seed_two_work_custody_mix(db):
     """Insert the three-work custody mix into a real library (the CLI/MCP seed)."""
     from scrolls.custody import record_events
@@ -1088,6 +1152,58 @@ def test_cli_works_filter_composes_with_the_per_item_ref_lens(db, capsys):
     assert payload["scope"] == {"ref": "arxiv:x", "drift": "drifted"}
     # biorxiv:y's work Y has no drifted rep → empty (an explicit "not at this posture")
     assert main(["works", "biorxiv:y", "--drift", "drifted"]) == 0
+    assert json.loads(capsys.readouterr().out)["works"] == []
+
+
+# --- H265: `scrolls works --at-risk` browse predicate --------------------
+
+
+def test_cli_works_at_risk_browses_the_unsafely_held_works(db, capsys):
+    _seed_two_work_custody_mix(db)
+    assert main(["works", "--at-risk"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # X (full+drifted, no full-and-unmoved rep) and Z (all-reference) are at risk;
+    # Y (full+verified) is safely held and drops out
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x", "10.3000/z"]
+    # the boolean predicate rides the scope echo, present only when set (G2)
+    assert payload["scope"] == {"min_representations": 2, "at_risk": True}
+    # stats.custody partitions exactly the kept set — the two at-risk works' (whole)
+    # representations: X's full preprint + its reference sibling, Z's two references
+    assert payload["stats"]["works"] == 2
+    assert payload["stats"]["custody"]["tiers"] == {
+        "full": 1, "partial": 0, "reference": 3}
+
+
+def test_cli_works_at_risk_omits_the_flag_from_scope_when_unset(db, capsys):
+    _seed_two_work_custody_mix(db)
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # unset → pruned from the scope echo (the lean unfiltered shape), and every work
+    # is reported (the at-risk Y, X, Z all travel)
+    assert "at_risk" not in payload["scope"]
+    assert payload["scope"] == {"min_representations": 2}
+
+
+def test_cli_works_at_risk_ands_with_the_custody_filters(db, capsys):
+    _seed_two_work_custody_mix(db)
+    # at-risk AND holds a full rep → X only (the recapture candidate: content in hand,
+    # but its full copy drifted so the work is at risk); Z is at risk but all-reference
+    assert main(["works", "--at-risk", "--fidelity", "full"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x"]
+    assert payload["scope"] == {
+        "min_representations": 2, "fidelity": "full", "at_risk": True}
+
+
+def test_cli_works_at_risk_composes_with_the_per_item_ref_lens(db, capsys):
+    _seed_two_work_custody_mix(db)
+    # arxiv:x's work X is at risk → kept, anchor echoed beside the predicate
+    assert main(["works", "arxiv:x", "--at-risk"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x"]
+    assert payload["scope"] == {"ref": "arxiv:x", "at_risk": True}
+    # biorxiv:y's work Y is safely held → empty (an explicit "this work is not at risk")
+    assert main(["works", "biorxiv:y", "--at-risk"]) == 0
     assert json.loads(capsys.readouterr().out)["works"] == []
 
 

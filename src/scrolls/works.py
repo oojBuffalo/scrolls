@@ -253,32 +253,46 @@ def filter_works(
     *,
     fidelity: str | None = None,
     drift: str | None = None,
+    at_risk: bool = False,
 ) -> list[Work]:
-    """Keep only the works that *contain* a representation at the given custody value(s).
+    """Keep only the works matching the given custody scope(s).
 
     The custody-filter family on the **consolidation** surface (roadmap H262): the
     family scoped each per-*item* custody axis (fidelity, drift) on every read, act,
     and export surface (H250–H260); this lifts the same per-item predicate to the
     *work* — the cluster of representations the family never reached. The **contains**
-    semantics: a work is kept *whole* (every representation still travels) iff it has
-    **at least one representation** that matches, since a work is a set of forms and
-    the natural read of "show me the works with a drifted representation" wants the
-    *work* and all its siblings — so a reader can see whether a safe sibling exists —
-    not the lone matching form. So `--drift drifted` surfaces *the works needing a
-    recapture decision*, their whole representation set intact.
+    semantics for `fidelity`/`drift`: a work is kept *whole* (every representation
+    still travels) iff it has **at least one representation** that matches, since a
+    work is a set of forms and the natural read of "show me the works with a drifted
+    representation" wants the *work* and all its siblings — so a reader can see whether
+    a safe sibling exists — not the lone matching form. So `--drift drifted` surfaces
+    *the works needing a recapture decision*, their whole representation set intact.
 
     Folds the **same** per-rep custody every other works surface reads — the
     item-intrinsic `Representation.fidelity` and `drift_posture` over the `verdicts`
     ledger `to_payload`'s per-rep `drift` folds — so a work is kept by exactly the
-    values its representations show. Both axes AND **on the same representation**, the
-    ∃-lift of the per-item filter (`filter_related`'s "no neighbour is *both*", H254):
-    `fidelity="full"`/`drift="drifted"` keeps a work iff some representation is *both*
-    full *and* drifted — a fully-held copy whose source moved, the recapture candidate
-    where the content is in hand — not merely some full rep and some (possibly
-    different) drifted rep. An unknown tier/posture outside the closed vocabulary
-    (`FIDELITY_TIERS`/`DRIFT_POSTURES`) raises ValueError, so a typo is a loud
-    could-not-check (G1), exactly as `filter_related` and the CLI `choices=` (exit 2)
-    reject one.
+    values its representations show. The `fidelity`/`drift` axes AND **on the same
+    representation**, the ∃-lift of the per-item filter (`filter_related`'s "no
+    neighbour is *both*", H254): `fidelity="full"`/`drift="drifted"` keeps a work iff
+    some representation is *both* full *and* drifted — a fully-held copy whose source
+    moved, the recapture candidate where the content is in hand — not merely some full
+    rep and some (possibly different) drifted rep. An unknown tier/posture outside the
+    closed vocabulary (`FIDELITY_TIERS`/`DRIFT_POSTURES`) raises ValueError, so a typo
+    is a loud could-not-check (G1), exactly as `filter_related` and the CLI `choices=`
+    (exit 2) reject one.
+
+    `at_risk` is the **at-risk browse predicate** (roadmap H265): when ``True`` it
+    keeps only the works **no representation safely holds** — the H261 `work_custody`
+    `safely_held == False` set the H263 alarm counts (no copy is both `full` *and*
+    unmoved anywhere in the cluster). It is a genuinely new predicate, *not* a
+    fidelity/drift value: "no rep is safely held" is the **negation of ∃(full ∧
+    safe)**, so it cannot be expressed as a single per-rep `fidelity`/`drift` filter,
+    the consolidation analogue of `list --drift`. It **ANDs** with the contains-axes:
+    `at_risk=True, fidelity="full"` keeps the at-risk works that *also* hold a full
+    rep — the recapture candidates whose content is in hand but whose work is still at
+    risk (the full copy drifted). The predicate is the same `work_custody` fold the
+    aggregate `custody` block and `at_risk_signal` read, so a work is browsed by
+    exactly the verdict it shows.
 
     Pure over the already-clustered works (the `filter_related` shape): cluster first
     (`works_over`/`works_for_item`), sieve here, *then* `to_payload`. Because whole
@@ -286,7 +300,8 @@ def filter_works(
     `min_representations` floor `works_over` already applied, and `to_payload`'s
     `stats.custody` — folded over the reported works' representations — partitions
     exactly the kept set with no change. `verdicts` is the `latest_events` ledger read
-    keyed by item id; absent (no `--drift`), every representation reads `unverified`.
+    keyed by item id; absent (no `--drift`/`--at-risk`), every representation reads
+    `unverified` (and a never-checked full copy is safely held — the M2 honesty).
     """
     if fidelity is not None and fidelity not in FIDELITY_TIERS:
         raise ValueError(
@@ -298,13 +313,17 @@ def filter_works(
             f"unknown drift posture {drift!r}; "
             f"choose one of {', '.join(DRIFT_POSTURES)}"
         )
-    if fidelity is None and drift is None:
+    if fidelity is None and drift is None and not at_risk:
         return works
     verdicts = verdicts or {}
     return [
         work
         for work in works
-        if any(
+        if (
+            not at_risk
+            or not work_custody(work.representations, verdicts)["safely_held"]
+        )
+        and any(
             (fidelity is None or rep.fidelity == fidelity)
             and (drift is None or drift_posture(verdicts.get(rep.id)) == drift)
             for rep in work.representations
