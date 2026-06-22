@@ -3862,6 +3862,152 @@ def test_doctor_custody_conflicts_scopes_by_source(scrolls_home, tmp_path, capsy
     assert other["events"] == []
 
 
+# --- reconcile --keep-held: the operator act on a recorded conflict (H276, ADR 0105) ---
+
+
+def test_reconcile_keep_held_resolves_a_recorded_conflict(
+    scrolls_home, tmp_path, capsys
+):
+    """H276: `reconcile <id> --keep-held` is the operator act — it affirms the held
+    copy, recording a `resolved` conflict-axis event that supersedes the open
+    conflict so `doctor`'s `custody.conflicts` clears, while the held copy is never
+    overwritten and the original `conflict` event survives on the timeline."""
+    from scrolls.custody import item_events
+
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    db = get_paths().db_path
+    held_before = get_item(db, seeded.id)
+    assert run_doctor(get_paths(), fix=False)["custody"]["conflicts"]["items"] == 1
+    capsys.readouterr()
+
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision == {
+        "id": seeded.id,
+        "resolved": True,
+        "decision": "keep_held",
+        "held_hash": "sha256:abc",         # the affirmed held copy
+        "incoming_hash": "sha256:moved",   # the rejected incoming capture
+        "dry_run": False,
+    }
+
+    # the aggregate (and every surface folding it) clears
+    assert run_doctor(get_paths(), fix=False)["custody"]["conflicts"]["items"] == 0
+
+    # the held copy is provably untouched — raw is sacred (custody §2.4)
+    held_after = get_item(db, seeded.id)
+    assert held_after.content_hash == held_before.content_hash == "sha256:abc"
+    assert held_after.extracted_text == held_before.extracted_text
+
+    # append-only: the original conflict survives, the resolution is a *new* row
+    assert [e.status for e in item_events(db, seeded.id)] == ["resolved", "conflict"]
+
+
+def test_reconcile_keep_held_is_idempotent(scrolls_home, tmp_path, capsys):
+    """A second `reconcile --keep-held` after a resolution is an honest no-op
+    (`resolved: false`) — the latest conflict-axis event is already `resolved`, so
+    `current_conflict` returns None and nothing is recorded."""
+    from scrolls.custody import item_events
+
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    db = get_paths().db_path
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    capsys.readouterr()
+
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["resolved"] is False
+    assert decision["reason"] == "no unresolved import conflict"
+    # no second resolution row — the no-op records nothing
+    assert [e.status for e in item_events(db, seeded.id)] == ["resolved", "conflict"]
+
+
+def test_reconcile_dry_run_predicts_without_recording(scrolls_home, tmp_path, capsys):
+    """`--dry-run` predicts the same decision the live run would emit (plus
+    `dry_run: true`) but writes nothing — the conflict stays unresolved and no
+    `resolved` event is recorded (the H245/H273 predict-the-write discipline)."""
+    from scrolls.custody import item_events
+
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    db = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["reconcile", seeded.id, "--keep-held", "--dry-run"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["resolved"] is True
+    assert decision["dry_run"] is True
+    assert decision["held_hash"] == "sha256:abc"
+    assert decision["incoming_hash"] == "sha256:moved"
+
+    # nothing was written: the conflict is still unresolved and no resolution exists
+    assert run_doctor(get_paths(), fix=False)["custody"]["conflicts"]["items"] == 1
+    assert [e.status for e in item_events(db, seeded.id)] == ["conflict"]
+
+
+def test_reconcile_requires_a_resolution_flag(scrolls_home, tmp_path, capsys):
+    """A bare `reconcile <id>` (no resolution) is a loud usage error (exit 2) — a
+    custody-changing write must carry an explicit operator decision, and nothing is
+    written."""
+    from scrolls.custody import item_events
+
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    db = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["reconcile", seeded.id]) == 2
+    err = json.loads(capsys.readouterr().err)
+    assert "keep-held" in err["error"]
+    # the conflict is untouched — no resolution written
+    assert [e.status for e in item_events(db, seeded.id)] == ["conflict"]
+
+
+def test_reconcile_unknown_id_is_a_could_not_check(scrolls_home, capsys):
+    """An unknown ref is a could-not-check (exit 1), the `history`/`verify`
+    empty-vs-error split — never a silent success."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["reconcile", "web:does-not-exist", "--keep-held"]) == 1
+    err = json.loads(capsys.readouterr().err)
+    assert "no such item" in err["error"]
+
+
+def test_reconcile_held_item_with_no_conflict_is_a_noop(scrolls_home, capsys):
+    """A held item that never carried a conflict is an honest no-op (`resolved:
+    false`, exit 0) — there is nothing to reconcile, not an error."""
+    seeded = _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["resolved"] is False
+    assert decision["reason"] == "no unresolved import conflict"
+
+
+def test_reconcile_keeps_the_conflict_on_history_beside_the_resolved_row(
+    scrolls_home, tmp_path, capsys
+):
+    """After a resolution, `history --status conflict` still surfaces the divergence
+    (append-only — the record of *when* a peer disagreed is never destroyed) and
+    `history --status resolved` surfaces the operator decision, both off the drift
+    axis (`history --status drifted` is empty)."""
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    capsys.readouterr()
+
+    assert main(["history", seeded.id, "--status", "conflict"]) == 0
+    conflicts = json.loads(capsys.readouterr().out)
+    assert [e["status"] for e in conflicts] == ["conflict"]
+    assert conflicts[0]["observed_hash"] == "sha256:moved"
+
+    assert main(["history", seeded.id, "--status", "resolved"]) == 0
+    resolved = json.loads(capsys.readouterr().out)
+    assert [e["status"] for e in resolved] == ["resolved"]
+    assert resolved[0]["prior_hash"] == "sha256:abc"      # the affirmed held copy
+    assert resolved[0]["observed_hash"] == "sha256:moved"  # the rejected capture
+
+    assert main(["history", seeded.id, "--status", "drifted"]) == 0
+    assert json.loads(capsys.readouterr().out) == []  # never on the drift axis
+
+
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):
     main(["init"])
     capsys.readouterr()

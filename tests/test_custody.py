@@ -610,6 +610,154 @@ def test_unresolved_conflicts_excludes_a_since_deleted_item(tmp_path):
     assert custody.unresolved_conflicts([], custody.latest_conflict_events(db_path)) == {}
 
 
+# --- the operator resolution: reconcile --keep-held (roadmap H276, ADR 0105) ---
+# The act on the conflict axis: a `resolved` event affirms the held copy and
+# supersedes the open conflict it closes. It rides `history` but never the drift
+# posture (the ADR 0104 isolation, kept on the act axis), and `unresolved_conflicts`
+# clears an item whose latest conflict-axis event is a `resolved` — even though the
+# held `content_hash` is unchanged (the keep-held mechanism, distinct from the
+# H275 hash mechanism a future --accept-incoming uses).
+
+
+def test_resolved_status_is_a_first_class_ledger_status():
+    # the resolution joins the closed `LEDGER_STATUSES` vocabulary (so `history
+    # --status resolved` is valid) but stays off the verify-verdict drift axis.
+    assert custody.RESOLVED_STATUS == "resolved"
+    assert "resolved" in custody.LEDGER_STATUSES
+    assert "resolved" not in custody.CUSTODY_STATUSES
+    assert custody.CONFLICT_AXIS_STATUSES == ("conflict", "resolved")
+
+
+def test_resolution_event_records_affirmed_vs_rejected_hash():
+    # the act-axis counterpart of conflict_event: pure given `now`, it stamps a
+    # `resolved` status with prior_hash = the affirmed held copy, observed_hash =
+    # the rejected incoming capture — the verify-event field semantics reused, so
+    # every serializer carries it unchanged and it round-trips like any other event.
+    event = custody.resolution_event(
+        "web:a",
+        held_hash="sha256:held",
+        incoming_hash="sha256:incoming",
+        now="2026-06-22T00:00:00+00:00",
+    )
+    assert event.item_id == "web:a"
+    assert event.status == custody.RESOLVED_STATUS == "resolved"
+    assert event.prior_hash == "sha256:held"  # the affirmed winner, kept
+    assert event.observed_hash == "sha256:incoming"  # the rejected capture
+    assert event.checked_at == "2026-06-22T00:00:00+00:00"
+    assert event.detail and "resolved" in event.detail.lower()
+    assert event_from_dict(event_export_dict(event)) == event
+
+
+def test_resolution_event_is_excluded_from_the_drift_posture(tmp_path):
+    # the ADR 0104 isolation, kept on the act axis: a `resolved` event lives in the
+    # ledger and on the per-item timeline, but `latest_events` (the drift posture)
+    # reads only the verify verdicts, so a conflict-then-resolution item reads
+    # `unverified` — never re-checked — not some drift posture.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h2", now="2026-06-20T00:00:00+00:00"
+        ),
+        custody.resolution_event(
+            "web:a", held_hash="h", incoming_hash="h2", now="2026-06-22T00:00:00+00:00"
+        ),
+    ])
+    assert "web:a" not in latest_events(db_path)  # neither event is a drift verdict
+    assert custody.drift_posture(latest_events(db_path).get("web:a")) == "unverified"
+    # …yet both axis events are on the timeline (append-only — the conflict survives)
+    assert [e.status for e in item_events(db_path, "web:a")] == ["resolved", "conflict"]
+
+
+def test_latest_conflict_events_returns_the_resolution_when_it_is_latest(tmp_path):
+    # broadened to the conflict axis (H276): the MAX(id) is taken over `conflict`
+    # *and* `resolved`, so the latest *decision* wins — a `resolved` recorded after
+    # a `conflict` is the latest axis event for the item.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-20T00:00:00+00:00",
+        ),
+    ])
+    record_events(db_path, [
+        custody.resolution_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-22T00:00:00+00:00",
+        ),
+    ])
+    latest = custody.latest_conflict_events(db_path)
+    assert set(latest) == {"web:a"}
+    assert latest["web:a"].status == "resolved"
+
+
+def test_unresolved_conflicts_clears_after_a_keep_held_resolution(tmp_path):
+    # the keep-held mechanism (ADR 0105), distinct from the H275 hash mechanism: the
+    # held `content_hash` is *unchanged* (the held copy is never overwritten), so the
+    # pure hash compare (observed != content) would still read it unresolved — but
+    # the latest conflict-axis event is a `resolved`, so the status gate clears it.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-20T00:00:00+00:00",
+        ),
+    ])
+    items = [_item("web:a", content_hash="held")]  # held copy untouched
+    # before the resolution it is unresolved (observed "incoming" != held "held")
+    assert set(custody.unresolved_conflicts(items, custody.latest_conflict_events(db_path))) == {"web:a"}
+    record_events(db_path, [
+        custody.resolution_event(
+            "web:a", held_hash="held", incoming_hash="incoming",
+            now="2026-06-22T00:00:00+00:00",
+        ),
+    ])
+    # after the resolution it clears — even though the held hash is still "held"
+    assert custody.unresolved_conflicts(items, custody.latest_conflict_events(db_path)) == {}
+
+
+def test_unresolved_conflicts_reopens_on_a_new_conflict_after_resolution(tmp_path):
+    # a genuinely new divergent import after a resolution appends a higher-id
+    # `conflict` — new evidence of a new disagreement — so the latest axis event is
+    # a `conflict` again and the alarm re-opens (the latest decision wins).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [custody.conflict_event(
+        "web:a", held_hash="held", incoming_hash="v2", now="2026-06-20T00:00:00+00:00")])
+    record_events(db_path, [custody.resolution_event(
+        "web:a", held_hash="held", incoming_hash="v2", now="2026-06-21T00:00:00+00:00")])
+    record_events(db_path, [custody.conflict_event(
+        "web:a", held_hash="held", incoming_hash="v3", now="2026-06-22T00:00:00+00:00")])
+    items = [_item("web:a", content_hash="held")]
+    reopened = custody.unresolved_conflicts(items, custody.latest_conflict_events(db_path))
+    assert set(reopened) == {"web:a"}
+    assert reopened["web:a"].observed_hash == "v3"  # the new divergence, not the old
+
+
+def test_current_conflict_is_the_per_item_reconcile_target(tmp_path):
+    # the bridge `reconcile` reads: the same `unresolved_conflicts` over
+    # `latest_conflict_events`, restricted to one item, so the act's target equals
+    # what `doctor`/the `_Conflicts:_` line count. Open → the conflict event; after
+    # a resolution → None (the idempotent no-op the command reports).
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    item = _item("web:a", content_hash="held")
+    assert custody.current_conflict(db_path, item) is None  # never conflicted
+    record_events(db_path, [custody.conflict_event(
+        "web:a", held_hash="held", incoming_hash="incoming",
+        now="2026-06-22T00:00:00+00:00")])
+    open_conflict = custody.current_conflict(db_path, item)
+    assert open_conflict is not None
+    assert open_conflict.status == "conflict"
+    assert open_conflict.observed_hash == "incoming"
+    record_events(db_path, [custody.resolution_event(
+        "web:a", held_hash="held", incoming_hash="incoming",
+        now="2026-06-22T00:00:01+00:00")])
+    assert custody.current_conflict(db_path, item) is None  # resolved
+
+
 # --- render_custody_conflicts: the readable `_Conflicts:_` line (roadmap H277) ---
 # The readable completion of the `custody.conflicts` aggregate: folds the same
 # `unresolved_conflicts` predicate the doctor block reads, so the line's count and

@@ -1364,7 +1364,8 @@ boundary on an unknown item is a usage error, not a missing-item one
 
 `--status <verdict>` is the **verdict axis** — return only the events whose
 `status` is one of the closed set `unchanged`/`drifted`/`rotted`/`error` *plus*
-the import-time `conflict` (the raw event status `history` emits, *not* the
+the two conflict-axis events: the import-time `conflict` and its operator
+`resolved` supersession (the raw event status `history` emits, *not* the
 reader-facing drift posture — so it is `unchanged`, not `verified`). "Show me
 only the times this source actually *changed*" — an agent triaging a long ledger
 reads the drift/rot events without scanning the steady-state re-checks
@@ -1372,10 +1373,12 @@ reads the drift/rot events without scanning the steady-state re-checks
 **conflicts**", the times another capture of this id disagreed with the held copy
 at merge time (roadmap H274, recorded by both lossless importers — see *import
 items*/*import bundle* below — readable here via `--status conflict`,
-`test_import_items_records_a_conflict_as_a_custody_event`). A `conflict` is a
-*distinct* axis, never a drift posture: it rides the ledger and this timeline but
-`doctor`'s `custody.drift` / `list --drift` ignore it (a peer disagreeing is no
-evidence the live source moved). `--status` is a closed vocabulary guarded by
+`test_import_items_records_a_conflict_as_a_custody_event`), or "show me the times
+I **resolved** one" (`--status resolved`, the `reconcile --keep-held` decision —
+see *reconcile* below, H276). Both are a *distinct* axis from drift, never a drift
+posture: they ride the ledger and this timeline but `doctor`'s `custody.drift` /
+`list --drift` ignore them (a peer disagreeing — or an operator affirming the held
+copy — is no evidence the live source moved). `--status` is a closed vocabulary guarded by
 argparse `choices` (an unknown verdict is a usage error, exit 2, never a silent
 empty — `test_history_status_is_a_closed_vocabulary`), and composes with the
 other two axes **verdict → window → cap**: filter the verdict, then `--since` the
@@ -1414,6 +1417,65 @@ $ scrolls history web:af2e70e87b6d --status drifted   # only the times the sourc
 $ scrolls history web:af2e70e87b6d --status conflict   # only the times a re-import disagreed with the held copy
 [{"checked_at": "2026-06-20T11:00:00+00:00", "status": "conflict", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:7b41…", "detail": "import conflict: an incoming capture of this id differs from the held copy"}]
 [exit 0]
+```
+
+### `scrolls reconcile <id> --keep-held [--dry-run]`
+
+The **operator act** on a recorded import conflict — the resolution leg of the
+conflict-on-import theme (detection: *import items*/*import bundle* below and
+`scrolls history --status conflict`; scope read: `doctor`'s `custody.conflicts`
+and the `_Conflicts:_` briefing line; ADR 0104/0105, cited tests in
+`tests/test_cli.py`). When two captures of the same id collide on import the held
+copy is kept and the divergence is *surfaced and recorded* but never resolved —
+so `doctor`/the `_Conflicts:_` line flag it indefinitely. `reconcile` is the
+explicit, operator-driven way to close it.
+
+`--keep-held` **affirms the held copy** as authoritative. It records a `resolved`
+conflict-axis custody event that *supersedes* the open conflict, so the divergence
+clears from `doctor`'s `custody.conflicts`, the `_Conflicts:_` line, and the MCP
+`get_library_health` twin (all fold the one shared `unresolved_conflicts`
+predicate). Two custody guarantees hold by construction: the **held copy is never
+overwritten** (raw is sacred, custody §2.4 — its content and `content_hash` are
+provably untouched), and the **original `conflict` event survives** on the
+timeline (append-only — `history --status conflict` still shows *when* a peer
+disagreed; the resolution is a new `resolved` row, readable via `history --status
+resolved`). It is **CLI-only** — a custody-changing write is an explicit operator
+act, not an ambient MCP capability — like `verify`.
+
+`--keep-held` is **required**: a bare `reconcile <id>` is a loud usage error (exit
+2, nothing written) because the resolution is a decision, not a default. (The
+sibling `--accept-incoming` — *adopt* the peer's capture — is **deferred**: the
+conflict event records only the incoming *hash*, never the incoming content, so
+adopting it requires re-supplying the content plus custody-safe prior-content
+archival — the first import-path write that changes a held capture, ADR 0105.)
+
+The command is **idempotent** and **dry-run-able**. A second `reconcile
+--keep-held` after a resolution is an honest no-op (`{"resolved": false, "reason":
+"no unresolved import conflict"}`, exit 0) — as is reconciling a held item that
+never carried a conflict. `--dry-run` predicts the *same* decision payload the
+live run would emit (plus `dry_run: true`) but **writes nothing** — the conflict
+stays unresolved and no `resolved` event is recorded (the predict-the-write
+discipline `import bundle --dry-run` uses). An unknown ref is a loud
+could-not-check (exit 1), the `history`/`verify` empty-vs-error split. A genuinely
+new divergent import *after* a resolution appends a fresh `conflict` event and
+**re-opens** the alarm — new evidence of a new disagreement.
+
+```console
+$ scrolls reconcile web:demo --keep-held --dry-run   # predict: nothing is written
+{"id": "web:demo", "resolved": true, "decision": "keep_held", "held_hash": "sha256:9c20…", "incoming_hash": "sha256:7b41…", "dry_run": true}
+[exit 0]
+
+$ scrolls reconcile web:demo --keep-held             # affirm the held copy (records a `resolved` event)
+{"id": "web:demo", "resolved": true, "decision": "keep_held", "held_hash": "sha256:9c20…", "incoming_hash": "sha256:7b41…", "dry_run": false}
+[exit 0]
+
+$ scrolls reconcile web:demo --keep-held             # idempotent — already resolved
+{"id": "web:demo", "resolved": false, "decision": "keep_held", "reason": "no unresolved import conflict", "dry_run": false}
+[exit 0]
+
+$ scrolls reconcile web:demo                          # a resolution is required, not a default
+{"error": "reconcile needs a resolution: --keep-held (affirm the held copy). --accept-incoming (adopt the peer's capture) is deferred — the incoming content is not retained (ADR 0105)"}
+[exit 2]
 ```
 
 ### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend] [--source S]`

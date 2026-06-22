@@ -30,6 +30,7 @@ from scrolls.custody import (
     LEDGER_STATUSES,
     CustodyEvent,
     conflict_event,
+    current_conflict,
     custody_counts,
     drift_posture,
     dump_events_export,
@@ -48,6 +49,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    resolution_event,
     tally_custody,
     tally_custody_by_source,
     unverified_items,
@@ -938,6 +940,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("paths", help="Print the library layout (JSON output)")
 
+    reconcile_parser = subparsers.add_parser(
+        "reconcile",
+        help="Resolve a recorded import conflict — affirm the held copy (JSON output)",
+    )
+    reconcile_parser.add_argument(
+        "id", help="Item id (e.g. web:demo), or the item's URL, carrying the conflict"
+    )
+    reconcile_parser.add_argument(
+        "--keep-held",
+        dest="keep_held",
+        action="store_true",
+        help="Affirm the held copy as authoritative, recording the conflict as "
+        "resolved-in-favor-of-held — the held copy is never overwritten and the "
+        "original conflict stays on the `history` timeline. The only resolution "
+        "implemented; --accept-incoming (adopt the peer's capture) is deferred — "
+        "the incoming content is not retained, only its hash (ADR 0105)",
+    )
+    reconcile_parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Predict the resolution without recording it (writes nothing) — the "
+        "same decision payload the live run would emit, plus dry_run: true",
+    )
+
     related_parser = subparsers.add_parser(
         "related", help="Find items related to one item (JSON output)"
     )
@@ -1209,6 +1236,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_follow(args.url)
     if args.command == "history":
         return _cmd_history(args.id, args.limit, args.since, args.status)
+    if args.command == "reconcile":
+        return _cmd_reconcile(args.id, args.keep_held, args.dry_run)
     if args.command == "import":
         if args.import_command == "bookmarks":
             return _cmd_import_bookmarks(args.path)
@@ -3527,6 +3556,81 @@ def _cmd_history(
             )
         )
     )
+    return 0
+
+
+def _cmd_reconcile(ref: str, keep_held: bool, dry_run: bool = False) -> int:
+    """Resolve a recorded import conflict by affirming the held copy (roadmap H276).
+
+    The operator **act** on the conflict-on-import detection/read legs (ADR
+    0104/0105): an import conflict surfaced by `import items`/`import bundle` and
+    recorded as a `conflict` custody event (queryable via `scrolls history <id>
+    --status conflict`, counted by `doctor`'s `custody.conflicts`) is here resolved
+    on **explicit operator instruction**. The only resolution implemented is
+    ``--keep-held``: affirm the held copy as authoritative, recording a `resolved`
+    conflict-axis event that supersedes the open conflict. The held copy is **never
+    overwritten** (raw is sacred, custody §2.4) and the original `conflict` event is
+    never removed (append-only) — the divergence stays on the timeline while the
+    alarm clears across `doctor`/the `_Conflicts:_` line (the shared
+    `unresolved_conflicts` fold). ``--accept-incoming`` (adopt the peer's capture)
+    is deferred: the incoming content is not retained, only its hash (ADR 0105).
+
+    Honest and safe: a missing resolution flag is a loud usage error (exit 2, no
+    write); an unknown ref is a could-not-check (exit 1, the `history`/`verify`
+    split); a held item with **no** unresolved conflict is an idempotent no-op
+    (``resolved: false``, exit 0) — so re-running after a resolution does nothing.
+    ``--dry-run`` predicts the decision (the same payload the live run emits, plus
+    ``dry_run: true``) and writes nothing — the "preview never drifts from reality"
+    discipline (H245/H273) on the resolution axis.
+    """
+    paths = get_paths()
+    if not keep_held:
+        print(
+            json.dumps(
+                {"error": "reconcile needs a resolution: --keep-held (affirm the "
+                 "held copy). --accept-incoming (adopt the peer's capture) is "
+                 "deferred — the incoming content is not retained (ADR 0105)"}
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    item, error = _find_item(paths, ref)
+    if item is None:
+        print(json.dumps({"error": error}), file=sys.stderr)
+        return 1
+    conflict = current_conflict(paths.db_path, item)
+    if conflict is None:
+        # idempotent no-op: nothing unresolved to reconcile (already resolved,
+        # never conflicted, or the held copy adopted the incoming content)
+        print(
+            json.dumps(
+                {"id": item.id, "resolved": False, "decision": "keep_held",
+                 "reason": "no unresolved import conflict", "dry_run": dry_run}
+            )
+        )
+        return 0
+    decision = {
+        "id": item.id,
+        "resolved": True,
+        "decision": "keep_held",
+        "held_hash": item.content_hash,
+        "incoming_hash": conflict.observed_hash,
+        "dry_run": dry_run,
+    }
+    if not dry_run:
+        if paths.db_path.exists():
+            init_db(paths.db_path)  # ensure the ledger table exists before recording
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        record_events(
+            paths.db_path,
+            [resolution_event(
+                item.id,
+                held_hash=item.content_hash,
+                incoming_hash=conflict.observed_hash,
+                now=now,
+            )],
+        )
+    print(json.dumps(decision))
     return 0
 
 

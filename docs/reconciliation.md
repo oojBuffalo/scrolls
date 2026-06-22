@@ -187,10 +187,10 @@ and `test_unresolved_conflicts_clears_when_the_held_copy_now_matches_the_incomin
 clean/held-filter/source-scope siblings in `tests/test_cli.py`;
 `test_get_library_health_carries_the_conflicts_aggregate` in `tests/test_mcp.py`.
 
-A reviewed `reconcile` resolution (choose a winner, record the supersession)
-remains deferred (ADR 0104, roadmap H276): detection → read ship first, the
-obsidian *surface, don't rewrite* posture; a readable `_Conflicts:_` briefing line
-is the next adjacent read.
+A readable `_Conflicts:_` briefing line (H277, below) and a reviewed `reconcile`
+resolution (H276, below — *choose a winner, record the supersession*) both shipped
+after this read leg: detection → read → resolve, the obsidian *surface, don't
+rewrite* posture carried to its close.
 
 ## Shipped: a readable `_Conflicts:_` briefing line (H277, ADR 0104)
 
@@ -242,5 +242,78 @@ clean/resolution-aware/round-trip no-ops; HTML twin + clean no-op),
 `tests/test_context.py` (carries-the-line + doctor convergence + `index` gate +
 `connected` presence + clean no-op + MCP parity), and the
 `render_custody_conflicts` unit tests in `tests/test_custody.py` (count,
-held-filter + resolution-aware, honest no-op). A reviewed `reconcile` resolution
-(H276) remains the last deferred leg of the theme.
+held-filter + resolution-aware, honest no-op).
+
+## Shipped: a reviewed `reconcile` resolution — keep-held (H276, ADR 0105)
+
+Detection (H272–H274) and the scope read (H275/H277) *surface and count* a
+divergence but never resolve it — the held copy is always kept, so `doctor`'s
+`custody.conflicts` and the `_Conflicts:_` line flag every recorded conflict
+indefinitely. `scrolls reconcile <id> --keep-held` is the **operator act** that
+closes the loop — the final move of the obsidian *surface, don't rewrite* posture:
+*choose a winner, record the supersession, never destroy the prior capture.*
+
+```bash
+scrolls reconcile <id> --keep-held              # affirm the held copy
+scrolls reconcile <id> --keep-held --dry-run    # predict, write nothing
+```
+
+`--keep-held` affirms the held copy as authoritative. It records a typed
+`resolved` **conflict-axis** custody event (`custody.resolution_event` —
+`prior_hash` = the affirmed held copy, `observed_hash` = the rejected incoming
+capture) that **supersedes** the open conflict: `latest_conflict_events` now reads
+the `MAX(id)` over the conflict axis (`conflict` *and* `resolved`), and
+`unresolved_conflicts` keeps an item only while its latest axis event is *still an
+open* `conflict`. So the resolution clears across every conflict surface at once —
+`doctor`'s `custody.conflicts`, the `_Conflicts:_` briefing line on both bundle
+forms and `scrolls context`, and the MCP `get_library_health` twin — because they
+all fold that one shared predicate.
+
+Two custody guarantees hold by construction:
+
+- **The held copy is never overwritten** (raw is sacred — custody §2.4): its
+  content and `content_hash` are provably untouched; `reconcile` only *appends* a
+  ledger event.
+- **The original `conflict` event survives** (append-only): `scrolls history <id>
+  --status conflict` still shows *when* a peer disagreed, and `--status resolved`
+  shows the operator decision. The resolution is a new row, not an edit.
+
+The decision the slice resolves (ADR 0105): **why keep-held ships and
+accept-incoming is deferred.** The hash-compare resolution predicate (H275) clears
+a conflict when the held copy's `content_hash` equals the incoming hash — which is
+exactly how a future `--accept-incoming` *would* clear (the held hash *becomes* the
+observed hash). But it cannot clear a keep-held, because keep-held leaves the held
+hash unchanged; so keep-held needs an **explicit recorded decision** (the
+`resolved` event, skipped on the status gate). And `--accept-incoming` (adopt the
+peer's capture) needs the incoming **content** — but the conflict event records
+only the incoming *hash*; the importer discarded the bytes (the held copy was never
+overwritten). Adopting the peer's capture therefore requires re-supplying the
+content plus custody-safe prior-content archival (ADR 0098's deferred
+"re-capture-on-accept") — the first import-path write that changes a held capture,
+a separate, heavier slice.
+
+The command is **CLI-only** (a custody-changing write is an explicit operator act,
+not an ambient MCP capability, like `verify`), **opt-in** (a bare `reconcile <id>`
+is exit 2 — the resolution is a decision, not a default), **idempotent** (a second
+`--keep-held` is a no-op — the latest axis event is already `resolved`), and
+**dry-run-able** (`--dry-run` emits the same decision payload the live run would,
+plus `dry_run: true`, and writes nothing — the `import bundle --dry-run`
+predict-the-write discipline). A genuinely new divergent import *after* a
+resolution appends a fresh `conflict` event and **re-opens** the alarm — new
+evidence of a new disagreement. The `resolved` event stays off the drift axis
+(`latest_events` reads only the verify verdicts), exactly the ADR 0104 isolation.
+
+Tested: `tests/test_custody.py` (the `resolution_event` shape + serializer
+round-trip, a `resolved` event excluded from the drift posture,
+`latest_conflict_events` returns the resolution when it is latest,
+`unresolved_conflicts` clears after a keep-held resolution and re-opens on a fresh
+conflict, the `current_conflict` per-item target); `tests/test_cli.py`
+(`reconcile --keep-held` resolves and clears `doctor` while the held copy is
+untouched, idempotent re-run, `--dry-run` predicts without recording, a missing
+resolution flag is exit 2, an unknown id is exit 1, a no-conflict held item is a
+no-op, the `conflict` row survives on `history` beside the `resolved` row).
+
+**Deferred:** `--accept-incoming` (a content-bearing, re-import-driven supersession
+with prior-content archival — the first held-capture write) and an MCP `reconcile`
+twin. With keep-held the conflict-on-import theme is complete on the detect → read
+→ **resolve** arc for the safe direction.

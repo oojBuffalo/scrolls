@@ -63,11 +63,33 @@ CONFLICT_STATUS = "conflict"
 # `_warn_conflicts` stderr line, persisted so `scrolls history` is self-describing.
 _CONFLICT_DETAIL = "import conflict: an incoming capture of this id differs from the held copy"
 
+# The operator-driven resolution of a recorded import conflict (roadmap H276): a
+# reviewed decision to affirm the held copy over a diverging incoming capture
+# (`scrolls reconcile <id> --keep-held`). Like `CONFLICT_STATUS` it is a *conflict-
+# axis* event — outside the verify verdicts, so it never enters the drift posture —
+# but it *supersedes* the open conflict it closes: once the latest conflict-axis
+# event for an item is a `resolved`, the import conflict is closed (the held copy
+# was affirmed; raw is never overwritten — custody §2.4). The hash-compare predicate
+# alone cannot clear a keep-held (the held `content_hash` is unchanged), so the
+# decision is an explicit recorded event, not an inference (ADR 0105).
+RESOLVED_STATUS = "resolved"
+
+# The human detail stamped on a resolution event — self-describing on the timeline.
+_RESOLVED_DETAIL = "import conflict resolved: held copy affirmed (keep-held)"
+
+# The conflict axis: an import divergence (`conflict`) and its operator resolution
+# (`resolved`). `latest_conflict_events` reads the MAX(id) over this axis so a
+# resolution supersedes the conflict it closes, exactly as a re-observed conflict
+# supersedes an earlier one. Disjoint from the verify verdicts the drift posture
+# folds (`CUSTODY_STATUSES`) — ADR 0104/0105.
+CONFLICT_AXIS_STATUSES = (CONFLICT_STATUS, RESOLVED_STATUS)
+
 # Every status that can appear in a ledger row — the four verify verdicts plus the
-# import-conflict event. The `scrolls history --status` filter validates against
-# this superset (a conflict event is readable on the timeline and filterable), but
-# the drift posture reads only the `CUSTODY_STATUSES` verify verdicts.
-LEDGER_STATUSES = CUSTODY_STATUSES + (CONFLICT_STATUS,)
+# two conflict-axis events (import `conflict` and its `resolved` supersession). The
+# `scrolls history --status` filter validates against this superset (a conflict or
+# resolution event is readable on the timeline and filterable), but the drift
+# posture reads only the `CUSTODY_STATUSES` verify verdicts.
+LEDGER_STATUSES = CUSTODY_STATUSES + CONFLICT_AXIS_STATUSES
 
 # The custody-fidelity tiers in best-held-first order — the three `get_fidelity`
 # returns. The canonical order every custody headline renders tiers in.
@@ -211,6 +233,49 @@ def conflict_event(
         prior_hash=held_hash,
         observed_hash=incoming_hash,
         detail=_CONFLICT_DETAIL,
+    )
+
+
+def resolution_event(
+    item_id: str,
+    *,
+    held_hash: str | None,
+    incoming_hash: str | None,
+    now: str,
+) -> CustodyEvent:
+    """Build the custody event recording an operator's reconcile decision (H276).
+
+    The act-axis counterpart of `conflict_event`: where that records "a peer's
+    capture of this id disagreed at import time", this records "I reviewed that
+    divergence and affirmed the held copy" — the `scrolls reconcile <id>
+    --keep-held` decision (ADR 0105). Pure and deterministic given `now`, exactly
+    like `conflict_event` / `verify_item`, so the construction is testable without
+    a clock — the CLI edge stamps the wall time and the held copy is never touched.
+
+    It reuses the verify-event field semantics verbatim, so every serializer
+    (`event_payload`, `event_export_dict`) and the export/import round-trip carry
+    it with no special-casing:
+
+    - ``prior_hash`` = the held copy's `content_hash` — the affirmed winner, kept;
+    - ``observed_hash`` = the *rejected* incoming hash from the conflict it closes,
+      so ``history --status resolved`` reads "I kept ``prior_hash``, rejected
+      ``observed_hash``".
+
+    ``status`` is `RESOLVED_STATUS`, a *conflict-axis* status outside the verify
+    verdicts: it rides the per-item `scrolls history` timeline and **supersedes**
+    the open `conflict` it closes (`latest_conflict_events` reads the MAX(id) over
+    the conflict axis), yet never enters the drift posture `latest_events` derives
+    (it reads only `CUSTODY_STATUSES`) — the ADR 0104 isolation, kept on the act
+    axis. The original `conflict` event is never removed (append-only); this is a
+    new row, so the divergence stays on the timeline for the record.
+    """
+    return CustodyEvent(
+        item_id=item_id,
+        checked_at=now,
+        status=RESOLVED_STATUS,
+        prior_hash=held_hash,
+        observed_hash=incoming_hash,
+        detail=_RESOLVED_DETAIL,
     )
 
 
@@ -633,24 +698,33 @@ def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
 
 
 def latest_conflict_events(db_path: Path) -> dict[str, CustodyEvent]:
-    """The most recent *import-conflict* event per item, keyed by item id (H275).
+    """The most recent *conflict-axis* event per item, keyed by item id (H275/H276).
 
     The conflict-axis sibling of `latest_events`: where that reads the MAX(id) per
     item over the *verify verdicts* (`CUSTODY_STATUSES`) for the drift posture, this
-    reads the MAX(id) per item over the `conflict` rows (`CONFLICT_STATUS`) for the
-    `doctor` conflict aggregate (`custody.conflicts`). The two never mix — an import
-    conflict is a distinct provenance-of-divergence axis (ADR 0104), so the drift
-    posture and the conflict view fold disjoint ledger slices. A re-observed
-    divergence (a higher-`id` conflict event) supersedes the earlier one, exactly as
-    `latest_events` keeps the latest verify verdict. An item carrying *only* a
-    conflict event appears here yet stays absent from `latest_events` (its drift
-    posture reads `unverified` — never re-checked).
+    reads the MAX(id) per item over the **conflict axis** (`CONFLICT_AXIS_STATUSES`
+    = an import `conflict` and its operator `resolved` supersession) for the
+    `doctor` conflict aggregate (`custody.conflicts`). The two axes never mix — an
+    import conflict/resolution is a distinct provenance-of-divergence axis (ADR
+    0104/0105), so the drift posture and the conflict view fold disjoint ledger
+    slices.
+
+    "Most recent" is the largest `id`, so the latest *decision* wins: a re-observed
+    divergence (a higher-`id` `conflict`) supersedes an earlier conflict, and an
+    operator `resolved` event (`reconcile --keep-held`, H276) supersedes the
+    conflict it closes — exactly as `latest_events` keeps the latest verify verdict.
+    `unresolved_conflicts` then decides which of these latest events are still open
+    (only an unsuperseded `conflict` is). An item carrying *only* a conflict-axis
+    event appears here yet stays absent from `latest_events` (its drift posture
+    reads `unverified` — never re-checked).
     """
+    placeholders = ", ".join("?" for _ in CONFLICT_AXIS_STATUSES)
     rows = _query_events(
         db_path,
         "SELECT * FROM custody_events WHERE id IN "
-        "(SELECT MAX(id) FROM custody_events WHERE status = ? GROUP BY item_id)",
-        (CONFLICT_STATUS,),
+        f"(SELECT MAX(id) FROM custody_events WHERE status IN ({placeholders}) "
+        "GROUP BY item_id)",
+        tuple(CONFLICT_AXIS_STATUSES),
     )
     return {row["item_id"]: _from_row(row) for row in rows}
 
@@ -658,17 +732,26 @@ def latest_conflict_events(db_path: Path) -> dict[str, CustodyEvent]:
 def unresolved_conflicts(
     items: list[ScrollItem], conflicts: dict[str, CustodyEvent]
 ) -> dict[str, CustodyEvent]:
-    """Held items whose latest import-conflict is still unresolved (roadmap H275).
+    """Held items whose latest import-conflict is still unresolved (H275/H276).
 
-    A recorded conflict is *unresolved* while the latest `conflict` event's
-    ``observed_hash`` (the incoming capture that disagreed) still differs from the
-    held item's current ``content_hash`` — the divergence the importer surfaced has
-    not been closed. Because the held copy is never auto-overwritten (ADR 0104; raw
-    is sacred), every freshly recorded conflict is unresolved; the predicate is
-    deliberately *resolution-aware* so a future `reconcile` (roadmap H276) that
-    adopts the incoming content — the held hash becomes the observed hash — clears
-    the item with **no** special "resolved" event, exactly the `latest_events`
-    held-filter precedent (read the latest event, compare it to the current state).
+    A recorded conflict is *unresolved* while its **latest conflict-axis event is
+    still an open `conflict`** whose ``observed_hash`` (the incoming capture that
+    disagreed) differs from the held item's current ``content_hash``. Two clearing
+    paths coexist, both folded over the *latest* conflict-axis event
+    (`latest_conflict_events`, read the latest event vs. the current state):
+
+    - the **explicit-resolution** path (H276): the latest event is a `resolved`
+      (`reconcile <id> --keep-held` — the operator affirmed the held copy), skipped
+      on the *status gate* regardless of its hashes; and
+    - the **hash** path (H275, the future `--accept-incoming`): the latest event is
+      still a `conflict` but the held copy's current ``content_hash`` now equals its
+      ``observed_hash`` (the incoming content was adopted), skipped on the *hash
+      gate* with no special event — the `latest_events` held-filter precedent.
+
+    Because the held copy is never auto-overwritten (ADR 0104; raw is sacred), a
+    freshly recorded conflict is unresolved until one of these closes it — and a
+    genuinely new divergent import after a resolution appends a higher-`id`
+    `conflict` that re-opens the alarm (new evidence, new disagreement).
 
     Held-filtered like the drift aggregate (`doctor._check_custody_drift`): a
     conflict on a since-deleted id is not this library's divergence, so an item
@@ -680,9 +763,30 @@ def unresolved_conflicts(
     unresolved: dict[str, CustodyEvent] = {}
     for item_id, event in conflicts.items():
         item = by_id.get(item_id)
-        if item is not None and event.observed_hash != item.content_hash:
+        if (
+            item is not None
+            and event.status == CONFLICT_STATUS
+            and event.observed_hash != item.content_hash
+        ):
             unresolved[item_id] = event
     return unresolved
+
+
+def current_conflict(db_path: Path, item: ScrollItem) -> CustodyEvent | None:
+    """The item's open import conflict, or ``None`` — the per-item reconcile target (H276).
+
+    The bridge between the scope-level conflict read and the operator act: folds the
+    *same* `unresolved_conflicts` over `latest_conflict_events`, restricted to this
+    one item, so what `scrolls reconcile` acts on is exactly what `doctor`'s
+    `custody.conflicts` and the `_Conflicts:_` briefing line count (convergence by
+    construction — there is no second definition of "an open conflict"). Returns the
+    latest open `conflict` event (so the caller can record the rejected
+    ``observed_hash`` on the `resolved` event), or ``None`` when the item has no
+    unresolved conflict — already resolved, never conflicted, or the held copy
+    adopted the incoming content. Tolerates a pre-v7 library (no ledger table) via
+    `latest_conflict_events`'s empty read.
+    """
+    return unresolved_conflicts([item], latest_conflict_events(db_path)).get(item.id)
 
 
 def posture_from_status(status: str | None) -> str:
