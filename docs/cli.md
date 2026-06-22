@@ -1550,6 +1550,53 @@ The recovery **read** also travels over MCP (H281): `list_archived` is the twin 
 store. The **write** stays **CLI-only**: the `import … --accept-incoming` adoption, and
 the symmetric restore, are explicit operator acts (custody §2.4).
 
+### `scrolls archive prune (--before ISO | --keep N) [--apply]`
+
+**Bounds** the append-only recovery store by a retention policy (H282). The
+`item_archive` grows on every accept-incoming adoption (and the symmetric restore
+round-trip), so over time the store accumulates superseded captures. Pruning it is
+**custody-safe** — the archive is a *recovery convenience*, not the root of trust
+(raw is sacred for the **held** copy; a superseded prior is already a deliberate
+replacement, ADR 0106 / custody §2.4) — but the act is **explicit**, **report-only
+by default**, and **never touches a held row** (it only ever DELETEs from
+`item_archive`).
+
+Exactly **one** retention policy is required (a bare `prune`, or both at once, is a
+usage error → exit 2, the `reconcile <id>` opt-in gate):
+
+- `--before ISO` — drop priors archived **strictly before** the boundary
+  (date-only ok → that day's UTC midnight, the `verify --stale-before` normalization).
+  The time-based policy; it **may** drop an item's latest prior (after which
+  `archive show` for that id is a could-not-recover — the honest consequence of a
+  time-bound retention).
+- `--keep N` — per item, keep the **most recent N** priors and drop the rest. N>=1
+  (a `--keep 0` is rejected), so the latest prior **always survives** a keep-prune
+  and `archive show <id>` keeps recovering it. The count-based policy.
+
+**Report-only by default** — it predicts the drop set and writes nothing (the
+dry-run discipline, H245/H273); `--apply` performs the deletion and warns loudly on
+stderr (a recovery store was shrunk). The report is shared by both modes, so the
+preview describes exactly what `--apply` would remove:
+
+```console
+$ scrolls archive prune --keep 1            # report-only: predict, write nothing
+{"policy": {"keep": 1}, "applied": false, "matched": 2, "dropped": 0, "remaining": 1, "by_item": [{"item_id": "web:demo", "dropped": 2}], "archived": [ ...the two oldest priors... ]}
+[exit 0]
+
+$ scrolls archive prune --keep 1 --apply    # commit the deletion
+{"policy": {"keep": 1}, "applied": true, "matched": 2, "dropped": 2, "remaining": 1, "by_item": [{"item_id": "web:demo", "dropped": 2}], "archived": [ ... ]}
+{"warning": "pruned 2 archived prior capture(s) across 1 item(s) (held copies untouched): `web:demo`"}   # stderr
+[exit 0]
+```
+
+`matched` is the drop set the policy selects; `dropped` is what was actually removed
+(0 in preview, `== matched` after `--apply`); `remaining` is the archive rows that
+survive; `by_item` rolls the drop set per item; `archived` carries the full
+drop-set entries for review (the `archive list` shape). **Idempotent**: a second
+`--apply` with the same policy finds the rows already gone and drops nothing. The
+write is **CLI-only** (a custody-changing write, like `verify`/`reconcile`); an
+uninitialized / pre-v8 library honestly reports an empty drop set.
+
 ### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend] [--source S]`
 
 One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibling

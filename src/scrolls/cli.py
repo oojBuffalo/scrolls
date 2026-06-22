@@ -107,6 +107,8 @@ from scrolls.items import (
     list_items,
     merge_item,
     preview_import_archive,
+    prune_archive,
+    select_prunable_archive,
     update_item,
 )
 from scrolls.archive_export import ArchiveSourceError, load_archive_export
@@ -1050,6 +1052,36 @@ def build_parser() -> argparse.ArgumentParser:
     archive_show_parser.add_argument(
         "id", help="Item id (e.g. web:demo), or the item's URL, with an archived prior"
     )
+    archive_prune_parser = archive_sub.add_parser(
+        "prune",
+        help="Drop archived prior captures by a retention policy — bounds the "
+        "append-only recovery store (report-only until --apply; JSON output)",
+    )
+    archive_prune_parser.add_argument(
+        "--before",
+        dest="before",
+        default=None,
+        metavar="ISO",
+        help="Drop priors archived strictly before this ISO-8601 timestamp "
+        "(date-only ok → that day's UTC midnight) — the time-based policy; may "
+        "drop an item's latest prior",
+    )
+    archive_prune_parser.add_argument(
+        "--keep",
+        dest="keep",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Per item, keep the most recent N priors and drop the rest (N>=1, so "
+        "`archive show` still recovers the latest) — the count-based policy. "
+        "Exactly one of --before/--keep is required",
+    )
+    archive_prune_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete the drop set; default is report-only — predict what "
+        "would be dropped and write nothing (the dry-run discipline)",
+    )
 
     related_parser = subparsers.add_parser(
         "related", help="Find items related to one item (JSON output)"
@@ -1327,6 +1359,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "archive":
         if args.archive_command == "show":
             return _cmd_archive_show(args.id)
+        if args.archive_command == "prune":
+            return _cmd_archive_prune(args.before, args.keep, args.apply)
         return _cmd_archive_list(args.item_id)
     if args.command == "import":
         if args.import_command == "bookmarks":
@@ -3980,6 +4014,149 @@ def _cmd_archive_show(ref: str) -> int:
         )
         return 1
     sys.stdout.write(dump_items_export([prior]))
+    return 0
+
+
+def _warn_pruned(dropped: list) -> None:
+    """Surface an applied archive prune on stderr (the `_warn_adopted` idiom).
+
+    `archive prune --apply` *deletes* archived prior captures — the recovery store
+    was shrunk. Even though the operator asked for it, that is a custody signal that
+    rides stderr beside the structured report: how many priors were dropped, across
+    which items, bounded with a ``(+N more)`` tail (the readable-surface cap). The
+    held copies are untouched (the archive is a recovery convenience, not the root of
+    trust — ADR 0106), so it is a `warning`, not an error. No-op on a 0-drop prune.
+    """
+    if not dropped:
+        return
+    item_ids = sorted({entry.item_id for entry in dropped})
+    named = ", ".join(f"`{item_id}`" for item_id in item_ids[:_MAX_CONFLICT_IDS])
+    if len(item_ids) > _MAX_CONFLICT_IDS:
+        named += f" (+{len(item_ids) - _MAX_CONFLICT_IDS} more)"
+    print(
+        json.dumps({
+            "warning": (
+                f"pruned {len(dropped)} archived prior capture(s) across "
+                f"{len(item_ids)} item(s) (held copies untouched): {named}"
+            )
+        }),
+        file=sys.stderr,
+    )
+
+
+def _archive_prune_report(
+    *, before: str | None, keep: int | None, drop: list, applied: bool, remaining: int
+) -> dict:
+    """The `archive prune` JSON report — the drop set, scalars, and per-item rollup.
+
+    Shared by the report-only preview and the ``--apply`` run so both describe the
+    same drop set (the H273 "predict the write" discipline). ``matched`` is the drop
+    set size the policy selects; ``dropped`` is what was actually deleted (0 in
+    preview, == ``matched`` after ``--apply``); ``remaining`` is the archive rows that
+    survive. ``by_item`` rolls the drop set per item (newest-first item order), and
+    ``archived`` carries the full entry dicts for review (the `archive list` shape).
+    """
+    policy = {"before": before} if before is not None else {"keep": keep}
+    by_item: list[dict] = []
+    counts: dict[str, int] = {}
+    for entry in drop:  # newest-first; first sight fixes the item's report order
+        if entry.item_id not in counts:
+            by_item.append({"item_id": entry.item_id, "dropped": 0})
+        counts[entry.item_id] = counts.get(entry.item_id, 0) + 1
+    for row in by_item:
+        row["dropped"] = counts[row["item_id"]]
+    return {
+        "policy": policy,
+        "applied": applied,
+        "matched": len(drop),
+        "dropped": len(drop) if applied else 0,
+        "remaining": remaining,
+        "by_item": by_item,
+        "archived": [archive_entry_dict(entry) for entry in drop],
+    }
+
+
+def _cmd_archive_prune(
+    before: str | None, keep: int | None, apply: bool
+) -> int:
+    """Bound the append-only prior-content archive by a retention policy (H282).
+
+    The archive grows on every accept-incoming adoption (and the symmetric restore
+    round-trip). It is a **recovery convenience**, not the root of trust — raw is
+    sacred for the *held* copy, and a superseded prior is already a deliberate
+    replacement (ADR 0106 / custody §2.4) — so pruning it is custody-safe, but the
+    act is explicit, report-only by default, and never touches a held row.
+
+    Exactly one retention policy is required: ``--before ISO`` (drop priors archived
+    before the boundary) or ``--keep N`` (per item, keep the most recent N, drop the
+    rest). Neither / both is a usage error (exit 2 — the `reconcile --keep-held`
+    opt-in gate). ``--keep`` needs N>=1, so the latest prior always survives and
+    `archive show` keeps recovering it. Report-only by default — predict the drop set
+    and write nothing (the H245/H273 dry-run discipline); ``--apply`` performs the
+    deletion and warns loudly on stderr. Idempotent: a second ``--apply`` with the
+    same policy drops nothing.
+    """
+    # exactly one policy — the explicit opt-in gate (a bare prune is a usage error,
+    # the `reconcile <id>` without a resolution flag precedent)
+    if (before is None) == (keep is None):
+        print(
+            json.dumps({
+                "error": "archive prune needs exactly one retention policy: "
+                "--before <ISO> or --keep <N>"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+    boundary: str | None = None
+    if before is not None:
+        # a malformed --before is a loud usage error (exit 2, the `verify
+        # --stale-before` / `export events --since` precedent), never a silently
+        # empty prune that could mask a typo'd boundary
+        try:
+            boundary = parse_since(before)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        if boundary is None:
+            print(
+                json.dumps(
+                    {"error": "--before needs an ISO-8601 timestamp boundary"}
+                ),
+                file=sys.stderr,
+            )
+            return 2
+    if keep is not None and keep < 1:
+        print(
+            json.dumps({
+                "error": "--keep needs N>=1 (the latest prior always survives a "
+                "keep-prune so `archive show` can still recover it; use --before to "
+                "drop regardless of recency)"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+
+    paths = get_paths()
+    if not paths.db_path.exists():
+        # an uninitialized / pre-v8 library honestly holds no archive — nothing to
+        # prune, the empty-but-shaped report (the `archive list` honesty)
+        print(json.dumps(_archive_prune_report(
+            before=boundary, keep=keep, drop=[], applied=apply, remaining=0
+        )))
+        return 0
+
+    if apply:
+        dropped = prune_archive(paths.db_path, before=boundary, keep=keep)
+        remaining = len(list_archived(paths.db_path))  # post-delete survivors
+    else:
+        dropped = select_prunable_archive(paths.db_path, before=boundary, keep=keep)
+        remaining = len(list_archived(paths.db_path)) - len(dropped)  # would-remain
+    report = _archive_prune_report(
+        before=boundary, keep=keep, drop=dropped, applied=apply, remaining=remaining
+    )
+    if apply:
+        _warn_pruned(dropped)
+    print(json.dumps(report))
     return 0
 
 

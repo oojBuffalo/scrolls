@@ -1162,3 +1162,95 @@ def preview_import_archive(
     finally:
         conn.close()
     return imported, skipped
+
+
+# --- archive retention / prune (bound the append-only recovery store, H282) ---
+#
+# ADR 0106 made the `item_archive` append-only: every accept-incoming adoption
+# snapshots the prior copy, and the symmetric restore round-trip appends more, so
+# the store grows unbounded. Pruning it is custody-safe — the archive is a
+# **recovery convenience**, not the root of trust (raw-is-sacred protects the
+# *held* copy; a superseded prior is already a deliberate replacement) — but the
+# act must be explicit, predictable, and never touch a held row. A retention
+# policy selects a *drop set*; the read-only `select_prunable_archive` is the
+# preview, `prune_archive` is the `--apply` write, and both fold the one pure
+# `_select_prunable` so the preview predicts the write exactly (the H245/H273
+# discipline). Two policies, mutually exclusive:
+#   * `before` — drop priors archived strictly before an ISO boundary (time-based,
+#     the `verify --stale-before` precedent); may drop an item's latest prior.
+#   * `keep`   — per item, keep the most recent `keep` priors and drop the rest
+#     (count-based); `keep >= 1`, so the latest prior always survives and
+#     `archive show <id>` keeps recovering it.
+
+
+def _select_prunable(
+    entries: list[ArchiveEntry], *, before: str | None, keep: int | None
+) -> list[ArchiveEntry]:
+    """Pure: the subset of `entries` a retention policy drops — the drop set.
+
+    `entries` arrive newest-first (archive id DESC, the `list_archived` order).
+    Exactly one of `before` / `keep` is set (the CLI enforces the gate); the other
+    is ``None``. `before` drops every entry archived strictly before the boundary
+    (a lexicographic compare over the normalized UTC ISO shape — apples-to-apples
+    via `parse_since`, the `--stale-before` precedent). `keep` walks each item's
+    entries newest-first and drops everything past the most-recent `keep`. The
+    returned drop set stays newest-first, so it reads like `archive list`.
+    """
+    if before is not None:
+        return [e for e in entries if e.archived_at < before]
+    # keep N: per item, the first `keep` (newest) survive; the rest drop.
+    seen: dict[str, int] = {}
+    drop: list[ArchiveEntry] = []
+    for entry in entries:  # newest-first
+        rank = seen.get(entry.item_id, 0) + 1
+        seen[entry.item_id] = rank
+        if keep is not None and rank > keep:
+            drop.append(entry)
+    return drop
+
+
+def select_prunable_archive(
+    db_path: Path, *, before: str | None = None, keep: int | None = None
+) -> list[ArchiveEntry]:
+    """The archive rows a retention policy would drop — the prune drop set (H282).
+
+    Read-only: the preview behind `scrolls archive prune` (no ``--apply``) *and* the
+    shared selection `prune_archive` deletes, so the preview predicts the write
+    exactly (the H245/H273 "the preview never drifts from reality" discipline).
+    Folds the same `list_archived` index (newest first, pre-v8 tolerant) the CLI
+    already reads, then the pure `_select_prunable`. Exactly one of `before` /
+    `keep` selects the set; passing neither returns ``[]`` (no policy → nothing
+    selected — the CLI rejects that case before reaching here).
+    """
+    if before is None and keep is None:
+        return []
+    return _select_prunable(list_archived(db_path), before=before, keep=keep)
+
+
+def prune_archive(
+    db_path: Path, *, before: str | None = None, keep: int | None = None
+) -> list[ArchiveEntry]:
+    """Delete the archive rows a retention policy selects; return the dropped entries (H282).
+
+    The ``--apply`` write behind `scrolls archive prune`. Selects the same drop set
+    as `select_prunable_archive` (so the preview predicts this exactly), then
+    DELETEs those rows by their per-library `archive_id` in one transaction.
+    **Only ever touches `item_archive`** — the held items and the custody ledger are
+    untouched (the archive is a recovery convenience, not the root of trust — ADR
+    0106 / custody §2.4). Idempotent: a second prune with the same policy finds the
+    rows already gone and drops nothing. Returns the dropped entries (newest first),
+    so the caller reports what was removed.
+    """
+    drop = select_prunable_archive(db_path, before=before, keep=keep)
+    if not drop:
+        return []
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                "DELETE FROM item_archive WHERE id = ?",
+                [(entry.archive_id,) for entry in drop],
+            )
+    finally:
+        conn.close()
+    return drop

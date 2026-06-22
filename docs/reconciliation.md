@@ -472,10 +472,10 @@ clears the aggregate, idempotent, `archive list`/`show`, the show→import resto
 predicts without writing).
 
 **Deferred:** ~~the archive in portable bundles~~ (shipped — H280, below), an MCP
-accept-incoming / `archive` twin, `archive prune` / retention, and `archive show
---all` / restore-by-version. With `--accept-incoming` the conflict-on-import theme
-is complete on **both** resolution directions — keep-held and accept-incoming —
-across detect → read → resolve.
+accept-incoming *write* twin, ~~`archive prune` / retention~~ (shipped — H282,
+below), and `archive show --all` / restore-by-version. With `--accept-incoming` the
+conflict-on-import theme is complete on **both** resolution directions — keep-held
+and accept-incoming — across detect → read → resolve.
 
 ## Shipped: the prior-content archive travels in the portable round-trip (H280)
 
@@ -554,3 +554,53 @@ empty before init / on a never-adopted library, `--id`/`item_id` scope, the
 convergence-with-CLI `archive list`/`archive show` ties, the model-complete
 re-importable snapshot, the no-prior / unknown-id could-not-recover errors, the
 registered-tool surface).
+
+## Shipped: `archive prune` — a retention act bounding the recovery store (H282, ADR 0106)
+
+The `item_archive` is **append-only and unbounded**: every accept-incoming adoption
+snapshots the prior copy, and the symmetric restore round-trip
+(`archive show | import … --accept-incoming`) appends more, so the store accumulates
+superseded captures with no way to reclaim space. H282 adds the bound:
+
+```text
+scrolls archive prune (--before ISO | --keep N) [--apply]
+```
+
+**The decisive question** the slice resolved: *is pruning the archive a custody
+violation?* — answered **no**. Raw-is-sacred (§2.4) protects the **held** copy; a
+superseded prior is already a *deliberate replacement* the operator chose, and the
+archive is a **recovery convenience**, not the root of trust. So dropping old
+snapshots is custody-safe — provided the act is **explicit**, **predictable**, and
+**never touches a held row**. It only ever DELETEs from `item_archive`; the items
+table and the custody ledger are untouched (a test pins the held copy byte-for-byte
+intact and the ledger unchanged across a prune).
+
+Two mutually-exclusive policies, exactly one required (a bare `prune`, or both, is
+exit 2 — the `reconcile <id>` opt-in gate):
+
+- **`--before ISO`** — drop priors archived *strictly before* the boundary (date-only
+  ok → that day's UTC midnight, the `verify --stale-before` normalization via
+  `parse_since`). The time-based policy; it **may** drop an item's latest prior (an
+  explicit, honest consequence — `archive show` then could-not-recovers for it).
+- **`--keep N`** — per item, keep the most recent N priors and drop the rest. **N>=1**
+  (a `--keep 0` is rejected), so the latest prior **always survives** a keep-prune and
+  `archive show <id>` keeps recovering it — a clean recovery invariant the count
+  policy guarantees and the time policy deliberately does not.
+
+**Report-only by default** (the H245/H273 dry-run discipline): a bare
+`archive prune --keep 1` predicts the drop set (`matched`) and writes nothing
+(`dropped: 0`, `applied: false`); the archive is genuinely untouched. `--apply`
+performs the deletion (`dropped == matched`) and warns loudly on stderr (a recovery
+store was shrunk, even though the operator asked). The read-only
+`items.select_prunable_archive` (the preview) and the `items.prune_archive` write fold
+the **one pure `_select_prunable`**, so the preview predicts the write exactly. The
+write is **idempotent** (a second `--apply` finds the rows gone, drops 0) and
+**CLI-only** (a custody-changing write, like `verify`/`reconcile`). No schema change,
+no network — a deterministic DELETE over the local recovery store.
+
+Tested: `tests/test_items.py` (the per-item keep / strictly-before selection, the
+preview ≡ apply drop set, idempotency, the held-row + ledger untouched, the
+empty-archive no-op); `tests/test_cli.py` (the exactly-one-policy gate, the
+`--keep 0` / malformed-`--before` rejections, report-only writes nothing, `--apply`
+drops + warns + leaves the latest recoverable, the before-policy whole-archive clear,
+the clean-library empty report).

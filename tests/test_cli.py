@@ -4194,6 +4194,163 @@ def test_archive_show_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
     assert "no archived prior" in err["error"]
 
 
+# --- archive prune (H282): a retention act bounding the append-only recovery
+# store. Report-only by default; --apply deletes; exactly one of --before/--keep;
+# never touches a held row (the archive is a recovery convenience, not the root of
+# trust — ADR 0106). ---
+
+
+def _seed_with_archived_priors(scrolls_home, tmp_path, count):
+    """Seed a rich item, then adopt `count` divergent captures via accept-incoming,
+    so the archive ends up holding `count` prior copies (newest last archived).
+    Returns the seeded id; the held copy is the last adopted capture."""
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    for i in range(count):
+        held = get_item(db, seeded.id)
+        divergent = dataclasses.replace(
+            held, content_hash=f"sha256:v{i + 1}", raw_text=f"peer {i + 1}"
+        )
+        out_path = tmp_path / f"incoming{i}.jsonl"
+        out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+        assert main(["import", "items", str(out_path), "--accept-incoming"]) == 0
+    return seeded.id
+
+
+def test_archive_prune_requires_exactly_one_policy(scrolls_home, tmp_path, capsys):
+    """The explicit opt-in gate (the `reconcile <id>` precedent): a bare prune, or
+    both policies at once, is a usage error (exit 2) — never an ambiguous write."""
+    _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "prune"]) == 2
+    assert "exactly one retention policy" in json.loads(capsys.readouterr().err)["error"]
+    assert main(["archive", "prune", "--keep", "1", "--before", "2026-01-01"]) == 2
+    assert "exactly one retention policy" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_archive_prune_rejects_keep_below_one(scrolls_home, tmp_path, capsys):
+    """`--keep 0` would nuke an item's whole history including the latest prior —
+    rejected, so `archive show` always survives a keep-prune (use --before to drop
+    regardless of recency)."""
+    _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "prune", "--keep", "0"]) == 2
+    assert "N>=1" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_archive_prune_rejects_a_malformed_before(scrolls_home, tmp_path, capsys):
+    """A malformed `--before` is a loud usage error (exit 2, the `verify
+    --stale-before` precedent), never a silently empty prune that masks a typo."""
+    _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "prune", "--before", "not-a-date"]) == 2
+    assert "ISO" in json.loads(capsys.readouterr().err)["error"] or \
+        "not a valid" in json.loads(capsys.readouterr().err).get("error", "")
+
+
+def test_archive_prune_report_only_by_default_writes_nothing(
+    scrolls_home, tmp_path, capsys
+):
+    """Default is report-only: it predicts the drop set (matched>0) but deletes
+    nothing (dropped==0, applied false) and the archive is unchanged on disk — the
+    dry-run discipline (H245/H273)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)  # 3 priors
+    capsys.readouterr()
+    assert main(["archive", "list"]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 3
+
+    assert main(["archive", "prune", "--keep", "1"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["applied"] is False
+    assert report["policy"] == {"keep": 1}
+    assert report["matched"] == 2          # the two oldest priors selected
+    assert report["dropped"] == 0          # …but nothing actually removed
+    assert report["remaining"] == 1        # one would survive
+    assert report["by_item"] == [{"item_id": item_id, "dropped": 2}]
+    assert len(report["archived"]) == 2    # the reviewable drop set (the list shape)
+    # the archive is genuinely untouched — count still 3
+    assert main(["archive", "list"]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 3
+
+
+def test_archive_prune_apply_keep_drops_oldest_keeps_latest_and_warns(
+    scrolls_home, tmp_path, capsys
+):
+    """`--apply --keep 1` deletes all but the most recent prior per item, warns
+    loudly on stderr (a recovery store was shrunk), and leaves the latest prior
+    recoverable via `archive show` (the keep>=1 invariant)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    capsys.readouterr()
+
+    assert main(["archive", "prune", "--keep", "1", "--apply"]) == 0
+    out, err = capsys.readouterr()
+    report = json.loads(out)
+    assert report["applied"] is True
+    assert report["matched"] == 2 and report["dropped"] == 2 and report["remaining"] == 1
+    # loud on stderr — a held copy was *not* touched, but the recovery store shrank
+    warning = json.loads(err)["warning"]
+    assert "pruned 2" in warning and item_id in warning
+    # the archive now holds exactly the latest prior, still recoverable
+    assert main(["archive", "list"]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 1
+    assert main(["archive", "show", item_id]) == 0
+    recovered = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert recovered["content_hash"] == "sha256:v2"  # the newest archived prior
+
+
+def test_archive_prune_apply_is_idempotent(scrolls_home, tmp_path, capsys):
+    """A second `--apply` with the same policy finds the rows already gone and drops
+    nothing — idempotent, like the rest of the custody writes."""
+    _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    capsys.readouterr()
+    assert main(["archive", "prune", "--keep", "1", "--apply"]) == 0
+    assert json.loads(capsys.readouterr().out)["dropped"] == 2
+    # second run: nothing left to drop
+    assert main(["archive", "prune", "--keep", "1", "--apply"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["dropped"] == 0 and second["matched"] == 0 and second["remaining"] == 1
+
+
+def test_archive_prune_apply_never_touches_a_held_item(scrolls_home, tmp_path, capsys):
+    """Pruning the recovery store leaves the held copy byte-for-byte intact — the
+    archive is a convenience, not the root of trust (ADR 0106 / custody §2.4)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 2)
+    db = get_paths().db_path
+    held_before = get_item(db, item_id)
+    capsys.readouterr()
+    assert main(["archive", "prune", "--keep", "1", "--apply"]) == 0
+    capsys.readouterr()
+    assert get_item(db, item_id) == held_before  # the held capture is untouched
+
+
+def test_archive_prune_before_can_drop_the_whole_archive(scrolls_home, tmp_path, capsys):
+    """The time-based policy drops priors archived before the boundary, latest
+    included — a far-future `--before --apply` clears the store; a far-past one is a
+    no-op. (The per-row boundary slicing is unit-tested with controlled timestamps.)"""
+    _seed_with_archived_priors(scrolls_home, tmp_path, 2)
+    capsys.readouterr()
+    # a far-past boundary drops nothing (everything is newer)
+    assert main(["archive", "prune", "--before", "2000-01-01", "--apply"]) == 0
+    assert json.loads(capsys.readouterr().out)["dropped"] == 0
+    # a far-future boundary drops the whole archive, latest included
+    assert main(["archive", "prune", "--before", "2099-01-01", "--apply"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["dropped"] == 2 and report["remaining"] == 0
+    assert main(["archive", "list"]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 0
+
+
+def test_archive_prune_on_a_clean_library_is_an_empty_report(scrolls_home, capsys):
+    """A library that never adopted holds an empty archive — prune honestly reports
+    a zero drop set (shaped like a real report), never a crash."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["archive", "prune", "--keep", "1"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["matched"] == 0 and report["dropped"] == 0 and report["remaining"] == 0
+    assert report["by_item"] == [] and report["archived"] == []
+
+
 # --- status custody.conflicts scalar (H279): the JSON-status counterpart of the
 # readable `_Conflicts:_` briefing line (H277), folding the same
 # `unresolved_conflicts` doctor's `custody.conflicts` reads into the machine

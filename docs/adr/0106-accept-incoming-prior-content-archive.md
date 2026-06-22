@@ -194,9 +194,25 @@ operator act (custody §2.4), not an ambient MCP capability.
   CLI reads (convergence by construction) — beside the already-travelling
   `history --status superseded` and the cleared conflict aggregate. The write twin
   remains deferred.
-- **`archive prune` / retention.** The archive is append-only and unbounded; a
+- **`archive prune` / retention.** ~~The archive is append-only and unbounded; a
   retention policy (drop snapshots older than N, or beyond K per item) is left
-  until the store's growth is shown to matter.
+  until the store's growth is shown to matter.~~ **Shipped (roadmap H282):**
+  `scrolls archive prune (--before ISO | --keep N) [--apply]` bounds the store —
+  `--before` drops priors archived strictly before a boundary (the `verify
+  --stale-before` precedent), `--keep N` keeps the most recent N priors per item
+  (N>=1, so `archive show` always survives a keep-prune). It is **report-only by
+  default** (predict the drop set, write nothing — the H245/H273 dry-run discipline);
+  `--apply` deletes and warns loudly. Exactly one policy is required (the `reconcile`
+  opt-in gate), it is idempotent, and it **only ever DELETEs from `item_archive`** —
+  the held items and the custody ledger are untouched, because the archive is a
+  *recovery convenience*, not the root of trust (a superseded prior is already a
+  deliberate replacement — custody §2.4). CLI-only, no schema change. The
+  read-only `items.select_prunable_archive` (the preview) and the `items.prune_archive`
+  write fold the one pure `_select_prunable`, so the preview predicts the write
+  exactly. Verified offline: `tests/test_items.py` (the per-item keep / before
+  selection, the preview ≡ apply drop set, idempotency, held-row + ledger untouched)
+  and `tests/test_cli.py` (the policy gate, report-only default, `--apply` + warn,
+  the keep>=1 recovery invariant, the before-policy whole-archive clear).
 - **`archive show --all` / restore-by-version.** `archive show` emits the latest
   archived prior; emitting the full archived history for an id, or restoring a
   specific older version, is left until a multi-supersession workflow needs it.

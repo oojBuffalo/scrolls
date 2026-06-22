@@ -24,7 +24,9 @@ from scrolls.items import (
     list_items,
     make_item_id,
     preview_import_archive,
+    prune_archive,
     replace_items,
+    select_prunable_archive,
     update_item,
 )
 
@@ -394,6 +396,112 @@ def test_latest_archived_returns_none_for_a_never_superseded_id(db_path):
     insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
                                    url="https://a.example", content_hash="sha256:x"))
     assert latest_archived(db_path, "web:a") is None
+
+
+# --- archive retention / prune (bound the append-only recovery store, H282) ---
+
+
+def _archive_chain(db_path, item_id, hashes, *, base_at="2026-06-22T00:00:00+00:00"):
+    """Adopt a chain of divergent captures of `item_id`, leaving one archive row
+    per supersession (the prior copy of each step). `hashes` is the sequence of
+    *new* content hashes adopted, starting from a held capture hashed `sha256:h0`;
+    the archive ends up holding `len(hashes)` priors (h0, h1, …), newest last
+    archived. `archived_at` advances per step so a `--before` test can target them.
+    Returns the list of archived prior hashes in adoption order."""
+    held = make_item(id=item_id, source="web", source_id=None,
+                     url=f"https://{item_id}.example", raw_text="body h0",
+                     content_hash="sha256:h0", stage="rendered")
+    insert_item(db_path, held)
+    archived = []
+    for i, new_hash in enumerate(hashes):
+        incoming = dataclasses.replace(held, raw_text=f"body {new_hash}",
+                                       content_hash=new_hash)
+        # stamp each adoption a day apart so --before can slice them
+        archived_at = f"2026-06-{22 + i:02d}T00:00:00+00:00"
+        adopt_incoming(db_path, incoming, archived_at=archived_at)
+        archived.append(held.content_hash)  # the prior that was archived this step
+        held = incoming
+    return archived
+
+
+def test_select_prunable_keep_drops_all_but_the_most_recent_n_per_item(db_path):
+    # three priors archived for web:a (h0, h1, h2 newest); keep=1 drops the two
+    # oldest, keeps the latest — never the most-recently-superseded copy.
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    assert [e.prior_hash for e in list_archived(db_path)] == [
+        "sha256:h2", "sha256:h1", "sha256:h0"]  # newest-first
+    drop = select_prunable_archive(db_path, keep=1)
+    assert [e.prior_hash for e in drop] == ["sha256:h1", "sha256:h0"]  # the two oldest
+    # keep=2 drops only the single oldest; keep above the count drops nothing
+    assert [e.prior_hash for e in select_prunable_archive(db_path, keep=2)] == ["sha256:h0"]
+    assert select_prunable_archive(db_path, keep=3) == []
+    assert select_prunable_archive(db_path, keep=99) == []
+
+
+def test_select_prunable_keep_is_per_item(db_path):
+    # keep N applies independently per item — a fat-history item is trimmed while a
+    # single-prior item is untouched.
+    _archive_chain(db_path, "web:a", ["sha256:a1", "sha256:a2"])  # 2 priors
+    _archive_chain(db_path, "web:b", ["sha256:b1"])               # 1 prior
+    drop = select_prunable_archive(db_path, keep=1)
+    assert {(e.item_id, e.prior_hash) for e in drop} == {("web:a", "sha256:h0")}
+    # web:b keeps its lone prior; web:a keeps its newest
+    assert select_prunable_archive(db_path, keep=2) == []
+
+
+def test_select_prunable_before_drops_strictly_older_rows(db_path):
+    # three priors stamped 2026-06-22/23/24; --before 2026-06-24 drops the first two
+    # (strictly before the boundary), keeps the 24th — a lexicographic UTC compare.
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    drop = select_prunable_archive(db_path, before="2026-06-24T00:00:00+00:00")
+    assert {e.archived_at for e in drop} == {
+        "2026-06-22T00:00:00+00:00", "2026-06-23T00:00:00+00:00"}
+    # the boundary itself is exclusive (strictly before), so the 24th survives
+    assert all(e.archived_at < "2026-06-24T00:00:00+00:00" for e in drop)
+    # a boundary past everything drops the whole archive (including the latest)
+    assert len(select_prunable_archive(db_path, before="2030-01-01T00:00:00+00:00")) == 3
+
+
+def test_prune_archive_deletes_exactly_the_drop_set_and_returns_it(db_path):
+    # the apply write deletes the same set the preview names (preview ≡ apply), and
+    # leaves the survivors intact — recoverable as before.
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    preview = select_prunable_archive(db_path, keep=1)
+    dropped = prune_archive(db_path, keep=1)
+    assert [e.archive_id for e in dropped] == [e.archive_id for e in preview]
+    survivors = list_archived(db_path)
+    assert [e.prior_hash for e in survivors] == ["sha256:h2"]  # the latest prior kept
+    # the latest is still recoverable byte-for-byte after the prune
+    assert latest_archived(db_path, "web:a").content_hash == "sha256:h2"
+
+
+def test_prune_archive_is_idempotent(db_path):
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2"])
+    first = prune_archive(db_path, keep=1)
+    assert len(first) == 1
+    # a second prune with the same policy finds the rows already gone → drops nothing
+    assert prune_archive(db_path, keep=1) == []
+    assert len(list_archived(db_path)) == 1
+
+
+def test_prune_archive_never_touches_held_items_or_the_ledger(db_path):
+    # pruning the recovery store leaves the held copy and the custody ledger
+    # untouched — the archive is a convenience, not the root of trust (ADR 0106).
+    from scrolls.custody import latest_events
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2"])
+    held_before = get_item(db_path, "web:a")
+    events_before = latest_events(db_path)
+    prune_archive(db_path, keep=1)
+    assert get_item(db_path, "web:a") == held_before  # held copy byte-for-byte intact
+    assert latest_events(db_path) == events_before    # the ledger is untouched
+
+
+def test_prune_on_an_empty_archive_is_a_clean_no_op(db_path):
+    # a library that never adopted holds an empty archive; the prune selection and
+    # the apply both return an empty drop set, never a crash.
+    assert select_prunable_archive(db_path, keep=1) == []
+    assert select_prunable_archive(db_path, before="2030-01-01T00:00:00+00:00") == []
+    assert prune_archive(db_path, keep=1) == []
 
 
 # --- portable prior-content archive (the recovery store travels, H280) -------
