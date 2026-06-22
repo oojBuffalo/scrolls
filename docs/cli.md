@@ -1540,8 +1540,15 @@ $ scrolls archive show web:demo | scrolls import items /dev/stdin --accept-incom
 ```
 
 An id with no archived prior (never superseded) or an unknown id is a loud
-could-not-recover (exit 1), the `verify`/`reconcile` empty-vs-error split. Like
-`reconcile`, `archive` is **CLI-only** — recovery is an explicit operator act.
+could-not-recover (exit 1), the `verify`/`reconcile` empty-vs-error split.
+
+The recovery **read** also travels over MCP (H281): `list_archived` is the twin of
+`archive list` (the same `{count, archived}` index, folding the shared
+`items.archive_entry_dict`) and `get_archived(item_id)` is the twin of `archive show`
+(the model-complete, re-importable prior snapshot, folding the same
+`items.latest_archived`) — so an agent operating purely over MCP can read the recovery
+store. The **write** stays **CLI-only**: the `import … --accept-incoming` adoption, and
+the symmetric restore, are explicit operator acts (custody §2.4).
 
 ### `scrolls maintain [--all] [--limit N | --no-recheck | --history [N]] [--trend] [--source S]`
 

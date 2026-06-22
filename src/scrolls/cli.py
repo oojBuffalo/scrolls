@@ -92,6 +92,7 @@ from scrolls.works import (
 from scrolls.items import (
     ScrollItem,
     adopt_incoming,
+    archive_entry_dict,
     archived_records,
     classification_provenance,
     dump_archive_export,
@@ -3948,15 +3949,7 @@ def _cmd_archive_list(ref: str | None = None) -> int:
     entries = list_archived(paths.db_path, item_id) if paths.db_path.exists() else []
     print(json.dumps({
         "count": len(entries),
-        "archived": [
-            {
-                "item_id": entry.item_id,
-                "prior_hash": entry.prior_hash,
-                "superseded_by": entry.superseded_by,
-                "archived_at": entry.archived_at,
-            }
-            for entry in entries
-        ],
+        "archived": [archive_entry_dict(entry) for entry in entries],
     }))
     return 0
 

@@ -57,13 +57,17 @@ from scrolls.works import filter_works, membership_payload, work_membership
 from scrolls.works import to_payload as works_payload
 from scrolls.works import works_for_item, works_over
 from scrolls.items import (
+    archive_entry_dict,
     classification_provenance,
     count_by_source,
     get_fidelity,
     get_item,
     item_summary,
+    item_to_dict,
     list_items,
 )
+from scrolls.items import latest_archived as _latest_archived
+from scrolls.items import list_archived as _list_archived
 from scrolls.kb import compile_kb
 from scrolls.paths import get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
@@ -90,7 +94,10 @@ _INSTRUCTIONS = (
     "for the whole "
     "library's link structure at once, get_library_health for the "
     "whole-library custody audit (score, fidelity tiers, drift, and which "
-    "source needs attention), run_maintenance for a one-call scheduled custody "
+    "source needs attention), list_archived/get_archived to read the "
+    "prior-content recovery store (what an accept-incoming adoption superseded, "
+    "and the recoverable prior snapshot), "
+    "run_maintenance for a one-call scheduled custody "
     "pass (regenerate views, audit, and the custody delta vs the last run; "
     "offline — it never re-captures; pass source= to scope the pass to the "
     "weakest source), get_maintenance_history for the custody "
@@ -642,6 +649,74 @@ def list_sources() -> dict[str, int]:
     return count_by_source(paths.db_path)
 
 
+def list_archived(item_id: str | None = None) -> dict[str, Any]:
+    """The prior-content recovery index — captures a `--accept-incoming` superseded.
+
+    The MCP counterpart of `scrolls archive list` (roadmap H281, ADR 0106). When an
+    operator adopts a diverging peer capture (`scrolls import … --accept-incoming`),
+    the held copy it replaces is archived first — raw is never destroyed (custody
+    §2.4) — and this is the queryable index of *what* was superseded, newest first:
+    each ``{item_id, prior_hash, superseded_by, archived_at}`` — the hash before the
+    adoption, the hash that replaced it, and when. Lightweight metadata only; the
+    model-complete prior snapshot is fetched on demand by `get_archived`.
+
+    `item_id` scopes to one item (its id or the URL that saved it, resolved like
+    `get_scroll`'s — ADR 0028); omitted, the whole archive. Returns
+    ``{count, archived}`` — the *same* shape the CLI prints, folding the *same*
+    `items.archive_entry_dict` serializer, so the recovery index reads identically on
+    the shell and over MCP (convergence by construction). A clean / pre-v8 /
+    uninitialized library honestly holds nothing (``{count: 0, archived: []}``),
+    never an error; a malformed `item_id` ref raises (the MCP error idiom).
+
+    Read-only: the recovery *write* (`import … --accept-incoming`, and the symmetric
+    restore via `archive show | import … --accept-incoming`) is a custody-changing,
+    operator-gated CLI act (custody §2.4, ADR 0106) — this is the read twin only.
+    """
+    paths = get_paths()
+    resolved = resolve_item_id(item_id) if item_id is not None else None
+    entries = (
+        _list_archived(paths.db_path, resolved) if paths.db_path.exists() else []
+    )
+    return {
+        "count": len(entries),
+        "archived": [archive_entry_dict(entry) for entry in entries],
+    }
+
+
+def get_archived(item_id: str) -> dict[str, Any]:
+    """One item's latest archived prior capture — the model-complete recovery snapshot.
+
+    The MCP counterpart of `scrolls archive show` (roadmap H281, ADR 0106). Where
+    `list_archived` returns the recovery *index* (metadata, no body), this returns the
+    most-recently superseded copy of one item as the model-complete, re-importable
+    `item_to_dict` snapshot (the same shape an `export items` line carries) — so an
+    agent can recover the prior bytes and, if it chooses, hand the snapshot back to a
+    CLI ``scrolls import items … --accept-incoming`` to *restore* it (the symmetric
+    round-trip; the restore write stays operator-gated, custody §2.4). Folds the same
+    `items.latest_archived` the CLI `archive show` reads, so the two surfaces converge
+    by construction.
+
+    `item_id` is the item's id or the URL that saved it (ADR 0028), resolved like
+    `get_scroll`'s. An item with no archived prior (never superseded) — or an unknown
+    id, or a pre-v8 / uninitialized library — is an error (the could-not-recover
+    signal, the MCP twin of `archive show`'s exit 1), never a silent empty.
+    """
+    paths = get_paths()
+    resolved = resolve_item_id(item_id)
+    prior = (
+        _latest_archived(paths.db_path, resolved) if paths.db_path.exists() else None
+    )
+    if prior is None:
+        suffix = f" (from {item_id})" if resolved != item_id else ""
+        raise ValueError(f"no archived prior capture for {resolved}{suffix}")
+    snapshot = item_to_dict(prior)
+    # the tuple fields render as JSON lists (matching `get_scroll` and the CLI
+    # `archive show` JSONL line), so the snapshot is the re-importable export shape
+    for name in ("tags", "concepts", "links", "media"):
+        snapshot[name] = list(snapshot[name])
+    return snapshot
+
+
 def get_library_health(source: str | None = None) -> dict[str, Any]:
     """The whole-library custody audit — how custody stands across the library.
 
@@ -926,6 +1001,8 @@ _TOOLS = (
     get_concept_page,
     get_tag_page,
     list_sources,
+    list_archived,
+    get_archived,
     get_library_health,
     run_maintenance,
     get_maintenance_history,

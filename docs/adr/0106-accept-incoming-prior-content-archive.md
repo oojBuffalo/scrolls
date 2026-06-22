@@ -183,10 +183,17 @@ operator act (custody §2.4), not an ambient MCP capability.
   the whole-library JSONL siblings of `export events`/`import events`, and `import
   bundle` restores any archive block unconditionally, deduped by `(item_id,
   prior_hash)` (the H67 events-dedup precedent). No schema change.
-- **An MCP `import … --accept-incoming` / `archive` twin.** A custody-changing
-  write and its recovery are operator-gated for now (custody §2.4), like
-  `reconcile`/`verify`; the read side (`history --status superseded`, the cleared
-  conflict aggregate) already travels over MCP.
+- **An MCP `import … --accept-incoming` write twin.** The custody-changing
+  *write* (and the symmetric restore via `archive show | import …
+  --accept-incoming`) stays operator-gated (custody §2.4), like
+  `reconcile`/`verify`. **The *read* side shipped (roadmap H281):** `list_archived`
+  (the recovery index — what an adoption superseded, with the hash before/after and
+  when, the twin of `scrolls archive list`) and `get_archived(item_id)` (the
+  model-complete, re-importable prior snapshot, the twin of `scrolls archive show`)
+  travel over MCP, folding the same `items.archive_entry_dict`/`latest_archived` the
+  CLI reads (convergence by construction) — beside the already-travelling
+  `history --status superseded` and the cleared conflict aggregate. The write twin
+  remains deferred.
 - **`archive prune` / retention.** The archive is append-only and unbounded; a
   retention policy (drop snapshots older than N, or beyond K per item) is left
   until the store's growth is shown to matter.

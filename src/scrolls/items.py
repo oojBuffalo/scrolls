@@ -815,6 +815,25 @@ class ArchiveEntry:
     superseded_by: str | None
 
 
+def archive_entry_dict(entry: ArchiveEntry) -> dict[str, Any]:
+    """One recovery-index row as a JSON-serializable dict — the shared read shape.
+
+    The metadata an operator (CLI `scrolls archive list`) or an agent (MCP
+    `list_archived`) scans: *which* held copy was replaced, the hash before/after,
+    and when — no body (the model-complete prior snapshot is fetched on demand by
+    `latest_archived`/`archive show`/`get_archived`). The per-library autoincrement
+    ``archive_id`` is omitted (an internal cursor, never part of the contract, like
+    the custody-event `id`). Folded by both surfaces so the recovery index reads
+    identically on the shell and over MCP (convergence by construction).
+    """
+    return {
+        "item_id": entry.item_id,
+        "prior_hash": entry.prior_hash,
+        "superseded_by": entry.superseded_by,
+        "archived_at": entry.archived_at,
+    }
+
+
 def adopt_incoming(
     db_path: Path, incoming: ScrollItem, *, archived_at: str
 ) -> ScrollItem | None:

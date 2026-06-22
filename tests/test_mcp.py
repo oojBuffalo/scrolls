@@ -95,6 +95,8 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "get_concept_page",
         "get_tag_page",
         "list_sources",
+        "list_archived",
+        "get_archived",
         "get_library_health",
         "run_maintenance",
         "get_maintenance_history",
@@ -258,6 +260,111 @@ def test_get_scroll_history_unknown_item_raises(scrolls_home):
     main(["init"])
     with pytest.raises(ValueError, match="no such item"):
         mcp_server.get_scroll_history("web:nope")
+
+
+# --- list_archived / get_archived (H281, ADR 0106): the MCP *read* twin of the
+# prior-content recovery store — what an accept-incoming adoption superseded, and
+# the recoverable prior snapshot. The write stays operator-gated (custody §2.4). ---
+
+
+def _seed_with_archived_prior(
+    content_hash="sha256:held", *, archived_at="2026-06-22T00:00:00+00:00"
+):
+    """A held item whose prior copy was superseded by an accept-incoming adoption.
+
+    Seeds the held item, then `adopt_incoming` (the one custody-safe overwrite) so
+    the prior is archived (recoverable) and the held copy carries the incoming —
+    exactly the state a CLI `import … --accept-incoming` leaves. Returns the prior.
+    """
+    from scrolls.items import adopt_incoming
+
+    held = _seed_verifiable_item(content_hash=content_hash)
+    incoming = dataclasses.replace(
+        held, content_hash="sha256:peer", extracted_text="peer body"
+    )
+    prior = adopt_incoming(get_paths().db_path, incoming, archived_at=archived_at)
+    return prior
+
+
+def test_list_archived_indexes_superseded_captures(scrolls_home):
+    # H281: the MCP recovery index — the metadata an accept-incoming adoption
+    # archived (what was replaced, hash before/after, when), newest first.
+    prior = _seed_with_archived_prior()
+    listed = mcp_server.list_archived()
+    assert listed["count"] == 1
+    entry = listed["archived"][0]
+    assert entry == {
+        "item_id": "web:demo",
+        "prior_hash": "sha256:held",       # what was archived
+        "superseded_by": "sha256:peer",    # what replaced it
+        "archived_at": "2026-06-22T00:00:00+00:00",
+    }
+    assert prior.content_hash == "sha256:held"  # the held copy that was superseded
+
+
+def test_list_archived_empty_library_is_honest_empty(scrolls_home):
+    # an initialized library that never adopted anything holds nothing — never error
+    _seed_verifiable_item()
+    assert mcp_server.list_archived() == {"count": 0, "archived": []}
+
+
+def test_list_archived_before_init_is_honest_empty(scrolls_home):
+    # a pre-v8 / uninitialized library honestly holds nothing, never an error
+    assert mcp_server.list_archived() == {"count": 0, "archived": []}
+
+
+def test_list_archived_scopes_to_one_item(scrolls_home):
+    # `item_id` scopes the index to one item; an unrelated id has no archived priors
+    _seed_with_archived_prior()
+    assert mcp_server.list_archived("web:demo")["count"] == 1
+    assert mcp_server.list_archived("web:other") == {"count": 0, "archived": []}
+
+
+def test_list_archived_converges_with_cli_archive_list(scrolls_home, capsys):
+    # convergence by construction: the MCP twin returns the *same* `{count, archived}`
+    # shape the CLI `archive list` prints, folding the same `archive_entry_dict`.
+    _seed_with_archived_prior()
+    capsys.readouterr()
+    assert main(["archive", "list"]) == 0
+    cli = json.loads(capsys.readouterr().out)
+    assert mcp_server.list_archived() == cli
+
+
+def test_get_archived_returns_the_model_complete_snapshot(scrolls_home):
+    # H281: the recoverable prior snapshot as the re-importable `item_to_dict` shape,
+    # so an agent can recover the prior bytes (and hand them back to a CLI restore).
+    from scrolls.items import item_from_dict
+
+    prior = _seed_with_archived_prior()
+    snapshot = mcp_server.get_archived("web:demo")
+    assert snapshot["content_hash"] == "sha256:held"
+    assert snapshot["extracted_text"] == "captured body"  # the prior body, recovered
+    # re-importable: round-trips back to the archived prior ScrollItem byte-for-byte
+    assert item_from_dict(snapshot) == prior
+
+
+def test_get_archived_converges_with_cli_archive_show(scrolls_home, capsys):
+    # convergence by construction: the MCP snapshot equals the CLI `archive show`
+    # JSONL line (the same `item_to_dict` the export shape carries).
+    _seed_with_archived_prior()
+    capsys.readouterr()
+    assert main(["archive", "show", "web:demo"]) == 0
+    cli_line = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert mcp_server.get_archived("web:demo") == cli_line
+
+
+def test_get_archived_no_prior_raises(scrolls_home):
+    # a known but never-superseded item has no archived prior — the could-not-recover
+    # signal (the MCP twin of `archive show`'s exit 1), never a silent empty
+    _seed_verifiable_item()
+    with pytest.raises(ValueError, match="no archived prior capture for web:demo"):
+        mcp_server.get_archived("web:demo")
+
+
+def test_get_archived_unknown_item_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError, match="no archived prior capture"):
+        mcp_server.get_archived("web:nope")
 
 
 def test_verify_scroll_unknown_item_raises(scrolls_home):

@@ -1563,6 +1563,15 @@ choice (ADRs 0004, 0005).
   not a per-item scope/custody flag), so it rides MCP unlike the browse twins'
   `--stats` affordance; read-only, network-free, honest-empty `[]` when never
   maintained),
+  `list_archived(item_id=…)` / `get_archived(item_id)` (roadmap H281, ADR 0106 —
+  the *read* twin of the prior-content recovery store: `list_archived` is the
+  `{count, archived}` recovery index of what a `--accept-incoming` adoption
+  superseded (the CLI `archive list` twin, folding the shared
+  `items.archive_entry_dict`), and `get_archived` is the model-complete,
+  re-importable prior snapshot (the CLI `archive show` twin, folding
+  `items.latest_archived`) — converging with the CLI by construction. The
+  recovery *write* (`import … --accept-incoming` and the symmetric restore) stays
+  operator-gated (custody §2.4): the read travels over MCP, the write does not),
   `ingest_url`, the feed subscription tools `follow_feed`,
   `unfollow_feed`, `list_feed_subscriptions`, `sync_feeds`, plus
   `compile_library`) registered

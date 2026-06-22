@@ -517,3 +517,40 @@ carries no archive block, `--with-archive` carries the scoped priors, the round-
 recovers them in a fresh library, the byte-identical re-export, idempotent restore,
 the dry-run prediction, the HTML form); `tests/test_cli.py` (`export archive` /
 `import archive` round-trip, idempotency, `--id` scope, empty/error cases).
+
+## Shipped: an MCP archive *read* twin — `list_archived` / `get_archived` (H281, ADR 0106)
+
+The recovery store was **CLI-only**: `scrolls archive list` / `scrolls archive show`
+read what an accept-incoming adoption superseded, but an agent operating purely over
+MCP could see *that* an adoption happened (the `superseded` event over
+`get_scroll_history --status superseded`, the cleared `custody.conflicts` over
+`get_library_health`) yet had no way to reach the recovery store itself. H281 adds the
+*read* twin — the same CLI split, over MCP:
+
+- **`list_archived(item_id=None)`** is the recovery *index* (the twin of `scrolls
+  archive list`): the metadata an adoption archived — each `{item_id, prior_hash,
+  superseded_by, archived_at}`, newest first — scoped to one item or the whole
+  archive. It returns the **same `{count, archived}` shape** the CLI prints, folding
+  the **same shared `items.archive_entry_dict` serializer**, so the index reads
+  identically on the shell and over MCP (convergence by construction). A clean /
+  pre-v8 / uninitialized library is the honest empty block, never an error.
+- **`get_archived(item_id)`** is the recovery *snapshot* (the twin of `scrolls
+  archive show`): the most-recently superseded copy of one item as the
+  model-complete, re-importable `item_to_dict` snapshot — the same shape an `export
+  items` line carries — folding the same `items.latest_archived` the CLI reads. So an
+  agent can recover the prior bytes and, if it chooses, hand the snapshot back to a
+  CLI `scrolls import items … --accept-incoming` to *restore* it. An item with no
+  archived prior (never superseded), an unknown id, or a pre-v8 library is an error
+  (the could-not-recover signal, the MCP twin of `archive show`'s exit 1).
+
+The **write stays operator-gated** (custody §2.4): the custody-changing
+`import … --accept-incoming` adoption — and the symmetric restore — is a shell act, not
+an ambient MCP capability. This is the *read* twin only. The two tools fold the same
+primitives the CLI reads (`archive_entry_dict`/`latest_archived`), so the surfaces
+converge by construction; **no schema change, no network.**
+
+Tested: `tests/test_mcp.py` (the index after an adoption + the four-field row, honest
+empty before init / on a never-adopted library, `--id`/`item_id` scope, the
+convergence-with-CLI `archive list`/`archive show` ties, the model-complete
+re-importable snapshot, the no-prior / unknown-id could-not-recover errors, the
+registered-tool surface).
