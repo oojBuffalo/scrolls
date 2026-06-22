@@ -3543,7 +3543,14 @@ def test_export_items_round_trips_through_import(
     exit_code = main(["import", "items", str(out_path)])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"imported": 1, "skipped": 0, "items": 1}
+    assert payload == {
+        "imported": 1,
+        "skipped": 0,
+        "unchanged": 0,
+        "conflict": 0,
+        "conflicts": [],
+        "items": 1,
+    }
     restored = get_item(get_paths().db_path, "arxiv:1706.03762")
     assert restored == seeded  # every field survived the round-trip
 
@@ -3554,11 +3561,19 @@ def test_import_items_is_idempotent(scrolls_home, tmp_path, capsys):
     main(["export", "items"])
     out_path = tmp_path / "library.jsonl"
     out_path.write_text(capsys.readouterr().out, encoding="utf-8")
-    # re-importing into the same library skips the already-present item
+    # re-importing into the same library skips the already-present item — and the
+    # skip is an honest `unchanged` no-op (identical content_hash), not a conflict
     exit_code = main(["import", "items", str(out_path)])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"imported": 0, "skipped": 1, "items": 1}
+    assert payload == {
+        "imported": 0,
+        "skipped": 1,
+        "unchanged": 1,
+        "conflict": 0,
+        "conflicts": [],
+        "items": 1,
+    }
 
 
 def test_import_items_never_overwrites_existing_item(scrolls_home, tmp_path, capsys):
@@ -3573,6 +3588,119 @@ def test_import_items_never_overwrites_existing_item(scrolls_home, tmp_path, cap
     out_path.write_text(exported, encoding="utf-8")
     main(["import", "items", str(out_path)])
     assert get_item(get_paths().db_path, "arxiv:1706.03762").title == "Edited"
+
+
+def test_import_items_title_only_edit_is_unchanged_not_a_conflict(
+    scrolls_home, tmp_path, capsys
+):
+    """A skip whose held row differs only in a *derived/metadata* field (title)
+    is `unchanged`, not a `conflict` — the conflict signal is content-custody
+    (the `content_hash` the verify ledger drifts on), not every column. A title
+    edit does not change `content_hash`, so the captured content is identical."""
+    seeded = _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    main(["export", "items"])
+    exported = capsys.readouterr().out
+    update_item(get_paths().db_path, dataclasses.replace(seeded, title="Edited"))
+    out_path = tmp_path / "library.jsonl"
+    out_path.write_text(exported, encoding="utf-8")
+    main(["import", "items", str(out_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["unchanged"] == 1
+    assert payload["conflict"] == 0 and payload["conflicts"] == []
+
+
+def test_import_items_surfaces_a_content_conflict(scrolls_home, tmp_path, capsys):
+    """A held id re-imported with a *different* `content_hash` is surfaced as a
+    `conflict`, never silently swallowed — and the held copy is never overwritten
+    (custody vision §2.4: a conflict is a recorded, surfaced event, not an
+    overwrite). The obsidian reconcile adoption: surface, don't silently rewrite."""
+    from scrolls.items_export import dump_items_export
+
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    # an incoming row for the *same id* but a divergent capture (different
+    # content_hash + body) — e.g. another library's copy captured at another time
+    held = get_item(get_paths().db_path, "arxiv:1706.03762")
+    divergent = dataclasses.replace(
+        held, content_hash="sha256:moved", extracted_text="A different capture…"
+    )
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+
+    exit_code = main(["import", "items", str(out_path)])
+    assert exit_code == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload == {
+        "imported": 0,
+        "skipped": 1,
+        "unchanged": 0,
+        "conflict": 1,
+        "conflicts": ["arxiv:1706.03762"],
+        "items": 1,
+    }
+    # the held copy is preserved byte-for-byte — surfaced, never overwritten
+    kept = get_item(get_paths().db_path, "arxiv:1706.03762")
+    assert kept.content_hash == "sha256:abc"
+    assert kept.extracted_text == "The dominant sequence transduction models…"
+    # loud, not silent: a stderr warning names the conflicting id (the
+    # `_warn_orphan_events` idiom — a content divergence is a custody signal)
+    warning = json.loads(err)
+    assert "arxiv:1706.03762" in warning["warning"]
+    assert "conflict" in warning["warning"].lower()
+
+
+def test_import_items_partitions_a_mixed_batch(scrolls_home, tmp_path, capsys):
+    """One import can carry a new row, an identical re-import, and a divergent
+    copy of a held id — partitioned into imported / unchanged / conflict, with
+    `skipped == unchanged + conflict` (the coherence invariant) and the conflict
+    ids sorted and uncapped (the M2 structured-completeness idiom)."""
+    from scrolls.items_export import dump_items_export
+
+    held = _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    fresh = dataclasses.replace(
+        held,
+        id="web:fresh",
+        source="web",
+        url="https://example.com/fresh",
+        content_hash="sha256:fresh",
+    )
+    same = held  # identical → unchanged
+    divergent = dataclasses.replace(held, content_hash="sha256:moved")
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(
+        dump_items_export([fresh, same, divergent]), encoding="utf-8"
+    )
+
+    main(["import", "items", str(out_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1  # web:fresh
+    assert payload["unchanged"] == 1  # the identical re-import
+    assert payload["conflict"] == 1  # the divergent copy of arxiv:1706.03762
+    assert payload["conflicts"] == ["arxiv:1706.03762"]
+    # the coherence invariant: every skip is exactly one of unchanged | conflict
+    assert payload["skipped"] == payload["unchanged"] + payload["conflict"]
+
+
+def test_merge_item_classifies_the_insert_outcome(scrolls_home):
+    """The shared primitive: a new id imports, an identical re-insert is
+    `unchanged`, a same-id/different-`content_hash` re-insert is a `conflict`,
+    and the held row is never overwritten."""
+    from scrolls.items import get_item, merge_item
+
+    held = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    fresh = dataclasses.replace(
+        held, id="web:new", source="web", url="https://example.com/new"
+    )
+    assert merge_item(db, fresh) == "imported"
+    assert merge_item(db, fresh) == "unchanged"  # identical re-insert
+    divergent = dataclasses.replace(fresh, content_hash="sha256:elsewhere")
+    assert merge_item(db, divergent) == "conflict"
+    # surfaced, never overwritten — the first capture's hash survives
+    assert get_item(db, "web:new").content_hash == fresh.content_hash
 
 
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):
@@ -3719,7 +3847,14 @@ def test_export_items_custody_scoped_backup_round_trips_through_import(
     exit_code = main(["import", "items", str(out_path)])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"imported": 2, "skipped": 0, "items": 2}
+    assert payload == {
+        "imported": 2,
+        "skipped": 0,
+        "unchanged": 0,
+        "conflict": 0,
+        "conflicts": [],
+        "items": 2,
+    }
 
     db = get_paths().db_path
     assert get_item(db, "web:full0") is not None

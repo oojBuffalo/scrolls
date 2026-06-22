@@ -308,6 +308,45 @@ def insert_item(db_path: Path, item: ScrollItem) -> bool:
         conn.close()
 
 
+def merge_item(db_path: Path, item: ScrollItem) -> str:
+    """Insert an item custody-safely, returning *why* the row was kept or skipped.
+
+    The conflict-aware companion of `insert_item`: it still does INSERT OR IGNORE
+    (the held copy is **never** overwritten — raw is sacred), but it distinguishes
+    the two reasons a row is skipped so a divergence is surfaced rather than
+    silently swallowed (custody vision §2.4: drift/conflict is a recorded event,
+    not an overwrite; the obsidian reconcile adoption — *detect, surface, don't
+    silently rewrite*). Returns one of:
+
+    - ``"imported"`` — the id was new; the row was inserted.
+    - ``"unchanged"`` — the id was already held with the **same** ``content_hash``;
+      an idempotent re-import (a true custody no-op). Two reference-only rows with
+      no captured content (both ``content_hash`` ``None``) are unchanged too — there
+      is nothing held either way to diverge.
+    - ``"conflict"`` — the id was already held with a **different** ``content_hash``;
+      the incoming copy disagrees with the held one (a different capture of the
+      same id — e.g. another library's bundle of a source that has since drifted).
+      The held row is kept; the caller surfaces the conflicting id.
+
+    The comparison is on ``content_hash`` — the captured-content fingerprint the
+    verify ledger itself drifts on (`custody`) — not the whole row: a difference in
+    a *derived* field (title, category, an enrichment tag) is not a content-custody
+    conflict, only a divergence of the same captured bytes is. A within-batch
+    duplicate id resolves against the row this same batch already inserted, so a
+    bundle that repeats an id with different content is itself reported conflicting.
+    """
+    if insert_item(db_path, item):
+        return "imported"
+    # the id was taken (a prior import/`add`, or an earlier row in this same
+    # batch); compare the captured-content fingerprint to tell an idempotent
+    # re-import from a genuine divergence. `held` is non-None here barring a
+    # concurrent delete — the no-op fallback keeps the contract local.
+    held = get_item(db_path, item.id)
+    if held is not None and held.content_hash != item.content_hash:
+        return "conflict"
+    return "unchanged"
+
+
 def update_item(db_path: Path, item: ScrollItem) -> bool:
     """Replace the stored row for `item.id`; return False if no such row (no upsert)."""
     row = _to_row(item)

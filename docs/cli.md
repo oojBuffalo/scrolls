@@ -2038,19 +2038,52 @@ carry is captured media *blobs*, which `doctor` then reports as missing for
 resumes safely (`test_import_items_is_idempotent`,
 `test_import_items_never_overwrites_existing_item`).
 
+**A skip is not opaque — a conflict is surfaced, never silently swallowed.**
+Because the held copy is never overwritten, the question that matters for
+custody is *why* a row was skipped: an idempotent re-import of the **same**
+captured content, or an incoming copy that **disagrees** with what we hold.
+`import items` partitions every skip on the `content_hash` — the captured-content
+fingerprint the verify ledger itself drifts on (`scrolls verify`) — into
+`unchanged` (same content, a true no-op) and `conflict` (a different capture of
+the same id: e.g. another library's bundle of a source that has since drifted).
+The held copy is still kept — raw is sacred, a conflict is a *recorded, surfaced*
+event, not an overwrite (custody vision §2.4; the obsidian reconcile adoption —
+*detect and surface, don't silently rewrite*, `docs/reconciliation.md`). The
+diverging ids ride the structured `conflicts` list (sorted, deduped, uncapped —
+the completeness contract) **and** a loud stderr warning naming them (bounded
+`(+N more)`), so a divergence is never lost in an opaque `skipped` count. A
+difference in only a *derived* field (title, category, an enrichment tag) does
+not change `content_hash` and is `unchanged`, not a conflict
+(`test_import_items_title_only_edit_is_unchanged_not_a_conflict`). The shared
+`merge_item` primitive and `_merge_items`/`_warn_conflicts` are the home for this
+partition, ready for the bundle import to reuse
+(`test_import_items_surfaces_a_content_conflict`,
+`test_import_items_partitions_a_mixed_batch`,
+`test_merge_item_classifies_the_insert_outcome`).
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new items inserted |
-| `skipped` | already present (id collision is the dedupe working) |
+| `skipped` | already present and not inserted (`== unchanged + conflict`) |
+| `unchanged` | skipped: held copy has the same `content_hash` (idempotent) |
+| `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept) |
+| `conflicts` | the distinct ids whose held copy diverged (sorted, uncapped) |
 | `items` | item records read from the file (blank lines excluded) |
 
 ```console
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 6, "skipped": 0, "items": 6}
+{"imported": 6, "skipped": 0, "unchanged": 0, "conflict": 0, "conflicts": [], "items": 6}
 [exit 0]
 
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 0, "skipped": 6, "items": 6}
+{"imported": 0, "skipped": 6, "unchanged": 6, "conflict": 0, "conflicts": [], "items": 6}
+[exit 0]
+
+# an incoming copy of a held id with different captured content — surfaced,
+# not silently dropped; the held copy is kept (custody §2.4)
+$ scrolls import items /tmp/diverged.jsonl
+{"warning": "1 item(s) in this import conflict with a held copy (different content — kept the held copy, not overwritten): `github:sqlite/sqlite`"}   # stderr
+{"imported": 0, "skipped": 1, "unchanged": 0, "conflict": 1, "conflicts": ["github:sqlite/sqlite"], "items": 1}
 [exit 0]
 ```
 

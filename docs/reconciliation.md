@@ -66,3 +66,34 @@ This gives us a foundation without over-committing to a complex engine immediate
 - Should reconciliation run automatically after ingest, or only on demand?
 
 These will be answered in subsequent slices with real usage data.
+
+## Shipped: conflict-on-import detection (the custody-safe reconcile surface)
+
+The obsidian-second-brain inspiration (`docs/agents/obsidian-second-brain-inspiration.md`,
+the `/obsidian-reconcile` row) sharpened the reconcile posture: **keep the
+detection, replace auto-overwrite with surfacing a conflict for review — surface,
+don't silently rewrite.** The first concrete enactment of that posture is at the
+**import boundary**, where two libraries' captures actually collide.
+
+`scrolls import items` (and, next, `scrolls import bundle`) no longer treats a
+skipped row as opaque. Every row goes through `items.merge_item`, which keeps the
+`INSERT OR IGNORE` custody guarantee (the held copy is never overwritten) but
+classifies the skip on the `content_hash` — the same captured-content fingerprint
+the verify ledger drifts on (ADR 0098):
+
+- `unchanged` — the held copy has the same content (an idempotent re-import).
+- `conflict` — the held copy has *different* captured content for the same id (a
+  divergent capture — exactly the "conflicting metadata across representations"
+  question above, observed at merge time). The held copy is kept; the diverging
+  ids are surfaced in the structured `conflicts` field **and** a loud stderr
+  warning, so the divergence is a recorded, reviewable event — never silently
+  swallowed into a `skipped` count, and never an overwrite (custody vision §2.4).
+
+This is reconciliation *detection* made custody-safe: it answers "these two
+captures of the same id disagree" without choosing a winner or rewriting anything.
+A future slice can lift the conflict into a custody ledger *event* (the bi-temporal
+captured-at vs source-changed-at framing) and offer an explicit, reviewed
+resolution (`reconcile`), but the load-bearing primitive — *surface, don't
+overwrite* — ships first and is tested
+(`test_import_items_surfaces_a_content_conflict` and siblings in
+`tests/test_cli.py`).

@@ -92,6 +92,7 @@ from scrolls.items import (
     item_summary,
     library_counts,
     list_items,
+    merge_item,
     update_item,
 )
 from scrolls.events_export import EventsSourceError, load_events_export
@@ -1820,6 +1821,69 @@ def _cmd_import_opml(path: str) -> int:
     return 0
 
 
+_MAX_CONFLICT_IDS = 5
+
+
+def _merge_items(
+    db_path: Path, items: list[ScrollItem]
+) -> tuple[dict[str, int], list[str]]:
+    """Insert items custody-safely, partitioning each skip into unchanged vs conflict.
+
+    The shared core of the **lossless** importers (`import items`, and the bundle
+    import — the Scrolls-native pair whose rows carry a model-complete
+    ``content_hash``, unlike the heterogeneous third-party imports). Every row goes
+    through `merge_item` (INSERT OR IGNORE — the held copy is never overwritten),
+    and the skip is classified: an identical re-import is ``unchanged`` (a true
+    no-op), a same-id/different-``content_hash`` row is a ``conflict`` (the incoming
+    copy disagrees with what we hold — surfaced, never an overwrite, custody vision
+    §2.4). Returns ``(counts, conflicts)`` where ``counts`` is
+    ``{imported, skipped, unchanged, conflict}`` with ``skipped == unchanged +
+    conflict`` by construction, and ``conflicts`` is the sorted, deduped,
+    **uncapped** distinct ids whose held copy diverged — the M2 structured-
+    completeness twin of the bounded `_warn_conflicts` stderr line.
+    """
+    counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0}
+    conflict_ids: set[str] = set()
+    for item in items:
+        outcome = merge_item(db_path, item)
+        if outcome == "imported":
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+            counts[outcome] += 1
+            if outcome == "conflict":
+                conflict_ids.add(item.id)
+    return counts, sorted(conflict_ids)
+
+
+def _warn_conflicts(conflict_ids: list[str]) -> None:
+    """Surface content conflicts on stderr (the `_warn_orphan_events` idiom), loud not silent.
+
+    A conflict — a held id re-imported with a different captured ``content_hash`` —
+    is a custody signal an operator should see, so it rides stderr beside the
+    structured ``conflicts`` field: the held copy was kept, but an incoming copy
+    disagreed and was *not* silently discarded into an opaque ``skipped`` count
+    (the obsidian reconcile adoption: surface, don't silently rewrite). Names the
+    diverging ids, bounded with a ``(+N more)`` tail (the readable-surface cap; the
+    structured field stays uncapped). No-op on a clean import.
+    """
+    if not conflict_ids:
+        return
+    named = ", ".join(f"`{item_id}`" for item_id in conflict_ids[:_MAX_CONFLICT_IDS])
+    if len(conflict_ids) > _MAX_CONFLICT_IDS:
+        named += f" (+{len(conflict_ids) - _MAX_CONFLICT_IDS} more)"
+    print(
+        json.dumps({
+            "warning": (
+                f"{len(conflict_ids)} item(s) in this import conflict with a held "
+                f"copy (different content — kept the held copy, not overwritten): "
+                f"{named}"
+            )
+        }),
+        file=sys.stderr,
+    )
+
+
 def _cmd_import_items(path: str) -> int:
     try:
         imported_items, stats = load_items_export(Path(path).expanduser())
@@ -1829,18 +1893,16 @@ def _cmd_import_items(path: str) -> int:
 
     paths = get_paths()
     ensure_library(paths)
-    counts = {"imported": 0, "skipped": 0}
-    for item in imported_items:
-        # INSERT OR IGNORE: an existing item (earlier import, or a manual
-        # `add`/user edit) is never overwritten — re-imports stay cheap.
-        # Derived artifacts rebuild from these rows: `doctor --fix` rewrites
-        # missing scrolls and the FTS index, `kb` recompiles the library.
-        if insert_item(paths.db_path, item):
-            counts["imported"] += 1
-        else:
-            counts["skipped"] += 1
-
-    print(json.dumps({**counts, **stats}))
+    # INSERT OR IGNORE per row (an existing item — earlier import, or a manual
+    # `add`/user edit — is never overwritten; re-imports stay cheap), but the skip
+    # is no longer opaque: an identical re-import is `unchanged`, a same-id row with
+    # a different `content_hash` is a surfaced `conflict` (custody vision §2.4 —
+    # drift/conflict is a recorded event, never an overwrite). Derived artifacts
+    # rebuild from these rows: `doctor --fix` rewrites missing scrolls and the FTS
+    # index, `kb` recompiles the library.
+    counts, conflicts = _merge_items(paths.db_path, imported_items)
+    _warn_conflicts(conflicts)
+    print(json.dumps({**counts, "conflicts": conflicts, **stats}))
     return 0
 
 
