@@ -712,14 +712,36 @@ counts, so the payload shape never varies.
 `custody` is the one-line **custody headline** — "how custody stands"
 without parsing a full `doctor` report: integrity `score`, the fidelity
 `tiers` distribution, the drift posture (`checked`/`unverified`/`unchanged`/
-`drifted`/`rotted`/`error`), and the stale enrichment/summary counts. It is
-distilled from the same `run_doctor` custody view (network-free) via the
-`custody_snapshot` primitive `scrolls maintain` records, so `status` can
-never disagree with `doctor` or a maintenance snapshot
+`drifted`/`rotted`/`error`), the stale enrichment/summary counts, the at-risk-works
+count (`at_risk`, roadmap H267), and the **unresolved import-conflict count**
+(`conflicts`, roadmap H279). It is distilled from the same `run_doctor` custody
+view (network-free) via the `custody_snapshot` primitive `scrolls maintain` records,
+so `status` can never disagree with `doctor` or a maintenance snapshot
 (`test_status_custody_headline_converges_with_doctor`). Before `init` the
 `score` is honestly `null` (no store), not a fabricated `100`; an empty but
 initialized library is trivially fully custodied (`100`), the "empty is
 healthy" posture `doctor` reports.
+
+`conflicts` is the count of currently-held items carrying an **unresolved import
+conflict** — a peer's bundle re-imported a held id with a *different* captured
+content, surfaced (never silently swallowed) and recorded on the ledger (roadmap
+H272–H274, ADR 0104). It is the JSON-`status` counterpart of the readable
+`_Conflicts:_` briefing line the `export bundle`/`context` surfaces carry (H277):
+`scrolls status` renders no readable conflict line, so it carries the machine scalar
+beside `drift`/`at_risk`. Folded from the *same* `unresolved_conflicts` over
+`latest_conflict_events` that `doctor`'s `custody.conflicts` reads — a pure read of
+the report `run_doctor` already produced — so it converges field-for-field with
+`doctor`'s `custody.conflicts.items` by construction
+(`test_status_custody_conflicts_surfaces_an_unresolved_import_conflict`). The count
+is **resolution-aware**: `scrolls reconcile <id> --keep-held` records a `resolved`
+event that supersedes the open conflict, clearing the scalar (the held copy is never
+overwritten — raw is sacred, custody §2.4;
+`test_status_custody_conflicts_clears_after_reconcile`). Unlike the whole-library-only
+`at_risk` alarm, it **scopes by source** for free — a held item owns a source, so
+`status --source <S>` narrows the conflict fold exactly as it narrows `drift`
+(`test_status_custody_conflicts_source_scopes_like_the_drift_scalar`). An empty or
+conflict-free library reports the honest `0`
+(`test_status_custody_conflicts_is_zero_on_a_clean_library`).
 
 `headline` is the one-line custody string rendered from the same snapshot —
 `_Custody: N scroll(s) · fidelity <tier counts> · drift <posture counts>._`,

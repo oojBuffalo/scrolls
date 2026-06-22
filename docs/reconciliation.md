@@ -317,3 +317,43 @@ no-op, the `conflict` row survives on `history` beside the `resolved` row).
 with prior-content archival — the first held-capture write) and an MCP `reconcile`
 twin. With keep-held the conflict-on-import theme is complete on the detect → read
 → **resolve** arc for the safe direction.
+
+## Shipped: a conflict scalar on `scrolls status`'s JSON custody snapshot (H279)
+
+The readable `_Conflicts:_` line (H277) was deliberately scoped to the three
+Markdown briefings (`export bundle` ×2 + `scrolls context`). `scrolls status`
+renders no readable `_Attention:_`/`_At-risk work:_` lines — it carries the
+**machine** custody snapshot instead (`custody`: `score`, `tiers`, `drift`,
+`enrichment_stale`/`summaries_stale`, `at_risk`). It did *not* yet carry an
+import-conflict count, so an agent reading `status` for a custody dashboard saw
+drift and at-risk-works but not unresolved import conflicts. H279 closes that last
+conflict **read** gap on the JSON surface:
+
+```json
+// scrolls status  →  "custody": { …, "at_risk": 0, "conflicts": 1 }
+```
+
+`custody.conflicts` is the count of currently-held items carrying an *unresolved*
+import conflict — the same `unresolved_conflicts` over `latest_conflict_events`
+that `doctor`'s `custody.conflicts` and the `_Conflicts:_` line read, folded into
+the shared `maintain.custody_snapshot` primitive (`custody.get("conflicts",
+{}).get("items", 0)`, the defensive read `at_risk` uses). Because `status`'s
+`custody` block *is* `custody_snapshot(run_doctor(...))`, the scalar converges
+field-for-field with `doctor`'s `custody.conflicts.items` by construction — a pure
+read of the report `run_doctor` already produced, no extra ledger query, no schema
+change. It is **resolution-aware** (a `reconcile --keep-held` clears it) and
+**source-scopable** for free (`status --source <S>` narrows the conflict fold like
+the drift scalar, since a held item owns a source — unlike the cross-source
+`at_risk` alarm). The MCP `get_library_health` twin already carries the full
+`custody.conflicts` block (it spreads `**custody`), so it needs no change.
+
+Tested: `tests/test_cli.py` (the scalar surfaces an unresolved conflict + converges
+with `doctor` + stays off the drift axis, clears after `reconcile --keep-held`,
+honest `0` on a clean library, source-scopes to the conflicting source);
+`tests/test_maintain.py` (the `custody_snapshot` primitive records
+`custody.conflicts.items` and defaults to `0` without a `conflicts` block).
+
+**Deferred (the `at_risk` → H267/H268 analogue):** the cross-run `delta` /
+`--history` / `--trend` treatment of the conflict scalar and a readable
+`_Conflicts:_` line on the `maintain` report. The scalar is recorded in the
+snapshot today but not yet differenced.

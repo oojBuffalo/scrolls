@@ -71,13 +71,15 @@ from scrolls.render import write_scroll
 
 
 def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
-                   coverage=None, at_risk=0):
+                   coverage=None, at_risk=0, conflicts=0):
     """A minimal doctor report shaped like `run_doctor`'s custody block.
 
     `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
     member (roadmap H113); defaults to the honest zero when not specified.
     `at_risk` mirrors the `custody.works.at_risk` consolidation-alarm count
     (roadmap H263/H267); defaults to zero (no work at risk).
+    `conflicts` mirrors the `custody.conflicts.items` unresolved-import-conflict
+    count (roadmap H275/H279); defaults to zero (no recorded divergence).
     """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
@@ -94,6 +96,8 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
             "summaries": {"stale": summaries_stale},
             "works": {"status": "ok", "total": at_risk, "at_risk": at_risk,
                       "most_at_risk": None},
+            "conflicts": {"basis": "import_ledger", "as_of": None,
+                          "items": conflicts, "events": []},
         }
     }
 
@@ -107,6 +111,7 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         summaries_stale=1,
         coverage={"verified": 2, "total": 4},
         at_risk=2,
+        conflicts=3,
     )
     snap = custody_snapshot(report)
     assert snap == {
@@ -122,6 +127,10 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         # the consolidation-loss scalar (H267): the at-risk-works count, not the
         # whole `at_risk_works` block — a comparable scalar the delta subtracts
         "at_risk": 2,
+        # the unresolved import-conflict count (H275/H279): the JSON-`status`
+        # counterpart of the readable `_Conflicts:_` line, read off
+        # `custody.conflicts.items` (the `items` count, not the whole event list)
+        "conflicts": 3,
     }
 
 
@@ -155,6 +164,23 @@ def test_custody_snapshot_at_risk_defaults_to_zero_without_a_works_block():
         "status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None,
     }
     assert custody_snapshot(skipped)["at_risk"] == 0
+
+
+def test_custody_snapshot_records_the_unresolved_conflict_count():
+    # H279: the snapshot carries the unresolved-import-conflict count read off
+    # `custody.conflicts.items` (the `items` scalar, not the whole event list), so
+    # `scrolls status` carries the machine conflict scalar beside drift/at-risk —
+    # converging with `doctor`'s `custody.conflicts.items` by construction.
+    report = _doctor_report(80, {"full": 2}, {}, conflicts=2)
+    assert custody_snapshot(report)["conflicts"] == 2
+
+
+def test_custody_snapshot_conflicts_defaults_to_zero_without_a_conflicts_block():
+    # A report predating H275 (no `conflicts` block) reads the honest 0, never a
+    # KeyError — the module's degrade-safely posture (ADR 0082), as `at_risk` does.
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["conflicts"]
+    assert custody_snapshot(report)["conflicts"] == 0
 
 
 # --- snapshot_headline (the one-line custody picture, roadmap H103) --------

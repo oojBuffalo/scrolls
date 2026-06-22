@@ -131,6 +131,23 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     (a scoped item set fragments works → `at_risk: 0`), reads the honest `0`, never a
     `KeyError`. Only the **fully-unscoped** persisting pass records the snapshot
     (`run_maintain`), so a recorded `at_risk` is always the whole-library count.
+
+    Includes the **unresolved import-conflict count** (`custody.conflicts.items`,
+    roadmap H275/H279) — the held items whose latest import-conflict still disagrees
+    with the held copy (`unresolved_conflicts`, the resolution-aware predicate). This
+    is the JSON-`status` counterpart of the readable `_Conflicts:_` briefing line
+    (H277): `scrolls status` renders no readable conflict line, so it carries the
+    machine scalar instead, beside `drift`/`at_risk`. Folds the same audit view
+    `doctor`'s `custody.conflicts` reports — a **pure read of the report `run_doctor`
+    already produced** (no extra ledger query), so the `status` scalar converges
+    field-for-field with `doctor`'s `custody.conflicts.items` by construction. Unlike
+    the whole-library-only `at_risk`, it **scopes by source for free** (a held item
+    owns a source, so a `--source` audit narrows the conflict fold — `custody.drift`'s
+    source-attributable posture, not `custody.works`'s cross-source one). Read
+    defensively like the rest: a report predating H275 (no `conflicts` block) reads the
+    honest `0`, never a `KeyError`. The cross-run `delta`/`--trend` treatment of this
+    scalar (the `at_risk` → H267/H268 analogue) is the deferred sibling — recorded in
+    the snapshot today, not yet differenced.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -142,6 +159,7 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "enrichment_stale": custody["enrichment"]["stale"],
         "summaries_stale": custody["summaries"]["stale"],
         "at_risk": custody.get("works", {}).get("at_risk", 0),
+        "conflicts": custody.get("conflicts", {}).get("items", 0),
     }
 
 

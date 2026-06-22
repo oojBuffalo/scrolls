@@ -148,6 +148,9 @@ def _custody_headline(score):
         "summaries_stale": 0,
         # the at-risk-works count (H267): no multi-rep work held → none at risk
         "at_risk": 0,
+        # the unresolved import-conflict count (H279): an empty/uninitialized
+        # library has recorded no divergence → the honest 0
+        "conflicts": 0,
     }
 
 
@@ -4006,6 +4009,97 @@ def test_reconcile_keeps_the_conflict_on_history_beside_the_resolved_row(
 
     assert main(["history", seeded.id, "--status", "drifted"]) == 0
     assert json.loads(capsys.readouterr().out) == []  # never on the drift axis
+
+
+# --- status custody.conflicts scalar (H279): the JSON-status counterpart of the
+# readable `_Conflicts:_` briefing line (H277), folding the same
+# `unresolved_conflicts` doctor's `custody.conflicts` reads into the machine
+# `custody` snapshot `scrolls status` carries. ---
+
+
+def test_status_custody_conflicts_surfaces_an_unresolved_import_conflict(
+    scrolls_home, tmp_path, capsys
+):
+    """H279: `status`'s machine `custody` snapshot carries the unresolved-import-
+    conflict count beside drift/at-risk — the JSON-status counterpart of H277's
+    readable `_Conflicts:_` briefing line. After a divergent re-import, the held
+    item carries one unresolved conflict the scalar surfaces, converging
+    field-for-field with `doctor`'s `custody.conflicts.items` by construction (the
+    same distilled `run_doctor` view `status` already renders)."""
+    _import_a_divergent_copy(scrolls_home, tmp_path)
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody["conflicts"] == 1
+
+    # convergence by construction: the scalar is the doctor custody view distilled
+    report = run_doctor(get_paths())
+    assert custody == custody_snapshot(report)
+    assert custody["conflicts"] == report["custody"]["conflicts"]["items"]
+    # the conflict axis never bleeds into drift (ADR 0104) — the drift posture is
+    # untouched by the recorded conflict event
+    assert custody["drift"]["drifted"] == 0
+
+
+def test_status_custody_conflicts_clears_after_reconcile(
+    scrolls_home, tmp_path, capsys
+):
+    """H276/H279: the scalar is resolution-aware — once `reconcile --keep-held`
+    records a `resolved` event superseding the open conflict, the `status` count
+    clears (the held copy never overwritten), exactly as `doctor`'s aggregate does."""
+    seeded = _import_a_divergent_copy(scrolls_home, tmp_path)
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["custody"]["conflicts"] == 1
+
+    assert main(["reconcile", seeded.id, "--keep-held"]) == 0
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["custody"]["conflicts"] == 0
+
+
+def test_status_custody_conflicts_is_zero_on_a_clean_library(scrolls_home, capsys):
+    """No recorded conflict ⇒ an honest `0` (never a fabricated count) — the drift
+    scalar's zeroed-default honesty, on the conflict axis."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["custody"]["conflicts"] == 0
+
+
+def test_status_custody_conflicts_source_scopes_like_the_drift_scalar(
+    scrolls_home, tmp_path, capsys
+):
+    """H279/H166: a held item owns a source, so the conflict scalar scopes by
+    `--source` for free (unlike the cross-source at-risk-works alarm) — `run_doctor`'s
+    item pre-filter narrows the conflict fold. The conflicting source reports `1`, an
+    unaffected source reports `0`, and the whole-library read reports the `1`."""
+    _import_a_divergent_copy(scrolls_home, tmp_path)  # an arxiv conflict
+    # a second source, held clean (no conflict)
+    web = ScrollItem(
+        id=make_item_id("web", None, "https://example.com/clean"),
+        source="web",
+        source_id=None,
+        url="https://example.com/clean",
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A clean web capture, no peer disagreement.",
+        content_hash="sha256:web1234",
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    insert_item(get_paths().db_path, web)
+    capsys.readouterr()
+
+    def conflicts_for(args: list[str]) -> int:
+        assert main(["status", *args]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]["conflicts"]
+
+    assert conflicts_for([]) == 1                       # whole library
+    assert conflicts_for(["--source", "arxiv"]) == 1    # the conflicting source
+    assert conflicts_for(["--source", "web"]) == 0      # the unaffected source
 
 
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):
