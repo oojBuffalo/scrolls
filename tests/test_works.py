@@ -584,6 +584,107 @@ def test_work_custody_matches_the_shared_helper():
     )
 
 
+# --- H263: the at-risk-works consolidation alarm -----------------------
+# `at_risk_signal` is the consolidation-level analogue of the per-source
+# weakest-source `attention` flag: a work is *at risk* when NO representation is
+# safely held (`work_custody`'s `safely_held == False`), and `most_at_risk` names the
+# single lowest-custody-ceiling one. A pure fold over the H261 aggregate.
+
+
+def test_at_risk_signal_counts_the_works_no_rep_safely_holds():
+    from scrolls.works import at_risk_signal
+
+    items, verdicts = _two_work_custody_mix()
+    signal = at_risk_signal(works_over(items), verdicts)
+    # X (full+drifted, ref+unverified) and Z (all reference) are at risk; Y holds a
+    # full+verified rep so it is safely held — 2 of 3 works at risk.
+    assert signal["total"] == 3
+    assert signal["at_risk"] == 2
+
+
+def test_at_risk_signal_names_the_lowest_ceiling_work_as_most_at_risk():
+    from scrolls.works import at_risk_signal
+
+    items, verdicts = _two_work_custody_mix()
+    most = at_risk_signal(works_over(items), verdicts)["most_at_risk"]
+    # Z (all-reference, nothing re-derivable held) outranks X (which still holds a
+    # full-but-drifted copy): worst best_fidelity wins — content gone, not just moved.
+    assert most["doi"] == "10.3000/z"
+    assert most["canonical"] == "crossref:cz"  # crossref outranks arxiv (CANONICAL_SOURCE_RANK)
+    assert most["representations"] == 2
+    assert most["custody"] == {
+        "best_fidelity": "reference",
+        "safest_drift": "unverified",
+        "safely_held": False,
+    }
+    # self-describing, no fabricated command (no whole-library recapture act exists)
+    assert most["reason"] == (
+        "no representation is both full and unmoved "
+        "(best held reference, safest drift unverified)"
+    )
+    assert "command" not in most
+
+
+def test_at_risk_signal_breaks_a_fidelity_tie_by_worst_drift_then_doi():
+    from scrolls.works import at_risk_signal
+
+    # two at-risk works, both reference-ceiling: W1's *every* rep drifted (so its
+    # safest drift is `drifted`), W2's both unverified. Worst-drift-first → W1 is
+    # most at risk; the DOI tiebreak never fires because the drift axis decides.
+    items = [
+        _reference("arxiv:a", "10.1000/a", title="A"),
+        _reference("crossref:ca", "10.1000/a", title="A"),
+        _reference("arxiv:b", "10.2000/b", title="B"),
+        _reference("crossref:cb", "10.2000/b", title="B"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "drifted"),
+        "crossref:ca": _verdict("crossref:ca", "drifted"),
+    }
+    most = at_risk_signal(works_over(items), verdicts)["most_at_risk"]
+    assert most["doi"] == "10.1000/a"
+    assert most["custody"]["safest_drift"] == "drifted"
+
+
+def test_at_risk_signal_is_empty_when_every_work_is_safely_held():
+    from scrolls.works import at_risk_signal
+
+    # two works each with a full+verified rep → none at risk, no work named
+    items = [
+        _full("arxiv:a", "10.1000/a"), _reference("crossref:ca", "10.1000/a"),
+        _full("biorxiv:b", "10.2000/b"), _reference("crossref:cb", "10.2000/b"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "unchanged"),
+        "biorxiv:b": _verdict("biorxiv:b", "unchanged"),
+    }
+    signal = at_risk_signal(works_over(items), verdicts)
+    assert signal == {"total": 2, "at_risk": 0, "most_at_risk": None}
+
+
+def test_at_risk_signal_unverified_full_copy_is_safe_no_network():
+    from scrolls.works import at_risk_signal
+
+    # the pure caller (no ledger): a never-checked full copy is safely held (unverified
+    # ∈ the safe set, the M2 honesty), so a work with one is NOT at risk.
+    items = [_full("arxiv:a", "10.1000/a"), _reference("crossref:ca", "10.1000/a")]
+    signal = at_risk_signal(works_over(items), {})
+    assert signal["at_risk"] == 0
+
+
+def test_at_risk_signal_matches_work_custody_per_work():
+    # the alarm is exactly the `safely_held == False` set of the H261 helper — one
+    # home for the consolidation rule, not a re-derivation.
+    from scrolls.works import at_risk_signal, work_custody
+
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    expected = sum(
+        1 for w in works if not work_custody(w.representations, verdicts)["safely_held"]
+    )
+    assert at_risk_signal(works, verdicts)["at_risk"] == expected
+
+
 # --- H262: the custody-filter family on the consolidation surface ------
 # `filter_works` keeps WHOLE works that *contain* a representation at the given
 # custody value(s) — the cluster "contains" semantics (a work is a set of forms),

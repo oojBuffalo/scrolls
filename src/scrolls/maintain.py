@@ -395,6 +395,39 @@ def report_summary_by_source(report: dict[str, Any]) -> dict[str, int]:
     return dict(report.get("custody", {}).get("summaries", {}).get("by_source", {}))
 
 
+def report_at_risk_works(report: dict[str, Any]) -> dict[str, Any]:
+    """The at-risk-works consolidation alarm from this pass's doctor audit (roadmap H263).
+
+    `doctor`'s `custody.works` block names the works no representation safely holds —
+    the consolidation-level analogue of the weakest-source `attention` flag (the H261
+    `safely_held == False` set: every copy of the work degraded or moved, no unmoved
+    full form anywhere). The scheduled worker's own `maintain` report distils only the
+    *whole-library* `custody_snapshot` (which drops `works`), so an unattended log could
+    not surface the at-risk works without re-running `doctor`. This threads the block the
+    audit already produces into the report — the consolidation counterpart of
+    `report_by_source`'s per-item per-source picture (H123).
+
+    A pure read of the report `run_doctor` returns — **no new ledger read**, the block is
+    already folded in the audit (`doctor._check_at_risk_works`). Surfaced
+    **live-pass only** (like `report_by_source` H123, the `attention` flag, and
+    `suggest_repairs` H40): derived fresh from this pass's audit, never recorded in the
+    snapshot/log, so `--history`/`--trend` (which replay recorded snapshots) carry none.
+
+    A work spans sources, so the audit computes the alarm **whole-library only** (the
+    `doctor` `source is None` branch): an unscoped or `--fidelity` pass carries the
+    computed block (`status: "ok"`), a `--source` pass carries the skipped default
+    (`status: "skipped"` — a scoped item set fragments works). Honest absence: a report
+    without the block (an empty library, or an older schema) reads the skipped default,
+    never a `KeyError` — the module's degrade-safely posture on this axis.
+    """
+    return dict(
+        report.get("custody", {}).get(
+            "works",
+            {"status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None},
+        )
+    )
+
+
 # `weakest_source` — the distillation of `doctor`'s per-source breakdown to the
 # one source worth flagging — now lives in `custody.py` beside the
 # `custody_counts_by_source` map it reads, so the readable `export bundle`/`context`
@@ -746,8 +779,10 @@ def assemble_report(
     4. assemble the report: the recheck counts, the compiled-view counts, the
        distilled `custody` snapshot + one-line `headline`, the live-pass-only
        per-source breakdowns (`by_source`/`enrichment_by_source`/`summary_by_source`),
-       the single weakest-source `attention` flag, the `delta`, the structural
-       `issues` count, and the `suggested` on-request repair commands.
+       the single weakest-source `attention` flag, the consolidation-level
+       `at_risk_works` alarm (roadmap H263, the work-level counterpart of `attention`),
+       the `delta`, the structural `issues` count, and the `suggested` on-request
+       repair commands.
 
     **The two scope axes are non-persisting focused triage** — a pass scoped on
     *either* axis records no snapshot/log baseline, so its `delta` is the honest
@@ -809,6 +844,11 @@ def assemble_report(
         "headline": snapshot_headline(current),
         "by_source": by_source,
         "attention": weakest_source(by_source),
+        # the consolidation-level custody alarm (roadmap H263): the works no
+        # representation safely holds, the work-level counterpart of `attention`.
+        # Whole-library only (a work spans sources), so a `--source` pass carries
+        # the skipped default; live-pass only, like `attention`/`by_source`.
+        "at_risk_works": report_at_risk_works(report),
         "enrichment_by_source": report_enrichment_by_source(report),
         "summary_by_source": report_summary_by_source(report),
         "delta": delta,

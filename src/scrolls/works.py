@@ -430,6 +430,98 @@ def work_custody(
     }
 
 
+def at_risk_signal(
+    works: list[Work],
+    verdicts: dict[str, CustodyEvent],
+) -> dict[str, Any]:
+    """The *at-risk works* consolidation alarm — the works no representation safely holds.
+
+    The consolidation-level custody signal (roadmap H263, vision §3.5): the
+    per-source weakest-source `attention` flag (`custody.weakest_source`, H119) names
+    the source carrying the most actionable per-*item* loss; this names the **works**
+    carrying a *consolidation* loss — a work is **at risk** when **no** representation
+    is *safely held* (the H261 `work_custody` `safely_held == False`: there is no
+    representation that is both `full` *and* unmoved anywhere in its cluster). That is
+    a sharper alarm than the per-item drift count: an item drifting is survivable when
+    a sibling representation of the *same* work is still `full`+verified; a work with no
+    safe representation is a real custody loss — the only copies of the work are
+    degraded (`partial`/`reference`) or moved (`drifted`/`rotted`/`error`).
+
+    A pure fold over the H261 aggregate — `work_custody` over each work's
+    representations and the *same* `verdicts` ledger every other works surface reads —
+    **no schema change, no extra ledger read** beyond the one the caller already loads.
+    Returns ``{total, at_risk, most_at_risk}``:
+
+    - ``total`` — the works in scope (the multi-representation clusters `works_over`
+      reported; the consolidation question only applies to a work with siblings, a
+      single-representation paper's loss being the per-item signal already).
+    - ``at_risk`` — how many of them are not safely held.
+    - ``most_at_risk`` — the single work with the **lowest custody ceiling** (``None``
+      when none is at risk), so a report can name *one* work to act on without the
+      reader scanning the whole at-risk set. Picked deterministically by worst
+      ``best_fidelity`` first (a work holding *no* full content — `reference` best — is
+      more at risk than one holding a `full`-but-drifted copy: the content is gone vs.
+      merely moved), then worst ``safest_drift``, then ``doi`` as a stable tiebreak. The
+      entry carries the work's identity (``doi``/``url``/``canonical``), its
+      ``representations`` count, the H261 ``custody`` block, and a self-describing
+      ``reason`` — but **no `command`**: unlike the weakest-source flag (whose
+      `scrolls verify --source <S>` recheck exists), there is no whole-library
+      "recapture this work" act to name, and inventing a path that would not close the
+      gap is exactly what `suggest_repairs` refuses (the orphan-scroll discipline).
+
+    `verdicts` is the `latest_events` ledger read keyed by item id; absent entries
+    read `unverified` (a never-checked `full` copy is safely held — the M2 honesty,
+    no network). The shared primitive both `doctor`'s `custody.works` block and the
+    `maintain` report's `at_risk_works` pointer surface, so the count and the named
+    work are *the same* on both by construction.
+    """
+    risked = [
+        (work, work_custody(work.representations, verdicts))
+        for work in works
+    ]
+    risked = [(work, custody) for work, custody in risked if not custody["safely_held"]]
+    return {
+        "total": len(works),
+        "at_risk": len(risked),
+        "most_at_risk": _most_at_risk_entry(risked),
+    }
+
+
+def _most_at_risk_entry(
+    risked: list[tuple[Work, dict[str, Any]]]
+) -> dict[str, Any] | None:
+    """The single lowest-custody-ceiling work among the at-risk set, or ``None``.
+
+    Worst ``best_fidelity`` first (highest `FIDELITY_TIERS` index — `reference`, the
+    work whose content was never captured, over a `full`-but-moved copy), then worst
+    ``safest_drift`` (highest `DRIFT_POSTURES` index), then ``doi`` so the pick is
+    stable run to run. The `custody` block is the H261 verdict the ranking read, so
+    the named work agrees with the aggregate it carries by construction.
+    """
+    if not risked:
+        return None
+    work, custody = min(
+        risked,
+        key=lambda wc: (
+            -FIDELITY_TIERS.index(wc[1]["best_fidelity"]),
+            -DRIFT_POSTURES.index(wc[1]["safest_drift"]),
+            wc[0].doi,
+        ),
+    )
+    return {
+        "doi": work.doi,
+        "url": work.url,
+        "canonical": work.canonical.id,
+        "representations": len(work.representations),
+        "custody": custody,
+        "reason": (
+            "no representation is both full and unmoved "
+            f"(best held {custody['best_fidelity']}, "
+            f"safest drift {custody['safest_drift']})"
+        ),
+    }
+
+
 def to_payload(
     works: list[Work],
     item_count: int,

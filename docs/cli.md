@@ -864,6 +864,35 @@ view, never an `issue` or the exit code
 (`test_custody_by_source_never_feeds_issues_or_the_exit_code` in
 `tests/test_doctor.py`).
 
+The custody block also carries a `works` sub-block (roadmap H263) — the
+**at-risk-works** consolidation alarm, the work-level counterpart of the
+weakest-source `attention` flag. Where that names the source carrying the most
+per-*item* drift, this names the [**works**](#scrolls-works-ref---min-n---fidelity-t---drift-p)
+carrying a *consolidation* loss: a work (the cluster of representations of one
+scholarly work — a preprint, its published record, an index entry, ADR 0069) is
+**at risk** when **no** representation is *safely held* (the per-work
+`safely_held == false` of the H261 aggregate — every copy degraded
+(`partial`/`reference`) or moved (`drifted`/`rotted`/`error`), no unmoved full form
+anywhere). That is a sharper alarm than the per-item drift count: an item drifting
+is survivable when a sibling representation of the *same* work is still
+`full`+verified; a work with no safe representation is a real custody loss. The
+block holds `{status, total, at_risk, most_at_risk}` — `total` the
+multi-representation works audited, `at_risk` how many are not safely held, and
+`most_at_risk` the single lowest-custody-ceiling one (`null` when none) so an
+operator acts on *one* named work without scanning the set: worst `best_fidelity`
+first (a work holding no full content — `reference` best — is more at risk than one
+holding a `full`-but-`drifted` copy: the content is gone vs. merely moved), then
+worst `safest_drift`, then `doi`. Its entry carries the work's
+`doi`/`url`/`canonical`, `representations` count, the H261 `custody` verdict, and a
+self-describing `reason` — but **no `command`** (unlike `attention`'s
+`verify --source` recheck, there is no whole-library "recapture this work" act to
+name; inventing one is what `maintain`'s `suggested` block refuses for orphans).
+Report-only and a pure fold over the H261 aggregate (no schema change, no extra
+ledger read); `maintain` surfaces the same block as `at_risk_works`
+(`test_custody_works_flags_the_at_risk_works`,
+`test_custody_works_names_the_lowest_ceiling_work_as_most_at_risk`,
+`test_custody_works_never_feeds_issues_or_the_exit_code` in `tests/test_doctor.py`).
+
 `--source S` scopes the **whole** audit to one source's held items (roadmap H162)
 — the audit-side counterpart of the per-source act commands
 [`verify --source`](#scrolls-verify-id) (H125) and
@@ -879,11 +908,16 @@ singleton `{S: …}`. The convergence this guarantees, pinned in
 (`test_doctor_source_scope_converges_with_the_whole_library_by_source`): a
 `--source S` audit's `tiers`/`drift`/`coverage` equals the whole-library audit's
 `by_source[S]` slice and its `enrichment.stale` equals `enrichment.by_source[S]`
-(same held subset, same tally). Two checks are **not** source-attributable and so
+(same held subset, same tally). Three checks are **not** source-attributable and so
 are skipped under `--source`: `orphan_scrolls` (an unowned `.md` file belongs to
 no source — and scoping the item set must not flag *other* sources' owned scrolls
-as orphans) and `fts` (a single library-wide index), both reporting their empty/
-`skipped` defaults and left to a whole-library `scrolls doctor --fix`. The
+as orphans), `fts` (a single library-wide index), and the `custody.works`
+at-risk-works alarm (a work spans sources, so a scoped item set fragments works —
+a 2-representation work split arxiv+crossref drops below the floor and vanishes,
+making "no work is at risk" a falsehood the scope produced). All three report their
+empty/`skipped` defaults (the works block keeps `status: "skipped"`, never a
+fabricated "0 at risk") and are left to a whole-library `scrolls doctor`
+(`test_doctor_source_skips_the_at_risk_works_alarm` in `tests/test_doctor.py`). The
 exit-code rule is unchanged — structural `issues > fixed` fails — now over only
 that source's attributable findings; an unknown source holds nothing, so it is the
 honest empty audit (`score: 100`, empty `by_source`, exit 0), never an error
@@ -1439,6 +1473,23 @@ block already says everything; `attention` only adds value by discriminating
 **fully-clean** library (no source carries any drifted/rotted loss — reference-only
 is the normal capture posture, a tie-breaker, never a trigger). Like `by_source`,
 it rides the live pass only.
+
+The report also carries an **`at_risk_works`** member (roadmap H263) — the
+consolidation-level analogue of `attention`, the audit's `custody.works` block
+threaded through unchanged (see [`doctor`](#scrolls-doctor---fix---source-s)). Where
+`attention` names the source carrying the most per-*item* drift, this names the
+**works** carrying a *consolidation* loss: `{status, total, at_risk, most_at_risk}`,
+where a work is at risk when **no** representation is safely held (every copy
+degraded or moved, no unmoved full form anywhere), and `most_at_risk` names the
+single lowest-custody-ceiling one (`null` when none) — the one work to act on. A
+work spans sources, so the alarm is **whole-library only**: an unscoped or
+`--fidelity` pass carries the computed block (`status: "ok"`), a `--source` pass the
+skipped default (`status: "skipped"` — a scoped audit cannot see whole works). Like
+`by_source`/`attention`/`suggested` it rides the **live pass only** — derived fresh
+from this pass's audit, never recorded in the snapshot/log, so `--history`/`--trend`
+carry none (`test_maintain_reports_the_at_risk_works`,
+`test_maintain_at_risk_works_skipped_under_a_source_scope`,
+`test_maintain_history_does_not_carry_at_risk_works` in `tests/test_maintain.py`).
 
 The report also carries an **`enrichment_by_source`** member (roadmap H147) — the
 per-source **stale-classification debt** the audit already produces (`doctor`'s
@@ -3978,7 +4029,7 @@ The tools wrap the same engines as the CLI commands
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
-| `get_library_health(source=…)` | `scrolls status` / `doctor [--source]` (custody block) | the whole-library custody audit (H161): `run_doctor`'s custody block (`score`/`tiers`/`drift`+`coverage`/`by_source`/`enrichment`/`summaries`) plus the distilled weakest-source `attention` flag and one-line `headline` `status` adds. The optional `source` scopes the *whole* read to one source's held items (H167) — the MCP sibling of CLI `doctor --source`/`status --source`, reusing the same `run_doctor(source=)` pre-filter; `by_source` collapses to the singleton `{S: …}`, `attention` is `null` (single-source gate), and the scoped block equals a `doctor --source S` / `status --source S` over the same library. Read-only **posture** — the repairable structural-findings/exit-code axis stays a CLI concern (`doctor --fix`); network-free (drift read from the ledger). Converges with the CLI `status`/`doctor` by construction (`test_get_library_health_matches_cli_status_field_for_field`, `test_mcp_library_health_converges_with_status_and_doctor`, `test_mcp_library_health_source_scope_converges_with_doctor_and_status_source`); empty/uninitialized / unknown source → the honest present-but-empty block (`score: null`/`100`, `attention: null`). The per-source **refresh debt** rides here too, but **nested** (`enrichment.by_source`/`summaries.by_source`) rather than flattened like CLI `status`'s `enrichment_by_source`/`summary_by_source` (H180) — the MCP twin keeps the fuller re-derivability block; the flat CLI maps equal its `by_source` slices by construction (`test_get_library_health_refresh_debt_equals_cli_status_flat_maps`, `test_get_library_health_source_scopes_the_refresh_debt`), and the nested MCP read joins the full three-way refresh-debt tie ≡ `status` ≡ `doctor` over the combined stale-classification+stale-summary seed — whole-library and `--source`-scoped, carrying the double-attribution asymmetry and the single-source-cluster scope-collapse (H208, `test_mcp_library_health_refresh_debt_by_source_converges_with_status_and_doctor`) |
+| `get_library_health(source=…)` | `scrolls status` / `doctor [--source]` (custody block) | the whole-library custody audit (H161): `run_doctor`'s custody block (`score`/`tiers`/`drift`+`coverage`/`by_source`/`enrichment`/`summaries`/`works`) plus the distilled weakest-source `attention` flag and one-line `headline` `status` adds. The `works` member is the H263 at-risk-works consolidation alarm carried verbatim from the doctor block (`{status, total, at_risk, most_at_risk}` — the works no representation safely holds, whole-library only so a `--source` read carries the skipped default), pinned convergent with `doctor` by `test_get_library_health_carries_the_at_risk_works_alarm`. The optional `source` scopes the *whole* read to one source's held items (H167) — the MCP sibling of CLI `doctor --source`/`status --source`, reusing the same `run_doctor(source=)` pre-filter; `by_source` collapses to the singleton `{S: …}`, `attention` is `null` (single-source gate), and the scoped block equals a `doctor --source S` / `status --source S` over the same library. Read-only **posture** — the repairable structural-findings/exit-code axis stays a CLI concern (`doctor --fix`); network-free (drift read from the ledger). Converges with the CLI `status`/`doctor` by construction (`test_get_library_health_matches_cli_status_field_for_field`, `test_mcp_library_health_converges_with_status_and_doctor`, `test_mcp_library_health_source_scope_converges_with_doctor_and_status_source`); empty/uninitialized / unknown source → the honest present-but-empty block (`score: null`/`100`, `attention: null`). The per-source **refresh debt** rides here too, but **nested** (`enrichment.by_source`/`summaries.by_source`) rather than flattened like CLI `status`'s `enrichment_by_source`/`summary_by_source` (H180) — the MCP twin keeps the fuller re-derivability block; the flat CLI maps equal its `by_source` slices by construction (`test_get_library_health_refresh_debt_equals_cli_status_flat_maps`, `test_get_library_health_source_scopes_the_refresh_debt`), and the nested MCP read joins the full three-way refresh-debt tie ≡ `status` ≡ `doctor` over the combined stale-classification+stale-summary seed — whole-library and `--source`-scoped, carrying the double-attribution asymmetry and the single-source-cluster scope-collapse (H208, `test_mcp_library_health_refresh_debt_by_source_converges_with_status_and_doctor`) |
 | `run_maintenance(source=None)` | `scrolls maintain [--source S] --no-recheck` | one scheduled custody pass over MCP (H196): regenerate the compiled views, audit the post-maintenance state, compute the custody `delta` vs the last recorded run, and record this run's snapshot + append it to the trend log — returning the same report shape the CLI prints (`recheck`/`compiled`/`custody`/`headline`/`by_source`/`attention`/`enrichment_by_source`/`summary_by_source`/`delta`/`issues`/`suggested`). **Offline by default — the recheck is skipped:** `maintain`'s recheck is its one live network edge, and an MCP tool must not trigger implicit re-captures, so the MCP path always runs `--no-recheck` (drift read from the ledger, never re-checked); targeted live rechecks stay the explicit `verify_scroll` act (the `get_library_health`-vs-`doctor --fix` read/act boundary). The optional `source` scopes the pass to one source's held items (H203) — the MCP sibling of CLI `maintain --source S`, for an agent that has just read this library's `attention` flag and wants to run the pass on *that* weakest source; view regeneration stays whole-library (deterministic global recompile), the audit/delta narrow to `S` (`by_source` collapses to the singleton `{S: …}`, `attention` is `null`), and a scoped pass is **non-persisting** (writes no whole-library snapshot/log baseline, so its `delta` is honestly `null` — the whole-library pass owns the trend, ADR 0082). Report-only and idempotent (records the snapshot/log on a whole-library pass, never repairs rows). Converges field-for-field with the CLI `maintain [--source S] --no-recheck` (`test_run_maintenance_converges_with_cli_maintain_no_recheck`, `test_run_maintenance_source_converges_with_cli_maintain_source`); empty/uninitialized / unknown source → the honest-empty pass (`score: null`, `_Custody: 0 scroll(s)._`) |
 | `get_maintenance_history(limit=None, trend=False)` | `scrolls maintain --history [--trend]` | the recorded maintenance runs oldest-first — the custody *trajectory* over time, the read sibling of `run_maintenance` (H198). Returns the bare runs array (each `{recorded_at, snapshot, delta, headline}`) by default; `limit` bounds it to the most recent N (`None` is the full history — the CLI's bare `--history` instead defaults to the 10 most recent). With `trend=True` the runs are wrapped in the `{trend, runs}` envelope `maintain --history --trend` prints, whose `trend` distils the window's net score/drift/coverage movement into one posture (improving / holding / regressing) — the opt-in-envelope parity with the CLI, so the bare-array completeness `[]` never regresses. Read-only and network-free; honest absence — a never-maintained / uninitialized library is the empty `[]` (or the `insufficient-history` trend envelope), never an error. Converges with the CLI `maintain --history` field-for-field (`test_get_maintenance_history_matches_cli_maintain_history`) |
 | `ingest_url(url)` | `scrolls ingest` | the ingest payload, `error` key included (`test_ingest_url_without_adapter_reports_error_as_data`) |

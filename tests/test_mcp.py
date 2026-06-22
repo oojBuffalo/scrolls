@@ -3164,6 +3164,45 @@ def test_get_library_health_returns_the_doctor_custody_block(scrolls_home):
     assert health["headline"] == snapshot_headline(custody_snapshot(report))
 
 
+def test_get_library_health_carries_the_at_risk_works_alarm(scrolls_home):
+    # the H263 consolidation alarm rides the MCP doctor twin for free (it is part of
+    # the custody block `get_library_health` spreads), so an agent operating purely
+    # over MCP reads "which works have no safe representation" — convergent with the
+    # CLI `doctor` by construction.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.doctor import run_doctor
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+
+    def rep(item_id, doi, tier):
+        f = dict(id=item_id, source=item_id.split(":")[0],
+                 source_id=item_id.split(":", 1)[1], url=f"https://example.org/{item_id}",
+                 saved_at="2026-06-14T00:00:00+00:00",
+                 links=(f"https://doi.org/{doi}",), stage="rendered")
+        if tier == "full":
+            f.update(extracted_text="body", content_hash=f"sha256:{item_id}")
+        return ScrollItem(**f)
+
+    for item in [rep("arxiv:z", "10.3000/z", "reference"),
+                 rep("crossref:cz", "10.3000/z", "reference"),
+                 rep("arxiv:s", "10.4000/s", "full"),
+                 rep("crossref:cs", "10.4000/s", "reference")]:
+        insert_item(db, item)
+    record_events(db, [
+        CustodyEvent("arxiv:s", "2026-06-14T00:00:00+00:00", "unchanged", "h", "h"),
+    ])
+
+    works = mcp_server.get_library_health()["works"]
+    # Z is at risk (all reference); S is safely held (full+verified preprint)
+    assert works["status"] == "ok"
+    assert works["at_risk"] == 1
+    assert works["most_at_risk"]["doi"] == "10.3000/z"
+    # exactly `doctor`'s custody.works block — no MCP-side re-derivation
+    assert works == run_doctor(get_paths())["custody"]["works"]
+
+
 def test_get_library_health_matches_cli_status_field_for_field(scrolls_home, capsys):
     # MCP↔CLI parity: the tool's by_source/attention/score/tiers/headline equal a
     # `scrolls status` over the same seed — one custody picture, two surfaces.
@@ -3523,7 +3562,7 @@ def test_run_maintenance_returns_the_maintain_report_shape(scrolls_home):
 
     assert set(report) == {
         "recorded_at", "source", "fidelity", "recheck", "compiled", "custody",
-        "headline", "by_source", "attention", "enrichment_by_source",
+        "headline", "by_source", "attention", "at_risk_works", "enrichment_by_source",
         "summary_by_source", "delta", "issues", "suggested",
     }
     # whole-library and offline by default: the recheck is the one live network
@@ -3623,7 +3662,7 @@ def test_run_maintenance_source_scopes_the_pass_to_one_source(scrolls_home):
     # the shape is the whole-library report's; only the scope narrows
     assert set(report) == {
         "recorded_at", "source", "fidelity", "recheck", "compiled", "custody",
-        "headline", "by_source", "attention", "enrichment_by_source",
+        "headline", "by_source", "attention", "at_risk_works", "enrichment_by_source",
         "summary_by_source", "delta", "issues", "suggested",
     }
     assert report["source"] == "web"

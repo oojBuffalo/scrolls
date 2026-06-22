@@ -643,6 +643,115 @@ def test_custody_by_source_coverage_excludes_reference_only(paths):
     assert by_source["web"]["coverage"] == {"verified": 0, "total": 0}
 
 
+# --- at-risk works: the consolidation custody alarm (roadmap H263) ---
+# A work is *at risk* when NO representation is safely held (the H261
+# `safely_held == False` set) — every copy degraded or moved, no unmoved full form
+# anywhere. The work-level analogue of the per-source weakest-source flag.
+
+
+def _rep(item_id, doi, tier, **overrides):
+    """A representation of the work `doi` at the given fidelity tier (links to doi.org)."""
+    fields = dict(
+        id=item_id, source=item_id.split(":")[0],
+        source_id=item_id.split(":", 1)[1] if ":" in item_id else None,
+        url=f"https://example.org/{item_id}", saved_at="2026-06-12T08:00:00+00:00",
+        links=(f"https://doi.org/{doi}",), stage="rendered",
+    )
+    if tier == "full":
+        fields.update(extracted_text="body", content_hash=f"sha256:{item_id}")
+    elif tier == "partial":
+        fields.update(summary="a summary")
+    fields.update(overrides)
+    return ScrollItem(**fields)
+
+
+def _seed_works_custody_mix(paths):
+    """Three 2-rep works: X at risk (full+drifted, ref), Y safely held (full+verified,
+    partial), Z most at risk (all reference). Returns nothing — seeds the library."""
+    for item in [
+        _rep("arxiv:x", "10.1000/x", "full"),
+        _rep("crossref:cx", "10.1000/x", "reference"),
+        _rep("biorxiv:y", "10.2000/y", "full"),
+        _rep("pubmed:y", "10.2000/y", "partial"),
+        _rep("arxiv:z", "10.3000/z", "reference"),
+        _rep("crossref:cz", "10.3000/z", "reference"),
+    ]:
+        insert_item(paths.db_path, item)
+    record_events(paths.db_path, [
+        CustodyEvent(item_id="arxiv:x", checked_at="2026-06-14T00:00:00+00:00",
+                     status="drifted", prior_hash="sha256:a", observed_hash="sha256:b"),
+        CustodyEvent(item_id="biorxiv:y", checked_at="2026-06-14T00:00:00+00:00",
+                     status="unchanged", prior_hash="sha256:c", observed_hash="sha256:c"),
+    ])
+
+
+def test_custody_works_flags_the_at_risk_works(paths):
+    # 2 of 3 works at risk (X holds a full-but-drifted copy; Z holds nothing
+    # re-derivable); Y is safely held by its full+verified preprint, so excluded.
+    _seed_works_custody_mix(paths)
+    works = run_doctor(paths)["custody"]["works"]
+    assert works["status"] == "ok"
+    assert works["total"] == 3
+    assert works["at_risk"] == 2
+
+
+def test_custody_works_names_the_lowest_ceiling_work_as_most_at_risk(paths):
+    # Z (all-reference: no content held anywhere) outranks X (still holds a full,
+    # only-drifted copy) — worst fidelity ceiling wins.
+    _seed_works_custody_mix(paths)
+    most = run_doctor(paths)["custody"]["works"]["most_at_risk"]
+    assert most["doi"] == "10.3000/z"
+    assert most["url"] == "https://doi.org/10.3000/z"
+    assert most["canonical"] == "crossref:cz"  # crossref outranks arxiv
+    assert most["representations"] == 2
+    assert most["custody"] == {
+        "best_fidelity": "reference", "safest_drift": "unverified", "safely_held": False,
+    }
+    assert most["reason"] == (
+        "no representation is both full and unmoved "
+        "(best held reference, safest drift unverified)"
+    )
+
+
+def test_custody_works_never_feeds_issues_or_the_exit_code(paths):
+    # at-risk works are a custody *report*, like drift — doctor cannot repair an
+    # upstream move, so they never bump the structural issue count or the exit code.
+    _seed_works_custody_mix(paths)
+    report = run_doctor(paths)
+    assert report["custody"]["works"]["at_risk"] == 2
+    assert report["issues"] == 0
+    assert main(["doctor"]) == 0  # healthy exit despite the consolidation loss
+
+
+def test_custody_works_is_ok_and_empty_when_every_work_is_safely_held(paths):
+    # two works, each with a full+unverified rep (never checked, so safely held) →
+    # computed (status ok), none at risk, no work named.
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),
+        _rep("crossref:ca", "10.1000/a", "reference"),
+        _rep("biorxiv:b", "10.2000/b", "full"),
+        _rep("crossref:cb", "10.2000/b", "reference"),
+    ]:
+        insert_item(paths.db_path, item)
+    works = run_doctor(paths)["custody"]["works"]
+    assert works == {"status": "ok", "total": 2, "at_risk": 0, "most_at_risk": None}
+
+
+def test_custody_works_on_an_empty_library_is_ok_with_no_works(paths):
+    # an initialized but empty library computes the signal (status ok): 0 works.
+    works = run_doctor(paths)["custody"]["works"]
+    assert works == {"status": "ok", "total": 0, "at_risk": 0, "most_at_risk": None}
+
+
+def test_custody_works_on_an_uninitialized_library_is_skipped(scrolls_home):
+    # no database → the early return leaves the honest skipped default, never a
+    # fabricated "0 at risk" the audit never computed.
+    works = run_doctor(get_paths())["custody"]["works"]
+    assert works == {
+        "status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None,
+    }
+
+
 # --- per-source scoped audit (roadmap H162) ---
 
 
@@ -766,6 +875,19 @@ def test_doctor_source_skips_orphan_and_fts_checks(paths):
     # sanity: the whole-library audit *does* flag the stray orphan
     whole = run_doctor(paths)
     assert [o["path"] for o in whole["orphan_scrolls"]] == [str(stray.relative_to(paths.root))]
+
+
+def test_doctor_source_skips_the_at_risk_works_alarm(paths):
+    # a work spans sources (arxiv preprint + crossref record), so a --source-scoped
+    # item set fragments works: the at-risk-works alarm is whole-library only, the
+    # third non-source-attributable check. Scoped → the honest skipped default.
+    _seed_works_custody_mix(paths)
+    scoped = run_doctor(paths, source="arxiv")["custody"]["works"]
+    assert scoped == {
+        "status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None,
+    }
+    # sanity: the unscoped audit *does* see the at-risk works
+    assert run_doctor(paths)["custody"]["works"]["at_risk"] == 2
 
 
 def test_doctor_source_reports_only_that_sources_missing_scrolls(paths):
@@ -914,6 +1036,11 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             "basis": "members_hash",
             "eligible": 0, "summarized": 0, "current": 0, "stale": 0, "never": 0,
             "items": [], "by_source": {},
+        },
+        "works": {
+            # one item with no DOI → no multi-representation work, so the
+            # at-risk-works alarm is computed (status ok) and names none (H263)
+            "status": "ok", "total": 0, "at_risk": 0, "most_at_risk": None,
         },
     }
 

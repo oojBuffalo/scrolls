@@ -48,6 +48,7 @@ from scrolls.items import (
 from scrolls.paths import LibraryPaths
 from scrolls.render import write_scroll
 from scrolls.sources.urls import normalize_url
+from scrolls.works import at_risk_signal, works_over
 
 _STAGE_RANK = {"detected": 0, "fetched": 1, "rendered": 2}
 
@@ -91,15 +92,20 @@ def run_doctor(
     `enrichment.stale` equals `enrichment.by_source[S]` — pinned in
     `tests/test_custody_convergence.py`.
 
-    Two checks are **not** source-attributable, so a scoped audit skips them:
+    Three checks are **not** source-attributable, so a scoped audit skips them:
     `orphan_scrolls` (an unowned scroll file belongs to no source, and scoping
     the item set would falsely flag *other* sources' legitimately-owned scrolls
-    as orphans) and `fts` (a single library-wide index, not a per-source view).
-    Both are whole-library repairs left to `scrolls doctor --fix` without
-    `--source`; under a source scope they report empty/`skipped`. The exit-code
-    rule is unchanged — structural `issues > fixed` fails — now over only <S>'s
-    attributable findings (an unknown source holds nothing, so it is the honest
-    empty audit: `score: 100`, zeroed counts, never an error).
+    as orphans), `fts` (a single library-wide index, not a per-source view), and the
+    `custody.works` at-risk-works alarm (roadmap H263) — a *work* is a cross-source
+    consolidation (a preprint + its published record), so scoping the item set
+    fragments works (a 2-representation work split arxiv+crossref drops below the
+    floor and vanishes), making "no work is at risk" a falsehood the scope produced.
+    All three are whole-library views left to an unscoped `scrolls doctor`; under a
+    source scope they report empty/`skipped` (the works block keeps `status:
+    "skipped"`, never a fabricated "0 at risk"). The exit-code rule is unchanged —
+    structural `issues > fixed` fails — now over only <S>'s attributable findings (an
+    unknown source holds nothing, so it is the honest empty audit: `score: 100`,
+    zeroed counts, never an error).
     """
     report: dict[str, Any] = {
         "issues": 0,
@@ -147,6 +153,19 @@ def run_doctor(
                 "items": [],
                 "by_source": {},
             },
+            "works": {
+                # The at-risk-works consolidation alarm (roadmap H263): the works no
+                # representation safely holds (the H261 `safely_held == False` set).
+                # `status` distinguishes a computed audit ("ok") from one a `--source`
+                # scope skipped ("skipped") — a work spans sources, so a scoped item
+                # set fragments works (see `_check_at_risk_works`); the honest default
+                # is "skipped" so a missing-db/scoped report never reads as a confirmed
+                # "0 at risk" it never computed (the drift block's `unverified` honesty).
+                "status": "skipped",
+                "total": 0,
+                "at_risk": 0,
+                "most_at_risk": None,
+            },
         },
     }
     if not paths.db_path.exists():
@@ -159,10 +178,12 @@ def run_doctor(
     _check_missing_media(paths, report, items)
     if source is None:
         # Not source-attributable (see the run_doctor docstring): an orphan file
-        # owns no source, and the single FTS index is a whole-library view. A
-        # scoped audit leaves both at their honest empty/skipped defaults.
+        # owns no source, the single FTS index is a whole-library view, and a *work*
+        # spans sources (a 2-rep work split arxiv+crossref fragments under a scope).
+        # A scoped audit leaves all three at their honest empty/skipped defaults.
         _check_orphan_scrolls(paths, report, items)
         _check_fts(paths, report, fix)
+        _check_at_risk_works(paths, report, items)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
     _check_enrichment_provenance(report, items)
@@ -482,6 +503,39 @@ def _check_custody_drift(
         for _, event in sorted(latest.items())
         if event.status in ("drifted", "rotted")
     ]
+
+
+def _check_at_risk_works(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem]
+) -> None:
+    """At-risk works — the consolidation custody alarm (ADR 0069/0095, roadmap H263).
+
+    The work-level counterpart of the per-source weakest-source `attention` flag: where
+    that names the source carrying the most actionable per-*item* drift, this names the
+    **works** carrying a *consolidation* loss. A work (the cluster of representations of
+    one scholarly work — a preprint, its published record, an index entry, ADR 0069) is
+    **at risk** when **no** representation is *safely held* (the H261 `work_custody`
+    `safely_held == False`: there is no representation that is both `full` *and* unmoved
+    anywhere in its cluster). That is a sharper alarm than the per-item drift count: an
+    item drifting is survivable when a sibling representation of the *same* work is still
+    `full`+verified; a work with no safe representation is a real custody loss — every
+    copy of the work is degraded or moved.
+
+    Lives entirely under `report["custody"]["works"]`, a custody *view* like the drift /
+    enrichment / summary blocks — never the repairable `issues`/`fixed` or the exit code:
+    doctor cannot repair a source that moved upstream, and a degraded work is reported,
+    never silently overwritten (custody §2.4). Sets ``status: "ok"`` and fills
+    ``{total, at_risk, most_at_risk}`` from the shared `works.at_risk_signal` over the
+    library's multi-representation works (`works_over`'s 2+ default — the consolidation
+    question only applies to a work with siblings) and the *same* `latest_events` ledger
+    the drift block reads. Called **only on the unscoped audit** (the `source is None`
+    branch beside `_check_orphan_scrolls`/`_check_fts`): a work spans sources, so a
+    `--source`-scoped item set fragments works, and the block stays at its honest
+    `status: "skipped"` default rather than reading a scope-induced "0 at risk".
+    """
+    works = works_over(items)
+    verdicts = latest_events(paths.db_path)
+    report["custody"]["works"] = {"status": "ok", **at_risk_signal(works, verdicts)}
 
 
 def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:

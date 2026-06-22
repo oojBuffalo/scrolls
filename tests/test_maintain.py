@@ -53,6 +53,7 @@ from scrolls.maintain import (
     load_snapshot,
     log_path,
     read_log,
+    report_at_risk_works,
     report_by_source,
     report_enrichment_by_source,
     report_summary_by_source,
@@ -2465,6 +2466,115 @@ def test_maintain_history_does_not_carry_attention(home, monkeypatch, capsys):
     assert runs and all("attention" not in run for run in runs)
     assert all("attention" not in run["snapshot"] for run in runs)
     assert all("attention" not in run for run in read_log(log_path(home)))
+
+
+# --- the at-risk-works consolidation alarm (roadmap H263) -----------------
+# `maintain` surfaces `doctor`'s `custody.works` block as `at_risk_works` — the
+# work-level counterpart of the weakest-source `attention` flag, live-pass only.
+
+
+def _rep(item_id, doi, tier, **fields):
+    """A representation of work `doi` at the given fidelity tier (links to doi.org)."""
+    base = dict(
+        id=item_id, source=item_id.split(":")[0],
+        source_id=item_id.split(":", 1)[1] if ":" in item_id else None,
+        url=f"https://example.org/{item_id}", saved_at="2026-06-14T00:00:00+00:00",
+        links=(f"https://doi.org/{doi}",), stage="rendered",
+    )
+    if tier == "full":
+        base.update(extracted_text="body", content_hash=f"sha256:{item_id}")
+    elif tier == "partial":
+        base.update(summary="a summary")
+    base.update(fields)
+    return ScrollItem(**base)
+
+
+def _build_works_mix(home):
+    """Seed three 2-rep works into a real library: X at risk (full+drifted, ref), Y
+    safely held (full+verified, partial), Z most at risk (all reference)."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    for item in [
+        _rep("arxiv:x", "10.1000/x", "full"),
+        _rep("crossref:cx", "10.1000/x", "reference"),
+        _rep("biorxiv:y", "10.2000/y", "full"),
+        _rep("pubmed:y", "10.2000/y", "partial"),
+        _rep("arxiv:z", "10.3000/z", "reference"),
+        _rep("crossref:cz", "10.3000/z", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    record_events(home.db_path, [
+        CustodyEvent("arxiv:x", "2026-06-14T00:00:00+00:00", "drifted", "h:a", "h:b"),
+        CustodyEvent("biorxiv:y", "2026-06-14T00:00:00+00:00", "unchanged", "h:c", "h:c"),
+    ])
+
+
+def test_maintain_reports_the_at_risk_works(home, capsys):
+    """A live pass surfaces the works no representation safely holds — the
+    consolidation alarm, with the single most-at-risk work named."""
+    _build_works_mix(home)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    works = report["at_risk_works"]
+    assert works["status"] == "ok"
+    assert works["total"] == 3
+    assert works["at_risk"] == 2  # X (full+drifted) and Z (all reference); Y is safe
+    # Z (all-reference, nothing re-derivable held) is the lowest custody ceiling
+    assert works["most_at_risk"]["doi"] == "10.3000/z"
+    assert works["most_at_risk"]["custody"]["safely_held"] is False
+    # it is exactly `doctor`'s `custody.works` block — a faithful read, no recompute
+    assert works == report_at_risk_works(run_doctor(home))
+
+
+def test_maintain_at_risk_works_empty_when_every_work_safely_held(home, capsys):
+    """No work at risk → the computed block names none, the honest empty alarm."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),  # full+unverified → safely held
+        _rep("crossref:ca", "10.1000/a", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    works = json.loads(capsys.readouterr().out)["at_risk_works"]
+    assert works == {"status": "ok", "total": 1, "at_risk": 0, "most_at_risk": None}
+
+
+def test_maintain_at_risk_works_skipped_under_a_source_scope(home, capsys):
+    """A work spans sources, so a --source pass cannot see whole works: the alarm is
+    whole-library only and reports the honest skipped default under a scope."""
+    _build_works_mix(home)
+    capsys.readouterr()
+    assert main(["maintain", "--source", "arxiv", "--no-recheck"]) == 0
+    scoped = json.loads(capsys.readouterr().out)["at_risk_works"]
+    assert scoped == {
+        "status": "skipped", "total": 0, "at_risk": 0, "most_at_risk": None,
+    }
+
+    # but a --fidelity pass leaves the audit whole-library (H255), so it is computed
+    capsys.readouterr()
+    assert main(["maintain", "--fidelity", "full", "--no-recheck"]) == 0
+    scoped_fid = json.loads(capsys.readouterr().out)["at_risk_works"]
+    assert scoped_fid["status"] == "ok"
+    assert scoped_fid["at_risk"] == 2
+
+
+def test_maintain_history_does_not_carry_at_risk_works(home, capsys):
+    """`at_risk_works` rides the live pass only (like `attention`/`by_source`): it is
+    derived fresh from the audit, never recorded, so `--history` and the log are bare."""
+    _build_works_mix(home)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--history"]) == 0
+    runs = json.loads(capsys.readouterr().out)
+    assert runs and all("at_risk_works" not in run for run in runs)
+    assert all("at_risk_works" not in run["snapshot"] for run in runs)
+    assert all("at_risk_works" not in run for run in read_log(log_path(home)))
 
 
 # --- `scrolls maintain --source <S>` — the scoped pass (roadmap H165) ----------
