@@ -1306,17 +1306,24 @@ usage error on stderr, exit 2 — validated *before* the item lookup, so a typo'
 boundary on an unknown item is a usage error, not a missing-item one
 (`test_history_malformed_since_beats_an_unknown_id`).
 
-`--status <verdict>` is the **verdict axis** — return only the checks whose
-`status` is one of the closed set `unchanged`/`drifted`/`rotted`/`error` (the
-raw event verdict `history` emits, *not* the reader-facing drift posture — so
-it is `unchanged`, not `verified`). "Show me only the times this source
-actually *changed*" — an agent triaging a long ledger reads the drift/rot
-events without scanning the steady-state re-checks
-(`test_history_status_filters_to_one_verdict`). It is a closed vocabulary
-guarded by argparse `choices` (an unknown verdict is a usage error, exit 2,
-never a silent empty — `test_history_status_is_a_closed_vocabulary`), and
-composes with the other two axes **verdict → window → cap**: filter the
-verdict, then `--since` the time, then `--limit` the count
+`--status <verdict>` is the **verdict axis** — return only the events whose
+`status` is one of the closed set `unchanged`/`drifted`/`rotted`/`error` *plus*
+the import-time `conflict` (the raw event status `history` emits, *not* the
+reader-facing drift posture — so it is `unchanged`, not `verified`). "Show me
+only the times this source actually *changed*" — an agent triaging a long ledger
+reads the drift/rot events without scanning the steady-state re-checks
+(`test_history_status_filters_to_one_verdict`) — or "show me only the import
+**conflicts**", the times another capture of this id disagreed with the held copy
+at merge time (roadmap H274, recorded by both lossless importers — see *import
+items*/*import bundle* below — readable here via `--status conflict`,
+`test_import_items_records_a_conflict_as_a_custody_event`). A `conflict` is a
+*distinct* axis, never a drift posture: it rides the ledger and this timeline but
+`doctor`'s `custody.drift` / `list --drift` ignore it (a peer disagreeing is no
+evidence the live source moved). `--status` is a closed vocabulary guarded by
+argparse `choices` (an unknown verdict is a usage error, exit 2, never a silent
+empty — `test_history_status_is_a_closed_vocabulary`), and composes with the
+other two axes **verdict → window → cap**: filter the verdict, then `--since` the
+time, then `--limit` the count
 (`test_history_status_composes_with_since_and_limit`). A verdict nothing matches
 is the honest `[]`.
 
@@ -1346,6 +1353,10 @@ $ scrolls history web:af2e70e87b6d --since 2026-06-15   # only checks since the 
 
 $ scrolls history web:af2e70e87b6d --status drifted   # only the times the source actually changed
 [{"checked_at": "2026-06-14T09:00:00+00:00", "status": "drifted", "prior_hash": "sha256:1f3c…", "observed_hash": "sha256:9c20…", "detail": null}]
+[exit 0]
+
+$ scrolls history web:af2e70e87b6d --status conflict   # only the times a re-import disagreed with the held copy
+[{"checked_at": "2026-06-20T11:00:00+00:00", "status": "conflict", "prior_hash": "sha256:9c20…", "observed_hash": "sha256:7b41…", "detail": "import conflict: an incoming capture of this id differs from the held copy"}]
 [exit 0]
 ```
 
@@ -2061,6 +2072,18 @@ partition, ready for the bundle import to reuse
 `test_import_items_partitions_a_mixed_batch`,
 `test_merge_item_classifies_the_insert_outcome`).
 
+**A conflict is also *recorded* as a custody event** (roadmap H274, ADR 0104),
+not just printed: each diverging id gets a typed `conflict` event appended to the
+ledger (`prior_hash` = the held copy we keep, `observed_hash` = the incoming
+capture that disagreed, stamped at import time), so the divergence is queryable
+later via `scrolls history <id> --status conflict` instead of being re-detected
+from scratch on every re-import. It is a **distinct** axis, never a drift posture:
+`custody.latest_events` reads only the verify verdicts, so a conflict leaves
+`doctor`'s `custody.drift` / `list --drift` / the custody headlines untouched (a
+peer disagreeing is no evidence the live *source* moved — the M2 honesty). A clean
+re-import records nothing (`test_import_items_records_a_conflict_as_a_custody_event`,
+`test_import_items_clean_reimport_records_no_event`).
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new items inserted |
@@ -2471,7 +2494,14 @@ uncapped) **and** a bounded `{"warning": …}` on stderr naming them (the shared
 `_merge_items`/`_warn_conflicts` helpers, the same as `import items`).
 `skipped == unchanged + conflict` is the coherence invariant
 (`test_import_bundle_surfaces_a_content_conflict`,
-`test_import_bundle_dry_run_conflict_partition_matches_a_real_import`).
+`test_import_bundle_dry_run_conflict_partition_matches_a_real_import`). Because
+the recording rides the shared `_merge_items`, the bundle importer also writes a
+typed `conflict` **custody event** for each divergence (roadmap H274, ADR 0104) —
+queryable via `scrolls history <id> --status conflict`, a distinct axis that never
+enters the drift posture — exactly as `import items` does; the `--dry-run` predicts
+the conflict but, being read-only, records nothing
+(`test_import_bundle_records_a_conflict_as_a_custody_event`,
+`test_import_bundle_dry_run_records_no_conflict_event`).
 
 The importer also restores the bundle's **custody-events block** (roadmap H67)
 into the target's verify ledger, deduped by content — the 5-tuple

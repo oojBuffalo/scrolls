@@ -44,6 +44,31 @@ from scrolls.sources import FETCH_ADAPTERS, FetchError
 
 CUSTODY_STATUSES = ("unchanged", "drifted", "rotted", "error")
 
+# The import-time content-divergence event (roadmap H274): a *different* capture
+# of an already-held id — a peer's bundle, another library's `export items` — was
+# presented at merge time with a `content_hash` that disagrees with the held copy.
+# A **distinct provenance-of-divergence axis**, deliberately *not* a verify verdict:
+# `verify` re-captures through the live adapter and asks "has the *source* moved?";
+# an import conflict involves no source re-capture at all — we only know a *peer*
+# disagreed. So it is recorded in the same append-only ledger (queryable on the
+# per-item `scrolls history` timeline) but is **excluded from the drift posture**
+# (`latest_events` reads only `CUSTODY_STATUSES`): claiming the source `drifted`
+# off a peer disagreement would be fabrication (the M2 honesty — the drift axis
+# means "the live source moved", which a conflict is not evidence of). The held
+# copy is never touched; the conflict is a recorded, surfaced event (custody §2.4,
+# the obsidian reconcile adoption — *detect, surface, don't rewrite*).
+CONFLICT_STATUS = "conflict"
+
+# The human detail stamped on a conflict event — the readable counterpart of the
+# `_warn_conflicts` stderr line, persisted so `scrolls history` is self-describing.
+_CONFLICT_DETAIL = "import conflict: an incoming capture of this id differs from the held copy"
+
+# Every status that can appear in a ledger row — the four verify verdicts plus the
+# import-conflict event. The `scrolls history --status` filter validates against
+# this superset (a conflict event is readable on the timeline and filterable), but
+# the drift posture reads only the `CUSTODY_STATUSES` verify verdicts.
+LEDGER_STATUSES = CUSTODY_STATUSES + (CONFLICT_STATUS,)
+
 # The custody-fidelity tiers in best-held-first order — the three `get_fidelity`
 # returns. The canonical order every custody headline renders tiers in.
 FIDELITY_TIERS = ("full", "partial", "reference")
@@ -146,6 +171,47 @@ def live_recapture(item: ScrollItem) -> ScrollItem:
     if adapter is None:
         raise FetchError(f"no fetch adapter for source '{item.source}'")
     return adapter(item)
+
+
+def conflict_event(
+    item_id: str,
+    *,
+    held_hash: str | None,
+    incoming_hash: str | None,
+    now: str,
+) -> CustodyEvent:
+    """Build the custody event recording an import-time content divergence (H274).
+
+    The conflict-axis counterpart of `verify_item`'s drift event: where that records
+    "the live source moved" from a re-capture, this records "another capture of this
+    id disagreed with mine, observed at import time" from a lossless merge
+    (`import items` / `import bundle`, the importers whose rows carry a model-complete
+    `content_hash`). Pure and deterministic given `now`, exactly like `verify_item`,
+    so the construction is testable without a clock — the CLI edge stamps the wall
+    time and the held copy is never touched.
+
+    The two-hash slot reuses the verify-event field semantics verbatim, so every
+    existing serializer (`event_payload`, `event_export_dict`) and the export/import
+    round-trip carry it unchanged:
+
+    - ``prior_hash`` = the held copy's `content_hash` — what *we* hold (raw is sacred,
+      kept, never overwritten);
+    - ``observed_hash`` = the *incoming* `content_hash` that disagreed — what the
+      peer's capture presented.
+
+    ``status`` is `CONFLICT_STATUS`, deliberately *outside* the verify verdicts, so
+    the event rides the per-item `scrolls history` timeline yet never enters the
+    drift posture `latest_events` derives (it reads only `CUSTODY_STATUSES`) — the
+    M2 honesty that a peer disagreement is not evidence the live source drifted.
+    """
+    return CustodyEvent(
+        item_id=item_id,
+        checked_at=now,
+        status=CONFLICT_STATUS,
+        prior_hash=held_hash,
+        observed_hash=incoming_hash,
+        detail=_CONFLICT_DETAIL,
+    )
 
 
 # --- ledger persistence ---------------------------------------------------
@@ -291,12 +357,14 @@ def item_history(
     what remains):
 
     - `status` keeps only the checks whose verdict is exactly this — one of
-      `CUSTODY_STATUSES` (``unchanged``/``drifted``/``rotted``/``error``, the
-      raw event status `history` emits, *not* the reader-facing drift posture):
-      "show me only the times this source actually changed" (roadmap H77). An
-      unknown verdict raises ``ValueError`` (a closed vocabulary — never a
-      silent empty, the `list --drift` posture), so both the CLI (which also
-      guards via argparse ``choices``) and the MCP twin inherit the guarantee.
+      `LEDGER_STATUSES` (the four verify verdicts
+      ``unchanged``/``drifted``/``rotted``/``error`` *plus* the import-time
+      ``conflict`` event, roadmap H274 — the raw event status `history` emits,
+      *not* the reader-facing drift posture): "show me only the times this source
+      actually changed" (H77), or "only the import conflicts" (H274). An unknown
+      verdict raises ``ValueError`` (a closed vocabulary — never a silent empty,
+      the `list --drift` posture), so both the CLI (which also guards via argparse
+      ``choices``) and the MCP twin inherit the guarantee.
     - `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`, which
       the CLI/MCP edge calls): only checks ``checked_at >= since`` are kept —
       the time-axis window a maintenance worker asks for ("what has this source
@@ -308,10 +376,10 @@ def item_history(
 
     Each axis is ``None`` by default, so the unfiltered shape is unchanged.
     """
-    if status is not None and status not in CUSTODY_STATUSES:
+    if status is not None and status not in LEDGER_STATUSES:
         raise ValueError(
             f"unknown custody status {status!r}; "
-            f"choose one of {', '.join(CUSTODY_STATUSES)}"
+            f"choose one of {', '.join(LEDGER_STATUSES)}"
         )
     events = item_events(db_path, item_id)
     if status is not None:
@@ -539,16 +607,27 @@ def partition_resolvable_events(
 
 
 def latest_events(db_path: Path) -> dict[str, CustodyEvent]:
-    """The most recent custody event per item, keyed by item id.
+    """The most recent *verify* verdict per item, keyed by item id — the drift posture.
 
     "Most recent" is the largest `id` for that item — a monotonic counter that
     breaks the same-second ties `checked_at` cannot. Items never verified are
-    simply absent. This is what doctor aggregates into its drift report.
+    simply absent. This is what doctor aggregates into its drift report and what
+    every `drift_posture` read folds, so it is restricted to the **verify verdicts**
+    (`CUSTODY_STATUSES`): a `conflict` event (roadmap H274 — a peer's capture
+    disagreed at import time) lives in the same ledger and is readable on the
+    per-item `scrolls history` timeline, but it must **not** become a drift posture
+    (a peer disagreement is not evidence the live *source* moved — the M2 honesty),
+    so the MAX(id) is taken over the verify rows only. An item carrying only a
+    conflict event therefore reads `unverified` (never re-checked), and a conflict
+    appended *after* a `drifted` verdict never overrides it.
     """
+    placeholders = ", ".join("?" for _ in CUSTODY_STATUSES)
     rows = _query_events(
         db_path,
         "SELECT * FROM custody_events WHERE id IN "
-        "(SELECT MAX(id) FROM custody_events GROUP BY item_id)",
+        f"(SELECT MAX(id) FROM custody_events WHERE status IN ({placeholders}) "
+        "GROUP BY item_id)",
+        tuple(CUSTODY_STATUSES),
     )
     return {row["item_id"]: _from_row(row) for row in rows}
 

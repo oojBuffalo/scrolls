@@ -430,6 +430,96 @@ def test_latest_events_empty_ledger(tmp_path):
     assert latest_events(db_path) == {}
 
 
+# --- conflict events: a distinct provenance-of-divergence axis (H274) -------
+
+
+def test_conflict_event_records_held_vs_incoming_hash():
+    # the conflict-axis counterpart of verify_item: pure given `now`, it stamps a
+    # `conflict` status with prior_hash = what we hold, observed_hash = the
+    # incoming capture that disagreed (the verify-event field semantics reused, so
+    # every serializer carries it unchanged).
+    event = custody.conflict_event(
+        "web:a",
+        held_hash="sha256:held",
+        incoming_hash="sha256:incoming",
+        now="2026-06-22T00:00:00+00:00",
+    )
+    assert event.item_id == "web:a"
+    assert event.status == custody.CONFLICT_STATUS == "conflict"
+    assert event.prior_hash == "sha256:held"
+    assert event.observed_hash == "sha256:incoming"
+    assert event.checked_at == "2026-06-22T00:00:00+00:00"
+    assert event.detail and "conflict" in event.detail.lower()
+    # the export/history serializers carry it with no special-casing (the field
+    # semantics are the verify event's), so it round-trips like any other event
+    assert event_from_dict(event_export_dict(event)) == event
+
+
+def test_conflict_event_is_excluded_from_the_drift_posture(tmp_path):
+    # the decision the slice resolves: an import conflict is a *distinct* axis, not
+    # a verify verdict — a peer's capture disagreeing is no evidence the live
+    # *source* moved (the M2 honesty). So a conflict event lives in the ledger but
+    # `latest_events` (the drift posture every surface folds) reads only the verify
+    # verdicts: an item with *only* a conflict event reads `unverified`.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h2", now="2026-06-22T00:00:00+00:00"
+        )
+    ])
+    assert "web:a" not in latest_events(db_path)  # not a drift verdict
+    assert custody.drift_posture(latest_events(db_path).get("web:a")) == "unverified"
+    # …yet the event *is* on the per-item ledger timeline (queryable history)
+    assert [e.status for e in item_events(db_path, "web:a")] == ["conflict"]
+
+
+def test_a_conflict_appended_after_a_drift_never_overrides_it(tmp_path):
+    # the harder isolation case: an item that genuinely drifted (a verify verdict),
+    # then a *later* conflict event (higher id) — the drift posture must stay
+    # `drifted`. `latest_events` takes the MAX(id) over the verify rows only, so a
+    # conflict appended afterwards cannot mask the real drift verdict.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-20T00:00:00+00:00", "drifted", "h", "h2"),
+    ])
+    record_events(db_path, [
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h3", now="2026-06-22T00:00:00+00:00"
+        )
+    ])
+    assert latest_events(db_path)["web:a"].status == "drifted"
+    assert custody.drift_posture(latest_events(db_path)["web:a"]) == "drifted"
+    # the whole ledger (both axes) still travels with the item for a handoff
+    assert [e.status for e in events_for_items(db_path, ["web:a"])] == [
+        "drifted",
+        "conflict",
+    ]
+
+
+def test_item_history_status_filters_to_conflict_events(tmp_path):
+    # H274: `history --status conflict` is a first-class filter — the conflict
+    # status joins the closed `LEDGER_STATUSES` vocabulary the per-item timeline
+    # validates against, beside the four verify verdicts.
+    db_path = tmp_path / "db.sqlite"
+    init_db(db_path)
+    record_events(db_path, [
+        CustodyEvent("web:a", "2026-06-20T00:00:00+00:00", "drifted", "h", "h2"),
+        custody.conflict_event(
+            "web:a", held_hash="h", incoming_hash="h3", now="2026-06-22T00:00:00+00:00"
+        ),
+    ])
+    assert "conflict" in custody.LEDGER_STATUSES
+    only_conflicts = item_history(db_path, "web:a", status="conflict")
+    assert [e["status"] for e in only_conflicts] == ["conflict"]
+    assert only_conflicts[0]["observed_hash"] == "h3"
+    # the drift filter excludes the conflict (the two axes never bleed together)
+    assert [e["status"] for e in item_history(db_path, "web:a", status="drifted")] == [
+        "drifted"
+    ]
+
+
 # --- last_checked primitive (the time axis of the per-item picture, H84) ---
 
 

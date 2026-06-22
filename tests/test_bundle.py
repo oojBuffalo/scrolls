@@ -2385,6 +2385,71 @@ def test_import_bundle_within_bundle_dup_with_divergent_content_conflicts_on_bot
     assert get_item(db, "wikipedia:en:SQLite").extracted_text == "The first capture."
 
 
+def test_import_bundle_records_a_conflict_as_a_custody_event(
+    scrolls_home, tmp_path, capsys
+):
+    # H274: the conflict-event recording rides the *shared* `_merge_items`, so the
+    # bundle importer gets it for free — a divergent held id surfaced as a conflict
+    # also lands on the ledger (held vs incoming `content_hash`), queryable via
+    # `scrolls history`. And it stays a *distinct* axis: the drift posture is
+    # untouched (a peer disagreement is not evidence the live source moved).
+    from scrolls.custody import drift_posture, item_events, latest_events
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    capsys.readouterr()
+    # the divergence is a recorded ledger event (the shared `_merge_items` H274 hook)
+    events = item_events(db, "wikipedia:en:SQLite")
+    assert [e.status for e in events] == ["conflict"]
+    assert events[0].prior_hash == "sha256:held"  # the kept copy
+    assert events[0].observed_hash == "sha256:moved"  # the incoming bundle row
+    # distinct axis: the conflict never enters the drift posture
+    assert drift_posture(latest_events(db).get("wikipedia:en:SQLite")) == "unverified"
+
+
+def test_import_bundle_dry_run_records_no_conflict_event(
+    scrolls_home, tmp_path, capsys
+):
+    # the dry-run *predicts* the conflict (H273) but writes nothing — including the
+    # ledger: `_preview_merge_items` is the read-only twin, so a preview leaves no
+    # conflict event behind even though it warns and names the conflicting id. Only
+    # the live import (the writing `_merge_items`) records.
+    from scrolls.custody import item_events
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite", "The original capture.",
+        content_hash="sha256:held",
+    ))
+    divergent = make_item(
+        "wikipedia:en:SQLite", "SQLite", "A different, later capture.",
+        content_hash="sha256:moved",
+    )
+    bundle_path = tmp_path / "incoming.md"
+    bundle_path.write_text(_items_only_bundle([divergent]), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["conflict"] == 1  # the preview predicts the conflict…
+    # …but the ledger is untouched — no event written by the dry-run
+    assert item_events(db, "wikipedia:en:SQLite") == []
+
+
 # --- scope, completeness, honesty ------------------------------------------
 
 

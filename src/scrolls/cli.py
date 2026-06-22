@@ -27,7 +27,9 @@ from scrolls.bundle import (
 from scrolls.classify import classify_item, stale_classifications
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
-    CUSTODY_STATUSES,
+    LEDGER_STATUSES,
+    CustodyEvent,
+    conflict_event,
     custody_counts,
     drift_posture,
     dump_events_export,
@@ -448,11 +450,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history_parser.add_argument(
         "--status",
-        choices=CUSTODY_STATUSES,
+        choices=LEDGER_STATUSES,
         default=None,
-        help="Only checks with this verdict (unchanged/drifted/rotted/error) — "
-        "e.g. the times this source actually drifted; composes with "
-        "--since/--limit (verdict, then window, then cap)",
+        help="Only events with this status (unchanged/drifted/rotted/error, or "
+        "the import-time conflict) — e.g. the times this source actually drifted, "
+        "or every divergent re-import; composes with --since/--limit (status, "
+        "then window, then cap)",
     )
 
     import_parser = subparsers.add_parser(
@@ -1841,9 +1844,22 @@ def _merge_items(
     conflict`` by construction, and ``conflicts`` is the sorted, deduped,
     **uncapped** distinct ids whose held copy diverged — the M2 structured-
     completeness twin of the bounded `_warn_conflicts` stderr line.
+
+    Each conflict is also **recorded** as a custody event on the held item (roadmap
+    H274): a divergence is no longer just a transient warning the next import
+    re-detects from scratch — it joins the append-only ledger as a typed ``conflict``
+    event (held vs incoming `content_hash`, stamped at import time), queryable on the
+    per-item `scrolls history` timeline. It is a *distinct* provenance-of-divergence
+    axis, not a verify verdict, so it never enters the drift posture (`latest_events`
+    reads only the verify verdicts) — the M2 honesty that a peer disagreement is not
+    evidence the live source moved. A clean import records nothing (`record_events`
+    no-ops on the empty list); this is the live, writing path, so the read-only
+    `_preview_merge_items` deliberately does **not** record.
     """
     counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0}
     conflict_ids: set[str] = set()
+    events: list[CustodyEvent] = []
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for item in items:
         outcome = merge_item(db_path, item)
         if outcome == "imported":
@@ -1853,6 +1869,21 @@ def _merge_items(
             counts[outcome] += 1
             if outcome == "conflict":
                 conflict_ids.add(item.id)
+                # the held copy (the kept, never-overwritten row) is what the
+                # incoming capture diverged from — record both hashes so `history`
+                # answers "what disagreed, and when". `held` is non-None barring a
+                # concurrent delete (merge_item just read it); the `.content_hash`
+                # falls back to None defensively rather than crash the import.
+                held = get_item(db_path, item.id)
+                events.append(
+                    conflict_event(
+                        item.id,
+                        held_hash=held.content_hash if held is not None else None,
+                        incoming_hash=item.content_hash,
+                        now=now,
+                    )
+                )
+    record_events(db_path, events)
     return counts, sorted(conflict_ids)
 
 

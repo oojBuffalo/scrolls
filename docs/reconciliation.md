@@ -97,10 +97,44 @@ writing), so an operator merging a peer's bundle can review the divergences befo
 committing — and a within-bundle duplicate that disagrees with itself classifies
 identically on both paths (H273).
 
-A future slice (H274) can lift the conflict into a custody ledger *event* (the
-bi-temporal captured-at vs source-changed-at framing) and offer an explicit,
-reviewed resolution (`reconcile`), but the load-bearing primitive — *surface,
-don't overwrite* — ships first and is tested
-(`test_import_items_surfaces_a_content_conflict` and siblings in
+### Shipped: a conflict is a recorded custody event (H274, ADR 0104)
+
+A surfaced conflict is no longer just a transient warning the next import
+re-detects from scratch: it now **joins the append-only custody ledger** (ADR
+0098) as a typed `conflict` event on the held item, queryable on the per-item
+`scrolls history` timeline (`scrolls history <id> --status conflict`). The event
+carries `prior_hash` = the held copy we keep and `observed_hash` = the incoming
+capture that disagreed, stamped at import time — "another capture of this id
+disagreed with mine, observed at import time" (the bi-temporal captured-at vs
+source-changed-at signal, now grounded by the concrete merge-a-peer's-bundle
+workflow). It rides the shared `cli._merge_items`, so both lossless importers
+record it for free; the bundle `--dry-run` predicts the conflict but, being
+read-only, records nothing.
+
+The design decision ADR 0104 resolves: an import conflict is a **distinct
+provenance-of-divergence axis**, *not* a verify-drift. The drift axis means "the
+live **source** moved" — known only by re-capturing through the adapter
+(`verify`); an import conflict involves no source re-capture, only a peer
+disagreeing, so claiming the source `drifted` would be fabrication (the M2
+honesty). The isolation is total: `custody.latest_events` reads only the verify
+verdicts, so a `conflict` event never enters the drift posture — `doctor`'s
+`custody.drift`, `list/search --drift`, the scope headlines and `works` aggregate
+are all unaffected, an item with only a conflict reads `unverified`, and a
+conflict appended after a real `drifted` verdict never masks it.
+
+Tested: `test_conflict_event_records_held_vs_incoming_hash`,
+`test_conflict_event_is_excluded_from_the_drift_posture`,
+`test_a_conflict_appended_after_a_drift_never_overrides_it`, and
+`test_item_history_status_filters_to_conflict_events` in `tests/test_custody.py`;
+`test_import_items_records_a_conflict_as_a_custody_event` and
+`test_import_items_clean_reimport_records_no_event` in `tests/test_cli.py`;
+`test_import_bundle_records_a_conflict_as_a_custody_event` and
+`test_import_bundle_dry_run_records_no_conflict_event` in `tests/test_bundle.py`.
+The earlier *surface, don't overwrite* primitive remains tested by
+`test_import_items_surfaces_a_content_conflict` and siblings in
 `tests/test_cli.py`; `test_import_bundle_surfaces_a_content_conflict` and the
-dry-run-prediction / within-bundle-dup siblings in `tests/test_bundle.py`).
+dry-run-prediction / within-bundle-dup siblings in `tests/test_bundle.py`.
+
+A reviewed `reconcile` resolution (choose a winner, record the supersession) and
+a `doctor` scope-level conflict aggregate remain deferred (ADR 0104): detection
+ships first, the obsidian *surface, don't rewrite* posture.

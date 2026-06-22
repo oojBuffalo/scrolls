@@ -3703,6 +3703,74 @@ def test_merge_item_classifies_the_insert_outcome(scrolls_home):
     assert get_item(db, "web:new").content_hash == fresh.content_hash
 
 
+def test_import_items_records_a_conflict_as_a_custody_event(
+    scrolls_home, tmp_path, capsys
+):
+    """H274: a surfaced import conflict is no longer just a transient warning — it
+    joins the append-only ledger as a typed `conflict` event on the held item
+    (held vs incoming `content_hash`, stamped at import time), queryable on the
+    per-item `scrolls history` timeline. Crucially it is a *distinct* axis: it
+    never moves the item's drift posture (a peer disagreement is not evidence the
+    live source moved — the M2 honesty)."""
+    from scrolls.custody import drift_posture, item_events, latest_events
+    from scrolls.items_export import dump_items_export
+
+    _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    capsys.readouterr()
+    held = get_item(db, "arxiv:1706.03762")
+    divergent = dataclasses.replace(
+        held, content_hash="sha256:moved", extracted_text="A different capture…"
+    )
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([divergent]), encoding="utf-8")
+
+    assert main(["import", "items", str(out_path)]) == 0
+    capsys.readouterr()
+
+    # the divergence is now a recorded ledger event, not just a printed warning
+    events = item_events(db, "arxiv:1706.03762")
+    assert [e.status for e in events] == ["conflict"]
+    conflict = events[0]
+    assert conflict.prior_hash == "sha256:abc"  # what we hold (the kept copy)
+    assert conflict.observed_hash == "sha256:moved"  # the incoming capture
+    assert conflict.detail and "conflict" in conflict.detail.lower()
+
+    # the conflict is a *distinct* axis — the drift posture stays `unverified`
+    # (never re-checked against the live source); doctor's drift block, which folds
+    # `latest_events`, is wholly unaffected by the conflict event
+    assert drift_posture(latest_events(db).get("arxiv:1706.03762")) == "unverified"
+    report = run_doctor(get_paths(), fix=False)
+    assert report["custody"]["drift"]["checked"] == 0
+    assert report["custody"]["drift"]["drifted"] == 0
+
+    # the event is reachable straight from the CLI `scrolls history --status conflict`
+    assert main(["history", "arxiv:1706.03762", "--status", "conflict"]) == 0
+    timeline = json.loads(capsys.readouterr().out)
+    assert [e["status"] for e in timeline] == ["conflict"]
+    assert timeline[0]["observed_hash"] == "sha256:moved"
+
+
+def test_import_items_clean_reimport_records_no_event(scrolls_home, tmp_path, capsys):
+    """A clean (idempotent) re-import writes no ledger noise — `record_events`
+    no-ops on the empty conflict list, so only a genuine divergence leaves a
+    trace (the verify ledger's append-only honesty, conflict axis)."""
+    from scrolls.custody import item_events
+    from scrolls.items_export import dump_items_export
+
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    capsys.readouterr()
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(dump_items_export([seeded]), encoding="utf-8")
+
+    assert main(["import", "items", str(out_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["unchanged"] == 1 and payload["conflict"] == 0
+    # an idempotent re-import is a custody no-op — nothing recorded
+    assert item_events(db, "arxiv:1706.03762") == []
+
+
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):
     main(["init"])
     capsys.readouterr()
