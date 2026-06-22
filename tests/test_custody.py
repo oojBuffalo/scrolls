@@ -610,6 +610,56 @@ def test_unresolved_conflicts_excludes_a_since_deleted_item(tmp_path):
     assert custody.unresolved_conflicts([], custody.latest_conflict_events(db_path)) == {}
 
 
+# --- render_custody_conflicts: the readable `_Conflicts:_` line (roadmap H277) ---
+# The readable completion of the `custody.conflicts` aggregate: folds the same
+# `unresolved_conflicts` predicate the doctor block reads, so the line's count and
+# the JSON `items` cannot disagree. Names no command (the `reconcile` act is H276).
+
+
+def _conflict_at(item_id, *, held, incoming):
+    return custody.conflict_event(
+        item_id, held_hash=held, incoming_hash=incoming,
+        now="2026-06-22T00:00:00+00:00")
+
+
+def test_render_custody_conflicts_counts_the_unresolved_held_divergences():
+    # two held items with an open divergence → one `_Conflicts:_` line naming the
+    # count, with the trailing blank for splicing (the H159/H264 renderer shape)
+    items = [_item("web:a", content_hash="held"), _item("web:b", content_hash="held")]
+    conflicts = {
+        "web:a": _conflict_at("web:a", held="held", incoming="moved"),
+        "web:b": _conflict_at("web:b", held="held", incoming="moved"),
+    }
+    assert custody.render_custody_conflicts(items, conflicts) == [
+        "_Conflicts: 2 item(s) carry an unresolved import conflict._",
+        "",
+    ]
+
+
+def test_render_custody_conflicts_is_resolution_aware_and_held_filtered():
+    # a resolved conflict (held copy now matches the incoming) and a conflict on an
+    # out-of-scope id both drop out via `unresolved_conflicts`, so the only counted
+    # divergence is the genuinely-open held one
+    items = [_item("web:a", content_hash="held"), _item("web:b", content_hash="moved")]
+    conflicts = {
+        "web:a": _conflict_at("web:a", held="old", incoming="moved"),    # open
+        "web:b": _conflict_at("web:b", held="old", incoming="moved"),    # resolved
+        "web:gone": _conflict_at("web:gone", held="x", incoming="y"),    # not held
+    }
+    assert custody.render_custody_conflicts(items, conflicts) == [
+        "_Conflicts: 1 item(s) carry an unresolved import conflict._",
+        "",
+    ]
+
+
+def test_render_custody_conflicts_honest_no_op_when_nothing_unresolved():
+    assert custody.render_custody_conflicts([], {}) == []
+    items = [_item("web:a", content_hash="held")]
+    # a resolved conflict only → honest absence (no line)
+    conflicts = {"web:a": _conflict_at("web:a", held="old", incoming="held")}
+    assert custody.render_custody_conflicts(items, conflicts) == []
+
+
 # --- last_checked primitive (the time axis of the per-item picture, H84) ---
 
 

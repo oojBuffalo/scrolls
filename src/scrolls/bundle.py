@@ -93,10 +93,13 @@ from scrolls.custody import (
     dump_events_export,
     event_from_dict,
     events_for_items,
+    latest_conflict_events,
     latest_events,
     render_custody_attention,
     render_custody_by_source,
+    render_custody_conflicts,
     render_custody_refresh,
+    unresolved_conflicts,
     weakest_source,
 )
 from scrolls.generated import GENERATED_END, fence, generated_bodies, generated_body
@@ -148,6 +151,7 @@ code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px
 .custody-headline { font-weight: 600; }
 .custody-attention { font-weight: 600; color: #b3261e; }
 .custody-at-risk { font-weight: 600; color: #b3261e; }
+.custody-conflicts { font-weight: 600; color: #b3261e; }
 .custody-refresh { font-weight: 600; color: #9a6700; }
 .note { color: #6a6a6a; font-size: .85rem; }
 .custody-facts { list-style: none; padding-left: 0; }
@@ -331,6 +335,19 @@ def build_bundle(
     # construction; honest no-op when no multi-representation work in scope is at
     # risk ([] lines).
     lines += render_at_risk_works(items, verdicts)
+    # the readable import-conflict pointer (roadmap H277): one `_Conflicts:_` line
+    # naming how many held items in scope carry an *unresolved import conflict* (a
+    # peer's capture disagreed with the held copy at merge time, ADR 0104, still
+    # open — raw is never auto-overwritten) — the readable completion of H275's JSON
+    # `custody.conflicts` aggregate, beside the drift `_Attention:_` and
+    # consolidation `_At-risk work:_` divergence lines above. Folds the *same*
+    # `unresolved_conflicts` over the *same* `latest_conflict_events` map `doctor`'s
+    # `custody.conflicts` reads, so the count converges with the JSON block for the
+    # same scope by construction; names no command (the `reconcile` act is H276,
+    # the at-risk orphan-command discipline); honest no-op when no held item in
+    # scope carries an unresolved conflict ([] lines).
+    conflicts = latest_conflict_events(db_path) if items else {}
+    lines += render_custody_conflicts(items, conflicts)
     # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
     # naming the source(s) whose classifications/summaries are stale and the exact
     # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-
@@ -453,6 +470,13 @@ def build_bundle_html(
     # so the two forms (and `doctor`'s `custody.works`) name the same work; honest
     # no-op when no multi-representation work in scope is at risk
     body += _at_risk_html(items, verdicts)
+    # the readable import-conflict pointer (roadmap H277), the HTML twin of the
+    # Markdown `_Conflicts:_` line — distilled by the *same* `unresolved_conflicts`
+    # over the same `latest_conflict_events` map, so the two forms (and `doctor`'s
+    # `custody.conflicts`) report the same count; grouped with the divergence lines
+    # above and below `_refresh_html` (the Markdown order); honest no-op when no held
+    # item in scope carries an unresolved conflict
+    body += _conflicts_html(db_path, items)
     # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
     # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
     # the two forms name the same sources; honest no-op when no source carries
@@ -561,6 +585,29 @@ def _at_risk_html(
         f"<code>{html.escape(entry['doi'])}</code> — "
         f"{html.escape(entry['reason'])}; "
         f"{signal['at_risk']} work(s) at risk.</p>"
+    ]
+
+
+def _conflicts_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
+    """The HTML twin of the Markdown `_Conflicts:_` line (roadmap H277).
+
+    Over the *same* `unresolved_conflicts` predicate against the same
+    `latest_conflict_events` map the Markdown `render_custody_conflicts` and the JSON
+    `doctor`'s `custody.conflicts` read, so the three surfaces report the same count
+    of held items carrying an unresolved import conflict by construction. Returns []
+    on honest absence — exactly when no held item in scope carries an unresolved
+    conflict — like the Markdown no-op. The count is an integer, but the static text
+    is escaped for safety regardless, like `_attention_html`. Names no command (the
+    `reconcile` act is roadmap H276, the at-risk orphan-command discipline).
+    """
+    if not items:
+        return []
+    count = len(unresolved_conflicts(items, latest_conflict_events(db_path)))
+    if count == 0:
+        return []
+    return [
+        f'<p class="custody-conflicts">Conflicts: {count} '
+        "item(s) carry an unresolved import conflict.</p>"
     ]
 
 

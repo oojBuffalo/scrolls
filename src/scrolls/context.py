@@ -52,9 +52,11 @@ from scrolls.custody import (
     custody_headline,
     drift_posture,
     last_checked,
+    latest_conflict_events,
     latest_events,
     render_custody_attention,
     render_custody_by_source,
+    render_custody_conflicts,
     render_custody_refresh,
     render_fidelity_holdings,
 )
@@ -266,6 +268,22 @@ def build_context(
         # folded into one canonical in `items`, so its full custody picture — and
         # whether any representation is safely held — lives in the whole matched set.
         lines += render_at_risk_works(scope_items, verdicts)
+        # the readable import-conflict pointer (roadmap H277): one `_Conflicts:_`
+        # line naming how many held items in scope carry an *unresolved import
+        # conflict* (a peer's capture disagreed with the held copy at merge time,
+        # ADR 0104, still open) — the readable completion of H275's JSON
+        # `custody.conflicts` aggregate, beside the drift `_Attention:_` and
+        # consolidation `_At-risk work:_` divergence lines above. Folds the *same*
+        # `unresolved_conflicts` over the same `latest_conflict_events` map `doctor`'s
+        # `custody.conflicts` reads, so the count converges with the JSON block for
+        # the same scope by construction. Gated to `connected`+ with the headline
+        # (the `index` tier reads no ledger, so it makes no conflict claim); folded
+        # over the per-*item* `items` (the collapsed kept set the headline/`_Attention:_`
+        # use — a conflict is a per-item custody fact, not a work-consolidation one);
+        # names no command (the `reconcile` act is H276, the at-risk orphan-command
+        # discipline); honest no-op when no held item in scope carries an unresolved
+        # conflict ([] lines).
+        lines += render_custody_conflicts(items, latest_conflict_events(db_path))
         # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
         # line naming the source(s) whose classifications/summaries are stale and
         # the exact `classify --stale`/`kb --stale --source <S>` refresh — the

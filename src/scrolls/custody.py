@@ -1339,6 +1339,54 @@ def render_custody_attention(
     return [line, ""]
 
 
+def render_custody_conflicts(
+    items: list[ScrollItem], conflicts: dict[str, CustodyEvent]
+) -> list[str]:
+    """The readable `_Conflicts:_` line for a briefing (roadmap H277).
+
+    The import-conflict-axis counterpart of the drift `_Attention:_` line
+    (`render_custody_attention`, H159) and the work-level `_At-risk work:_` line
+    (`works.render_at_risk_works`, H264): the **readable completion** of H275's JSON
+    `custody.conflicts` aggregate. Where the drift line names the source whose *live
+    source moved*, this names how many held items carry an *unresolved import
+    conflict* — a peer's capture of an id disagreed with the held copy at merge time
+    (ADR 0104) and the divergence is still open (the held copy is never
+    auto-overwritten — raw is sacred). So an agent skimming the `export
+    bundle`/`scrolls context` briefing reads "N items carry an unresolved import
+    conflict" without re-running `doctor`:
+
+        ``_Conflicts: N item(s) carry an unresolved import conflict._``
+
+    Folds the *same* `unresolved_conflicts` predicate over the *same*
+    `latest_conflict_events` map `doctor`'s `custody.conflicts`
+    (`doctor._check_custody_conflicts`) reads, so the count converges field-for-field
+    with that JSON block / `doctor` for the same scope by construction. Held-filtered
+    by `unresolved_conflicts` (a conflict on a since-deleted id is dropped) and
+    scope-relative to the briefing's own `items` (the per-*item* custody axis the
+    headline and `_Attention:_` line fold, not the work axis), so a conflict counts
+    here exactly when its held item is in scope.
+
+    Names **no command** — unlike `_Attention:_`/`_Refresh:_`, which point at an
+    existing recheck/refresh act. The resolution act, a reviewed `reconcile` (roadmap
+    H276), does not exist yet, so fabricating a command would violate the
+    `at_risk_signal` orphan-command discipline (a readable pointer never names an act
+    the CLI cannot perform). The line surfaces the count; the per-item detail lives on
+    `doctor`'s `custody.conflicts.events` and ``scrolls history <id> --status
+    conflict``.
+
+    Returns ``[line, ""]`` (the line plus a trailing blank) so a caller splices it
+    straight in beside the other custody pointers. Returns ``[]`` on honest absence —
+    exactly when no held item in scope carries an unresolved conflict (a clean or
+    never-merged-with-a-peer scope), the same no-op the `_Attention:_`/`_At-risk
+    work:_` lines take.
+    """
+    count = len(unresolved_conflicts(items, conflicts))
+    if count == 0:
+        return []
+    line = f"_Conflicts: {count} item(s) carry an unresolved import conflict._"
+    return [line, ""]
+
+
 def render_custody_refresh(
     enrichment_by_source: dict[str, int],
     summary_by_source: dict[str, int],

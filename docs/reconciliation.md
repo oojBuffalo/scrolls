@@ -191,3 +191,56 @@ A reviewed `reconcile` resolution (choose a winner, record the supersession)
 remains deferred (ADR 0104, roadmap H276): detection → read ship first, the
 obsidian *surface, don't rewrite* posture; a readable `_Conflicts:_` briefing line
 is the next adjacent read.
+
+## Shipped: a readable `_Conflicts:_` briefing line (H277, ADR 0104)
+
+H275 put the import-conflict aggregate on `doctor`'s `custody.conflicts` JSON read
+(and the MCP `get_library_health` twin), but the **readable briefings an agent
+skims** — the shareable `export bundle` (both Markdown and HTML forms) and the
+`scrolls context` briefing — carried only the per-item drift/source headlines,
+never the scope-level conflict count. The three briefings now render a one-line
+conflict pointer beside the existing custody headline and the `_Attention:_` /
+`_At-risk work:_` / `_Refresh:_` lines:
+
+```text
+_Conflicts: 1 item(s) carry an unresolved import conflict._
+```
+
+and its HTML twin `<p class="custody-conflicts">Conflicts: 1 item(s) carry an
+unresolved import conflict.</p>`. It is the **conflict-axis counterpart of the
+drift `_Attention:_` line** (`custody.render_custody_attention`, H159) and the
+work-level `_At-risk work:_` line (`works.render_at_risk_works`, H264): the
+readable completion of H275's JSON aggregate.
+
+Design decisions:
+
+- **Converges by construction.** The line folds the *same* `unresolved_conflicts`
+  predicate over the *same* `latest_conflict_events` map `doctor`'s
+  `custody.conflicts` reads (the shared `custody.render_custody_conflicts` helper),
+  so the readable count and the JSON `items` cannot disagree for the same scope.
+- **Names no command.** Unlike `_Attention:_`/`_Refresh:_`, which point at an
+  existing recheck/refresh act, the conflict resolution act — a reviewed
+  `reconcile` (H276) — does not exist yet, so the line surfaces the *count* only;
+  fabricating a command would violate the `at_risk_signal` orphan-command
+  discipline (the per-item detail lives on `doctor`'s `custody.conflicts.events`
+  and `scrolls history <id> --status conflict`).
+- **Per-item axis, scope-relative.** Folded over the briefing's own `items` (the
+  per-item custody axis the headline and `_Attention:_` line use — a conflict is a
+  per-item fact, not a work consolidation), held-filtered by `unresolved_conflicts`.
+- **Gated like the headline.** In `context`, the line is gated to the
+  `connected`/`full` budget tiers — the leanest `index` tier reads no ledger, so it
+  makes no conflict claim (the M2 anti-fabrication gate). Export-only on the bundle:
+  a derived read view, never inside the lossless `@generated` JSONL fence, so the
+  round-trip is untouched.
+- **Honest absence.** No line when no held item in scope carries an unresolved
+  conflict (a clean or never-merged-with-a-peer scope), the `_Attention:_`/`_At-risk
+  work:_` no-op shape — and a *resolved* conflict (the held copy now matches the
+  incoming hash) drops out via the resolution-aware predicate.
+
+Tested: `tests/test_bundle.py` (Markdown carries-the-line + doctor convergence +
+clean/resolution-aware/round-trip no-ops; HTML twin + clean no-op),
+`tests/test_context.py` (carries-the-line + doctor convergence + `index` gate +
+`connected` presence + clean no-op + MCP parity), and the
+`render_custody_conflicts` unit tests in `tests/test_custody.py` (count,
+held-filter + resolution-aware, honest no-op). A reviewed `reconcile` resolution
+(H276) remains the last deferred leg of the theme.

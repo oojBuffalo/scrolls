@@ -1532,6 +1532,116 @@ def test_context_at_risk_work_line_mcp_parity(scrolls_home):
     )
 
 
+# --- readable import-conflict `_Conflicts:_` line (roadmap H277) --------------
+# The readable completion of H275's JSON `custody.conflicts` aggregate (ADR 0104):
+# the conflict-axis counterpart of the drift `_Attention:_` line, gated to
+# `connected`+ like the headline (a ledger read), naming no command (the `reconcile`
+# act is roadmap H276). Honest absence when no held item carries an unresolved
+# import conflict.
+
+
+def _record_conflict(db, item_id, *, held, incoming):
+    """Record an unresolved import-conflict event on a held item (H274 shape)."""
+    from scrolls.custody import conflict_event
+
+    record_events(
+        db,
+        [conflict_event(
+            item_id, held_hash=held, incoming_hash=incoming,
+            now="2026-06-22T00:00:00+00:00")],
+    )
+
+
+def test_context_carries_a_conflicts_line(scrolls_home, capsys):
+    # roadmap H277: a held item carrying an unresolved import conflict surfaces one
+    # `_Conflicts:_` line in the model-facing bundle
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Conflicts: 1 item(s) carry an unresolved import conflict._" in out
+    assert out.index("_Conflicts:") > out.index("_Custody:")
+
+
+def test_context_conflicts_line_converges_with_doctor(scrolls_home, capsys):
+    # the line folds the *same* `unresolved_conflicts` `doctor`'s `custody.conflicts`
+    # reads, so the readable count and the JSON aggregate cannot disagree
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "B.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:Postgres", "Postgres database", "B.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    _record_conflict(db, "wikipedia:en:Postgres", held="deadbeef", incoming="moved")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    items = run_doctor(get_paths())["custody"]["conflicts"]["items"]
+    assert items == 2
+    assert f"_Conflicts: {items} item(s) carry an unresolved import conflict._" in out
+
+
+def test_context_conflicts_line_gated_off_index(scrolls_home, capsys):
+    # the `index` tier reads no ledger, so it makes no conflict claim (the H47 gate),
+    # exactly like the headline/`_Attention:_`/`_At-risk work:_` lines
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Conflicts:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_conflicts_line_present_from_connected_up(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_Conflicts: 1 item(s) carry an unresolved import conflict._" in out
+
+
+def test_context_conflicts_line_omitted_when_clean(scrolls_home, capsys):
+    # no recorded conflict → honest absence (the no-op shape)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_Conflicts:" not in out
+
+
+def test_context_conflicts_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the conflict line rides
+    # MCP identically (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+
+    bundle = get_context_bundle("database")
+    assert "_Conflicts: 1 item(s) carry an unresolved import conflict._" in bundle
+
+
 # --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
 #
 # The enrichment/summary-axis counterpart of `_Attention:_` on the model-facing

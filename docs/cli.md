@@ -561,6 +561,34 @@ H97), and honest absence — no line — when no multi-representation work is at
 `test_kb_group_pages_omit_the_at_risk_work_line`,
 `test_kb_at_risk_work_line_is_refresh_safe`).
 
+Grouped with those divergence lines, the `export bundle` and `scrolls context`
+briefings carry a **`_Conflicts:_` line** (roadmap H277) — the readable completion
+of `doctor`'s `custody.conflicts` JSON aggregate (H275, ADR 0104), the
+**import-conflict-axis counterpart** of the drift `_Attention:_` line. Where
+`_Attention:_` names the source whose *live source moved*, this names how many held
+items carry an *unresolved import conflict* — a peer's capture of an id disagreed
+with the held copy at merge time, and the divergence is still open (the held copy is
+never auto-overwritten — raw is sacred): `_Conflicts: N item(s) carry an unresolved
+import conflict._`, with the HTML twin `<p class="custody-conflicts">Conflicts: N
+item(s) carry an unresolved import conflict.</p>`. It folds the *same*
+`custody.unresolved_conflicts` predicate over the same `custody.latest_conflict_events`
+map `doctor`'s `custody.conflicts` reads (the shared `custody.render_custody_conflicts`
+helper), so the readable count and the JSON `items` cannot disagree for the same
+scope. Unlike `_Attention:_`/`_Refresh:_`, it names **no command** — the resolution
+act, a reviewed `reconcile` (roadmap H276), does not exist yet, so the line surfaces
+the count only (fabricating a command would violate the orphan-command discipline;
+the per-item detail lives on `doctor`'s `custody.conflicts.events` and `scrolls
+history <id> --status conflict`). Folded over the briefing's own `items` (the
+per-*item* custody axis the headline and `_Attention:_` line use — a conflict is a
+per-item fact, not a work consolidation), gated to `connected`+ on `scrolls context`
+like the headline (the `index` tier reads no ledger), and **export-only** on the
+bundle (a derived read view, never inside the lossless `@generated` JSONL fence, so
+the round-trip is untouched). Honest absence — omitted entirely when no held item in
+scope carries an unresolved conflict, and a *resolved* conflict (the held copy now
+matches the incoming hash) drops out via the resolution-aware predicate
+(`test_bundle_carries_a_conflicts_line`, `test_conflicts_line_converges_with_doctor`,
+`test_conflicts_line_is_resolution_aware`, `test_context_conflicts_line_mcp_parity`).
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the

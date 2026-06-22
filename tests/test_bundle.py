@@ -828,6 +828,125 @@ def test_bundle_html_at_risk_line_omitted_for_single_rep_and_empty_scope(scrolls
     )
 
 
+# --- readable import-conflict `_Conflicts:_` line (roadmap H277) --------------
+# The readable completion of H275's JSON `custody.conflicts` aggregate (ADR 0104):
+# a one-line conflict-axis counterpart of the drift `_Attention:_` line, on both
+# bundle forms and the `context` briefing. A held id whose latest import-conflict's
+# incoming hash still disagrees with the held copy is *unresolved* (the held copy is
+# never auto-overwritten — raw is sacred); the line surfaces the count, names no
+# command (the `reconcile` act is roadmap H276).
+
+
+def _record_conflict(db, item_id, *, held, incoming):
+    """Record an unresolved import-conflict event on a held item (H274 shape)."""
+    from scrolls.custody import conflict_event
+
+    record_events(
+        db,
+        [conflict_event(
+            item_id, held_hash=held, incoming_hash=incoming,
+            now="2026-06-22T00:00:00+00:00")],
+    )
+
+
+def test_bundle_carries_a_conflicts_line(scrolls_home):
+    # roadmap H277: a held item carrying an unresolved import conflict surfaces one
+    # `_Conflicts:_` line — the readable completion of H275's `custody.conflicts`.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    bundle = build_bundle(db, "database")
+    assert "_Conflicts: 1 item(s) carry an unresolved import conflict._" in bundle
+    # grouped with the divergence lines, below the scope custody headline
+    assert bundle.index("_Conflicts:") > bundle.index("_Custody:")
+
+
+def test_conflicts_line_converges_with_doctor(scrolls_home):
+    # the line's count is the *same* `unresolved_conflicts` fold `doctor`'s
+    # `custody.conflicts` reads, so the readable line and the JSON aggregate can
+    # never disagree for the same (whole-library) scope
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "B.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:Postgres", "Postgres database", "B.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    _record_conflict(db, "wikipedia:en:Postgres", held="deadbeef", incoming="moved")
+    bundle = build_bundle(db, "database")  # matches both held items
+    items = run_doctor(get_paths())["custody"]["conflicts"]["items"]
+    assert items == 2
+    assert f"_Conflicts: {items} item(s) carry an unresolved import conflict._" in bundle
+
+
+def test_conflicts_line_omitted_on_a_clean_library(scrolls_home):
+    # honest absence: no recorded conflict → no `_Conflicts:` line (the no-op shape)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    bundle = build_bundle(db, "database")
+    assert "_Custody:" in bundle
+    assert "_Conflicts:" not in bundle
+
+
+def test_conflicts_line_is_resolution_aware(scrolls_home):
+    # a conflict whose latest incoming hash equals the held copy's current
+    # content_hash is *resolved* — the resolution-aware predicate (H275) drops it, so
+    # the line is honestly absent (the future `reconcile` H276 clears it for free)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    # the recorded incoming hash now matches the held copy → no longer a divergence
+    _record_conflict(db, "wikipedia:en:SQLite", held="older", incoming="deadbeef")
+    bundle = build_bundle(db, "database")
+    assert "_Conflicts:" not in bundle
+
+
+def test_conflicts_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H264/H159 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    bundle = build_bundle(db, "database")
+    assert "_Conflicts:" in bundle
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+
+
+def test_bundle_html_carries_a_conflicts_line(scrolls_home):
+    # roadmap H277: the HTML briefing carries the same conflict pointer as the
+    # Markdown `_Conflicts:_` line, from the *same* `unresolved_conflicts` fold —
+    # so the two readable forms (and `doctor`'s JSON) cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    _record_conflict(db, "wikipedia:en:SQLite", held="deadbeef", incoming="moved")
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-conflicts">Conflicts: 1 '
+        "item(s) carry an unresolved import conflict.</p>" in doc
+    )
+
+
+def test_bundle_html_conflicts_line_omitted_on_a_clean_library(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    doc = build_bundle_html(db, "database")
+    assert "Custody:" in doc  # the headline still renders
+    assert '<p class="custody-conflicts">' not in doc
+    # empty scope is a no-op too
+    assert '<p class="custody-conflicts">' not in build_bundle_html(
+        db, "nothingmatcheshere"
+    )
+
+
 def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
     # roadmap H159: the HTML briefing carries the same pointer, from the same
     # `weakest_source`, so the two readable forms cannot desync
