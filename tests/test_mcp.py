@@ -1402,6 +1402,8 @@ _ZERO_WORKS_CUSTODY = {
               ("verified", "unverified", "drifted", "rotted", "error")},
     "by_source": {},  # no reps → the empty per-source split (roadmap H155)
     "attention": None,  # no sources → the honest-null weakest-source flag (roadmap H174)
+    # no works → the at-risk-works summary is the honest zeroed fold (roadmap H266)
+    "at_risk": {"total": 0, "at_risk": 0, "most_at_risk": None},
 }
 
 
@@ -1543,8 +1545,16 @@ def test_get_works_stats_custody_member_agrees_with_the_cli(scrolls_home):
     # the weakest-source flag (roadmap H174) rides the MCP twin too (shared
     # `to_payload`): the lean flag (no fabricated coverage) names the drifted arxiv
     expected["attention"] = weakest_source(expected["by_source"], include_coverage=False)
+    # the at-risk-works summary (roadmap H266) rides the MCP twin too (shared
+    # `to_payload`): the one work is at risk (its full copy drifted, no safely-held rep)
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, works_over
+
+    expected["at_risk"] = at_risk_signal(works_over(list_items(db)), latest_events(db))
     assert custody == expected
     assert expected["attention"]["source"] == "arxiv"
+    assert expected["at_risk"]["at_risk"] == 1
 
 
 def test_get_works_carries_the_aggregate_custody_block(scrolls_home):
@@ -1590,6 +1600,66 @@ def test_get_works_carries_the_aggregate_custody_block(scrolls_home):
     assert work["custody"] == work_custody(
         clustered.representations, latest_events(db)
     )
+
+
+def _seed_at_risk_works(db):
+    """Two at-risk works for the H266 stats summary: X (full+drifted) + Z (all ref).
+
+    Z (no content held anywhere) is the lowest-ceiling work; X holds a full copy that
+    has merely drifted. Y (safely held) is intentionally absent so `at_risk == total`.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id="arxiv:x", source="arxiv", source_id="x", url="https://arxiv.org/abs/x",
+        saved_at="2026-06-12T00:00:00+00:00", title="X",
+        links=("https://doi.org/10.1000/x",), stage="rendered",
+        raw_text="body", content_hash="sha256:a"))
+    insert_item(db, ScrollItem(
+        id="crossref:cx", source="crossref", source_id="10.1000/x",
+        url="https://doi.org/10.1000/x", saved_at="2026-06-12T00:00:00+00:00",
+        title="X", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="arxiv:z", source="arxiv", source_id="z", url="https://arxiv.org/abs/z",
+        saved_at="2026-06-12T00:00:00+00:00", title="Z",
+        links=("https://doi.org/10.3000/z",), stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="crossref:cz", source="crossref", source_id="10.3000/z",
+        url="https://doi.org/10.3000/z", saved_at="2026-06-12T00:00:00+00:00",
+        title="Z", stage="rendered"))
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:x", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+
+def test_get_works_stats_custody_at_risk_rides_the_mcp_twin(scrolls_home):
+    # H266: the MCP works twin carries the same `stats.custody.at_risk` summary the
+    # CLI does — both route through `works.to_payload`, so the fold is identical.
+    from scrolls.cli import main
+
+    main(["init"])
+    _seed_at_risk_works(get_paths().db_path)
+    at_risk = mcp_server.get_works()["stats"]["custody"]["at_risk"]
+    # both X (full+drifted) and Z (all-reference) are at risk; Z the lowest ceiling
+    assert at_risk["total"] == 2
+    assert at_risk["at_risk"] == 2
+    assert at_risk["most_at_risk"]["doi"] == "10.3000/z"
+    assert at_risk["most_at_risk"]["custody"]["best_fidelity"] == "reference"
+
+
+def test_get_works_stats_custody_at_risk_converges_with_get_library_health(scrolls_home):
+    # cross-surface invariant: the unscoped MCP `get_works` payload's
+    # `stats.custody.at_risk` equals `get_library_health()`'s `works` block (minus its
+    # `status`) — both fold the shared `at_risk_signal` over the same default 2+
+    # clustering and ledger, the MCP twin of the CLI works↔doctor convergence.
+    from scrolls.cli import main
+
+    main(["init"])
+    _seed_at_risk_works(get_paths().db_path)
+    at_risk = mcp_server.get_works()["stats"]["custody"]["at_risk"]
+    works_block = mcp_server.get_library_health()["works"]
+    assert at_risk == {k: v for k, v in works_block.items() if k != "status"}
 
 
 def test_get_works_item_lens_reports_one_items_work(scrolls_home):

@@ -669,6 +669,22 @@ def to_payload(
     `search`/`list`/`related --stats` envelopes and the `graph` stats block (H150).
     It sums to the whole `stats.custody` block beside it by construction (every rep
     lands in exactly one source group). An empty scope is the honest empty `{}`.
+
+    `stats.custody.at_risk` (roadmap H266) is the *scope-level at-risk-works summary*:
+    the `at_risk_signal` fold (`{total, at_risk, most_at_risk}`, H263) over the
+    **reported** works, beside `attention` in the same `stats.custody` loss-summary
+    family (`attention` being itself a scope-level custody-loss summary — a source
+    flag, not a rep tally). It is the works-surface counterpart of `doctor`'s
+    `custody.works` at-risk alarm, so a reader of any `works` payload sees "N of the
+    reported works are at risk; worst is `<doi>`" without a second `doctor` call. A
+    pure fold over the reported works, so it composes with the H262/H265 filters
+    (under `--at-risk`, `at_risk == total`; under `--fidelity full`, the at-risk subset
+    of the kept works) and `at_risk.total` equals `stats.works` beside it by
+    construction. It converges with `doctor`'s `custody.works` (and MCP
+    `get_library_health`) over the **same scope** field-for-field — the unscoped works
+    payload reports the same default 2+ clustering and ledger `doctor` audits, so the
+    two read the identical `{total, at_risk, most_at_risk}`. No schema change beyond
+    stats, no extra ledger read — the same `verdicts` the per-rep `drift` already folds.
     """
     verdicts = verdicts or {}
     # `stats.custody` over the reported works' representations (roadmap H100), and its
@@ -691,6 +707,18 @@ def to_payload(
     # shared `to_payload`). The browse-stats `by_source` carries no per-source
     # coverage (H155), so `include_coverage=False` keeps the flag honest.
     custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
+    # `stats.custody.at_risk` (roadmap H266): the scope-level at-risk-works summary —
+    # the `at_risk_signal` fold (`{total, at_risk, most_at_risk}`, H263) over the
+    # **reported** works, the works-surface counterpart of `doctor`'s `custody.works`
+    # alarm and the exact precedent of `attention` beside it (itself a scope-level
+    # custody-loss summary, not a rep tally). So a reader of any `works` payload sees
+    # "N of the reported works are at risk; worst is `<doi>`" without a second `doctor`
+    # call. A pure fold over the reported works, so it composes with the H262/H265
+    # filters (under `--at-risk`, `at_risk == total`; under `--fidelity full` it counts
+    # the at-risk subset of the kept works) and converges with `doctor`'s `custody.works`
+    # / `get_library_health` over the same scope by construction. No schema change beyond
+    # stats, no extra ledger read — the same `verdicts` the per-rep `drift` already folds.
+    custody["at_risk"] = at_risk_signal(works, verdicts)
     return {
         "scope": {key: value for key, value in scope.items() if value is not None},
         "works": [

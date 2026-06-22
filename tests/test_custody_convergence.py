@@ -3223,8 +3223,19 @@ def test_works_stats_custody_agrees_with_its_representations(scrolls_home, capsy
     assert main(["works"]) == 0
     payload = json.loads(capsys.readouterr().out)
     reps = [rep for work in payload["works"] for rep in work["representations"]]
-    # the envelope tally == the tally over the reported reps' own fidelity/drift
-    assert payload["stats"]["custody"] == _tally_rows(reps)
+    # the envelope tally == the tally over the reported reps' own fidelity/drift,
+    # plus the works-only at-risk-works summary (roadmap H266) — the consolidation
+    # loss-summary member `_tally_rows` (a per-rep fold) does not carry, so add it
+    # from the shared `at_risk_signal` over the reported works
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal, works_over
+
+    expected = _tally_rows(reps)
+    expected["at_risk"] = at_risk_signal(works_over(list_items(db)), latest_events(db))
+    assert payload["stats"]["custody"] == expected
+    # the one work is at risk: its full copy drifted, no safely-held rep
+    assert expected["at_risk"]["at_risk"] == 1
     # the concrete mix the seed produces: one full+drifted preprint, one
     # reference+unverified published record
     assert payload["stats"]["custody"]["tiers"] == {"full": 1, "partial": 0, "reference": 1}

@@ -3593,6 +3593,27 @@ is uncapped the floor *is* its truncation story: a work missing from the
 payload was below the reported floor, not absent. An empty or uninitialized
 library is no works, exit 0 — with the scope still named.
 
+Beside that tally, `stats.custody.at_risk` is the **scope-level at-risk-works
+summary** (roadmap H266) — the works-surface counterpart of the
+`doctor`/`maintain`/MCP `get_library_health` at-risk-works alarm (H263), and a
+sibling of the `attention` weakest-source flag in the same `stats.custody`
+loss-summary family (`attention` being itself a scope-level custody-loss summary,
+a source flag rather than a rep tally). It is the shared `at_risk_signal` fold —
+`{total, at_risk, most_at_risk}` over the **reported** works — so a reader of any
+`works` payload sees "N of the reported works are at risk; worst is `<doi>`"
+without a second `doctor` call: `total` is the reported-works count (equal to
+`stats.works` beside it), `at_risk` how many are not safely held, and
+`most_at_risk` the single lowest-custody-ceiling one (`null` when none is at risk,
+the same `{doi, url, canonical, representations, custody, reason}` entry — and the
+same no-`command` discipline — the alarm names). A pure fold over the *reported*
+works, so it composes with the filters below: under `--at-risk` every reported
+work is at risk (`at_risk == total`), and under `--fidelity full` it counts the
+at-risk subset of the kept works. No extra ledger read (the same `verdicts` the
+per-rep `drift` folds), and over the unscoped default 2+ clustering it converges
+field-for-field with `doctor`'s `custody.works` (minus its `status`) by
+construction (`test_stats_custody_at_risk_summarizes_the_reported_works`,
+`test_cli_works_stats_custody_at_risk_converges_with_doctor`).
+
 `--fidelity T` / `--drift P` are the custody-filter family on the
 **consolidation** surface (roadmap H262, `tests/test_works.py`): the family
 scoped each per-*item* custody axis on every read/act/export surface
@@ -4075,7 +4096,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
-| `get_works(min_representations=2, item=, fidelity=, drift=, at_risk=)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `fidelity`/`drift` keep whole works that *contain* a representation at that custody value, ANDing on the same rep (the contains-semantics consolidation filter, H262); `at_risk=True` keeps only the works no representation safely holds — the negation of *∃(full ∧ unmoved)*, the at-risk-works alarm (H263) as a browse predicate, ANDing with `fidelity`/`drift` (H265); `stats.custody` tallies the reported reps (H100) |
+| `get_works(min_representations=2, item=, fidelity=, drift=, at_risk=)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `fidelity`/`drift` keep whole works that *contain* a representation at that custody value, ANDing on the same rep (the contains-semantics consolidation filter, H262); `at_risk=True` keeps only the works no representation safely holds — the negation of *∃(full ∧ unmoved)*, the at-risk-works alarm (H263) as a browse predicate, ANDing with `fidelity`/`drift` (H265); `stats.custody` tallies the reported reps (H100) and carries an `at_risk` summary `{total, at_risk, most_at_risk}` over the reported works — the works-surface twin of `get_library_health`'s at-risk alarm, convergent by construction (H266) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |

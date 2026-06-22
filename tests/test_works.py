@@ -83,6 +83,8 @@ ZERO_CUSTODY = {
     "by_source": {},
     # no sources → the weakest-source flag is honestly `null` (roadmap H174)
     "attention": None,
+    # no works → the at-risk-works summary is the honest zeroed fold (roadmap H266)
+    "at_risk": {"total": 0, "at_risk": 0, "most_at_risk": None},
 }
 
 
@@ -1339,11 +1341,22 @@ def test_cli_works_stats_custody_member_matches_the_rendered_reps(db, capsys):
     # so it carries no per-source coverage (`include_coverage=False`) — the arxiv
     # preprint drifted, so `arxiv` is the flagged source here
     expected["attention"] = weakest_source(expected["by_source"], include_coverage=False)
+    # the at-risk-works summary (roadmap H266): the shared `at_risk_signal` fold over
+    # the reported works — the one work here is at risk (its full copy drifted, no
+    # safely-held rep), so the summary names it
+    from scrolls.custody import latest_events
+    from scrolls.items import list_items
+    from scrolls.works import at_risk_signal
+
+    expected["at_risk"] = at_risk_signal(
+        works_over(list_items(db)), latest_events(db))
     assert payload["stats"]["custody"] == expected
     assert set(expected["by_source"]) == {"arxiv", "crossref"}  # genuinely multi-source
     # the flag names the drifted source and carries no fabricated coverage
     assert expected["attention"]["source"] == "arxiv"
     assert "coverage" not in expected["attention"]
+    # the at-risk summary names the lone at-risk work (the full copy drifted)
+    assert expected["at_risk"]["at_risk"] == 1
 
 
 def test_stats_custody_attention_is_null_single_source():
@@ -1366,6 +1379,136 @@ def test_stats_custody_attention_is_null_single_source():
     custody = payload["stats"]["custody"]
     assert set(custody["by_source"]) == {"arxiv"}  # single source
     assert custody["attention"] is None
+
+
+# --- H266: the works stats carry a scope-level at-risk-works summary -------
+# `stats.custody.at_risk` is the works-surface counterpart of the
+# `doctor`/`maintain`/`get_library_health` at-risk-works alarm (H263): the
+# `at_risk_signal` fold over the *reported* works, beside `attention` in the same
+# `stats.custody` loss-summary family. A reader of any `works` payload sees "N of the
+# reported works are at risk; worst is `<doi>`" without a second `doctor` call.
+
+
+def test_stats_custody_at_risk_summarizes_the_reported_works():
+    # the works `stats.custody.at_risk` is exactly the `at_risk_signal` fold over the
+    # reported works — same {total, at_risk, most_at_risk} the H263 alarm reads.
+    from scrolls.works import at_risk_signal
+
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    payload = to_payload(
+        works, len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    at_risk = payload["stats"]["custody"]["at_risk"]
+    assert at_risk == at_risk_signal(works, verdicts)
+    # X (full+drifted, ref) and Z (all reference) are at risk; Y holds a full+verified
+    # rep so it is safely held → 2 of 3 works at risk, Z the lowest-ceiling worst.
+    assert at_risk["total"] == 3
+    assert at_risk["at_risk"] == 2
+    assert at_risk["most_at_risk"]["doi"] == "10.3000/z"
+
+
+def test_stats_custody_at_risk_total_equals_the_reported_works_count():
+    # `at_risk.total` is the reported-works count, equal to `stats.works` beside it by
+    # construction (both fold over the same reported list) — a coherence invariant.
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    payload = to_payload(
+        works, len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    assert payload["stats"]["custody"]["at_risk"]["total"] == payload["stats"]["works"]
+
+
+def test_stats_custody_at_risk_is_zeroed_when_no_work_is_reported():
+    # nothing clears the floor → no works → the honest zeroed fold, not an absent key
+    items = [make_item("arxiv:solo", url="https://arxiv.org/abs/solo",
+                       links=("https://doi.org/10.1000/x",))]
+    works = works_over(items)  # one-rep work, below the default floor of 2
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    assert payload["stats"]["custody"]["at_risk"] == {
+        "total": 0, "at_risk": 0, "most_at_risk": None,
+    }
+
+
+def test_stats_custody_at_risk_is_empty_when_every_work_is_safely_held():
+    # every work holds a full+verified rep → none at risk, no work named (the
+    # honest no-op the H263 alarm takes), even though the works are reported.
+    items = [
+        _full("arxiv:a", "10.1000/a"), _reference("crossref:ca", "10.1000/a"),
+        _full("biorxiv:b", "10.2000/b"), _reference("crossref:cb", "10.2000/b"),
+    ]
+    verdicts = {
+        "arxiv:a": _verdict("arxiv:a", "unchanged"),
+        "biorxiv:b": _verdict("biorxiv:b", "unchanged"),
+    }
+    works = works_over(items)
+    payload = to_payload(
+        works, len(items), scope={"min_representations": 2}, verdicts=verdicts
+    )
+    at_risk = payload["stats"]["custody"]["at_risk"]
+    assert at_risk == {"total": 2, "at_risk": 0, "most_at_risk": None}
+
+
+def test_stats_custody_at_risk_composes_with_the_at_risk_filter():
+    # H265 composition: under `--at-risk` every reported work is at risk, so the
+    # summary reads `at_risk == total` — honest, the kept set IS the at-risk set.
+    from scrolls.works import filter_works
+
+    items, verdicts = _two_work_custody_mix()
+    kept = filter_works(works_over(items), verdicts, at_risk=True)
+    payload = to_payload(
+        kept, len(items), scope={"min_representations": 2, "at_risk": True},
+        verdicts=verdicts,
+    )
+    at_risk = payload["stats"]["custody"]["at_risk"]
+    assert at_risk["total"] == at_risk["at_risk"] == 2  # X + Z, no safely-held Y
+
+
+def test_stats_custody_at_risk_composes_with_the_fidelity_filter():
+    # H262 composition: the fold counts the at-risk subset of the *kept* works.
+    # `--fidelity full` keeps X (full+drifted) and Y (full+verified); of those only
+    # X is at risk (Y is safely held), so the summary reads 1 of 2.
+    from scrolls.works import filter_works
+
+    items, verdicts = _two_work_custody_mix()
+    kept = filter_works(works_over(items), verdicts, fidelity="full")
+    payload = to_payload(
+        kept, len(items), scope={"min_representations": 2, "fidelity": "full"},
+        verdicts=verdicts,
+    )
+    at_risk = payload["stats"]["custody"]["at_risk"]
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x", "10.2000/y"]
+    assert at_risk["total"] == 2
+    assert at_risk["at_risk"] == 1
+    assert at_risk["most_at_risk"]["doi"] == "10.1000/x"
+
+
+def test_cli_works_stats_custody_at_risk_converges_with_doctor(db, capsys):
+    # cross-surface invariant: the unscoped `works` payload's `stats.custody.at_risk`
+    # equals `doctor`'s `custody.works` (minus its `status`) — both fold the shared
+    # `at_risk_signal` over the same default 2+ clustering and ledger, so the
+    # consolidation alarm reads identically without a second `doctor` call.
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.doctor import run_doctor
+    from scrolls.paths import get_paths
+
+    for item in [
+        _full("arxiv:x", "10.1000/x", title="X"),
+        _reference("crossref:cx", "10.1000/x", title="X"),
+        _reference("arxiv:z", "10.3000/z", title="Z"),
+        _reference("crossref:cz", "10.3000/z", title="Z"),
+    ]:
+        insert_item(db, item)
+    record_events(db, [CustodyEvent(
+        item_id="arxiv:x", checked_at="2026-06-14T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:a", observed_hash="sha256:b")])
+
+    assert main(["works"]) == 0
+    at_risk = json.loads(capsys.readouterr().out)["stats"]["custody"]["at_risk"]
+    works_block = run_doctor(get_paths())["custody"]["works"]
+    # doctor's block is the same fold plus a `status` key; drop it to compare
+    assert at_risk == {k: v for k, v in works_block.items() if k != "status"}
+    assert at_risk["at_risk"] == 2  # both X (full+drifted) and Z (all-reference)
 
 
 # --- the scope echo: completeness contract G2 -----------------------------
