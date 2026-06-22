@@ -532,6 +532,164 @@ def test_refresh_pointer_drives_scoped_enrichment_then_summary_refresh(
     assert final["summaries"]["by_source"] == {}
 
 
+# --- the adopt-a-peer's-better-capture leg (H284) -------------------------
+
+PEER_HASH = "sha256:peer-recapture"
+
+
+def _peer_recapture(original: ScrollItem) -> ScrollItem:
+    """A peer's diverging re-capture of the *same* source (same id) — a fuller body
+    and a fresh content hash. Imported, it conflicts with our held copy (custody
+    §2.4: a peer disagreeing is a surfaced event, not an overwrite); adopted via
+    `--accept-incoming`, it replaces the held copy while the prior is archived
+    (recoverable via `scrolls archive show`). It stays full-fidelity (raw +
+    extracted + hash + provenance), so adoption is a flip of *which* faithful copy
+    we hold — never a loss of fidelity, so the integrity score is never lowered."""
+    return replace(
+        original,
+        content_hash=PEER_HASH,
+        raw_text=f"<peer's fuller capture of {original.url}>",
+        extracted_text=original.extracted_text
+        + " A worked example walks through the attention computation.",
+    )
+
+
+def _read_jsonl_lines(text: str) -> list[dict]:
+    """Parse the JSONL an agent pipes between commands (`archive show`/`export`)."""
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflict(
+    home, capsys, tmp_path
+):
+    """*adopt* (H284): the accept-incoming sibling of the drift/refresh self-healing
+    legs, the one custody move no other dogfood exercises end to end — *take a peer's
+    better capture while keeping the prior recoverable*.
+
+    A peer re-captured one of the sources we hold and got different bytes (a fuller
+    body). They share a bundle. We import it (the divergence is **surfaced and
+    recorded**, our held copy untouched — custody §2.4), review it via
+    `doctor`/`history`, then **adopt** it with `import bundle --accept-incoming` (the
+    held copy is replaced, its prior archived, the conflict cleared), and finally
+    **restore** the prior with `archive show <id> | import items --accept-incoming`.
+
+    The two custody points the leg makes visible, the adopt-axis twins of the drift
+    leg's "drift never lowers the score":
+
+    - **the conflict aggregate moves 0 → 1 → 0** — `doctor`'s `custody.conflicts`
+      counts the open import conflict after the plain import, and the adoption (a
+      `superseded` event that supersedes the open `conflict`) clears it; and
+    - **the held content flips and flips back, the integrity score never lowered** —
+      the held `content_hash` goes original → peer → original across the adopt and
+      the restore, while `doctor`'s `custody.score` holds at 100 throughout, because
+      adoption swaps one full-fidelity capture for another and the prior is archived,
+      not destroyed (custody §2.4 — adoption is a recorded event, never a loss).
+    """
+    # 1. HOLD a topic in full; the arxiv paper is the one a peer will re-capture.
+    lib = home("library")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv"
+    assert get_item(lib.db_path, original.id).content_hash == original.content_hash
+    capsys.readouterr()  # drain the kb report
+
+    # prove: nothing diverges yet — the conflict aggregate is 0, the score 100.
+    assert main(["doctor"]) == 0
+    start = json.loads(capsys.readouterr().out)["custody"]
+    assert start["score"] == 100
+    assert start["conflicts"]["items"] == 0
+
+    # 2. A PEER shares a bundle of the same topic — but their arxiv capture diverges
+    #    (a fuller body, a fresh content hash); the two web scrolls are byte-identical.
+    home("peer")
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    _build([_peer_recapture(original), items[1], items[2]])
+    capsys.readouterr()
+    assert main(["export", "bundle", TOPIC]) == 0
+    peer_bundle = capsys.readouterr().out
+    peer_path = tmp_path / "peer-briefing.md"
+    peer_path.write_text(peer_bundle, encoding="utf-8")
+
+    # 3. IMPORT the peer bundle WITHOUT adopting: the divergent arxiv capture is
+    #    surfaced as a conflict and recorded; the held copy is kept (raw is sacred).
+    home("library")
+    assert main(["import", "bundle", str(peer_path)]) == 0
+    detect = json.loads(capsys.readouterr().out)
+    assert detect["conflict"] == 1
+    assert detect["conflicts"] == [original.id]
+    assert detect["adopted"] == []
+    assert detect["unchanged"] == 2  # the two web scrolls travelled identical
+    # the held copy is provably untouched — still our original capture
+    assert get_item(lib.db_path, original.id).content_hash == original.content_hash
+
+    # REVIEW via doctor: the conflict aggregate moved 0 → 1, the score still 100.
+    assert main(["doctor"]) == 0
+    detected = json.loads(capsys.readouterr().out)["custody"]
+    assert detected["score"] == 100
+    assert detected["conflicts"]["items"] == 1
+    assert [e["id"] for e in detected["conflicts"]["events"]] == [original.id]
+    assert detected["conflicts"]["events"][0]["observed_hash"] == PEER_HASH
+
+    # REVIEW via history: the divergence is a queryable, recorded custody event.
+    assert main(["history", original.id, "--status", "conflict"]) == 0
+    conflict_events = json.loads(capsys.readouterr().out)
+    assert len(conflict_events) == 1
+    assert conflict_events[0]["status"] == "conflict"
+    assert conflict_events[0]["observed_hash"] == PEER_HASH
+
+    # 4. ADOPT: re-import the same bundle with --accept-incoming. The held copy is
+    #    replaced by the peer's capture, its prior archived, the conflict cleared.
+    assert main(["import", "bundle", str(peer_path), "--accept-incoming"]) == 0
+    adopt = json.loads(capsys.readouterr().out)
+    assert adopt["adopted"] == [original.id]
+    assert adopt["conflicts"] == []
+    # the held content FLIPPED to the peer's capture
+    assert get_item(lib.db_path, original.id).content_hash == PEER_HASH
+
+    # the conflict aggregate moved 1 → 0; the score was never lowered.
+    assert main(["doctor"]) == 0
+    adopted_state = json.loads(capsys.readouterr().out)["custody"]
+    assert adopted_state["score"] == 100
+    assert adopted_state["conflicts"]["items"] == 0
+
+    # the adoption is a recorded `superseded` event; the prior is archived.
+    assert main(["history", original.id, "--status", "superseded"]) == 0
+    superseded = json.loads(capsys.readouterr().out)
+    assert len(superseded) == 1
+    assert superseded[0]["status"] == "superseded"
+    assert main(["archive", "list", "--id", original.id]) == 0
+    archive = json.loads(capsys.readouterr().out)
+    assert archive["count"] == 1
+    assert archive["archived"][0]["prior_hash"] == original.content_hash
+    assert archive["archived"][0]["superseded_by"] == PEER_HASH
+
+    # 5. RESTORE the prior: `archive show <id>` emits the original capture as a
+    #    re-importable JSONL line; `import items --accept-incoming` re-adopts it
+    #    (archiving the peer copy in turn — the symmetric round-trip, ADR 0106).
+    assert main(["archive", "show", original.id]) == 0
+    archived_line = capsys.readouterr().out
+    recovered = _read_jsonl_lines(archived_line)
+    assert len(recovered) == 1 and recovered[0]["content_hash"] == original.content_hash
+    restore_path = tmp_path / "restore.jsonl"
+    restore_path.write_text(archived_line, encoding="utf-8")
+
+    assert main(["import", "items", str(restore_path), "--accept-incoming"]) == 0
+    restore = json.loads(capsys.readouterr().out)
+    assert restore["adopted"] == [original.id]
+    # the held content FLIPPED BACK to our original capture
+    assert get_item(lib.db_path, original.id).content_hash == original.content_hash
+
+    # the conflict aggregate is still 0 (a superseded adoption, never an open
+    # conflict); the score still 100 — the whole flip-and-flip-back kept custody
+    # intact, every prior recoverable, integrity never lowered.
+    assert main(["doctor"]) == 0
+    final = json.loads(capsys.readouterr().out)["custody"]
+    assert final["score"] == 100
+    assert final["conflicts"]["items"] == 0
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 

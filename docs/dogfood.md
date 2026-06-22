@@ -120,16 +120,122 @@ re-check. An agent reading the report can always tell *"confirmed unchanged at
 the last verify"* from *"never checked"* from *"the source drifted, here is the
 event"* — and can still walk away with the faithful copy it held.
 
+## Adopting a peer's better capture — the accept-incoming flow
+
+The four legs above are the *one-custodian* story: I hold a topic, prove it,
+watch the source drift, and carry it elsewhere. The accept-incoming flow
+(ADR 0106, roadmap H278) adds the *two-custodian* one — **a peer re-captured a
+source I hold and got a better copy, and I want to adopt it without losing the
+one I had.** It is a genuinely new custody move: the first import path that
+*changes* a held capture. The drift leg never overwrites; this one does — but
+custody-safely, because the prior is archived first and the swap is a recorded
+event, so it is a *flip of which faithful copy I hold*, never a loss.
+
+`tests/test_dogfood.py` pins it offline as
+`test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflict`:
+the same `_held_topic()` is held in a `library` home, then a `peer` home holds
+the same topic with one diverging arxiv capture (a fuller body, a fresh content
+hash) and exports a bundle. The custody story is the **conflict aggregate moving
+0 → 1 → 0** while the **held content flips and flips back and the integrity score
+never drops**.
+
+```bash
+# A peer shares a bundle. One capture (the arxiv paper) diverges from mine.
+# 1. DETECT — import it WITHOUT adopting: the divergence is surfaced + recorded,
+#    my held copy is kept untouched (raw is sacred — custody §2.4).
+scrolls import bundle peer-briefing.md
+# → {"unchanged": 2, "conflict": 1, "conflicts": ["arxiv:1706.03762"], "adopted": []}
+
+# 2. REVIEW — doctor counts the open conflict (0 → 1); the score is still 100.
+scrolls doctor                       # → custody.conflicts.items == 1
+scrolls history arxiv:1706.03762 --status conflict   # the recorded divergence
+
+# 3. ADOPT — re-import WITH --accept-incoming: the held copy is replaced by the
+#    peer's, its prior archived (recoverable), the conflict cleared.
+scrolls import bundle peer-briefing.md --accept-incoming
+# → {"adopted": ["arxiv:1706.03762"], "conflicts": []}
+scrolls doctor                       # → custody.conflicts.items == 0, score 100
+scrolls history arxiv:1706.03762 --status superseded   # the recorded adoption
+
+# 4. RESTORE — the prior is never gone: emit it and re-adopt it (the peer copy is
+#    archived in turn — the symmetric round-trip).
+scrolls archive show arxiv:1706.03762 > prior.jsonl
+scrolls import items prior.jsonl --accept-incoming
+# → {"adopted": ["arxiv:1706.03762"]}      # held content flipped back to mine
+scrolls doctor                       # → custody.conflicts.items == 0, score 100
+```
+
+**Detect (`import bundle`, no flag).** The peer's two web scrolls travel
+byte-identical (`unchanged`); their arxiv capture disagrees on `content_hash`, so
+it is surfaced as a `conflict` and recorded — never written over my held copy:
+
+```json
+{ "unchanged": 2, "conflict": 1, "conflicts": ["arxiv:1706.03762"], "adopted": [] }
+```
+
+`doctor`'s conflict aggregate now reads `1`, the divergence named with both
+hashes, **while the integrity score holds at 100** (a peer disagreeing is not
+evidence *my* capture degraded):
+
+```json
+{
+  "score": 100,
+  "conflicts": { "basis": "import_ledger", "items": 1,
+                 "events": [ { "id": "arxiv:1706.03762", "status": "conflict",
+                               "prior_hash": "sha256:06.03762",
+                               "observed_hash": "sha256:peer-recapture" } ] }
+}
+```
+
+**Adopt (`import bundle --accept-incoming`).** Now I take the peer's copy. The
+held row is replaced, its prior snapshot appended to the recovery archive, and a
+`superseded` event supersedes the open conflict — so the aggregate clears (`1 →
+0`) across every conflict surface at once, and the score is still 100:
+
+```json
+{ "adopted": ["arxiv:1706.03762"], "conflicts": [] }
+```
+
+```json
+{ "checked_at": "…", "status": "superseded",
+  "prior_hash": "sha256:06.03762", "observed_hash": "sha256:peer-recapture",
+  "detail": "import conflict resolved: incoming capture adopted (accept-incoming); prior copy archived" }
+```
+
+**Restore (`archive show … | import items --accept-incoming`).** The prior was
+archived, not destroyed: `archive show` re-emits it in the `export items` JSONL
+shape, and re-adopting it flips the held content back to my original capture
+(archiving the peer copy in turn). The aggregate stays `0` — a `superseded`
+adoption is a resolution, never an open conflict — and the final audit is clean:
+
+```json
+{ "score": 100, "conflicts": { "items": 0 },
+  "tiers": { "full": 3, "partial": 0, "reference": 0 } }
+```
+
+The custody point is the adopt-axis twin of the drift leg's: **adopting a peer's
+capture never lowers the integrity score**, because the swap trades one
+full-fidelity copy for another and the displaced one is archived (custody §2.4 —
+"a re-fetch that disagrees … is a custody event"). The held `content_hash` goes
+*original → peer → original* while the score holds at `100` throughout; every
+prior stays recoverable, so the flip is fully reversible. (`adopt_incoming` swaps
+the row but does not re-render the scroll view — a real agent runs `scrolls kb`
+afterward to recompile `library/`; the held file the prior render left in place
+keeps the fidelity audit honest in the meantime.)
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Four tests: each leg on its own, plus `test_dogfood_flow_hold_prove_detect_take`
-— the whole sequence, in order, unattended. The lossless round-trip leg shares
-its guarantee with `tests/test_roundtrip.py` (the JSONL backup invariant,
-ADR 0099); the bundle envelope is ADR 0103.
+Seven tests: each leg on its own — the core hold/detect/take legs, the scoped
+drift- and refresh-triage legs, and the accept-incoming *adopt-a-peer's-better-
+capture* flow above — plus `test_dogfood_flow_hold_prove_detect_take`, the whole
+hold → prove → detect → take sequence in order, unattended. The lossless
+round-trip leg shares its guarantee with `tests/test_roundtrip.py` (the JSONL
+backup invariant, ADR 0099); the bundle envelope is ADR 0103; the accept-incoming
+adoption + prior-content archive is ADR 0106.
 
 ## The recurring sibling — `scrolls maintain`
 
