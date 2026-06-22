@@ -18,6 +18,7 @@ from scrolls.cli import main
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
 from scrolls.works import (
+    filter_works,
     find_works,
     membership_payload,
     to_payload,
@@ -583,6 +584,119 @@ def test_work_custody_matches_the_shared_helper():
     )
 
 
+# --- H262: the custody-filter family on the consolidation surface ------
+# `filter_works` keeps WHOLE works that *contain* a representation at the given
+# custody value(s) — the cluster "contains" semantics (a work is a set of forms),
+# both axes AND on the *same* representation (the ∃-lift of the per-item filter).
+
+
+def _two_work_custody_mix():
+    """Three 2-rep works across a custody spread, for the H262 consolidation filter.
+
+    Sorted by DOI (works_over's stable order, all 2-rep): X, Y, Z.
+    - Work X (10.1000/x): a *full* arxiv preprint that has **drifted** + a bare
+      *reference* crossref record (unverified).
+    - Work Y (10.2000/y): a *full* biorxiv preprint that is **verified**
+      (unchanged) + a *partial* pubmed record (unverified).
+    - Work Z (10.3000/z): two *reference* records, both unverified — no full
+      form anywhere (a work with nothing re-derivable held).
+    """
+    items = [
+        _full("arxiv:x", "10.1000/x", title="X"),
+        _reference("crossref:cx", "10.1000/x", title="X"),
+        _full("biorxiv:y", "10.2000/y", title="Y"),
+        _partial("pubmed:y", "10.2000/y", title="Y"),
+        _reference("arxiv:z", "10.3000/z", title="Z"),
+        _reference("crossref:cz", "10.3000/z", title="Z"),
+    ]
+    verdicts = {
+        "arxiv:x": _verdict("arxiv:x", "drifted"),
+        "biorxiv:y": _verdict("biorxiv:y", "unchanged"),
+    }
+    return items, verdicts
+
+
+def _dois(works):
+    return [work.doi for work in works]
+
+
+def test_filter_works_keeps_works_with_a_matching_fidelity_rep():
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    # only X and Y hold a full-fidelity representation; Z is all-reference
+    assert _dois(filter_works(works, verdicts, fidelity="full")) == [
+        "10.1000/x", "10.2000/y"]
+    # partial lives only in Y; reference in X and Z
+    assert _dois(filter_works(works, verdicts, fidelity="partial")) == ["10.2000/y"]
+    assert _dois(filter_works(works, verdicts, fidelity="reference")) == [
+        "10.1000/x", "10.3000/z"]
+
+
+def test_filter_works_keeps_works_with_a_matching_drift_rep():
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    # X's preprint drifted; Y's preprint is verified; everything else unverified
+    assert _dois(filter_works(works, verdicts, drift="drifted")) == ["10.1000/x"]
+    assert _dois(filter_works(works, verdicts, drift="verified")) == ["10.2000/y"]
+    # every work carries at least one unverified representation
+    assert _dois(filter_works(works, verdicts, drift="unverified")) == [
+        "10.1000/x", "10.2000/y", "10.3000/z"]
+    # a posture no representation holds → an honest empty set, never an error
+    assert filter_works(works, verdicts, drift="rotted") == []
+
+
+def test_filter_works_keeps_the_whole_work_not_just_the_matching_rep():
+    # the cluster "contains" semantics: a work kept for its drifted rep still carries
+    # its (non-drifted) sibling, so a reader can see whether a safe form exists.
+    items, verdicts = _two_work_custody_mix()
+    (kept,) = filter_works(works_over(items), verdicts, drift="drifted")
+    # both the matching full+drifted rep AND the non-matching reference sibling travel
+    assert [rep.id for rep in kept.representations] == ["arxiv:x", "crossref:cx"]
+
+
+def test_filter_works_ands_both_axes_on_the_same_representation():
+    # Option B (the ∃-lift of the per-item AND): a work is kept iff a SINGLE rep is
+    # both. X holds a full+drifted rep and a reference+unverified rep.
+    items, verdicts = _two_work_custody_mix()
+    works = works_over(items)
+    # full AND drifted → X (arxiv:x is both); full AND verified → Y (biorxiv:y is both)
+    assert _dois(filter_works(works, verdicts, fidelity="full", drift="drifted")) == [
+        "10.1000/x"]
+    assert _dois(filter_works(works, verdicts, fidelity="full", drift="verified")) == [
+        "10.2000/y"]
+    # reference AND drifted → EMPTY, though X *contains* a reference rep AND a drifted
+    # rep — no single rep is both (a contains-per-axis "Option A" would wrongly keep X)
+    assert filter_works(works, verdicts, fidelity="reference", drift="drifted") == []
+
+
+def test_filter_works_unfiltered_is_identity_without_a_ledger():
+    works = works_over(_two_work_custody_mix()[0])
+    # both axes None → the input list unchanged, and no ledger read needed
+    assert filter_works(works) is works
+
+
+def test_filter_works_rejects_an_unknown_fidelity_tier():
+    works = works_over(_two_work_custody_mix()[0])
+    with pytest.raises(ValueError, match="unknown fidelity tier"):
+        filter_works(works, fidelity="gold")
+
+
+def test_filter_works_rejects_an_unknown_drift_posture():
+    works = works_over(_two_work_custody_mix()[0])
+    with pytest.raises(ValueError, match="unknown drift posture"):
+        filter_works(works, drift="moved")
+
+
+def _seed_two_work_custody_mix(db):
+    """Insert the three-work custody mix into a real library (the CLI/MCP seed)."""
+    from scrolls.custody import record_events
+
+    items, verdicts = _two_work_custody_mix()
+    for item in items:
+        insert_item(db, item)
+    record_events(db, list(verdicts.values()))
+
+
 # --- CLI ---------------------------------------------------------------
 
 
@@ -739,6 +853,82 @@ def test_cli_works_empty_library(scrolls_home, capsys):
         "works": [],
         "stats": {"items": 0, "works": 0, "custody": ZERO_CUSTODY},
     }
+
+
+# --- H262 CLI: `scrolls works --fidelity` / `--drift` ----------------------
+
+
+def test_cli_works_filters_by_fidelity_tier(db, capsys):
+    _seed_two_work_custody_mix(db)
+    assert main(["works", "--fidelity", "full"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # only X and Y hold a full-fidelity representation; Z (all-reference) drops out
+    assert [work["doi"] for work in payload["works"]] == ["10.1000/x", "10.2000/y"]
+    # the scope echoes the filter so a reader holding only the payload recovers it (G2)
+    assert payload["scope"] == {"min_representations": 2, "fidelity": "full"}
+    # stats.custody honors the filter: it tallies only the two kept works' (whole)
+    # representations — the full + their non-matching reference/partial siblings
+    assert payload["stats"]["works"] == 2
+    assert payload["stats"]["custody"]["tiers"] == {
+        "full": 2, "partial": 1, "reference": 1}
+
+
+def test_cli_works_filters_by_drift_posture(db, capsys):
+    _seed_two_work_custody_mix(db)
+    assert main(["works", "--drift", "drifted"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # only work X has a drifted representation — the work needing a recapture decision
+    assert [work["doi"] for work in payload["works"]] == ["10.1000/x"]
+    # the whole work travels: the drifted preprint AND its reference sibling
+    assert [r["id"] for r in payload["works"][0]["representations"]] == [
+        "arxiv:x", "crossref:cx"]
+    assert payload["scope"] == {"min_representations": 2, "drift": "drifted"}
+
+
+def test_cli_works_ands_both_custody_axes(db, capsys):
+    _seed_two_work_custody_mix(db)
+    # full AND verified on the same rep → work Y only
+    assert main(["works", "--fidelity", "full", "--drift", "verified"]) == 0
+    assert [w["doi"] for w in json.loads(capsys.readouterr().out)["works"]] == [
+        "10.2000/y"]
+    # reference AND drifted → empty: X contains both values, but in different reps
+    assert main(["works", "--fidelity", "reference", "--drift", "drifted"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["works"] == []
+    assert payload["scope"] == {
+        "min_representations": 2, "fidelity": "reference", "drift": "drifted"}
+
+
+def test_cli_works_unfiltered_scope_omits_the_custody_filters(db, capsys):
+    _seed_two_work_custody_mix(db)
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # None filters are pruned from the scope echo — the lean unfiltered shape
+    assert payload["scope"] == {"min_representations": 2}
+    assert [w["doi"] for w in payload["works"]] == [
+        "10.1000/x", "10.2000/y", "10.3000/z"]
+
+
+def test_cli_works_rejects_an_unknown_fidelity_via_exit_2(db):
+    # the closed vocabulary is enforced by argparse `choices=` → exit 2, before the
+    # command runs (the H252/H254 precedent for an act/relationship surface)
+    with pytest.raises(SystemExit) as exc:
+        main(["works", "--fidelity", "gold"])
+    assert exc.value.code == 2
+
+
+def test_cli_works_filter_composes_with_the_per_item_ref_lens(db, capsys):
+    # the filter rides the per-item lens too: `works <id> --drift drifted` answers
+    # "is the work this item represents one with a drifted rep?"
+    _seed_two_work_custody_mix(db)
+    # arxiv:x's work X has a drifted rep → kept, with the anchor echoed beside the filter
+    assert main(["works", "arxiv:x", "--drift", "drifted"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/x"]
+    assert payload["scope"] == {"ref": "arxiv:x", "drift": "drifted"}
+    # biorxiv:y's work Y has no drifted rep → empty (an explicit "not at this posture")
+    assert main(["works", "biorxiv:y", "--drift", "drifted"]) == 0
+    assert json.loads(capsys.readouterr().out)["works"] == []
 
 
 # --- the stats.custody tally (roadmap H100) -------------------------------

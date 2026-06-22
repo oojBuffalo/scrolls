@@ -1637,6 +1637,121 @@ def test_get_works_item_lens_unknown_item_raises(scrolls_home):
         mcp_server.get_works(item="arxiv:nope")
 
 
+def _works_custody_mix_mcp():
+    """Three 2-rep works across a custody spread — the MCP twin of
+    `test_works._two_work_custody_mix`. Sorted by DOI: X, Y, Z.
+    - Work X (10.1000/x): a *full* arxiv preprint that has **drifted** + a bare
+      *reference* crossref record (unverified).
+    - Work Y (10.2000/y): a *full* biorxiv preprint **verified** (unchanged) + a
+      *partial* pubmed record (unverified).
+    - Work Z (10.3000/z): two *reference* records, both unverified.
+    Library must already exist.
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+
+    def _item(item_id, source, doi, **fields):
+        return ScrollItem(
+            id=item_id, source=source, source_id=item_id.split(":", 1)[1],
+            url=f"https://ex.com/{item_id}", saved_at="2026-06-12T00:00:00+00:00",
+            title=item_id, links=(f"https://doi.org/{doi}",), stage="rendered",
+            **fields)
+
+    insert_item(db, _item("arxiv:x", "arxiv", "10.1000/x",
+                          raw_text="body", content_hash="sha256:x"))  # full
+    insert_item(db, _item("crossref:cx", "crossref", "10.1000/x"))  # reference
+    insert_item(db, _item("biorxiv:y", "biorxiv", "10.2000/y",
+                          raw_text="body", content_hash="sha256:y"))  # full
+    insert_item(db, _item("pubmed:y", "pubmed", "10.2000/y", summary="s"))  # partial
+    insert_item(db, _item("arxiv:z", "arxiv", "10.3000/z"))  # reference
+    insert_item(db, _item("crossref:cz", "crossref", "10.3000/z"))  # reference
+    record_events(db, [
+        CustodyEvent("arxiv:x", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:x", "sha256:moved", None),
+        CustodyEvent("biorxiv:y", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:y", "sha256:y", None),
+    ])
+    return db
+
+
+def test_get_works_filters_by_fidelity_tier(scrolls_home):
+    # the holdings axis on the consolidation surface — the MCP twin of
+    # `scrolls works --fidelity` (roadmap H262), lifting `list_scrolls(fidelity=)`
+    # to the work cluster.
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    assert [w["doi"] for w in mcp_server.get_works(fidelity="full")["works"]] == [
+        "10.1000/x", "10.2000/y"]
+    assert [w["doi"] for w in mcp_server.get_works(fidelity="reference")["works"]] == [
+        "10.1000/x", "10.3000/z"]
+    # the filter rides the scope echo (G2), pruned to the lean shape when unset
+    assert mcp_server.get_works(fidelity="full")["scope"] == {
+        "min_representations": 2, "fidelity": "full"}
+
+
+def test_get_works_filters_by_drift_posture(scrolls_home):
+    # the ledger-claim axis on the consolidation surface — the MCP twin of
+    # `scrolls works --drift` (roadmap H262).
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    drifted = mcp_server.get_works(drift="drifted")
+    assert [w["doi"] for w in drifted["works"]] == ["10.1000/x"]
+    # the whole work travels (contains semantics): the drifted preprint + its sibling
+    assert [r["id"] for r in drifted["works"][0]["representations"]] == [
+        "arxiv:x", "crossref:cx"]
+    # a posture no representation holds → an honest empty result, never an error
+    assert mcp_server.get_works(drift="rotted")["works"] == []
+
+
+def test_get_works_ands_both_custody_axes(scrolls_home):
+    # the two axes AND on the SAME representation, the same as the CLI twin: full+
+    # verified is work Y; reference+drifted is empty (X holds both values, but no
+    # single rep is both — the ∃-lift of `get_related_scrolls`'s "no neighbour is both").
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    assert [
+        w["doi"] for w in mcp_server.get_works(fidelity="full", drift="verified")["works"]
+    ] == ["10.2000/y"]
+    assert mcp_server.get_works(fidelity="reference", drift="drifted")["works"] == []
+
+
+def test_get_works_rejects_unknown_custody_vocab(scrolls_home):
+    # the same closed vocabulary as the `get_related_scrolls` twin; a typo raises
+    # rather than silently returning an empty result (no argparse `choices=` over MCP).
+    from scrolls.cli import main
+
+    main(["init"])
+    _works_custody_mix_mcp()
+
+    with pytest.raises(ValueError, match="unknown fidelity tier"):
+        mcp_server.get_works(fidelity="gold")
+    with pytest.raises(ValueError, match="unknown drift posture"):
+        mcp_server.get_works(drift="moved")
+
+
+def test_get_works_filter_matches_the_cli_twin(scrolls_home, capsys):
+    # CLI↔MCP parity: the same custody-scoped works payload on both surfaces
+    # (both route through `filter_works` + `works.to_payload`).
+    main(["init"])
+    _works_custody_mix_mcp()
+    capsys.readouterr()  # drain the `init` output so only the `works` JSON remains
+
+    assert main(["works", "--fidelity", "full", "--drift", "verified"]) == 0
+    cli_payload = json.loads(capsys.readouterr().out)
+    assert mcp_server.get_works(fidelity="full", drift="verified") == cli_payload
+
+
 def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(scrolls_home):
     # roadmap H163: the CLI `search`/`list --stats` envelope carries a per-source
     # `stats.custody.by_source` split (H155), but the MCP `search_scrolls`/

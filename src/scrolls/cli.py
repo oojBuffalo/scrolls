@@ -76,6 +76,7 @@ from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.graph import build_graph, to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS as DEFAULT_WORK_MIN
 from scrolls.works import (
+    filter_works,
     membership_payload,
     to_payload as works_payload,
     work_membership,
@@ -379,6 +380,27 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_WORK_MIN,
         help=f"Minimum representations per work (default {DEFAULT_WORK_MIN})",
+    )
+    works_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only works with a representation the library holds at this "
+        "custody-fidelity tier (ADR 0097) — the consolidation-surface twin of "
+        "`scrolls list --fidelity` / `related --fidelity`. The whole work travels "
+        "(every representation) when one matches, so you see the work and its "
+        "siblings (e.g. --fidelity full for works with a form you can re-derive "
+        "offline). ANDs with --drift on the same representation",
+    )
+    works_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only works with a representation at this custody drift posture (from "
+        "the verify ledger) — the ledger-claim-axis companion of --fidelity. The "
+        "whole work travels when one matches (e.g. --drift drifted for the works "
+        "needing a recapture decision, with their safe siblings intact). ANDs with "
+        "--fidelity on the same representation",
     )
 
     follow_parser = subparsers.add_parser(
@@ -1160,7 +1182,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "graph":
         return _cmd_graph(args.include_all)
     if args.command == "works":
-        return _cmd_works(args.min_representations, args.ref)
+        return _cmd_works(
+            args.min_representations, args.ref, args.fidelity, args.drift
+        )
     if args.command == "follow":
         return _cmd_follow(args.url)
     if args.command == "history":
@@ -3055,23 +3079,39 @@ def _cmd_graph(include_all: bool) -> int:
     return 0
 
 
-def _cmd_works(min_representations: int, ref: str | None = None) -> int:
+def _cmd_works(
+    min_representations: int,
+    ref: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
+) -> int:
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
-    if ref is not None:  # the per-item lens: this item's work(s) and siblings
-        try:
+    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    try:
+        if ref is not None:  # the per-item lens: this item's work(s) and siblings
             resolved = resolve_item_id(ref)
             works = works_for_item(items, resolved)
-        except ValueError as exc:
-            print(json.dumps({"error": str(exc)}), file=sys.stderr)
-            return 1
-        # the per-item lens ignores --min, so the echoed scope is the anchor
-        # alone (the resolved id, not the URL a caller may have passed) — G2
-        scope = {"ref": resolved}
-    else:
-        works = works_over(items, min_representations=min_representations)
-        scope = {"min_representations": min_representations}
-    verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+            # the per-item lens ignores --min, so the echoed scope is the anchor
+            # (the resolved id, not the URL a caller may have passed) plus the
+            # custody filters that narrowed it — G2
+            scope = {"ref": resolved, "fidelity": fidelity, "drift": drift}
+        else:
+            works = works_over(items, min_representations=min_representations)
+            scope = {
+                "min_representations": min_representations,
+                "fidelity": fidelity,
+                "drift": drift,
+            }
+        # The consolidation-surface custody sieve (roadmap H262): keep whole works
+        # that contain a representation at the custody value(s) — before `to_payload`,
+        # so `stats.custody` partitions the reported set. An unknown id and an unknown
+        # custody value both raise ValueError (the identical could-not-check path, G1),
+        # though argparse `choices=` already rejects a bad CLI value with exit 2.
+        works = filter_works(works, verdicts, fidelity=fidelity, drift=drift)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps(works_payload(works, len(items), scope=scope, verdicts=verdicts)))
     return 0
 

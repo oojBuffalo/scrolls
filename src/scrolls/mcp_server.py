@@ -53,7 +53,7 @@ from scrolls.facets import compute_facets
 from scrolls.graph import build_graph
 from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
-from scrolls.works import membership_payload, work_membership
+from scrolls.works import filter_works, membership_payload, work_membership
 from scrolls.works import to_payload as works_payload
 from scrolls.works import works_for_item, works_over
 from scrolls.items import (
@@ -451,6 +451,8 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
 def get_works(
     item: str | None = None,
     min_representations: int = DEFAULT_MIN_REPRESENTATIONS,
+    fidelity: str | None = None,
+    drift: str | None = None,
 ) -> dict[str, Any]:
     """Scholarly works the library holds more than one representation of.
 
@@ -474,6 +476,16 @@ def get_works(
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.
 
+    `fidelity` keeps only works with a representation the library holds at one
+    custody-fidelity tier (full/partial/reference, ADR 0097) and `drift` only works
+    with a representation at one verify-ledger posture
+    (verified/unverified/drifted/rotted/error) — the consolidation-surface twin of
+    `list_scrolls`/`get_related_scrolls`'s `fidelity`/`drift` filters lifted to the
+    work cluster. The whole work travels (every representation) when one matches, so
+    `drift="drifted"` surfaces the works needing a recapture decision with their safe
+    siblings intact; the two axes AND on the *same* representation. An unknown
+    tier/posture is an error, never a silent empty result.
+
     Pass `item` (an id or URL) for the *per-item* lens — the work(s) that one
     item represents, with every saved sibling representation: an item that
     found one form (a search hit) learns which other forms of the same work
@@ -486,11 +498,16 @@ def get_works(
     if item is not None:
         resolved = resolve_item_id(item)
         works = works_for_item(items, resolved)
-        scope: dict[str, Any] = {"ref": resolved}
+        scope: dict[str, Any] = {"ref": resolved, "fidelity": fidelity, "drift": drift}
     else:
         works = works_over(items, min_representations=min_representations)
-        scope = {"min_representations": min_representations}
+        scope = {
+            "min_representations": min_representations,
+            "fidelity": fidelity,
+            "drift": drift,
+        }
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
+    works = filter_works(works, verdicts, fidelity=fidelity, drift=drift)
     return works_payload(works, len(items), scope=scope, verdicts=verdicts)
 
 

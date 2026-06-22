@@ -3440,7 +3440,7 @@ $ scrolls graph
 [exit 0]
 ```
 
-### `scrolls works [ref] [--min N]`
+### `scrolls works [ref] [--min N] [--fidelity T] [--drift P]`
 
 Scholarly works the library holds more than one representation of, keyed
 by DOI (ADR 0069, `tests/test_works.py`). One work — an arXiv preprint,
@@ -3510,6 +3510,31 @@ representations" — the completeness contract's G2 honesty, and since `works`
 is uncapped the floor *is* its truncation story: a work missing from the
 payload was below the reported floor, not absent. An empty or uninitialized
 library is no works, exit 0 — with the scope still named.
+
+`--fidelity T` / `--drift P` are the custody-filter family on the
+**consolidation** surface (roadmap H262, `tests/test_works.py`): the family
+scoped each per-*item* custody axis on every read/act/export surface
+(`list`/`search`/`related`/`context`/`export …`), and this lifts the same
+per-item predicate to the *work* — the cluster of representations. The
+**contains** semantics: a work is kept *whole* (every representation still
+travels) when it **has a representation** at the custody value, since a work is
+a set of forms and "show me the works with a drifted representation" wants the
+work *and its siblings* — so a reader can see whether a safe sibling exists —
+not the lone matching form. So `--drift drifted` surfaces *the works needing a
+recapture decision* with their representation set intact. The filter folds the
+same per-rep `fidelity`/`drift` the representations carry, applied before the
+`--min`/report cut, and the two axes AND **on the same representation**:
+`--fidelity full --drift drifted` keeps a work iff some rep is *both* full and
+drifted (a fully-held copy whose source moved — the recapture candidate where
+the content is in hand), not merely some full rep and some — possibly different —
+drifted rep. Closed vocabulary → exit 2 (argparse `choices=`, the `verify
+--fidelity`/`related --drift` precedent). `stats.custody` honors the filter (it
+tallies the *reported* works' representations) and the filters ride the `scope`
+echo, pruned when unset (G2). The filter composes with the per-item `ref` lens
+too — `works <id> --drift drifted` answers "is the work this item represents one
+with a drifted rep?" (`test_cli_works_filters_by_fidelity_tier`,
+`test_cli_works_filters_by_drift_posture`,
+`test_cli_works_ands_both_custody_axes`).
 
 With a `ref` (an item id or URL — the saved URL is a valid handle wherever
 an id is, ADR 0028), `works` reports the *per-item* lens instead: the
@@ -3949,7 +3974,7 @@ The tools wrap the same engines as the CLI commands
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
 | `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
-| `get_works(min_representations=2)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `stats.custody` tallies the reported reps (H100) |
+| `get_works(min_representations=2, item=, fidelity=, drift=)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `fidelity`/`drift` keep whole works that *contain* a representation at that custody value, ANDing on the same rep (the contains-semantics consolidation filter, H262); `stats.custody` tallies the reported reps (H100) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |
 | `get_tag_page(tag)` | reading `library/tags/<name>.md` | Markdown page; tag matched case-insensitively, slug collisions resolved by heading (ADR 0064) |
 | `list_sources()` | — | item counts per source |
