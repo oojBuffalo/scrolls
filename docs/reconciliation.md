@@ -473,9 +473,10 @@ predicts without writing).
 
 **Deferred:** ~~the archive in portable bundles~~ (shipped — H280, below), an MCP
 accept-incoming *write* twin, ~~`archive prune` / retention~~ (shipped — H282,
-below), and `archive show --all` / restore-by-version. With `--accept-incoming` the
-conflict-on-import theme is complete on **both** resolution directions — keep-held
-and accept-incoming — across detect → read → resolve.
+below), ~~`archive show --all`~~ (shipped — H285, below), and restore-by-version
+(H286). With `--accept-incoming` the conflict-on-import theme is complete on **both**
+resolution directions — keep-held and accept-incoming — across detect → read →
+resolve.
 
 ## Shipped: the prior-content archive travels in the portable round-trip (H280)
 
@@ -604,3 +605,43 @@ empty-archive no-op); `tests/test_cli.py` (the exactly-one-policy gate, the
 `--keep 0` / malformed-`--before` rejections, report-only writes nothing, `--apply`
 drops + warns + leaves the latest recoverable, the before-policy whole-archive clear,
 the clean-library empty report).
+
+## Shipped: `archive show --all` — the full archived history (H285, ADR 0106)
+
+`scrolls archive show <id>` recovered only the **most-recently** superseded copy (the
+latest `item_archive` row). After several adoptions of the same id the *earlier* priors
+were reachable in the `archive list` index (their metadata) but not re-emittable as
+re-importable snapshots — a multi-supersession item's deeper history could be inspected
+but not backed up. H285 adds the full-history read:
+
+```text
+scrolls archive show <id> --all
+```
+
+`--all` emits **every** archived prior for the id as a JSONL stream, **newest first**
+(the `archive list` `id DESC` order), each line the model-complete `item_to_dict`
+snapshot — so the whole recoverable history backs up or inspects as re-importable
+`export items` lines, not just the head. The default (no `--all`) is unchanged: latest
+prior only.
+
+**The decisive choice** — convergence by construction. A new
+`items.archived_snapshots(db_path, item_id) -> list[ScrollItem]` (the list-returning
+sibling of the scalar `latest_archived`) folds the same `snapshot` column over *all*
+rows for the id by `id DESC`, and `latest_archived` was **refactored to return its
+head** (`archived_snapshots(...)[0]`). So `archive show` (the single-snapshot recovery)
+and `archive show --all` (the full history) share **one** snapshot-parsing read and can
+never disagree: `archive show <id>` is byte-identical to `archive show <id> --all`'s
+first line. An empty history (`--all` on a never-superseded or unknown id) is the same
+exit-1 could-not-recover as the single-snapshot read — an empty stream is not a recovery.
+
+A **CLI-only read** (no write), no schema change, no network — a pure fold over
+`item_archive` (pre-v8 tolerant, returns `[]`). Restoring a *specific* older version
+(not just the latest) is the deferred restore-by-version (H286): a `--hash`/`--at`
+selector over this same stream, feeding the existing accept-incoming adoption write.
+
+Tested: `tests/test_items.py` (`archived_snapshots` returns all priors newest-first and
+matches the `list_archived` order, `latest_archived` is its head, `[]` for a
+never-superseded id, pre-v8 tolerant); `tests/test_cli.py` (`--all` emits N lines
+newest-first for an N-adoption item, the default still one line and byte-identical to
+the `--all` head, a single-prior `--all` ≡ the default, a never-superseded `--all`
+exit-1).

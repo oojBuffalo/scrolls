@@ -4194,6 +4194,58 @@ def test_archive_show_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
     assert "no archived prior" in err["error"]
 
 
+def test_archive_show_all_emits_the_full_history_newest_first(
+    scrolls_home, tmp_path, capsys
+):
+    """`archive show <id> --all` (H285) emits *every* archived prior as a JSONL
+    stream, newest first — after three adoptions the archive holds three priors
+    (the original + two intermediates), and `--all` re-emits all three (the
+    default emits only the latest). Each line is a re-importable `export items`
+    snapshot, so the whole recoverable history can be backed up, not just the head."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    capsys.readouterr()
+
+    # --all emits the full history: three priors, newest first (v2, v1, then the
+    # original abc — the prior each successive adoption displaced)
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3
+    hashes = [json.loads(line)["content_hash"] for line in lines]
+    assert hashes == ["sha256:v2", "sha256:v1", "sha256:abc"]
+
+    # the default (no --all) still emits exactly one line — the latest prior — and
+    # it is byte-identical to the --all stream's head (convergence by construction)
+    assert main(["archive", "show", item_id]) == 0
+    default_lines = capsys.readouterr().out.splitlines()
+    assert len(default_lines) == 1
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == default_lines[0]
+
+
+def test_archive_show_all_with_one_prior_is_a_single_line(
+    scrolls_home, tmp_path, capsys
+):
+    """With a single archived prior, `--all` and the default agree exactly — the
+    full history *is* the latest, one line."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    all_out = capsys.readouterr().out
+    assert main(["archive", "show", item_id]) == 0
+    assert capsys.readouterr().out == all_out
+
+
+def test_archive_show_all_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
+    """`archive show --all` for a never-superseded id exits 1 with the same
+    could-not-recover signal as the single-snapshot read — an empty history is
+    not a recovery."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["archive", "show", "arxiv:1706.03762", "--all"]) == 1
+    err = json.loads(capsys.readouterr().err)
+    assert "no archived prior" in err["error"]
+
+
 # --- archive prune (H282): a retention act bounding the append-only recovery
 # store. Report-only by default; --apply deletes; exactly one of --before/--keep;
 # never touches a held row (the archive is a recovery convenience, not the root of

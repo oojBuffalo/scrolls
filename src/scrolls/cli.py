@@ -94,6 +94,7 @@ from scrolls.items import (
     adopt_incoming,
     archive_entry_dict,
     archived_records,
+    archived_snapshots,
     classification_provenance,
     dump_archive_export,
     get_fidelity,
@@ -1052,6 +1053,13 @@ def build_parser() -> argparse.ArgumentParser:
     archive_show_parser.add_argument(
         "id", help="Item id (e.g. web:demo), or the item's URL, with an archived prior"
     )
+    archive_show_parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_history",
+        help="Emit every archived prior capture for the id (newest first) as a JSONL "
+        "stream, not just the latest — the full recoverable history",
+    )
     archive_prune_parser = archive_sub.add_parser(
         "prune",
         help="Drop archived prior captures by a retention policy — bounds the "
@@ -1358,7 +1366,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_reconcile(args.id, args.keep_held, args.dry_run)
     if args.command == "archive":
         if args.archive_command == "show":
-            return _cmd_archive_show(args.id)
+            return _cmd_archive_show(args.id, args.all_history)
         if args.archive_command == "prune":
             return _cmd_archive_prune(args.before, args.keep, args.apply)
         return _cmd_archive_list(args.item_id)
@@ -3988,16 +3996,21 @@ def _cmd_archive_list(ref: str | None = None) -> int:
     return 0
 
 
-def _cmd_archive_show(ref: str) -> int:
-    """Emit one item's latest archived prior capture as a re-importable JSONL line (H278).
+def _cmd_archive_show(ref: str, all_history: bool = False) -> int:
+    """Emit an item's archived prior capture(s) as re-importable JSONL line(s) (H278/H285).
 
-    The recovery read (ADR 0106): the most-recently superseded copy of the item,
-    serialized in the exact `export items` JSONL shape, so restoring it is just
+    The recovery read (ADR 0106): the superseded copy/copies of the item, serialized
+    in the exact `export items` JSONL shape, so restoring is just
     ``scrolls archive show <id> | scrolls import items /dev/stdin --accept-incoming``
     (the symmetric round-trip — accept-incoming of the archived snapshot re-adopts
-    it, archiving the current copy in turn). The line *is* the artifact, like
-    `export items`, so it prints raw to stdout. Exit 1 when the id has no archived
-    prior (never superseded) or is unknown — the could-not-recover signal.
+    it, archiving the current copy in turn). The line(s) *are* the artifact, like
+    `export items`, so they print raw to stdout.
+
+    Default emits only the latest archived prior (one line). With ``--all`` (H285) it
+    emits **every** archived prior for the id, newest first — the full recoverable
+    history of a multi-supersession item, not just its newest copy. Either way exit 1
+    when the id has no archived prior (never superseded) or is unknown — the
+    could-not-recover signal.
     """
     paths = get_paths()
     try:
@@ -4005,15 +4018,21 @@ def _cmd_archive_show(ref: str) -> int:
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 2
-    prior = latest_archived(paths.db_path, item_id) if paths.db_path.exists() else None
-    if prior is None:
+    if not paths.db_path.exists():
+        priors: list[ScrollItem] = []
+    elif all_history:
+        priors = archived_snapshots(paths.db_path, item_id)
+    else:
+        latest = latest_archived(paths.db_path, item_id)
+        priors = [latest] if latest is not None else []
+    if not priors:
         suffix = f" (from {ref})" if item_id != ref else ""
         print(
             json.dumps({"error": f"no archived prior capture for {item_id}{suffix}"}),
             file=sys.stderr,
         )
         return 1
-    sys.stdout.write(dump_items_export([prior]))
+    sys.stdout.write(dump_items_export(priors))
     return 0
 
 

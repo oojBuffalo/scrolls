@@ -1525,7 +1525,7 @@ $ scrolls archive list
 [exit 0]
 ```
 
-### `scrolls archive show <id>`
+### `scrolls archive show <id> [--all]`
 
 **Recovers** one item's latest archived prior capture, emitting it as a
 re-importable `export items` JSONL line on stdout (ADR 0106). Because the line is
@@ -1541,6 +1541,25 @@ $ scrolls archive show web:demo | scrolls import items /dev/stdin --accept-incom
 
 An id with no archived prior (never superseded) or an unknown id is a loud
 could-not-recover (exit 1), the `verify`/`reconcile` empty-vs-error split.
+
+`--all` (H285) emits **every** archived prior for the id — the whole recoverable
+history, not just the latest — as a JSONL stream, **newest first** (the `archive list`
+order). After several adoptions a multi-supersession item carries more than one prior;
+`--all` backs up or inspects all of them as re-importable snapshots, where the default
+emits only the head:
+
+```console
+$ scrolls archive show web:demo --all          # newest archived prior first
+{"id": "web:demo", "content_hash": "sha256:v2", ...}
+{"id": "web:demo", "content_hash": "sha256:v1", ...}
+{"id": "web:demo", "content_hash": "sha256:abc", ...}
+[exit 0]
+```
+
+The default and `--all` never disagree by construction: `archive show <id>` is
+byte-identical to `archive show <id> --all`'s first line (`latest_archived` is the head
+of the shared `items.archived_snapshots` read). An empty history (`--all` on a
+never-superseded id) is the same exit-1 could-not-recover.
 
 The recovery **read** also travels over MCP (H281): `list_archived` is the twin of
 `archive list` (the same `{count, archived}` index, folding the shared

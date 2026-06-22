@@ -12,6 +12,7 @@ from scrolls.items import (
     archive_export_dict,
     archive_from_dict,
     archived_records,
+    archived_snapshots,
     delete_item,
     get_item,
     import_archive,
@@ -396,6 +397,44 @@ def test_latest_archived_returns_none_for_a_never_superseded_id(db_path):
     insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
                                    url="https://a.example", content_hash="sha256:x"))
     assert latest_archived(db_path, "web:a") is None
+
+
+# --- the full archived history read (`archive show --all`, H285) ---
+
+
+def test_archived_snapshots_returns_every_prior_newest_first(db_path):
+    # three adoptions leave three archived priors (h0, h1, h2); the full-history
+    # read re-emits all three as ScrollItems, newest-first (the list_archived order).
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    snaps = archived_snapshots(db_path, "web:a")
+    assert [s.content_hash for s in snaps] == ["sha256:h2", "sha256:h1", "sha256:h0"]
+    # each is the model-complete prior, recoverable byte-for-byte (raw body intact)
+    assert [s.raw_text for s in snaps] == ["body sha256:h2", "body sha256:h1", "body h0"]
+    # the newest-first stream matches the recovery index order exactly
+    assert [s.content_hash for s in snaps] == [
+        e.prior_hash for e in list_archived(db_path, item_id="web:a")
+    ]
+
+
+def test_latest_archived_is_the_head_of_archived_snapshots(db_path):
+    # convergence by construction: the single-snapshot recovery is exactly the
+    # full-history stream's head — `archive show` never disagrees with `--all`.
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2"])
+    snaps = archived_snapshots(db_path, "web:a")
+    assert latest_archived(db_path, "web:a") == snaps[0]
+
+
+def test_archived_snapshots_empty_for_a_never_superseded_id(db_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", content_hash="sha256:x"))
+    assert archived_snapshots(db_path, "web:a") == []
+
+
+def test_archived_snapshots_tolerates_pre_v8_library(tmp_path):
+    legacy = tmp_path / "legacy.sqlite"
+    import sqlite3
+    sqlite3.connect(legacy).close()  # an empty db, no item_archive table
+    assert archived_snapshots(legacy, "web:a") == []
 
 
 # --- archive retention / prune (bound the append-only recovery store, H282) ---

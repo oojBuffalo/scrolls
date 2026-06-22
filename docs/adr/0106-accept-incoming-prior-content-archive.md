@@ -213,6 +213,24 @@ operator act (custody §2.4), not an ambient MCP capability.
   selection, the preview ≡ apply drop set, idempotency, held-row + ledger untouched)
   and `tests/test_cli.py` (the policy gate, report-only default, `--apply` + warn,
   the keep>=1 recovery invariant, the before-policy whole-archive clear).
-- **`archive show --all` / restore-by-version.** `archive show` emits the latest
-  archived prior; emitting the full archived history for an id, or restoring a
-  specific older version, is left until a multi-supersession workflow needs it.
+- **`archive show --all` — the full archived history.** ~~`archive show` emits the
+  latest archived prior; emitting the full archived history for an id is left until a
+  multi-supersession workflow needs it.~~ **Shipped (roadmap H285):** `scrolls archive
+  show <id> --all` emits **every** archived prior for the id as a JSONL stream, newest
+  first (the `archive list` `id DESC` order), each line the model-complete `item_to_dict`
+  snapshot — so a multi-supersession item's whole recoverable history backs up as
+  re-importable `export items` lines, not just the head. The decisive choice: a new
+  `items.archived_snapshots(db_path, item_id) -> list[ScrollItem]` (the list-returning
+  sibling of the scalar `latest_archived`), and `latest_archived` refactored to return
+  its head, so the single-snapshot recovery and the full-history read share one
+  snapshot-parsing read and never disagree (convergence by construction). Default (no
+  `--all`) unchanged; an empty history is the same exit-1 could-not-recover as a
+  never-superseded id. CLI-only read, no schema change. Verified offline:
+  `tests/test_items.py` (`archived_snapshots` all-priors-newest-first, `latest_archived`
+  is its head, `[]` for never-superseded, pre-v8 tolerant) and `tests/test_cli.py`
+  (`--all` N lines for an N-adoption item, default one line, convergence with the head,
+  never-superseded exit-1).
+- **Restore-by-version.** Restoring a *specific* older archived version (not only the
+  latest) is left until a multi-supersession workflow needs it (roadmap H286, a selector
+  — `--hash`/`--at` — over the H285 `archived_snapshots` stream, feeding the existing
+  accept-incoming adoption write).

@@ -923,29 +923,47 @@ def list_archived(db_path: Path, item_id: str | None = None) -> list[ArchiveEntr
     ]
 
 
-def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
-    """The most recently archived prior capture for `item_id`, or ``None``.
+def archived_snapshots(db_path: Path, item_id: str) -> list[ScrollItem]:
+    """Every archived prior capture of `item_id`, newest first — the full recovery history.
 
-    The recovery read behind `scrolls archive show <id>`: parses the model-complete
-    snapshot of the latest (highest-`id`) archived copy back into a `ScrollItem`, so
-    it re-emits as a re-importable `export items` line — restoring it is then just
-    `import items … --accept-incoming` of that line (the symmetric round-trip).
-    Returns ``None`` when the id has no archived prior (never superseded).
+    The list-returning sibling of the scalar `latest_archived`, behind
+    `scrolls archive show <id> --all` (roadmap H285): parses the model-complete
+    ``snapshot`` of **every** archived copy of the id back into a `ScrollItem`,
+    ordered by archive ``id DESC`` (the `list_archived` newest-first order), so a
+    multi-supersession item's *whole* recoverable history re-emits as a
+    re-importable `export items` stream — not just its newest prior. `latest_archived`
+    is exactly this list's head, so the single-snapshot recovery and the full-history
+    read never disagree (convergence by construction). Returns ``[]`` when the id has
+    no archived prior (never superseded); tolerates a pre-v8 library (no archive
+    table) by returning ``[]``.
     """
     conn = sqlite3.connect(db_path)
     try:
-        row = conn.execute(
-            "SELECT snapshot FROM item_archive WHERE item_id = ? "
-            "ORDER BY id DESC LIMIT 1",
+        rows = conn.execute(
+            "SELECT snapshot FROM item_archive WHERE item_id = ? ORDER BY id DESC",
             (item_id,),
-        ).fetchone()
+        ).fetchall()
     except sqlite3.OperationalError:  # pre-v8 library, no archive table
-        return None
+        return []
     finally:
         conn.close()
-    if row is None:
-        return None
-    return item_from_dict(json.loads(row[0]))
+    return [item_from_dict(json.loads(row[0])) for row in rows]
+
+
+def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
+    """The most recently archived prior capture for `item_id`, or ``None``.
+
+    The recovery read behind `scrolls archive show <id>`: the model-complete snapshot
+    of the latest (highest-`id`) archived copy as a `ScrollItem`, so it re-emits as a
+    re-importable `export items` line — restoring it is then just `import items …
+    --accept-incoming` of that line (the symmetric round-trip). The head of
+    `archived_snapshots` (the full-history read), so the single-snapshot recovery and
+    `archive show --all` share one snapshot-parsing read and never disagree
+    (convergence by construction). Returns ``None`` when the id has no archived prior
+    (never superseded).
+    """
+    snapshots = archived_snapshots(db_path, item_id)
+    return snapshots[0] if snapshots else None
 
 
 # --- portable prior-content archive (the recovery store travels, roadmap H280) ---
