@@ -388,18 +388,102 @@ whole way. So an operator can inspect a rollback as many times as they like, on 
 version, before committing to it, and the write they finally run is exactly the one the
 read promised (custody §2.4).
 
+## Taking the recovery workflow with you — a machine handoff
+
+The flows above all recover on the *same* library that made the adoptions. The
+custody promise is bigger than that: **the whole recovery workflow travels.**
+`export bundle --with-archive` (ADR 0106, roadmap H280) packs the prior-content
+archive *into* the portable bundle, so someone can hand you a single file and you
+can `import bundle` it into a fresh library on a machine that *never saw the
+original adoptions* — and still **decide-and-restore** on it. H291 pins that the
+recovery *reads* (`archive show --all`/`diff`/`restore --dry-run`) come back
+identical after the round-trip; this leg runs the recovery *act* — a real
+`archive restore` write — on the rebuilt library.
+
+`tests/test_dogfood.py` pins it offline as
+`test_recovery_workflow_survives_a_machine_handoff`: on **machine A**, hold the
+topic and adopt a *chain* of two divergent peer captures (v1 → v2) so the archive
+holds two recoverable priors, then `export bundle --with-archive`. On **machine
+B** — a fresh library — `import bundle`, repair, then **inspect → decide → act**,
+asserting the act lands exactly on the diff's prediction across the machine
+boundary, on both the would-change and the idempotent cases.
+
+```bash
+# ── machine A: I adopted a chain of two peer captures; both priors are archived ──
+scrolls export bundle transformer --with-archive > briefing.md   # the artifact I hand off
+
+# ── machine B (never saw A's adoptions): rebuild from the bundle alone ──
+scrolls import bundle briefing.md
+#   → {"imported": 2, "archive": {"imported": 2, "skipped": 0}}   (both priors travelled)
+scrolls doctor --fix && scrolls kb     # import inserts rows; --fix materializes the scrolls
+scrolls doctor                         # → custody.score 100  (the recovery store is here)
+
+# 1. INSPECT — the full recoverable history travelled, newest-first.
+scrolls archive show arxiv:1706.03762 --all
+#   → sha256:peer-v1, sha256:06.03762     (the latest prior *and* my original)
+
+# 2. DECIDE — reach *past* the latest prior (v1) to my original by --hash.
+scrolls archive diff arxiv:1706.03762 --hash sha256:06.03762
+#   → would_restore: true, changed_fields: [content_hash, extracted_text, raw_text]
+
+# 3. ACT — a real restore on B lands exactly what the diff predicted.
+scrolls archive restore arxiv:1706.03762 --hash sha256:06.03762   # → restored: true, outcome: adopted
+scrolls doctor                                                     # → custody.score 100 (held = my original)
+
+# 4. DECIDE + ACT AGAIN — the version I just restored has nothing left to restore.
+scrolls archive diff arxiv:1706.03762 --hash sha256:06.03762      # → would_restore: false, changed_fields: []
+scrolls archive restore arxiv:1706.03762 --hash sha256:06.03762   # → restored: false, outcome: unchanged
+```
+
+**Rebuild (`import bundle`).** The fresh library takes the holdings, the custody
+ledger, *and* the prior-content archive from the one file — both archived priors,
+not just the latest head:
+
+```json
+{ "imported": 2, "skipped": 0, "adopted": [], "conflicts": [],
+  "events": { "imported": 2, "skipped": 0, "orphaned": 0 },
+  "archive": { "imported": 2, "skipped": 0 } }
+```
+
+**Decide on B (`archive diff --hash`).** B holds the peer's latest capture (v2);
+the `--hash` selector reaches past the latest prior to my original, and the diff
+predicts the write — identical to the diff I'd have read on A:
+
+```json
+{ "selector": { "hash": "sha256:06.03762" }, "prior_hash": "sha256:06.03762",
+  "held_hash": "sha256:peer-v2", "held_fidelity": "full", "prior_fidelity": "full",
+  "changed_fields": ["content_hash", "extracted_text", "raw_text"], "would_restore": true }
+```
+
+**Act on B (`archive restore --hash`).** A real write on the rebuilt library —
+`would_restore` *is* `restored`, the held copy flips to my original, the displaced
+v2 is archived in turn (the rollback stays reversible on B too):
+
+```json
+{ "selector": { "hash": "sha256:06.03762" }, "prior_hash": "sha256:06.03762",
+  "held_hash": "sha256:peer-v2", "outcome": "adopted", "restored": true }
+```
+
+The custody point is the cross-machine twin of decide-before-you-restore's: the
+*whole* recovery workflow — inspect, decide, **and act** — travels in the portable
+bundle, so you can recover on a machine that never witnessed the adoptions, the
+act still lands exactly what the read promised, and `doctor`'s `custody.score`
+holds at 100 through the real recovery write. "Take it with me" reaches past the
+holdings to the recovery *capability* itself (M4/cap 4, custody §2.4).
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Nine tests: each leg on its own — the core hold/detect/take legs, the scoped
+Ten tests: each leg on its own — the core hold/detect/take legs, the scoped
 drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
-flow, the *restore-by-version* roll-back, and the *decide-before-you-restore*
-`archive diff` → `archive restore` loop above — plus
-`test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
-sequence in order, unattended. The lossless round-trip leg shares its guarantee
+flow, the *restore-by-version* roll-back, the *decide-before-you-restore*
+`archive diff` → `archive restore` loop, and the *cross-machine recovery* leg above
+(the whole decide → act loop run on a library rebuilt from a `--with-archive`
+bundle) — plus `test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove →
+detect → take sequence in order, unattended. The lossless round-trip leg shares its guarantee
 with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle
 envelope is ADR 0103; the accept-incoming adoption + prior-content archive (and its
 restore-by-version and decide-before-you-restore reads) are ADR 0106.

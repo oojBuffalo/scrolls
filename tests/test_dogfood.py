@@ -971,6 +971,166 @@ def test_archive_diff_decides_then_restore_acts_exactly_as_predicted(
     assert _custody()["score"] == 100
 
 
+# --- the cross-machine recovery leg (H292): the whole decide→restore recovery
+#     workflow survives a `--with-archive` bundle handoff — you can decide-and-
+#     restore on a machine that never saw the original adoptions (the H287/H289
+#     analogue across the bundle boundary) ---------------------------------------
+
+
+def test_recovery_workflow_survives_a_machine_handoff(
+    home, capsys, tmp_path, monkeypatch
+):
+    """*cross-machine recovery* (H292): the decide→restore loop, end to end, on a
+    library rebuilt from a portable `--with-archive` bundle.
+
+    H280 makes the prior-content archive *travel* in the portable bundle; H291 pins
+    that the whole recovery *read*-family (`archive show --all`/`diff`/`restore
+    --dry-run`) reads identically on the rebuilt library — but only as non-mutating
+    reads, never running the recovery *act*. This leg is the operator-workflow layer
+    above that test: someone hands you a `--with-archive` bundle, you `import bundle`
+    into a fresh library on a machine that *never saw the original adoptions*, repair
+    it to materialize the rendered scrolls, then **recover on it for real** — read
+    `archive diff` to decide, run `archive restore` (a genuine write that moves the
+    held copy) to act. The "take it with me" guarantee (M4/cap 4) extended from "the
+    archive travels" (H280) to "the whole recovery *workflow* travels".
+
+    The three custody points the leg pins — the cross-machine twins of the
+    decide-before-you-restore leg's "the act lands exactly on the read's prediction":
+
+    - **the whole recovery workflow travels** — both the decision (`archive diff`)
+      and the act (`archive restore`, a real write) run on library B, which was
+      rebuilt *purely from the bundle* and never saw the chain of adoptions made on
+      A; the full recoverable history (`archive show --all`) is there to inspect and
+      a *specific earlier* prior is selectable by `--hash`, not just the latest;
+
+    - **read-then-act convergence across the boundary** — `archive diff`'s
+      ``would_restore`` *is* the subsequent `archive restore`'s ``restored``, with
+      matching ``prior_hash``/``held_hash``, on **both** the would-change and the
+      idempotent no-op cases (the H289 convergence, now across a machine handoff);
+      and
+
+    - **the recovery write keeps custody intact** — the real restore flips the held
+      copy to the chosen prior and re-archives the copy it displaced (reversible —
+      custody §2.4: nothing is destroyed), and `doctor`'s ``custody.score`` holds at
+      100 through the whole recovery on the freshly-imported library.
+    """
+
+    def _custody() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]
+
+    # 1. HOLD + ADOPT a chain on machine A: hold the topic in full, then adopt two
+    #    divergent peer captures of the arxiv paper over two days (v1→v2), each
+    #    archiving the prior. A's archive ends holding [original, v1] (held = v2) — a
+    #    genuine multi-supersession chain, so a restore can reach *past* the latest
+    #    prior (v1) to a specific earlier version. Recaptures are built from the held
+    #    DB row so they carry the rendered markdown_path (the H287 discipline); a
+    #    scripted clock spaces the archive timestamps deterministically.
+    a = home("machine-a")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv" and original.content_hash == ORIG_HASH
+    capsys.readouterr()  # drain the kb report
+    held0 = get_item(a.db_path, original.id)  # the rendered row (carries markdown_path)
+
+    clock = {"now": "2026-06-19T00:00:00+00:00"}
+    monkeypatch.setattr(cli, "datetime", _scripted_clock(clock))
+    for new_hash, archived_at, note in (
+        ("sha256:peer-v1", "2026-06-19T00:00:00+00:00", "Adds a worked attention example."),
+        ("sha256:peer-v2", "2026-06-20T00:00:00+00:00", "Adds the multi-head derivation."),
+    ):
+        clock["now"] = archived_at
+        recapture = _divergent_recapture(held0, new_hash, note)
+        incoming = tmp_path / f"{new_hash.split(':')[1]}.jsonl"
+        incoming.write_text(dump_items_export([recapture]), encoding="utf-8")
+        assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+        assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert get_item(a.db_path, original.id).content_hash == "sha256:peer-v2"
+
+    # 2. PACK: export a portable `--with-archive` bundle — the artifact handed off, so
+    #    the prior-content archive travels with the holdings (H280), not just the head.
+    assert main(["export", "bundle", TOPIC, "--with-archive"]) == 0
+    bundle_path = tmp_path / "transformer-with-archive.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # 3. HANDOFF to machine B — a fresh library that never saw A's adoptions. Import
+    #    the bundle, repair to materialize the rendered scrolls (import inserts the
+    #    rows but doesn't render — the same `doctor --fix` the take-it-with-me flow
+    #    runs), then prove custody: the score is 100 and the whole recovery store
+    #    travelled (both archived priors, not just the latest head).
+    b = home("machine-b")
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    imported = json.loads(capsys.readouterr().out)
+    assert imported["imported"] == len(items)
+    assert imported["archive"]["imported"] == 2  # both archived priors travelled
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    rebuilt = _custody()
+    assert rebuilt["score"] == 100 and rebuilt["issues"] == 0
+    # the head travelled: B holds the peer's latest capture, as A did.
+    assert get_item(b.db_path, original.id).content_hash == "sha256:peer-v2"
+
+    # 4. INSPECT the full recoverable history on B — newest-first [v1, original]: the
+    #    machine that never saw the adoptions can still see every recoverable prior.
+    assert main(["archive", "show", original.id, "--all"]) == 0
+    history = _read_jsonl_lines(capsys.readouterr().out)
+    assert [snap["content_hash"] for snap in history] == ["sha256:peer-v1", ORIG_HASH]
+    assert main(["archive", "list", "--id", original.id]) == 0
+    assert json.loads(capsys.readouterr().out)["count"] == 2  # the chain depth travelled
+
+    # 5. DECIDE on B — `archive diff --hash <ORIG>` reaches *past* the latest prior
+    #    (v1) to the original capture: what would restoring it get back, and what
+    #    would it cost?
+    assert main(["archive", "diff", original.id, "--hash", ORIG_HASH]) == 0
+    diff = json.loads(capsys.readouterr().out)
+    assert diff["selector"] == {"hash": ORIG_HASH}
+    assert diff["held_hash"] == "sha256:peer-v2"   # what B holds now
+    assert diff["prior_hash"] == ORIG_HASH         # the version a restore would land
+    assert diff["held_fidelity"] == "full" and diff["prior_fidelity"] == "full"
+    # exactly the three fields the recapture diverged on (a full→full swap, no loss).
+    assert diff["changed_fields"] == ["content_hash", "extracted_text", "raw_text"]
+    assert diff["would_restore"] is True
+    # the diff wrote nothing — B still holds the peer's latest capture.
+    assert get_item(b.db_path, original.id).content_hash == "sha256:peer-v2"
+
+    # 6. ACT on B — `archive restore` with the same selector (a *real* write), and
+    #    assert it lands exactly on the diff's prediction: read-then-act convergence
+    #    across the machine boundary.
+    clock["now"] = "2026-06-21T00:00:00+00:00"
+    assert main(["archive", "restore", original.id, "--hash", ORIG_HASH]) == 0
+    restore = json.loads(capsys.readouterr().out)
+    assert restore["selector"] == diff["selector"]          # same version selected
+    assert restore["restored"] == diff["would_restore"]     # would_restore *is* restored
+    assert restore["prior_hash"] == diff["prior_hash"]      # landed the version diff named
+    assert restore["held_hash"] == diff["held_hash"]        # displaced the copy diff named
+    assert restore["outcome"] == "adopted"
+    # the recovery happened on B: the held copy flipped to our original capture.
+    assert get_item(b.db_path, original.id).content_hash == ORIG_HASH
+    # the displaced v2 is itself archived — the rollback is reversible on B too.
+    assert main(["archive", "show", original.id]) == 0
+    displaced = _read_jsonl_lines(capsys.readouterr().out)
+    assert len(displaced) == 1 and displaced[0]["content_hash"] == "sha256:peer-v2"
+    # the real recovery write never lowered integrity on the freshly-imported library.
+    assert _custody()["score"] == 100
+
+    # 7. DECIDE + ACT AGAIN — the idempotent no-op the convergence implies: a second
+    #    diff against the now-restored original says there is nothing left to restore,
+    #    and the restore agrees — `would_restore` is `restored` on the no-op case too.
+    assert main(["archive", "diff", original.id, "--hash", ORIG_HASH]) == 0
+    diff2 = json.loads(capsys.readouterr().out)
+    assert diff2["would_restore"] is False and diff2["changed_fields"] == []
+    assert main(["archive", "restore", original.id, "--hash", ORIG_HASH]) == 0
+    restore2 = json.loads(capsys.readouterr().out)
+    assert restore2["restored"] == diff2["would_restore"]   # False == False, never lies
+    assert restore2["outcome"] == "unchanged"
+    assert get_item(b.db_path, original.id).content_hash == ORIG_HASH
+    assert _custody()["score"] == 100
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
