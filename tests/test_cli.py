@@ -6480,6 +6480,70 @@ def test_incremental_export_archive_re_imports_idempotently_over_the_full_backup
     assert family_b == read_family(tmp_path / "library-c")
 
 
+# --- the --since family shares one boundary-normalization contract: `history
+# --since` ≡ `export events --since` ≡ `export archive --since` pick *coherent*
+# windows from the one `parse_since` validator (inclusive >=) (H304) ----------
+
+
+def test_since_family_agrees_on_the_window_edge(scrolls_home, capsys):
+    """The three time-windowed reads pick the *same* window edge — `history
+    --since` (H71), `export events --since` (H75), and `export archive --since`
+    (H303) all normalize their boundary through the one `parse_since` validator
+    and compare lexicographically `>=` against a stored `+00:00` isoformat stamp
+    (`history`/`export events` on `checked_at`, `export archive` on
+    `archived_at`). Each was pinned in isolation, but nothing pinned that they
+    agree on the *edge*, so a future change to one read's boundary could silently
+    drift from the others.
+
+    Pin it on a single item carrying a `checked_at` ledger row *and* an
+    `archived_at` prior stamped at the **same** instant T: a `--since T` (the
+    exact stamp) includes both the event and the prior on all three reads (the
+    boundary is inclusive, `>=` not `>`); a `--since` one second after T excludes
+    both, in lockstep. So a maintenance worker using one `--since` value across
+    the backup family windows them coherently (the search/list/filter-consistency
+    theme on the time axis)."""
+    instant = "2026-06-21T12:00:00+00:00"
+    one_second_later = "2026-06-21T12:00:01+00:00"
+    # one item with a prior archived at T (the recovery-store row) ...
+    db, _ = _seed_archived_prior("web:demo", archived_at=instant)
+    # ... and a ledger check stamped at the same instant T (the custody-event row)
+    record_events(db, [
+        CustodyEvent("web:demo", instant, "unchanged", "sha256:new", "sha256:new"),
+    ])
+    capsys.readouterr()
+
+    def history_checks(boundary):
+        assert main(["history", "web:demo", "--since", boundary]) == 0
+        return [e["checked_at"] for e in json.loads(capsys.readouterr().out)]
+
+    def exported_events(boundary):
+        assert main(["export", "events", "--since", boundary]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        return [json.loads(line)["checked_at"] for line in lines]
+
+    def archived_priors(boundary):
+        assert main(["export", "archive", "--since", boundary]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        return [json.loads(line)["archived_at"] for line in lines]
+
+    # `--since T` (the exact stamp) — inclusive `>=`: all three keep their T row
+    assert history_checks(instant) == [instant]
+    assert exported_events(instant) == [instant]
+    assert archived_priors(instant) == [instant]
+
+    # a `Z`-suffixed spelling of T normalizes to the same edge (the shared
+    # `parse_since` funnel, not a per-command string-shape accident): same result
+    assert history_checks("2026-06-21T12:00:00Z") == [instant]
+    assert exported_events("2026-06-21T12:00:00Z") == [instant]
+    assert archived_priors("2026-06-21T12:00:00Z") == [instant]
+
+    # `--since T+1s` — all three drop the T row together (the edge is shared, so a
+    # single boundary value never includes one read's row while excluding another's)
+    assert history_checks(one_second_later) == []
+    assert exported_events(one_second_later) == []
+    assert archived_priors(one_second_later) == []
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 
