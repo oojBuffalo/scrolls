@@ -96,6 +96,7 @@ from scrolls.items import (
     archived_records,
     archived_snapshots,
     classification_provenance,
+    diff_snapshot,
     dump_archive_export,
     get_fidelity,
     get_item,
@@ -1094,6 +1095,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Predict the restore (the same decision the live run emits, plus "
         "dry_run: true) and write nothing — the preview-never-drifts discipline",
     )
+    archive_diff_parser = archive_sub.add_parser(
+        "diff",
+        help="Compare the held copy against a selected archived prior — the "
+        "decide-before-you-restore read (no write; JSON output)",
+    )
+    archive_diff_parser.add_argument(
+        "id", help="Item id (e.g. web:demo), or the item's URL, with an archived prior"
+    )
+    archive_diff_parser.add_argument(
+        "--hash",
+        dest="prior_hash",
+        default=None,
+        metavar="H",
+        help="Compare against the archived prior with this content hash (the "
+        "`archive list` prior_hash) — a specific version, not just the latest",
+    )
+    archive_diff_parser.add_argument(
+        "--at",
+        dest="at",
+        default=None,
+        metavar="ISO",
+        help="Compare against the newest prior archived at or before this ISO-8601 "
+        "timestamp (date-only ok → that day's UTC midnight) — the version held as of "
+        "a point in time. At most one of --hash/--at; default is the latest prior",
+    )
     archive_prune_parser = archive_sub.add_parser(
         "prune",
         help="Drop archived prior captures by a retention policy — bounds the "
@@ -1407,6 +1433,12 @@ def main(argv: list[str] | None = None) -> int:
                 prior_hash=args.prior_hash,
                 at=args.at,
                 dry_run=args.dry_run,
+            )
+        if args.archive_command == "diff":
+            return _cmd_archive_diff(
+                args.id,
+                prior_hash=args.prior_hash,
+                at=args.at,
             )
         if args.archive_command == "prune":
             return _cmd_archive_prune(args.before, args.keep, args.apply)
@@ -4211,6 +4243,114 @@ def _cmd_archive_restore(
     if not dry_run:
         _warn_adopted(adopted)
     print(json.dumps(decision))
+    return 0
+
+
+def _cmd_archive_diff(
+    ref: str,
+    *,
+    prior_hash: str | None = None,
+    at: str | None = None,
+) -> int:
+    """Compare the held copy against a selected archived prior — decide-before-you-restore (H288).
+
+    The read that answers "what would I get back, and what would I lose?" *before* the
+    H286 `archive restore` writes anything. Folds the **same** `select_archived_snapshot`
+    selector restore uses (``--hash``/``--at``, default the latest) against the
+    currently-held copy (`get_item`), reporting the custody-relevant delta:
+
+    - ``held_hash`` vs ``prior_hash`` — the captured-content fingerprints either side;
+    - ``held_fidelity`` / ``prior_fidelity`` — each copy's custody-fidelity tier
+      (`get_fidelity`, ADR 0097), so a degradation (full → partial) is visible before
+      the swap;
+    - ``changed_fields`` — the model-complete fields a restore would surface
+      (`items.diff_snapshot`); and
+    - ``would_restore`` — whether a restore would actually change the held copy (the
+      H286 idempotency predicted as a read: the same ``content_hash`` compare
+      `merge_item` makes — an absent id would be re-imported, an equal-hash prior is
+      the held copy already, so the restore is an ``unchanged`` no-op).
+
+    CLI-only read — it writes nothing (the `archive show` gate; the MCP twin is
+    deferred). Honest exits mirror `archive restore`: an unresolvable ref is a usage
+    error (exit 2); at most one version selector (exit 2); a malformed ``--at`` is a
+    loud usage error (exit 2); an id with no archived prior — or none matching the
+    selector — is a could-not-recover (exit 1).
+    """
+    paths = get_paths()
+    try:
+        item_id = resolve_item_id(ref)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
+    # at most one version selector — the explicit gate (the `archive restore` precedent)
+    if prior_hash is not None and at is not None:
+        print(
+            json.dumps({
+                "error": "archive diff takes at most one version selector: "
+                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+    boundary: str | None = None
+    if at is not None:
+        # a malformed --at is a loud usage error (exit 2), never a silently empty read
+        try:
+            boundary = parse_since(at)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        if boundary is None:
+            print(
+                json.dumps({"error": "--at needs an ISO-8601 timestamp boundary"}),
+                file=sys.stderr,
+            )
+            return 2
+    selector: dict = (
+        {"hash": prior_hash} if prior_hash is not None
+        else {"at": boundary} if boundary is not None
+        else {"latest": True}
+    )
+    selected = (
+        select_archived_snapshot(
+            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
+        )
+        if paths.db_path.exists()
+        else None
+    )
+    if selected is None:
+        suffix = f" (from {ref})" if item_id != ref else ""
+        scoped = (
+            f" matching {json.dumps(selector)}"
+            if prior_hash is not None or boundary is not None
+            else ""
+        )
+        print(
+            json.dumps(
+                {"error": f"no archived prior capture for {item_id}{suffix}{scoped}"}
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    entry, prior = selected
+    held = get_item(paths.db_path, item_id)
+    held_hash = held.content_hash if held is not None else None
+    # would a restore actually change the held copy? the H286 idempotency predicted
+    # *before* the write — the same content_hash compare `merge_item` acts on (an
+    # absent id would be re-imported; an equal-hash prior is the held copy already).
+    would_restore = held is None or held.content_hash != prior.content_hash
+    report = {
+        "id": item_id,
+        "selector": selector,
+        "prior_hash": entry.prior_hash,                       # the prior's content hash
+        "archived_at": entry.archived_at,                     # when that version was archived
+        "held_hash": held_hash,                               # what is held now
+        "held_fidelity": get_fidelity(held) if held is not None else None,
+        "prior_fidelity": get_fidelity(prior),
+        "changed_fields": diff_snapshot(held, prior),         # model-complete field delta
+        "would_restore": would_restore,
+    }
+    print(json.dumps(report))
     return 0
 
 

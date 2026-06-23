@@ -14,6 +14,7 @@ from scrolls.items import (
     archived_records,
     archived_snapshots,
     delete_item,
+    diff_snapshot,
     get_item,
     import_archive,
     insert_item,
@@ -493,6 +494,41 @@ def test_select_archived_snapshot_none_for_never_superseded_or_pre_v8(db_path, t
     legacy = tmp_path / "legacy.sqlite"
     sqlite3.connect(legacy).close()  # pre-v8: no item_archive table
     assert select_archived_snapshot(legacy, "web:a") is None
+
+
+# --- the decide-before-you-restore field diff (`archive diff`, H288) ---
+
+
+def test_diff_snapshot_names_only_the_fields_that_differ():
+    # the field-level delta over item_to_dict: a content edit changes raw_text and
+    # content_hash; the metadata difference (title) is reported too — every
+    # model-complete field a restore would surface, sorted.
+    held = make_item(id="web:a", source="web", source_id=None,
+                     url="https://a.example", title="held title",
+                     raw_text="held body", content_hash="sha256:held",
+                     stage="rendered")
+    prior = dataclasses.replace(held, title="prior title",
+                                raw_text="prior body", content_hash="sha256:prior")
+    assert item_to_dict(held).keys() == item_to_dict(prior).keys()  # same model
+    assert diff_snapshot(held, prior) == ["content_hash", "raw_text", "title"]
+
+
+def test_diff_snapshot_is_empty_when_the_prior_is_the_held_copy():
+    # the prior already *is* the held copy (an idempotent restore would be a no-op) —
+    # nothing differs, so the changed-field set is empty.
+    held = make_item(id="web:a", source="web", source_id=None,
+                     url="https://a.example", raw_text="body",
+                     content_hash="sha256:same", stage="rendered")
+    assert diff_snapshot(held, dataclasses.replace(held)) == []
+
+
+def test_diff_snapshot_against_an_absent_held_copy_is_the_whole_prior():
+    # a deleted id whose archive survives: a restore would re-create the whole row,
+    # so every model-complete field of the prior is reported changed.
+    prior = make_item(id="web:a", source="web", source_id=None,
+                      url="https://a.example", raw_text="body",
+                      content_hash="sha256:p", stage="rendered")
+    assert diff_snapshot(None, prior) == sorted(item_to_dict(prior))
 
 
 # --- archive retention / prune (bound the append-only recovery store, H282) ---

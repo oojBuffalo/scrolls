@@ -4424,6 +4424,158 @@ def test_archive_restore_unknown_id_is_a_could_not_recover(scrolls_home, capsys)
     assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
 
 
+# --- archive diff (H288): the decide-before-you-restore read — compare the held
+# copy against a selected archived prior (the same --hash/--at selector restore
+# uses, default the latest), reporting the held↔prior content-hash + fidelity delta,
+# the model-complete changed-field set, and `would_restore`. CLI-only read, no
+# write; unmatched selector / unknown id → exit 1 (the `archive restore` signals). ---
+
+
+def test_archive_diff_reports_the_held_vs_prior_delta_and_writes_nothing(
+    scrolls_home, tmp_path, capsys
+):
+    """`archive diff <id> --hash H` compares the currently-held copy against the
+    selected archived prior: held↔prior content hashes, each side's fidelity tier, the
+    model-complete fields a restore would surface, and `would_restore`. It is a *read*
+    — the held copy, the archive, and stderr are untouched."""
+    # archive holds priors [v2, v1, abc] (newest-first); held = v3
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    db = get_paths().db_path
+    rows_before = len(list_archived(db, item_id))
+    capsys.readouterr()
+
+    assert main(["archive", "diff", item_id, "--hash", "sha256:abc"]) == 0
+    out, err = capsys.readouterr()
+    report = json.loads(out)
+    assert report["id"] == item_id
+    assert report["selector"] == {"hash": "sha256:abc"}
+    assert report["held_hash"] == "sha256:v3"     # what is held now
+    assert report["prior_hash"] == "sha256:abc"   # the archived version compared against
+    assert report["archived_at"]                  # when that prior was archived
+    assert report["held_fidelity"] == "full" and report["prior_fidelity"] == "full"
+    # the original (abc) carried extracted_text/no raw_text; the held v3 carries a raw
+    # body and a different hash → exactly those fields differ, sorted
+    assert report["changed_fields"] == ["content_hash", "raw_text"]
+    assert report["would_restore"] is True        # the hashes differ → a restore acts
+    # it wrote nothing: the held copy, the archive, and stderr are all untouched
+    assert get_item(db, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db, item_id)) == rows_before
+    assert err == ""
+
+
+def test_archive_diff_default_compares_against_the_latest_prior(
+    scrolls_home, tmp_path, capsys
+):
+    """With no selector, diff compares against the *latest* archived prior — the
+    version `archive restore` (no selector) would adopt. The selector echoes
+    ``{latest: true}``."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)  # latest prior = v2
+    capsys.readouterr()
+    assert main(["archive", "diff", item_id]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["selector"] == {"latest": True}
+    assert report["prior_hash"] == "sha256:v2"  # the latest archived prior
+    assert report["held_hash"] == "sha256:v3"
+    assert report["would_restore"] is True
+
+
+def test_archive_diff_by_at_picks_the_version_held_as_of_a_time(scrolls_home, capsys):
+    """`archive diff <id> --at ISO` compares against the newest prior archived at/before
+    the boundary — the same point-in-time selection `archive restore --at` makes."""
+    item_id = _seed_archived_chain_at(scrolls_home, [
+        ("sha256:m1", "2026-06-22T00:00:00+00:00"),
+        ("sha256:m2", "2026-06-23T00:00:00+00:00"),
+        ("sha256:m3", "2026-06-24T00:00:00+00:00"),
+    ])  # archive: [m2@06-24, m1@06-23, abc@06-22]; held = m3
+    capsys.readouterr()
+    assert main(["archive", "diff", item_id, "--at", "2026-06-23T12:00:00+00:00"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the newest prior at/before the boundary is m1 (archived 06-23), not m2 (06-24)
+    assert report["prior_hash"] == "sha256:m1"
+    assert report["archived_at"] == "2026-06-23T00:00:00+00:00"
+    assert report["selector"] == {"at": "2026-06-23T12:00:00+00:00"}
+    assert report["would_restore"] is True
+
+
+def test_archive_diff_would_restore_false_when_the_prior_is_the_held_copy(
+    scrolls_home, tmp_path, capsys
+):
+    """When the selected prior already *is* the held copy, nothing differs and
+    ``would_restore`` is false — the H286 idempotency predicted as a read (a restore
+    would be an ``unchanged`` no-op)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    db = get_paths().db_path
+    capsys.readouterr()
+    # restore abc into place so the held copy *is* abc (abc stays in the archive)
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc"]) == 0
+    capsys.readouterr()
+    assert get_item(db, item_id).content_hash == "sha256:abc"
+    # now diff against that same prior: it is the held copy → empty delta, no restore
+    assert main(["archive", "diff", item_id, "--hash", "sha256:abc"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["held_hash"] == report["prior_hash"] == "sha256:abc"
+    assert report["changed_fields"] == []
+    assert report["would_restore"] is False
+
+
+def test_archive_diff_reports_each_sides_fidelity_tier(scrolls_home, capsys):
+    """``held_fidelity`` and ``prior_fidelity`` are derived independently, so a
+    degradation — the held copy now partial, the archived prior still full — is visible
+    *before* a restore recovers the fuller copy (ADR 0097)."""
+    seeded = _seed_rich_item(scrolls_home)  # full: extracted_text + content_hash, rendered
+    db = get_paths().db_path
+    held = get_item(db, seeded.id)
+    # adopt a degraded capture (only a summary survives → partial): the full original
+    # (abc) is archived, the held copy becomes partial
+    degraded = dataclasses.replace(
+        held, extracted_text=None, raw_text=None, summary="just a note",
+        content_hash="sha256:thin",
+    )
+    adopt_incoming(db, degraded, archived_at="2026-06-22T00:00:00+00:00")
+    capsys.readouterr()
+    assert main(["archive", "diff", seeded.id]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["held_fidelity"] == "partial"  # the degraded held copy
+    assert report["prior_fidelity"] == "full"    # the archived original
+    assert report["would_restore"] is True       # restoring recovers the full copy
+
+
+def test_archive_diff_unmatched_selector_is_a_could_not_recover(
+    scrolls_home, tmp_path, capsys
+):
+    """A `--hash`/`--at` that no archived prior matches is a could-not-recover (exit
+    1) — the same signal as `archive restore`, and nothing is written."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 2)
+    capsys.readouterr()
+    assert main(["archive", "diff", item_id, "--hash", "sha256:ghost"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
+    assert main(["archive", "diff", item_id, "--at", "2020-01-01T00:00:00+00:00"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_archive_diff_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
+    """`archive diff` for an id with no archived prior (never superseded) exits 1 —
+    the same could-not-recover signal as `archive show`/`restore`."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["archive", "diff", "arxiv:1706.03762"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_archive_diff_rejects_both_selectors_and_a_malformed_at(
+    scrolls_home, tmp_path, capsys
+):
+    """At most one version selector (exit 2, the `archive restore` gate); a malformed
+    `--at` is a loud usage error (exit 2), never a silently empty read."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "diff", item_id, "--hash", "sha256:abc",
+                 "--at", "2026-06-23"]) == 2
+    assert "at most one" in json.loads(capsys.readouterr().err)["error"]
+    assert main(["archive", "diff", item_id, "--at", "not-a-timestamp"]) == 2
+    assert "ISO-8601" in json.loads(capsys.readouterr().err)["error"]
+
+
 # --- archive prune (H282): a retention act bounding the append-only recovery
 # store. Report-only by default; --apply deletes; exactly one of --before/--keep;
 # never touches a held row (the archive is a recovery convenience, not the root of

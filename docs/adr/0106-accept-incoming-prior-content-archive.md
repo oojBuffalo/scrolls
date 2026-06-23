@@ -253,3 +253,26 @@ operator act (custody §2.4), not an ambient MCP capability.
   / default latest, the displaced copy archived + recoverable, idempotent no-op, unmatched
   selector + unknown id exit 1, both-selectors + malformed-`--at` exit 2, `--dry-run`
   writes nothing).
+- **Decide before you restore — `archive diff`.** **Shipped (roadmap H288):** `scrolls
+  archive diff <id> [--hash H | --at ISO]` compares the currently-held copy against a
+  selected archived prior *before* the H286 restore writes anything — the "what would I
+  get back, and what would I lose?" read. It folds the **same** `select_archived_snapshot`
+  selector restore uses (`--hash`/`--at`, default the latest) against `get_item`, reporting
+  held↔prior `content_hash`, each side's `fidelity` tier (`get_fidelity`, so a degradation
+  full→partial is visible before the swap), the model-complete `changed_fields` (a new pure
+  `items.diff_snapshot(held, prior)` field-level diff over `item_to_dict`), and
+  `would_restore` — whether a restore would actually change the held copy (the H286
+  idempotency predicted as a read: the same `content_hash` compare `merge_item` makes, so
+  `would_restore` is `false` when the prior already *is* the held copy). `diff_snapshot`
+  keys the field delta on every column while `would_restore` keys on `content_hash` alone
+  (what a restore acts on), so a metadata-only difference can list `changed_fields` while
+  `would_restore` is `false` — honest, not contradictory. **CLI-only read, no write** (the
+  `archive show` gate; the MCP twin is deferred), no schema change. Exits mirror `archive
+  restore`: at most one selector (exit 2), malformed `--at` (exit 2), an unmatched
+  selector / unknown id is a could-not-recover (exit 1). Verified offline:
+  `tests/test_items.py` (`diff_snapshot` changed-field set, empty on identical, whole-prior
+  against an absent held) and `tests/test_cli.py` (held-vs-prior delta + writes-nothing,
+  default/`--hash`/`--at` selection, `would_restore` true/false, the fidelity-tier delta,
+  unmatched + unknown-id exit 1, both-selectors + malformed-`--at` exit 2).
+- **An MCP `archive diff` read twin** stays deferred with the MCP accept-incoming *write*
+  twin — added when a workflow shows the read-only CLI surface insufficient.

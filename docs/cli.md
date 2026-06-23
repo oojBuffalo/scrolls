@@ -1613,6 +1613,44 @@ precedent). **CLI-only** (a custody-changing write); `--dry-run` predicts the sa
 decision (`dry_run: true`) and writes nothing (the preview-never-drifts discipline,
 H245/H273).
 
+### `scrolls archive diff <id> [--hash H | --at ISO]`
+
+**Compares** the currently-held copy against a selected archived prior — the *decide
+before you restore* read (H288, ADR 0106). `archive restore` adopts a chosen version;
+`diff` answers *"what would I get back, and what would I lose?"* **before** that write,
+folding the **same** `select_archived_snapshot` selector restore uses (`--hash H`,
+`--at ISO`, default the latest) against the held copy (`get_item`). It reports the
+custody-relevant delta, no write:
+
+- `held_hash` vs `prior_hash` — the captured-content fingerprints either side.
+- `held_fidelity` / `prior_fidelity` — each copy's custody-fidelity tier (`full` /
+  `partial` / `reference`, ADR 0097), so a degradation (e.g. the held copy now
+  `partial`, the archived prior still `full`) is visible *before* the swap.
+- `changed_fields` — the sorted, model-complete fields a restore would surface
+  (`items.diff_snapshot` over `item_to_dict`: `content_hash`, `raw_text`, `title`, …);
+  empty when the prior already *is* the held copy.
+- `would_restore` — whether a restore would actually change the held copy: the H286
+  idempotency predicted as a read (the same `content_hash` compare `merge_item` makes
+  — `false` when the prior already is the held copy, an `unchanged` no-op). Note this
+  keys on `content_hash`, so a metadata-only difference can list `changed_fields` while
+  `would_restore` is `false` (honest, not contradictory — a restore wouldn't pick it up).
+
+```console
+$ scrolls archive diff web:demo --hash sha256:abc        # held vs a specific prior
+{"id": "web:demo", "selector": {"hash": "sha256:abc"}, "prior_hash": "sha256:abc", "archived_at": "2026-06-20T00:00:00+00:00", "held_hash": "sha256:v3", "held_fidelity": "full", "prior_fidelity": "full", "changed_fields": ["content_hash", "raw_text"], "would_restore": true}
+[exit 0]
+
+$ scrolls archive diff web:demo                          # held vs the latest prior (default)
+{"id": "web:demo", "selector": {"latest": true}, "prior_hash": "sha256:v2", "archived_at": "2026-06-21T00:00:00+00:00", "held_hash": "sha256:v3", "held_fidelity": "full", "prior_fidelity": "full", "changed_fields": ["content_hash", "raw_text"], "would_restore": true}
+[exit 0]
+```
+
+**CLI-only read** — it writes nothing (the `archive show` gate; the MCP twin is
+deferred). Exits mirror `archive restore`: an unresolvable ref is a usage error (exit
+2), at most one version selector (exit 2), a malformed `--at` is a usage error (exit
+2); an id with no archived prior — or none matching the selector — is a
+could-not-recover (exit 1).
+
 ### `scrolls archive prune (--before ISO | --keep N) [--apply]`
 
 **Bounds** the append-only recovery store by a retention policy (H282). The

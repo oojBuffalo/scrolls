@@ -1011,6 +1011,32 @@ def select_archived_snapshot(
     return pairs[0] if pairs else None
 
 
+def diff_snapshot(held: ScrollItem | None, prior: ScrollItem) -> list[str]:
+    """The model-complete fields that differ between the held copy and an archived prior (H288).
+
+    The field-level delta behind `scrolls archive diff` — the *decide before you
+    restore* read (ADR 0106). A pure comparison over `item_to_dict` (the lossless
+    export shape), so an operator/agent sees *exactly which fields a restore would
+    surface* — ``content_hash``/``raw_text``/``extracted_text``/``title``/``tags``/…
+    — before the H286 `archive restore` adoption writes anything. Returns the sorted
+    names of the fields whose value differs; empty when the two captures are
+    identical (the prior already *is* the held copy).
+
+    A ``held`` of ``None`` (the id was deleted but its prior-content archive
+    survives) means a restore would re-create the whole row from the prior, so every
+    model-complete field of the prior is reported changed — the ``imported`` restore
+    outcome. Note this is the *field* delta for the "what differs?" read; whether a
+    restore *acts* keys on ``content_hash`` alone (the `merge_item` rule the CLI's
+    ``would_restore`` predicts), so a metadata-only difference can be reported here
+    while a restore stays an idempotent no-op (honest, not contradictory).
+    """
+    prior_dict = item_to_dict(prior)
+    if held is None:
+        return sorted(prior_dict)
+    held_dict = item_to_dict(held)
+    return sorted(name for name in held_dict if held_dict.get(name) != prior_dict.get(name))
+
+
 # --- portable prior-content archive (the recovery store travels, roadmap H280) ---
 #
 # ADR 0106 made adoption custody-safe *locally*: the superseded prior is archived
