@@ -5719,6 +5719,164 @@ def test_jsonl_backup_round_trip_breaks_if_the_archive_stream_is_truncated(
     assert len(capsys.readouterr().out.splitlines()) == 1  # vs. 3 on the full backup
 
 
+# --- export archive --id <ref>: the scoped per-item recovery-store backup
+# round-trips one item's recovery read-family identically while excluding its
+# siblings (H300, the H294 whole-library twin on the --id-scoped export path) ---
+
+
+def _seed_one_prior_cli(item_id, *, query_token="database"):
+    """Adopt a *single*-supersession chain on `item_id` in an already-init'd
+    library — the one-prior cousin of `_seed_archived_chain_cli`, used to seed a
+    *sibling* item whose archive must be correctly *excluded* from a scoped
+    `export archive --id <X>` (H300). Held ends as v1; the archive holds
+    [y0@06-20]. Distinct `sha256:y*` hashes keep it clearly apart from the
+    `sha256:v*` chain. Returns the db_path."""
+    db = get_paths().db_path
+    held = ScrollItem(
+        id=item_id, source=item_id.split(":")[0], url=f"https://{item_id}.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held sibling",
+        raw_text=f"<raw>The original {query_token} sibling.</raw>",
+        extracted_text=f"The original {query_token} sibling.",
+        content_hash="sha256:y0",
+        markdown_path=f"scrolls/{item_id}.md", stage="rendered",
+    )
+    insert_item(db, held)
+    incoming = dataclasses.replace(
+        held,
+        raw_text=f"<raw>A v1 {query_token} sibling.</raw>",
+        extracted_text=f"A v1 {query_token} sibling.",
+        content_hash="sha256:y1",
+    )
+    adopt_incoming(db, incoming, archived_at="2026-06-20T00:00:00+00:00")
+    return db
+
+
+def test_scoped_export_archive_round_trips_one_items_recovery_read_family(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """The *per-item* `export archive --id <X>` round-trips X's whole recovery
+    read-family identically — the H294 twin on the scoped export path — while a
+    sibling item Y's archive is correctly *excluded* from the backup.
+
+    H294 pins the *whole-library* `export archive` (`archived_records(db, None)`)
+    round-trip. The `--id <ref>`-scoped export folds a *different* read
+    (`archived_records(db, [item_id])`) — the operator move "back up *just this
+    item's* recoverable history" — and nothing pinned that the scoped fold
+    round-trips the recovery family for that item identically *and* genuinely
+    excludes the others. Pin it: adopt a multi-supersession chain on X *and* a
+    one-prior chain on Y in A, `export archive --id X` (+ a whole-library
+    `export items`), rebuild a fresh B, then assert X's `archive show --all`
+    (byte-for-byte), `archive diff`, and `archive restore --dry-run` agree
+    field-for-field across A and B over all three selectors (`--hash`/`--at`/
+    default-latest), and Y's archive is *absent* on B (a vacuous "everything
+    travelled" would pass falsely)."""
+    item_x, item_y = "web:demo", "web:sibling"
+    db_a = _seed_archived_chain_cli(item_x)  # X: 3-prior chain, held = v3
+    _seed_one_prior_cli(item_y)              # Y: 1-prior chain, held = y1
+    assert get_item(db_a, item_x).content_hash == "sha256:v3"
+    assert len(list_archived(db_a, item_x)) == 3
+    assert len(list_archived(db_a, item_y)) == 1  # Y has a real archive in A
+
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family(item_id):
+        """The whole recovery read-family for one item — non-mutating (reads + a
+        dry-run), so it is safe to run identically on A and on B."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_x_a = read_family(item_x)
+    # sanity: a non-trivial read in A — the full 3-prior chain and a real
+    # would-change delta (a vacuous all-empty read would pass the A==B tie falsely)
+    assert len(family_x_a["show_all"].splitlines()) == 3
+    assert family_x_a["diff:--hash sha256:v0"]["would_restore"] is True
+    assert family_x_a["restore:--at 2026-06-21T12:00:00+00:00"]["prior_hash"] == "sha256:v1"
+
+    # back A up: whole-library held rows, but ONLY X's recovery store (--id X)
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive", "--id", item_x]) == 0
+    archive_path = tmp_path / "archive-x.jsonl"
+    scoped = capsys.readouterr().out
+    archive_path.write_text(scoped, encoding="utf-8")
+    # the scoped backup carries only X's priors (3 lines), none of Y's
+    assert len(scoped.splitlines()) == 3
+    assert all(json.loads(line)["item_id"] == item_x for line in scoped.splitlines())
+
+    # rebuild a fresh B from the whole-library items + the X-scoped recovery store
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(archive_path)]) == 0
+    capsys.readouterr()
+
+    # B holds both held heads (the whole-library items backup) ...
+    assert get_item(db_b, item_x).content_hash == "sha256:v3"
+    assert get_item(db_b, item_y).content_hash == "sha256:y1"
+    # ... but only X's recovery store travelled; Y's archive is absent on B
+    assert len(list_archived(db_b, item_x)) == 3
+    assert list_archived(db_b, item_y) == []
+    capsys.readouterr()
+    assert main(["archive", "show", item_y, "--all"]) == 1  # no history → could-not-recover
+
+    # X's whole recovery read-family is byte/field-identical across the scoped round trip
+    assert read_family(item_x) == family_x_a
+
+
+def test_scoped_export_archive_excludes_the_unscoped_items_history(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """Mutation guard: the scope genuinely *selects* one item — `export archive
+    --id Y` carries Y's history and leaves X's out, so X's recovery family cannot
+    read on the rebuild. Inverts the H300 happy path (scope Y instead of X), so a
+    bug that ignored `--id` and dumped the whole archive would fail here."""
+    item_x, item_y = "web:demo", "web:sibling"
+    _seed_archived_chain_cli(item_x)  # X: 3-prior chain
+    _seed_one_prior_cli(item_y)       # Y: 1-prior chain
+
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive", "--id", item_y]) == 0  # scope the *sibling*
+    scoped = capsys.readouterr().out
+    archive_path = tmp_path / "archive-y.jsonl"
+    archive_path.write_text(scoped, encoding="utf-8")
+    # only Y's single prior travelled — X's three are excluded by the scope
+    assert [json.loads(line)["item_id"] for line in scoped.splitlines()] == [item_y]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    main(["import", "items", str(items_path)])
+    main(["import", "archive", str(archive_path)])
+    capsys.readouterr()
+
+    # Y's history is recoverable on B; X's is empty — the scope excluded it
+    assert len(list_archived(db_b, item_y)) == 1
+    assert list_archived(db_b, item_x) == []
+    capsys.readouterr()
+    assert main(["archive", "show", item_x, "--all"]) == 1  # the family cannot read X
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 
