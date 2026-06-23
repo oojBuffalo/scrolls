@@ -43,6 +43,7 @@ from scrolls.cli import main
 from scrolls.db import init_db
 from scrolls.items import (
     ScrollItem,
+    archived_records,
     get_item,
     insert_item,
     item_to_dict,
@@ -1303,6 +1304,197 @@ def test_recovery_workflow_survives_a_jsonl_backup_handoff(
     assert restore2["outcome"] == "unchanged"
     assert get_item(b.db_path, original.id).content_hash == ORIG_HASH
     assert _custody()["score"] == 100
+
+
+# --- the incremental-backup leg (H306): a full `export archive` at T0, then a
+#     later `export archive --since T0` increment, restored onto a peer, is an
+#     idempotent union that reads the recovery family identically — the H297
+#     dogfood on the `--since` (incremental) axis ---------------------------------
+
+
+def test_incremental_backup_workflow_round_trips_the_recovery_family(
+    home, capsys, tmp_path, monkeypatch
+):
+    """*incremental-backup recovery* (H306): the operator-workflow layer above
+    H303's data-layer idempotence test — a full `export archive` at T0, then a
+    later `export archive --since T0` increment, restored onto a fresh peer, is an
+    idempotent union (no double-count) that reads the recovery family identically.
+
+    H297 backs a library up to a *whole-library* `export items` + `export archive`
+    and recovers on the rebuild; this leg narrates the *incremental* backup an
+    operator actually runs once the archive grows: take a full backup at T0, adopt
+    more captures, then re-export **only** `export archive --since T0` (the cheap
+    incremental — the append-only recovery store, not the whole thing again),
+    re-snapshotting the small holdings (`export items`) each run. On a fresh machine
+    B you restore the latest holdings + the full archive + every increment since.
+
+    The custody points this leg pins — the `--since`-axis twins of H297's "the whole
+    recovery workflow round-trips a backup":
+
+    - **the increment is genuinely incremental** — `export archive --since T0`
+      carries a *strict subset* of A's whole recovery store (the priors archived
+      since T0), not the whole thing, yet it *overlaps* the full backup at the
+      inclusive boundary prior;
+
+    - **the union is idempotent — every prior lands exactly once** — `import archive
+      <full>` then `import archive <increment>` *skips* the boundary prior the full
+      already restored (ADR 0106's `(item_id, prior_hash)` dedup), so B's recovery
+      store holds each prior once (no double-count), reconstructing A's whole archive
+      from full + increment; and
+
+    - **the recovery family reads identically across the boundary** — `archive show
+      --all` (byte-for-byte), `archive diff`, and `archive restore --dry-run` over
+      every selector read the same on B, rebuilt purely from full + increment, as on
+      A, and `doctor`'s ``custody.score`` holds at 100 on the rebuilt library.
+    """
+    V1, V2, V3 = "sha256:peer-v1", "sha256:peer-v2", "sha256:peer-v3"
+    # the boundary the operator passes to every incremental backup — the inclusive
+    # (>=) edge, so the prior archived exactly at T0 rides in *both* backups (the
+    # overlap that exercises the import dedup).
+    T0 = "2026-06-19T00:00:00+00:00"
+
+    def _custody() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]
+
+    # selectors the recovery family reads over: the oldest prior by hash (reach
+    # *past* the latest priors), a point-in-time boundary mid-chain, default-latest.
+    selectors = (["--hash", ORIG_HASH], ["--at", "2026-06-19T12:00:00+00:00"], [])
+
+    def read_family():
+        """The whole recovery read-family — non-mutating (reads + a dry-run), so it
+        runs identically on A and on B without moving the held copy."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", original.id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", original.id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", original.id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    # 1. HOLD on machine A, then adopt a chain: original → v1@06-18 → v2@06-19. The
+    #    held copy ends as v2; the archive holds [original@06-18, v1@06-19].
+    a = home("machine-a")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv" and original.content_hash == ORIG_HASH
+    capsys.readouterr()  # drain the kb report
+    held0 = get_item(a.db_path, original.id)  # the rendered row (carries markdown_path)
+
+    clock = {"now": T0}
+    monkeypatch.setattr(cli, "datetime", _scripted_clock(clock))
+    for new_hash, archived_at, note in (
+        (V1, "2026-06-18T00:00:00+00:00", "Adds a worked attention example."),
+        (V2, "2026-06-19T00:00:00+00:00", "Adds the multi-head derivation."),
+    ):
+        clock["now"] = archived_at
+        incoming = tmp_path / f"{new_hash.split(':')[1]}.jsonl"
+        incoming.write_text(
+            dump_items_export([_divergent_recapture(held0, new_hash, note)]),
+            encoding="utf-8",
+        )
+        assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+        assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert get_item(a.db_path, original.id).content_hash == V2
+
+    # 2. FULL backup at T0: the whole holdings + the whole recovery store. The
+    #    archive holds the two priors archived so far [original@06-18, v1@06-19].
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_t0 = capsys.readouterr().out  # holdings as of T0 (head = v2)
+    assert main(["export", "archive"]) == 0
+    archive_full = capsys.readouterr().out
+    full_path = tmp_path / "archive-full.jsonl"
+    full_path.write_text(archive_full, encoding="utf-8")
+    assert [r["prior_hash"] for r in _read_jsonl_lines(archive_full)] == [ORIG_HASH, V1]
+
+    # 3. Adopt MORE after T0: v3@06-20. The held copy advances to v3; the archive
+    #    grows to [original@06-18, v1@06-19, v2@06-20].
+    clock["now"] = "2026-06-20T00:00:00+00:00"
+    incoming = tmp_path / "peer-v3.jsonl"
+    incoming.write_text(
+        dump_items_export([_divergent_recapture(held0, V3, "Adds the positional study.")]),
+        encoding="utf-8",
+    )
+    assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+    assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert get_item(a.db_path, original.id).content_hash == V3
+
+    # 4. INCREMENTAL backup: re-snapshot the (now-advanced) holdings in full, but
+    #    re-export only `export archive --since T0` — the cheap increment. The head
+    #    advanced (v2 → v3), which is why the increment re-snapshots the holdings.
+    assert main(["export", "items"]) == 0
+    items_inc = capsys.readouterr().out  # holdings as of the increment (head = v3)
+    items_path = tmp_path / "library-items.jsonl"
+    items_path.write_text(items_inc, encoding="utf-8")
+    assert main(["export", "archive", "--since", T0]) == 0
+    archive_inc = capsys.readouterr().out
+    inc_path = tmp_path / "archive-incremental.jsonl"
+    inc_path.write_text(archive_inc, encoding="utf-8")
+
+    # the holdings re-snapshot moved with the head (v2 at T0 → v3 at the increment),
+    # so the latest items backup — not the T0 one — is what reconstructs A's head.
+    assert _read_jsonl_lines(items_t0)  # the T0 holdings existed (superseded by items_inc)
+    head_t0 = next(r for r in _read_jsonl_lines(items_t0) if r["id"] == original.id)
+    head_inc = next(r for r in _read_jsonl_lines(items_inc) if r["id"] == original.id)
+    assert (head_t0["content_hash"], head_inc["content_hash"]) == (V2, V3)
+
+    # the increment is genuinely incremental: a strict subset of A's whole archive
+    # (2 of 3 priors — original@06-18 is *before* T0, so it stays only in the full
+    # backup), yet it OVERLAPS the full at the inclusive boundary prior (v1@06-19).
+    inc_priors = [r["prior_hash"] for r in _read_jsonl_lines(archive_inc)]
+    assert inc_priors == [V1, V2]  # archived at/after T0, not the pre-T0 original
+    assert len(_read_jsonl_lines(archive_full)) == 2  # full backup carries 2…
+    assert len(inc_priors) == 2 and len(archived_records(a.db_path)) == 3  # …of A's 3
+    assert V1 in [r["prior_hash"] for r in _read_jsonl_lines(archive_full)]  # the overlap
+
+    # capture A's recovery read-family for the cross-machine comparison.
+    family_a = read_family()
+    assert len(family_a["show_all"].splitlines()) == 3  # the full 3-prior chain
+    assert family_a["diff:--hash " + ORIG_HASH]["would_restore"] is True
+
+    # 5. HANDOFF to a fresh machine B: restore the latest holdings, then the full
+    #    archive, then the increment. The increment SKIPS the boundary prior the
+    #    full already restored (the dedup) — the union is idempotent, no double-count.
+    b = home("machine-b")
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == len(items)
+    assert main(["import", "archive", str(full_path)]) == 0
+    full_report = json.loads(capsys.readouterr().out)
+    assert (full_report["imported"], full_report["skipped"]) == (2, 0)
+    assert main(["import", "archive", str(inc_path)]) == 0
+    # the boundary prior (v1@06-19) is already held from the full backup → skipped;
+    # only v2@06-20 (archived after T0, absent from the full) is new.
+    inc_report = json.loads(capsys.readouterr().out)
+    assert (inc_report["imported"], inc_report["skipped"]) == (1, 1)
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    # 6. PROVE on B: the score is 100, the head matches A (v3), and the recovery
+    #    store reconstructs A's whole archive — every prior exactly once (no
+    #    double-count from the overlapping increment).
+    rebuilt = _custody()
+    assert rebuilt["score"] == 100 and rebuilt["issues"] == 0
+    assert get_item(b.db_path, original.id).content_hash == V3
+    assert archived_records(b.db_path, [original.id]) == archived_records(
+        a.db_path, [original.id]
+    )
+    assert len(archived_records(b.db_path)) == 3  # not 4 — the boundary prior deduped
+
+    # 7. the whole recovery read-family reads identically on B — rebuilt purely from
+    #    the full backup + the increment — as it did on A: the incremental backup is
+    #    a faithful recovery transport, not just a smaller file.
+    assert read_family() == family_a
 
 
 # --- the whole flow, unattended, in order ---------------------------------

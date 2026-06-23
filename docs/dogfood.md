@@ -561,19 +561,92 @@ holds at 100 through the real recovery write. Both portable recovery stores — 
 shareable bundle and the off-machine backup — carry the recovery *capability*, not
 just the holdings (cap 4, custody §2.4).
 
+## Incremental backup — a full archive at T0, then only what's new since
+
+The whole-library backup above re-exports the *entire* recovery store every run.
+Once the archive grows, an operator wants the cheaper shape: a **full** backup at
+T0, then **incremental** ones that re-export only `export archive --since T0` — the
+priors archived since the last sweep — while still re-snapshotting the small
+holdings each run. The question this raises is whether the union of a full backup
+*plus* an overlapping increment restores to the same recovery store as a single
+full backup would: every prior exactly once, no double-count. It does, because
+`import archive` dedups by `(item_id, prior_hash)` (ADR 0106), so a prior that
+rides in *both* the full backup and the (inclusive `--since`) increment is restored
+once and skipped the second time.
+
+`tests/test_dogfood.py` pins it offline as
+`test_incremental_backup_workflow_round_trips_the_recovery_family`: on **machine
+A**, hold the topic and adopt `original → v1@06-18 → v2@06-19`, take a **full**
+backup at `T0 = 06-19`, then adopt `v3@06-20` (the archive grows to three priors)
+and take an **incremental** backup — the latest holdings plus `export archive
+--since T0`. The increment carries a *strict subset* of A's archive (the two priors
+at/after T0, not the pre-T0 original) yet **overlaps** the full at the inclusive
+boundary prior (`v1@06-19`). Restore a fresh **B** from the latest holdings + the
+full archive + the increment, and the recovery family reads identically to A.
+
+```bash
+# ── machine A, T0 = 06-19: a FULL backup after adopting v1@06-18, v2@06-19 ──
+scrolls export items   > items-t0.jsonl          # holdings as of T0 (head = v2)
+scrolls export archive > archive-full.jsonl      # the whole recovery store so far
+#   archive-full priors → [sha256:06.03762 (06-18), sha256:peer-v1 (06-19)]
+
+# ── machine A, later: adopt v3@06-20, then an INCREMENTAL backup ──
+scrolls export items   > library-items.jsonl     # re-snapshot the holdings (head = v3)
+scrolls export archive --since 2026-06-19T00:00:00+00:00 > archive-incremental.jsonl
+#   increment priors → [sha256:peer-v1 (06-19), sha256:peer-v2 (06-20)]
+#   strict subset of A's 3 priors (drops the pre-T0 original); overlaps the full at v1
+
+# ── machine B (never saw A's adoptions): latest holdings + full + increment ──
+scrolls import items   library-items.jsonl
+#   → {"imported": 3, "skipped": 0, "adopted": [], "conflicts": [], "items": 3}
+scrolls import archive archive-full.jsonl
+#   → {"imported": 2, "skipped": 0, "archive": 2}        (original + v1)
+scrolls import archive archive-incremental.jsonl
+#   → {"imported": 1, "skipped": 1, "archive": 2}        v2 new; v1 deduped (no double-count)
+scrolls doctor --fix && scrolls kb     # import inserts rows; --fix materializes the scrolls
+scrolls doctor                         # → custody.score 100  (head = v3, like A)
+
+# the recovery family reads identically to A — every prior reconstructed, once.
+scrolls archive show arxiv:1706.03762 --all
+#   → sha256:peer-v2, sha256:peer-v1, sha256:06.03762   (3 priors, newest-first)
+scrolls archive diff    arxiv:1706.03762 --hash sha256:06.03762   # reach past the latest
+#   → would_restore: true, changed_fields: [content_hash, extracted_text, raw_text]
+scrolls archive restore arxiv:1706.03762 --hash sha256:06.03762 --dry-run
+#   → restored: true, prior_hash: sha256:06.03762, held_hash: sha256:peer-v3
+```
+
+**The idempotent union (`import archive <full>` then `<increment>`).** The boundary
+prior the inclusive `--since` re-exports is already restored by the full backup, so
+the increment skips it — the recovery store holds three priors, not four:
+
+```json
+{ "imported": 2, "skipped": 0, "archive": 2 }    // import archive <full>     — original + v1
+{ "imported": 1, "skipped": 1, "archive": 2 }    // import archive <increment> — v2 new, v1 deduped
+```
+
+The custody point is the `--since`-axis twin of the whole-library backup leg's: an
+incremental backup is a faithful recovery *transport*, not just a smaller file. The
+holdings re-snapshot moves with the head (so the *latest* `export items`, not the
+T0 one, reconstructs A's head), but the append-only recovery store grows by
+increments whose overlapping union restores losslessly — every recoverable prior
+lands exactly once, and the whole inspect → decide → act family reads identically on
+the library rebuilt from full + increment (cap 4, custody §2.4).
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Eleven tests: each leg on its own — the core hold/detect/take legs, the scoped
+Twelve tests: each leg on its own — the core hold/detect/take legs, the scoped
 drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
 flow, the *restore-by-version* roll-back, the *decide-before-you-restore*
 `archive diff` → `archive restore` loop, the *cross-machine recovery* leg (the whole
-decide → act loop run on a library rebuilt from a `--with-archive` bundle), and the
-*JSONL-backup recovery* leg above (the same decide → act loop on a library rebuilt
-from an `export items` + `export archive` backup) — plus
+decide → act loop run on a library rebuilt from a `--with-archive` bundle), the
+*JSONL-backup recovery* leg (the same decide → act loop on a library rebuilt from an
+`export items` + `export archive` backup), and the *incremental-backup recovery* leg
+above (a full `export archive` at T0 + a later `export archive --since T0` increment,
+restored as an idempotent union onto a fresh peer) — plus
 `test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
 sequence in order, unattended. The lossless round-trip leg shares its guarantee
 with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle
