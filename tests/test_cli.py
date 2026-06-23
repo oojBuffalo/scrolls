@@ -6044,6 +6044,265 @@ def test_export_archive_rejects_both_id_and_source(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+# --- export archive --fidelity / --drift: the custody-filter family on the
+# recovery-store backup — the last un-filtered export surface (H302) ----------
+
+
+def _seed_archive_for_custody_scope():
+    """A full-fidelity item with a multi-prior recovery store *and* a
+    reference-fidelity item with its own recovery store, spanning a fidelity tier
+    and a drift posture; inits the library and returns its db path.
+
+    `web:full` is full-fidelity (a re-derivable body + hash), a 3-prior chain
+    [v0,v1,v2] (held v3), and recorded *drifted*; `web:ref` is reference-only (its
+    held copy holds just the pointer, the prior was a full capture), a 1-prior
+    chain [r0] (held r1), and recorded *rotted*. Each carries a non-empty archive,
+    so `--fidelity full` keeping only web:full's priors (and `--drift drifted`
+    likewise) is a *non-vacuous* selection — the excluded item has a recovery store
+    of its own to leave behind, not a phantom. The distinct archive depths (3 vs 1)
+    prove the *whole* recovery store of the selected items travels."""
+    db = _seed_archived_chain_cli("web:full")  # full fidelity, 3-prior chain, held v3
+    # web:ref — a held copy degraded to reference-only (no body), with one archived
+    # full prior; the prior travels in the recovery store, the held tier is reference
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://web-ref.example",
+        saved_at="2026-06-11T00:00:01+00:00", title="Held (full prior)",
+        raw_text="<raw>The original reference capture.</raw>",
+        extracted_text="The original reference capture.",
+        content_hash="sha256:r0",
+        markdown_path="scrolls/web-ref.md", stage="rendered"))
+    adopt_incoming(db, ScrollItem(
+        id="web:ref", source="web", url="https://web-ref.example",
+        saved_at="2026-06-11T00:00:01+00:00", title="Held (reference now)",
+        content_hash="sha256:r1", stage="detected"),
+        archived_at="2026-06-20T00:00:00+00:00")
+    record_events(db, [
+        CustodyEvent("web:full", "2026-06-23T00:00:00+00:00", "drifted",
+                     "sha256:v3", "sha256:v4"),
+        CustodyEvent("web:ref", "2026-06-23T00:00:00+00:00", "rotted",
+                     "sha256:r1", None, "404"),
+    ])
+    return db
+
+
+def test_export_archive_fidelity_scopes_to_the_items_recovery_store(
+    scrolls_home, capsys
+):
+    # back up only the recovery store of items held at one fidelity tier — the
+    # item-set sieve selects the items `scrolls list --fidelity` enumerates, then
+    # their whole archived history travels (ADR 0097, the holdings-axis companion
+    # of --drift). The reference item's recovery store stays home.
+    _seed_archive_for_custody_scope()
+    capsys.readouterr()
+
+    assert main(["export", "archive", "--fidelity", "full"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    # only web:full's archive (its whole 3-prior chain); the reference item stays home
+    assert {row["item_id"] for row in rows} == {"web:full"}
+    assert len(rows) == 3
+
+    assert main(["export", "archive", "--fidelity", "reference"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:ref"}
+    assert len(rows) == 1
+
+
+def test_export_archive_drift_is_the_item_set_sieve_carrying_the_whole_store(
+    scrolls_home, capsys
+):
+    # the item-set-vs-per-prior decision (the H260 shape): `--drift drifted`
+    # selects the items *currently* drifted, then ships their *whole* archived
+    # history — mirroring how `--source` already scopes the recovery store by item,
+    # not a per-prior filter. web:full is drifted (3 priors), web:ref rotted (1).
+    _seed_archive_for_custody_scope()
+    capsys.readouterr()
+
+    assert main(["export", "archive", "--drift", "drifted"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:full"}
+    assert len(rows) == 3  # the moved item's whole recovery store, for a recapture handoff
+
+    # the rotted item is reachable by its current posture on the same axis
+    assert main(["export", "archive", "--drift", "rotted"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:ref"}
+    assert len(rows) == 1
+
+
+def test_export_archive_custody_axes_and_together(scrolls_home, capsys):
+    # both axes AND: --fidelity intersects --drift. The seed's web:full is
+    # full+drifted, web:ref is reference+rotted.
+    _seed_archive_for_custody_scope()
+    capsys.readouterr()
+
+    # the intersection full *and* drifted is exactly web:full's recovery store
+    assert main(["export", "archive", "--fidelity", "full", "--drift", "drifted"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:full"}
+
+    # an empty intersection (no full-fidelity rotted item) is the honest empty
+    # document, never an error — the `export items`/`export events` precedent
+    assert main(["export", "archive", "--fidelity", "full", "--drift", "rotted"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_archive_custody_scope_ands_with_source(scrolls_home, capsys):
+    # --source (H301) ANDs with --fidelity/--drift (H302): each narrows the item
+    # set, the intersection's whole recovery store travels. A *different*-source
+    # full-fidelity item proves --source genuinely intersects the custody axis.
+    _seed_archive_for_custody_scope()  # web:full (full, 3 priors), web:ref (reference, 1)
+    _seed_one_prior_cli("arxiv:full")  # arxiv, full fidelity, 1-prior chain
+    capsys.readouterr()
+
+    # web AND full = web:full only (arxiv:full is full but a different source;
+    # web:ref is web but reference)
+    assert main(["export", "archive", "--source", "web", "--fidelity", "full"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:full"}
+    assert len(rows) == 3
+
+    # web AND rotted = web:ref only
+    assert main(["export", "archive", "--source", "web", "--drift", "rotted"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:ref"}
+
+
+def test_custody_scoped_export_archive_round_trips_the_recovery_read_family(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """A custody-scoped `export archive --fidelity full` round-trips the whole
+    recovery read-family for the selected items identically — the H300/H301 shape
+    under a *custody* scope — while an excluded (reference-fidelity) item's archive
+    is correctly absent on the rebuild.
+
+    H300 pins the `--id`-scoped round-trip, H301 the `--source`-scoped one. H302's
+    custody filter folds a *different* item resolution (`list_items(fidelity=...)`),
+    and nothing pinned that its scoped archive round-trips the recovery family
+    identically *and* genuinely leaves the other-tier items behind. Pin it: a
+    full-fidelity multi-supersession item *and* a reference-fidelity item, each with
+    a recovery store, `export archive --fidelity full` (+ a whole-library `export
+    items`), rebuild a fresh B, then assert web:full's `archive show --all`
+    (byte-for-byte), `archive diff`, and `archive restore --dry-run` agree
+    field-for-field across A and B over all three selectors (`--hash`/`--at`/
+    default-latest), and web:ref's archive is *absent* on B (a vacuous "everything
+    travelled" would pass falsely). The --drift axis folds the same `list_items`
+    sieve, so this one round-trip pins both axes."""
+    from scrolls.items import get_fidelity
+
+    db_a = _seed_archive_for_custody_scope()
+    assert get_item(db_a, "web:full").content_hash == "sha256:v3"
+    assert len(list_archived(db_a, "web:full")) == 3
+    assert len(list_archived(db_a, "web:ref")) == 1  # the excluded item has a real archive
+    assert get_fidelity(get_item(db_a, "web:ref")) == "reference"  # excluded by --fidelity full
+
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family(item_id):
+        """The whole recovery read-family for one item — non-mutating (reads + a
+        dry-run), so it is safe to run identically on A and on B."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_full_a = read_family("web:full")
+    # sanity: a non-trivial read in A — the full 3-prior chain and a real
+    # would-change delta (a vacuous all-empty read would pass the A==B tie falsely)
+    assert len(family_full_a["show_all"].splitlines()) == 3
+    assert family_full_a["diff:--hash sha256:v0"]["would_restore"] is True
+    assert family_full_a["restore:--at 2026-06-21T12:00:00+00:00"]["prior_hash"] == "sha256:v1"
+
+    # back A up: whole-library held rows, but ONLY the full-fidelity recovery store
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive", "--fidelity", "full"]) == 0
+    scoped = capsys.readouterr().out
+    archive_path = tmp_path / "archive-full.jsonl"
+    archive_path.write_text(scoped, encoding="utf-8")
+    # the scoped backup carries only the full item's priors (3 lines), none of the reference's
+    assert {json.loads(line)["item_id"] for line in scoped.splitlines()} == {"web:full"}
+    assert len(scoped.splitlines()) == 3
+
+    # rebuild a fresh B from the whole-library items + the full-fidelity recovery store
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(archive_path)]) == 0
+    capsys.readouterr()
+
+    # B holds both held heads (the whole-library items backup) ...
+    assert get_item(db_b, "web:full").content_hash == "sha256:v3"
+    assert get_item(db_b, "web:ref").content_hash == "sha256:r1"
+    # ... but only the full item's recovery store travelled; the reference item's is absent
+    assert len(list_archived(db_b, "web:full")) == 3
+    assert list_archived(db_b, "web:ref") == []
+    capsys.readouterr()
+    assert main(["archive", "show", "web:ref", "--all"]) == 1  # no history → exit 1
+
+    # web:full's whole recovery read-family is byte/field-identical across the round trip
+    assert read_family("web:full") == family_full_a
+
+
+def test_export_archive_rejects_id_combined_with_custody_filters(scrolls_home, capsys):
+    """`--id` selects one precise item; `--fidelity`/`--drift` are the
+    library-filter group (an item-set sieve) — two selection modes, so mixing them
+    is a loud usage error (exit 2, stderr JSON, no stdout), the both-id-and-source
+    precedent extended to the custody axes."""
+    _seed_archived_prior()
+    for extra in (["--fidelity", "full"], ["--drift", "drifted"]):
+        capsys.readouterr()
+        assert main(["export", "archive", "--id", "web:demo", *extra]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""  # never a partial backup
+        assert "error" in json.loads(captured.err)
+
+
+def test_export_archive_rejects_an_unknown_fidelity_tier(scrolls_home):
+    # fidelity tiers are a closed vocabulary; a typo is exit 2, never a silent
+    # empty backup (the `export events --fidelity` precedent)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "archive", "--fidelity", "ful"])
+    assert excinfo.value.code == 2
+
+
+def test_export_archive_rejects_an_unknown_drift_posture(scrolls_home):
+    # drift postures are a closed vocabulary; a typo is exit 2, never a silent empty
+    with pytest.raises(SystemExit) as excinfo:
+        main(["export", "archive", "--drift", "drited"])
+    assert excinfo.value.code == 2
+
+
+def test_cmd_export_archive_unknown_tier_on_the_programmatic_path_is_exit_1(
+    scrolls_home, capsys
+):
+    # belt-and-braces below argparse: a direct call past `choices` surfaces the
+    # `list_items` ValueError as a JSON error on stderr, exit 1 (the
+    # `_cmd_export_events` precedent), never a stdout backup
+    from scrolls.cli import _cmd_export_archive
+
+    main(["init"])
+    capsys.readouterr()
+    exit_code = _cmd_export_archive(None, None, "bogus-tier", None)
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 

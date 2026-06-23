@@ -2807,7 +2807,7 @@ $ scrolls export events --drift drifted > moved.jsonl        # the full custody 
 [exit 0]
 ```
 
-### `scrolls export archive [--id <id> | --source <S>]`
+### `scrolls export archive [--id <id> | --source <S>] [--fidelity T] [--drift P]`
 
 Export the **prior-content archive** (`item_archive`, ADR 0106) as a lossless
 JSON Lines stream — the **portable recovery store** (roadmap H280), the third
@@ -2826,20 +2826,42 @@ replaced it), and the nested **model-complete `snapshot`** (the same lossless
 `item_to_dict` shape `export items` writes), so recovery round-trips through the
 importer the library already trusts. The stream **is** the artifact, so it prints
 raw on stdout (the `export items` exception to the JSON-on-stdout rule); there is
-no path argument. `--id <ref>` scopes to one item's archived priors (an id, or a
-URL resolved to the id `add` would mint — the `archive list --id` precedent);
-`--source <S>` scopes to *one source's* held items' priors (e.g. `--source web` —
-the source-scoped recovery backup, the `export events --source` analogue: it
-resolves the source to its held item ids, then their whole recovery store travels,
-so an operator can "back up just one source's recoverable history"); the whole
-library's recovery store otherwise (the backup case). `--id` and `--source` are
-independent single-scope selectors — one names an item, the other a source — so
-supplying both is a loud usage error (exit 2, stderr JSON;
-`test_export_archive_rejects_both_id_and_source`). An empty (or pre-`init`)
-library — an `--id` with no archived prior, or a `--source` with no held items —
-produces an empty document, never an error (`test_export_archive_empty_library_is_valid`,
-`test_export_archive_unmatched_id_is_an_empty_document`); a malformed URL `--id`
-is a loud error (`test_export_archive_bad_url_id_is_a_usage_error`). Restore with
+no path argument.
+
+Two ways to pick the item set whose recovery store travels. `--id <ref>` names
+**one precise item** (an id, or a URL resolved to the id `add` would mint — the
+`archive list --id` precedent). The **library-filter group** `--source` /
+`--fidelity` / `--drift` is an **item-set sieve** that ANDs together: it resolves
+the in-scope *held* items (the same `list --source`/`--fidelity`/`--drift`
+primitive `export events` folds, roadmap H260/H301/H302), then ships their *whole*
+archived history.
+
+- `--source <S>` — *one source's* held items' priors (e.g. `--source web`), the
+  `export events --source` analogue (roadmap H301).
+- `--fidelity {full|partial|reference}` — the recovery store of items held at one
+  custody-fidelity tier (ADR 0097); e.g. `--fidelity full` backs up "the recovery
+  history of holdings I can re-derive offline" (roadmap H302, the holdings-axis
+  companion of `--drift`).
+- `--drift {verified|unverified|drifted|rotted|error}` — the recovery store of
+  items *currently* at one drift posture (from the verify ledger); e.g. `--drift
+  drifted` backs up "the recoverable priors of the moved items for a recapture
+  handoff" — the items' *whole* archive (their earlier priors included), exactly as
+  `--source` scopes by item, **not** a per-prior filter (roadmap H302).
+
+The whole library's recovery store travels when no scope is given (the backup
+case). `--id` selects one precise item while the library-filter group selects a
+slice of the held library — two different selection modes — so combining `--id`
+with any of `--source`/`--fidelity`/`--drift` is a loud usage error (exit 2,
+stderr JSON; `test_export_archive_rejects_both_id_and_source`,
+`test_export_archive_rejects_id_combined_with_custody_filters`). An unknown
+`--fidelity`/`--drift` value is a closed-vocabulary usage error (exit 2;
+`test_export_archive_rejects_an_unknown_fidelity_tier`). An empty (or pre-`init`)
+library — an `--id` with no archived prior, a `--source` with no held items, or no
+holding at the custody value — produces an empty document, never an error
+(`test_export_archive_empty_library_is_valid`,
+`test_export_archive_unmatched_id_is_an_empty_document`,
+`test_export_archive_custody_axes_and_together`); a malformed URL `--id` is a loud
+error (`test_export_archive_bad_url_id_is_a_usage_error`). Restore with
 `scrolls import archive`.
 
 The records are ordered content-deterministically (by `archived_at`, then
@@ -2858,6 +2880,9 @@ $ scrolls export archive --id wikipedia:en:SQLite > sqlite-priors.jsonl   # one 
 [exit 0]
 
 $ scrolls export archive --source web > web-priors.jsonl   # one source's recovery store
+[exit 0]
+
+$ scrolls export archive --drift drifted > moved-priors.jsonl   # the recoverable priors of the moved items, for a recapture handoff
 [exit 0]
 ```
 

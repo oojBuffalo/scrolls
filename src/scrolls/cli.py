@@ -709,7 +709,29 @@ def build_parser() -> argparse.ArgumentParser:
         "arxiv) — the source-scoped recovery backup, the `export events --source` "
         "analogue; resolves the source to its held item ids, then their whole "
         "recovery store travels. Mutually exclusive with --id (one names a source, "
-        "the other an item)",
+        "the other an item); ANDs with --fidelity/--drift",
+    )
+    export_archive_parser.add_argument(
+        "--fidelity",
+        choices=("full", "partial", "reference"),
+        default=None,
+        help="Only the recovery store of items held at this fidelity tier "
+        "(ADR 0097) — the holdings-axis companion of --drift; the item-set sieve "
+        "selects the items `scrolls list --fidelity` enumerates, then their whole "
+        "archived history travels (e.g. --fidelity full to back up only the "
+        "recovery history of holdings you can re-derive offline). ANDs with "
+        "--drift/--source; mutually exclusive with --id",
+    )
+    export_archive_parser.add_argument(
+        "--drift",
+        choices=("verified", "unverified", "drifted", "rotted", "error"),
+        default=None,
+        help="Only the recovery store of items *currently* at this drift posture "
+        "(from the verify ledger) — the ledger-claim-axis companion of --fidelity; "
+        "the item-set sieve selects the items `scrolls list --drift` enumerates, "
+        "then their whole archived history travels (e.g. --drift drifted to back up "
+        "the recoverable priors of the moved items for a recapture handoff). ANDs "
+        "with --fidelity/--source; mutually exclusive with --id",
     )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
@@ -1491,7 +1513,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.drift,
             )
         if args.export_command == "archive":
-            return _cmd_export_archive(args.id, args.source)
+            return _cmd_export_archive(
+                args.id, args.source, args.fidelity, args.drift
+            )
         if args.export_command == "bundle":
             return _cmd_export_bundle(
                 args.query,
@@ -2503,7 +2527,12 @@ def _cmd_export_events(
     return 0
 
 
-def _cmd_export_archive(ref: str | None, source: str | None = None) -> int:
+def _cmd_export_archive(
+    ref: str | None,
+    source: str | None = None,
+    fidelity: str | None = None,
+    drift: str | None = None,
+) -> int:
     # the portable recovery store (H280): the prior-content archive (ADR 0106) as a
     # lossless JSONL stream, the recovery-store sibling of `export events`. A library
     # rebuilt from `export items` + `export events` reads *that* an adoption happened
@@ -2511,19 +2540,32 @@ def _cmd_export_archive(ref: str | None, source: str | None = None) -> int:
     # carries them, so `scrolls archive show` works on the rebuilt library.
     #
     # `--id <ref>` scopes to one item's archived priors (resolving a URL to the id
-    # `add` would mint, the `archive list --id` precedent); `--source <S>` scopes to
-    # *one source's* held items' priors (H301, the `export events --source` analogue
-    # — resolve the source to its held item ids, then their whole recovery store
-    # travels); the whole library's recovery store otherwise (the backup case).
+    # `add` would mint, the `archive list --id` precedent). The *library-filter
+    # group* `--source`/`--fidelity`/`--drift` is the other way to pick the item set
+    # whose recovery store travels — an *item-set sieve* (H301/H302): resolve the
+    # in-scope held item ids via the same `list --source`/`--fidelity`/`--drift`
+    # primitive `export events` folds (H260), then ship their whole archived history.
+    # `--fidelity full` backs up "the recovery history of holdings I can re-derive
+    # offline"; `--drift drifted` backs up "the recoverable priors of the moved
+    # items for a recapture handoff" — the items' *whole* archive, exactly as
+    # `--source` scopes by item. The three filters AND together; the whole library's
+    # recovery store travels when none is given (the backup case).
     #
-    # `--id` and `--source` are independent single-scope selectors — one names an
-    # item, the other a source — so supplying both is a loud usage error (exit 2,
-    # the `archive restore` "at most one version selector" precedent).
-    if ref is not None and source is not None:
+    # `--id` selects one precise item; the library-filter group selects a slice of
+    # the held library — two different selection modes — so mixing them is a loud
+    # usage error (exit 2, the `archive restore` "at most one version selector"
+    # precedent). An unknown fidelity/drift value is rejected by argparse `choices`
+    # (exit 2) before reaching here; on the library path `list_items` raises
+    # ValueError (the empty-vocabulary belt-and-braces → exit 1, the `export events`
+    # precedent).
+    if ref is not None and (
+        source is not None or fidelity is not None or drift is not None
+    ):
         print(
             json.dumps({
-                "error": "export archive takes at most one scope selector: "
-                "--id <ref> (one item) or --source <S> (one source)"
+                "error": "export archive --id <ref> selects one item; it cannot "
+                "combine with the library-filter scope "
+                "(--source/--fidelity/--drift)"
             }),
             file=sys.stderr,
         )
@@ -2536,16 +2578,31 @@ def _cmd_export_archive(ref: str | None, source: str | None = None) -> int:
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
-    elif source is not None:
-        # resolve the source to its held item ids (the `export events --source`
-        # enumeration), then their archived priors travel. A source with no held
-        # items resolves to an empty id set → a valid empty backup (the unmatched
-        # `--id` precedent), never an error; a missing/pre-init library likewise.
-        item_ids = (
-            [item.id for item in list_items(paths.db_path, source=source)]
-            if paths.db_path.exists()
-            else []
-        )
+    elif source is not None or fidelity is not None or drift is not None:
+        # resolve the library-filter group to its held item ids (the same
+        # `list --source`/`--fidelity`/`--drift` item-set sieve `export events`
+        # folds), then their archived priors travel. An empty selection (a source
+        # with no held items, or no holding at the custody value) is a valid empty
+        # backup (the unmatched `--id` precedent), never an error; a missing/pre-init
+        # library likewise. An unknown fidelity/drift value surfaces `list_items`'
+        # ValueError as exit 1 (argparse `choices` already rejects it as exit 2).
+        try:
+            item_ids = (
+                [
+                    item.id
+                    for item in list_items(
+                        paths.db_path,
+                        source=source,
+                        fidelity=fidelity,
+                        drift=drift,
+                    )
+                ]
+                if paths.db_path.exists()
+                else []
+            )
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
     records = (
         archived_records(paths.db_path, item_ids) if paths.db_path.exists() else []
     )
