@@ -156,6 +156,9 @@ def _custody_headline(score):
         # the unresolved import-conflict count (H279): an empty/uninitialized
         # library has recorded no divergence → the honest 0
         "conflicts": 0,
+        # the archive-integrity mismatch count (H298): no archived prior → the
+        # honest 0 (a clean recovery store)
+        "archive_mismatched": 0,
     }
 
 
@@ -4891,6 +4894,77 @@ def test_status_custody_conflicts_source_scopes_like_the_drift_scalar(
     assert conflicts_for([]) == 1                       # whole library
     assert conflicts_for(["--source", "arxiv"]) == 1    # the conflicting source
     assert conflicts_for(["--source", "web"]) == 0      # the unaffected source
+
+
+# --- status custody.archive_mismatched scalar (H298): the JSON-status counterpart
+# of the readable `_Archive:_` maintain line, folding doctor's
+# `custody.archive.mismatched` (H293) into the machine `custody` snapshot `scrolls
+# status` carries — since `status` renders no readable archive line. ---
+
+
+def _tamper_prior_hash(db, item_id, value):
+    """Out-of-band rewrite of a prior's advertised hash — a corrupt/laundered store."""
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "UPDATE item_archive SET prior_hash = ? WHERE item_id = ?", (value, item_id)
+        )
+    conn.close()
+
+
+def test_status_custody_archive_mismatched_surfaces_a_corrupt_prior(
+    scrolls_home, capsys
+):
+    """H298: `status`'s machine `custody` snapshot carries the archive-integrity
+    mismatch count beside drift/at-risk/conflicts — the JSON-status counterpart of
+    the readable `_Archive:_` maintain line. A tampered prior is surfaced, converging
+    field-for-field with `doctor`'s `custody.archive.mismatched` by construction (the
+    same distilled `run_doctor` view `status` already renders)."""
+    db, prior = _seed_archived_prior()
+    _tamper_prior_hash(db, prior.id, "sha256:tampered")
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody["archive_mismatched"] == 1
+
+    # convergence by construction: the scalar is the doctor custody view distilled
+    report = run_doctor(get_paths())
+    assert custody == custody_snapshot(report)
+    assert custody["archive_mismatched"] == report["custody"]["archive"]["mismatched"]
+
+
+def test_status_custody_archive_mismatched_is_zero_on_a_clean_store(
+    scrolls_home, capsys
+):
+    """An honest archive (prior_hash == snapshot.content_hash) ⇒ a `0`, never a
+    fabricated count — the conflict scalar's zeroed-default honesty, on the archive
+    axis."""
+    _seed_archived_prior()
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["custody"]["archive_mismatched"] == 0
+
+
+def test_status_custody_archive_mismatched_skipped_under_a_source_scope(
+    scrolls_home, capsys
+):
+    """H298/H166: the archive is a single whole-library recovery store (the integrity
+    check runs unscoped only), so a `--source` read leaves it skipped → the scalar
+    reads the honest `0` even with a tampered prior, unlike the source-attributable
+    conflict scalar. The whole-library read still surfaces the `1`."""
+    db, prior = _seed_archived_prior()
+    _tamper_prior_hash(db, prior.id, "sha256:tampered")
+    capsys.readouterr()
+
+    def archive_mismatched_for(args: list[str]) -> int:
+        assert main(["status", *args]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]["archive_mismatched"]
+
+    assert archive_mismatched_for([]) == 1                   # whole library
+    assert archive_mismatched_for(["--source", "web"]) == 0  # scoped → skipped → 0
 
 
 def test_export_items_empty_library_is_valid(scrolls_home, capsys):

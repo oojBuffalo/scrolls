@@ -297,5 +297,27 @@ operator act (custody §2.4), not an ambient MCP capability.
   Pure fold, no schema change. Verified offline: `tests/test_doctor.py` (clean/empty/null/
   scoped/divergence/ordering, report-only + exit-0) and `tests/test_mcp.py` (the
   `get_library_health` twin converges with the CLI `doctor` field-for-field).
+- **The archive-integrity alarm on the readable `maintain`/`status` surfaces.**
+  **Shipped (roadmap H298):** H293's `custody.archive` check was JSON-only — `maintain`'s
+  readable custody summary (score/tiers/drift/`conflicts_headline`/`at_risk_works`) was
+  *blind* to it, so the scheduled pass an operator skims reported a conflict but never a
+  tampered/laundered backup. `maintain` now carries a readable
+  `archive_integrity_headline` (`_Archive: N prior(s) fail integrity (prior_hash ≠
+  snapshot)._`, the `conflicts_headline`/`_Conflicts:_` sibling on the archive axis) and
+  `scrolls status` carries the machine `archive_mismatched` scalar (the JSON-status
+  counterpart, since `status` renders no readable line — the H279 conflicts-scalar
+  precedent). Both fold `custody.archive.mismatched` from the report `run_doctor` already
+  produced, so the readable line ≡ `doctor`'s count ≡ the `status` scalar by construction.
+  Decisive choices: the headline is **omitted entirely** (`null`, never a fabricated
+  `_Archive: 0 …_`) on a clean store *or* a skipped audit — the archive is whole-library,
+  so a `--source` `maintain` pass leaves it `status: "skipped"` and the line drops (a
+  `--fidelity` pass, whose audit stays whole-library, still computes it); it follows the
+  omit-when-clean briefing posture (H277), not the always-rendered at-risk/conflict lines;
+  and it carries **no `▲`/`▼` movement clause** — the point-in-time count only. The
+  cross-run trend on this axis (the H283 conflicts-trend analogue) is the **H299**
+  follow-up; the snapshot now records `archive_mismatched` so that delta has a baseline.
+  Pure fold, no schema change. Verified offline: `tests/test_maintain.py` (the headline
+  on a corrupt prior, omitted on a clean/`--source`-skipped library, the snapshot scalar)
+  and `tests/test_cli.py` (the `status` scalar + the three-way convergence).
 - **An MCP `archive diff` read twin** stays deferred with the MCP accept-incoming *write*
   twin — added when a workflow shows the read-only CLI surface insufficient.

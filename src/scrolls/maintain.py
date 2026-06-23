@@ -149,6 +149,23 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     scalar (the `at_risk` → H267/H268 analogue) ships in H283: `compute_delta` subtracts
     it (`delta["conflicts"]`), `compute_trend` differences it (`conflicts_change`), and
     `conflicts_headline` renders the readable `maintain`/trend `_Conflicts:_` line.
+
+    Includes the **archive-integrity mismatch count** (`custody.archive.mismatched`,
+    roadmap H293/H298) — the archived priors whose advertised `prior_hash` no longer
+    equals their snapshot body's `content_hash` (a corrupt/laundered recovery row a
+    bad import or hand-edited bundle could land). This is the JSON-`status`
+    counterpart of the readable `_Archive:_` `maintain` line (H298): `scrolls status`
+    renders no readable archive line, so it carries the machine scalar
+    (`archive_mismatched`) instead, beside `conflicts`/`at_risk`. Folds the same audit
+    view `doctor`'s `custody.archive` reports — a **pure read of the report
+    `run_doctor` already produced** (no extra archive query), so the `status` scalar
+    converges with `doctor`'s `custody.archive.mismatched` and the `maintain` headline
+    by construction. Unlike the source-attributable `conflicts`, the archive is a
+    single **whole-library** recovery store (not source-owned), so a `--source` audit
+    leaves it `status: "skipped"` (`_check_archive_integrity` runs only unscoped) and
+    the scalar reads the honest `0` — the same skipped→0 the whole-library-only
+    `at_risk` carries. Read defensively like the rest: a report predating H293 (no
+    `archive` block) reads the honest `0`, never a `KeyError`.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -161,6 +178,7 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "summaries_stale": custody["summaries"]["stale"],
         "at_risk": custody.get("works", {}).get("at_risk", 0),
         "conflicts": custody.get("conflicts", {}).get("items", 0),
+        "archive_mismatched": custody.get("archive", {}).get("mismatched", 0),
     }
 
 
@@ -286,6 +304,56 @@ def conflicts_headline(
     else:
         clause = f"no change {span}"
     return f"_Conflicts: {count} ({clause})._"
+
+
+def archive_integrity_headline(archive: dict[str, Any]) -> str | None:
+    """The readable archive-integrity ``_Archive:_`` line (roadmap H298).
+
+    The readable surfacing of `doctor`'s `custody.archive` integrity check (H293):
+    every archived prior's advertised ``prior_hash`` — the fingerprint `archive
+    list`/`archive restore --hash` key on — must equal its model-complete
+    ``snapshot`` body's own ``content_hash``. They agree at archival time by
+    construction, but the archive *travels* (`export/import archive`, the portable
+    `--with-archive` bundle), so a corrupt/hand-edited stream or a bad `import
+    archive` could land a row where they diverge — a custody-honesty bug invisible
+    until restore (`archive restore --hash <prior_hash>` would silently adopt
+    content with a *different* hash than advertised).
+
+    H293 put that check on the JSON read surfaces (`doctor`, MCP
+    `get_library_health`), but `maintain`'s readable custody summary — which already
+    folds score/tiers/drift/`conflicts_headline`/`at_risk_works` — was *blind* to it,
+    so the scheduled maintenance pass an operator skims reported a conflict but never
+    a tampered/laundered backup. This is the `conflicts_headline` (H283) /
+    `_Conflicts:_` briefing (H277) sibling on the archive axis:
+
+        ``_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot)._``
+
+    `archive` is `doctor`'s `custody.archive` block (``{status, checked, mismatched,
+    events}``). The count is its ``mismatched`` — the same number `doctor`'s JSON
+    block and the `status` `archive_mismatched` scalar (H298) carry, so the three
+    surfaces converge by construction.
+
+    **Omitted entirely** (returns ``None``, never a fabricated ``_Archive: 0 …_``)
+    when there is nothing to flag — a clean archive (``mismatched == 0``) *or* a
+    skipped audit (``status != "ok"``: a `--source` `maintain` pass, which leaves the
+    archive block at its `status: "skipped"` default since the whole-library-only
+    `_check_archive_integrity` never ran, or a pre-H293/uninitialized report). This
+    follows the H277 `_Conflicts:_`/`_Attention:_` omit-when-clean briefing posture,
+    not the always-rendered `conflicts_headline`: a tampered backup is the exception
+    worth a line, a clean store is the silent norm. The `maintain` report carries the
+    key with this ``None`` when clean (the `attention`-precedent stable shape).
+
+    Unlike `conflicts_headline`/`at_risk_headline`, this carries **no cross-run
+    movement clause** — that (the H283/H299 ``▲``/``▼`` trend on the archive axis)
+    rides the snapshot `archive_mismatched` scalar and ships in H299; H298 is the
+    point-in-time readable count.
+    """
+    if archive.get("status") != "ok":
+        return None
+    mismatched = archive.get("mismatched", 0)
+    if mismatched <= 0:
+        return None
+    return f"_Archive: {mismatched} prior(s) fail integrity (prior_hash ≠ snapshot)._"
 
 
 def _finding_present(report: dict[str, Any], category: str) -> bool:
@@ -1050,6 +1118,19 @@ def assemble_report(
         "conflicts_headline": conflicts_headline(
             current["conflicts"],
             None if delta is None else delta["conflicts"]["change"],
+        ),
+        # the readable archive-integrity line (roadmap H298): the count of archived
+        # priors whose advertised `prior_hash` diverges from their snapshot body
+        # (`doctor`'s `custody.archive`, H293), surfaced for the scheduled pass an
+        # operator skims — `maintain` was previously blind to this axis. Rendered
+        # from the live audit's archive block (not the distilled snapshot, which keeps
+        # only the `archive_mismatched` scalar `status` reads), so it converges with
+        # `doctor`'s `custody.archive.mismatched` by construction. `None` (the
+        # `attention` stable-shape precedent) on a clean store or a `--source` pass
+        # (the whole-library-only check leaves the block `status: "skipped"`) — never
+        # a fabricated `_Archive: 0 …_` line.
+        "archive_integrity_headline": archive_integrity_headline(
+            report["custody"].get("archive", {})
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

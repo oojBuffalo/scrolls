@@ -37,6 +37,7 @@ from scrolls.db import init_db
 from scrolls.doctor import run_doctor
 from scrolls.items import (
     ScrollItem,
+    adopt_incoming,
     get_fidelity,
     get_item,
     insert_item,
@@ -47,6 +48,7 @@ from scrolls.items import (
 )
 from scrolls.maintain import (
     append_log_entry,
+    archive_integrity_headline,
     at_risk_headline,
     compute_delta,
     compute_trend,
@@ -73,7 +75,7 @@ from scrolls.render import write_scroll
 
 
 def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
-                   coverage=None, at_risk=0, conflicts=0):
+                   coverage=None, at_risk=0, conflicts=0, archive_mismatched=0):
     """A minimal doctor report shaped like `run_doctor`'s custody block.
 
     `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
@@ -82,6 +84,8 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
     (roadmap H263/H267); defaults to zero (no work at risk).
     `conflicts` mirrors the `custody.conflicts.items` unresolved-import-conflict
     count (roadmap H275/H279); defaults to zero (no recorded divergence).
+    `archive_mismatched` mirrors the `custody.archive.mismatched` archive-integrity
+    count (roadmap H293/H298); defaults to zero (a clean recovery store).
     """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
@@ -100,6 +104,8 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
                       "most_at_risk": None},
             "conflicts": {"basis": "import_ledger", "as_of": None,
                           "items": conflicts, "events": []},
+            "archive": {"status": "ok", "checked": archive_mismatched,
+                        "mismatched": archive_mismatched, "events": []},
         }
     }
 
@@ -133,6 +139,10 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         # counterpart of the readable `_Conflicts:_` line, read off
         # `custody.conflicts.items` (the `items` count, not the whole event list)
         "conflicts": 3,
+        # the archive-integrity mismatch count (H293/H298): the JSON-`status`
+        # counterpart of the readable `_Archive:_` line, read off
+        # `custody.archive.mismatched` (the count, not the whole event list)
+        "archive_mismatched": 0,
     }
 
 
@@ -183,6 +193,24 @@ def test_custody_snapshot_conflicts_defaults_to_zero_without_a_conflicts_block()
     report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
     del report["custody"]["conflicts"]
     assert custody_snapshot(report)["conflicts"] == 0
+
+
+def test_custody_snapshot_records_the_archive_mismatch_count():
+    # H293/H298: the snapshot carries the archive-integrity mismatch count read off
+    # `custody.archive.mismatched` (the count, not the whole event list), so
+    # `scrolls status` carries the machine archive scalar beside drift/at-risk/
+    # conflicts — converging with `doctor`'s `custody.archive.mismatched` by
+    # construction.
+    report = _doctor_report(80, {"full": 2}, {}, archive_mismatched=2)
+    assert custody_snapshot(report)["archive_mismatched"] == 2
+
+
+def test_custody_snapshot_archive_mismatched_defaults_to_zero_without_an_archive_block():
+    # A report predating H293 (no `archive` block) reads the honest 0, never a
+    # KeyError — the module's degrade-safely posture (ADR 0082), as conflicts does.
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["archive"]
+    assert custody_snapshot(report)["archive_mismatched"] == 0
 
 
 # --- snapshot_headline (the one-line custody picture, roadmap H103) --------
@@ -298,6 +326,57 @@ def test_conflicts_headline_span_is_parametrized_for_the_trend_twin():
     assert conflicts_headline(2, -3, span="over 3 runs") == (
         "_Conflicts: 2 (▼3 over 3 runs)._"
     )
+
+
+# --- archive_integrity_headline (the readable archive-integrity line, H298) ---
+#
+# The `conflicts_headline`/`_Conflicts:_` (H277/H283) sibling on the archive axis:
+# surfaces `doctor`'s `custody.archive.mismatched` (H293) as a readable line for the
+# scheduled `maintain` pass an operator skims. Omit-when-clean (the H277 briefing
+# posture), never a fabricated `_Archive: 0 …_`. A point-in-time count (no ▲/▼ trend
+# clause — that rides the snapshot scalar in H299).
+
+
+def _archive_block(mismatched, *, status="ok", checked=None):
+    """A `custody.archive` block shaped like `doctor`'s, for the headline."""
+    return {
+        "status": status,
+        "checked": mismatched if checked is None else checked,
+        "mismatched": mismatched,
+        "events": [],
+    }
+
+
+def test_archive_integrity_headline_reports_a_mismatch_count():
+    # a tampered/laundered backup: the readable line names the count, the same
+    # `mismatched` doctor's JSON block and the status scalar carry
+    assert archive_integrity_headline(_archive_block(2)) == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    assert archive_integrity_headline(_archive_block(1, checked=3)) == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+
+
+def test_archive_integrity_headline_is_omitted_on_a_clean_archive():
+    # a clean store (mismatched 0, even with rows checked) → no line, never a
+    # fabricated `_Archive: 0 …_` (the H277 omit-when-clean briefing posture)
+    assert archive_integrity_headline(_archive_block(0, checked=5)) is None
+
+
+def test_archive_integrity_headline_is_omitted_when_the_check_was_skipped():
+    # a `--source` maintain pass / pre-H293 report leaves the block `status:
+    # "skipped"` (the whole-library-only check never ran) → no line, even if a stale
+    # `mismatched` lingers: a skipped audit makes no claim
+    assert archive_integrity_headline(_archive_block(0, status="skipped")) is None
+    assert archive_integrity_headline(
+        _archive_block(3, status="skipped")
+    ) is None
+
+
+def test_archive_integrity_headline_tolerates_an_absent_block():
+    # a report missing the archive block entirely (degrade-safe, ADR 0082) → no line
+    assert archive_integrity_headline({}) is None
 
 
 def test_delta_on_first_run_has_null_befores_and_changes():
@@ -2897,6 +2976,107 @@ def test_maintain_at_risk_works_skipped_under_a_source_scope(home, capsys):
     scoped_fid = json.loads(capsys.readouterr().out)["at_risk_works"]
     assert scoped_fid["status"] == "ok"
     assert scoped_fid["at_risk"] == 2
+
+
+# --- the readable archive-integrity headline on the maintain report (H298) -----
+#
+# H293 put the `doctor` `custody.archive` integrity check on the JSON read surfaces,
+# but `maintain`'s readable summary was blind to it: the scheduled pass an operator
+# skims reported a conflict but never a tampered/laundered backup. H298 surfaces it
+# as the `conflicts_headline`/`_Conflicts:_` sibling, with the `status`
+# `archive_mismatched` scalar twin — the three converging by construction.
+
+
+def _archive_a_prior(db, *, url="https://example.com/archived"):
+    """Hold an item, adopt a divergent capture so one honest prior lands in
+    item_archive (prior_hash == snapshot.content_hash). Returns the held item id."""
+    held = _rendered("web", None, url, extracted_text="OLD", content_hash="sha256:held")
+    insert_item(db, held)
+    incoming = replace(held, extracted_text="NEW", content_hash="sha256:moved")
+    adopt_incoming(db, incoming, archived_at="2026-06-22T00:00:00+00:00")
+    return held.id
+
+
+def _tamper_prior_hash(db, item_id, value):
+    """Out-of-band rewrite of a prior's advertised hash — a corrupt/laundered store."""
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "UPDATE item_archive SET prior_hash = ? WHERE item_id = ?", (value, item_id)
+        )
+    conn.close()
+
+
+def test_maintain_report_carries_the_archive_integrity_headline(home, capsys):
+    """A tampered/laundered backup surfaces a readable `_Archive:_` line on the
+    scheduled maintain pass — the readable side of H293's JSON-only check. The count
+    converges three ways (H298): the readable line ≡ `doctor`'s
+    `custody.archive.mismatched` ≡ the `status` `archive_mismatched` scalar the
+    snapshot carries."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    item_id = _archive_a_prior(home.db_path)
+    _tamper_prior_hash(home.db_path, item_id, "sha256:tampered")
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["archive_integrity_headline"] == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    # the JSON-status scalar twin the snapshot carries (what `scrolls status` reads)
+    assert report["custody"]["archive_mismatched"] == 1
+    # three-way convergence by construction (sabotage: hard-coding the headline count
+    # fails this tie): the readable line is rendered from the same audit block doctor
+    # reports, and doctor's mismatched count agrees
+    audit = run_doctor(home)["custody"]["archive"]
+    assert audit["mismatched"] == 1
+    assert report["archive_integrity_headline"] == archive_integrity_headline(audit)
+
+
+def test_maintain_omits_the_archive_headline_on_a_clean_library(
+    home, monkeypatch, capsys
+):
+    """A clean archive (here: none archived) → no `_Archive:_` line (None), never a
+    fabricated `_Archive: 0 …_`, and the scalar reads the honest 0."""
+    _build(_held_topic())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["archive_integrity_headline"] is None
+    assert report["custody"]["archive_mismatched"] == 0
+
+
+def test_maintain_source_pass_omits_the_archive_headline(home, capsys):
+    """The archive is a single whole-library recovery store (the integrity check runs
+    unscoped only), so a `--source` pass leaves the block `status: "skipped"` → no
+    readable line and a 0 scalar, even with a tampered prior present. The
+    whole-library audit still flags it — the scope skipped the check, it did not
+    clear the corruption."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    item_id = _archive_a_prior(home.db_path)
+    _tamper_prior_hash(home.db_path, item_id, "sha256:tampered")
+    capsys.readouterr()
+
+    assert main(["maintain", "--source", "web", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["archive_integrity_headline"] is None
+    assert report["custody"]["archive_mismatched"] == 0
+    # the corruption is real — only the scoped audit declined to look
+    assert run_doctor(home)["custody"]["archive"]["mismatched"] == 1
+
+    # a --fidelity pass leaves the audit whole-library (H255, like at_risk_works), so
+    # the archive integrity IS computed — the line renders and the scalar reads the 1
+    capsys.readouterr()
+    assert main(["maintain", "--fidelity", "full", "--no-recheck"]) == 0
+    fid = json.loads(capsys.readouterr().out)
+    assert fid["archive_integrity_headline"] == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    assert fid["custody"]["archive_mismatched"] == 1
 
 
 def test_maintain_history_does_not_carry_at_risk_works(home, capsys):
