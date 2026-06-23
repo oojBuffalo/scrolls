@@ -5498,6 +5498,153 @@ def test_export_archive_bad_url_id_is_a_usage_error(scrolls_home, capsys):
     assert "error" in json.loads(captured.err)
 
 
+def _seed_archived_chain_cli(item_id="web:demo", *, query_token="database"):
+    """Init a library and adopt a *chain* of divergent captures at controlled
+    `archived_at` stamps — a multi-supersession item whose archive holds several
+    recoverable priors, not just one (`_seed_archived_prior`'s deeper cousin, the
+    test_bundle `_seed_archived_chain` twin on the export/import-archive side).
+
+    The held copy ends as v3; the archive ends holding [v0@06-20, v1@06-21,
+    v2@06-22]. Strictly-increasing `archived_at` is deliberate: `export archive`
+    orders by `(archived_at, item_id, prior_hash)` and the rebuilt library imports
+    in that order, so A's adoption order and B's import order both yield the same
+    `id DESC` newest-first history — `archive show --all` reads identically on
+    either side. Returns the source library's db_path."""
+    main(["init"])
+    db = get_paths().db_path
+    held = ScrollItem(
+        id=item_id, source=item_id.split(":")[0], url=f"https://{item_id}.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held",
+        raw_text=f"<raw>The original {query_token} capture.</raw>",
+        extracted_text=f"The original {query_token} capture.",
+        content_hash="sha256:v0",
+        markdown_path=f"scrolls/{item_id}.md", stage="rendered",
+    )
+    insert_item(db, held)
+    for n, at in ((1, "2026-06-20T00:00:00+00:00"),
+                  (2, "2026-06-21T00:00:00+00:00"),
+                  (3, "2026-06-22T00:00:00+00:00")):
+        incoming = dataclasses.replace(
+            held,
+            raw_text=f"<raw>A v{n} {query_token} capture.</raw>",
+            extracted_text=f"A v{n} {query_token} capture.",
+            content_hash=f"sha256:v{n}",
+        )
+        adopt_incoming(db, incoming, archived_at=at)
+        held = incoming
+    return db
+
+
+def test_jsonl_backup_round_trips_the_archive_recovery_read_family(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """The whole archive-recovery *read* family reads identically on a library
+    rebuilt from `export items` + `export archive` — the H291 twin on the
+    JSONL-backup path (H294).
+
+    H291 pins that the *portable bundle*'s fenced `--with-archive` block carries
+    the whole recovery family across a rebuild. The whole-library `export archive`
+    JSONL is a *different* serialization (its own `import archive` restore, deduped
+    by `(item_id, prior_hash)`), and nothing pinned that the recovery family
+    survives *that* round-trip. Pin it: adopt a multi-supersession chain in A, back
+    A up with `export items` + `export archive` to two files, rebuild a fresh B
+    with `import items` + `import archive`, then assert `archive show --all`
+    (byte-for-byte), `archive diff` (held↔prior hashes / fidelities /
+    `changed_fields` / `would_restore`), and `archive restore --dry-run` agree
+    field-for-field across A and B over all three selectors (`--hash`, `--at`,
+    default-latest)."""
+    item_id = "web:demo"
+    db_a = _seed_archived_chain_cli(item_id)
+    assert get_item(db_a, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db_a, item_id)) == 3  # a genuine multi-supersession chain
+
+    # the selectors the family reads over: the oldest prior by hash, a point-in-time
+    # boundary mid-chain (picks v1@06-21, the newest at/before it), and default-latest
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family():
+        """Run the whole recovery read-family — non-mutating (reads + a dry-run), so
+        it is safe to run identically on A and on B."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_a = read_family()
+    # sanity: the family read something non-trivial in A — the full 3-prior chain and a
+    # real would-change delta (a vacuous all-empty read would pass the A==B tie falsely)
+    assert len(family_a["show_all"].splitlines()) == 3
+    assert family_a["diff:--hash sha256:v0"]["would_restore"] is True
+    assert family_a["restore:--at 2026-06-21T12:00:00+00:00"]["prior_hash"] == "sha256:v1"
+
+    # back A up to two JSONL files — the whole-library backup, no bundle
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive"]) == 0
+    archive_path = tmp_path / "archive.jsonl"
+    archive_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # rebuild a fresh library B from the two backups (held rows, then their priors)
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(archive_path)]) == 0
+    capsys.readouterr()
+
+    # the rebuilt library holds the same head and the same chain depth before reading
+    assert get_item(db_b, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db_b, item_id)) == 3
+
+    # the whole recovery read-family is byte/field-identical across the round trip
+    assert read_family() == family_a
+
+
+def test_jsonl_backup_round_trip_breaks_if_the_archive_stream_is_truncated(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """Mutation guard: the A==B family tie is non-vacuous — dropping rows from the
+    `export archive` stream before rebuilding B makes the recovery family read
+    *differently* on B, so the round-trip assertion would catch a lossy backup."""
+    item_id = "web:demo"
+    _seed_archived_chain_cli(item_id)
+    capsys.readouterr()
+    main(["export", "items"])
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    main(["export", "archive"])
+    archive_path = tmp_path / "archive.jsonl"
+    full = capsys.readouterr().out
+    # truncate the recovery store to its oldest prior alone (drop v1, v2)
+    archive_path.write_text(full.splitlines(keepends=True)[0], encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    main(["import", "items", str(items_path)])
+    main(["import", "archive", str(archive_path)])
+    capsys.readouterr()
+    # B's archive lost two priors — the recovery family cannot read identically
+    assert len(list_archived(db_b, item_id)) == 1
+    capsys.readouterr()
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    assert len(capsys.readouterr().out.splitlines()) == 1  # vs. 3 on the full backup
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 
