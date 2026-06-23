@@ -4576,6 +4576,75 @@ def test_archive_diff_rejects_both_selectors_and_a_malformed_at(
     assert "ISO-8601" in json.loads(capsys.readouterr().err)["error"]
 
 
+def test_archive_diff_would_restore_agrees_with_archive_restore_dry_run(
+    scrolls_home, tmp_path, capsys
+):
+    """`archive diff <id> <sel>`'s ``would_restore`` *is* `archive restore <id> <sel>
+    --dry-run`'s ``restored`` — the cross-command write-prediction tie (H290).
+
+    Both commands predict the *same* accept-incoming write — would a restore change the
+    held copy? — from the *same* inputs: `select_archived_snapshot` picks the prior, then
+    the ``content_hash`` compare `merge_item` makes decides. But they reach the verdict by
+    **separate** code paths: `archive diff` folds the compare directly
+    (``would_restore``), while `archive restore --dry-run` routes it through
+    `_preview_merge_items` → `_restore_outcome` (``restored``). A reader may trust `diff`
+    to decide and `restore --dry-run` to confirm; a divergence between two reads of one
+    predicted write would be a silent custody-honesty bug. Pin that they never disagree
+    across every selector (``--hash``, ``--at``, default-latest) and both the would-change
+    and the idempotent-no-op cases, and that `diff`'s ``prior_hash``/``held_hash`` match
+    the dry-run's — same selection, same held-vs-prior reading.
+    """
+    # archive holds priors [v2, v1, abc] (newest-first); held = v3
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    db = get_paths().db_path
+    rows_before = len(list_archived(db, item_id))
+
+    def diff(sel):
+        capsys.readouterr()
+        assert main(["archive", "diff", item_id, *sel]) == 0
+        return json.loads(capsys.readouterr().out)
+
+    def restore_dry_run(sel):
+        capsys.readouterr()
+        assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+        out, err = capsys.readouterr()
+        assert err == ""  # a dry-run writes nothing and says nothing on stderr
+        return json.loads(out)
+
+    def assert_agree(sel):
+        d, r = diff(sel), restore_dry_run(sel)
+        # the two predictions of the one write agree…
+        assert d["would_restore"] == r["restored"], sel
+        # …and they read the *same* held-vs-prior copies (same selection)
+        assert d["prior_hash"] == r["prior_hash"], sel
+        assert d["held_hash"] == r["held_hash"], sel
+        return d
+
+    # the three selectors restore uses — by hash, by point-in-time, and the default
+    # latest. Real-now archived_at values cluster in one second, so a far-future --at
+    # boundary robustly resolves to the latest prior; *which* prior --at picks is H288's
+    # concern, this test pins only that the two commands agree on it.
+    far_future = "2099-01-01T00:00:00+00:00"
+    for sel in (["--hash", "sha256:abc"], ["--at", far_future], []):
+        d = assert_agree(sel)
+        # held v3 differs from every selected prior → a would-change restore on each
+        assert d["would_restore"] is True, sel
+
+    # the reads/dry-runs leaked nothing: the held copy and the archive are untouched
+    assert get_item(db, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db, item_id)) == rows_before
+
+    # the idempotent-no-op case: restore abc into place so it *is* the held copy (abc
+    # stays archived), then re-diff/-dry-run against abc — both must predict no write
+    capsys.readouterr()
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc"]) == 0
+    capsys.readouterr()
+    assert get_item(db, item_id).content_hash == "sha256:abc"
+    d = assert_agree(["--hash", "sha256:abc"])
+    assert d["would_restore"] is False  # the prior already is the held copy
+    assert d["held_hash"] == d["prior_hash"] == "sha256:abc"
+
+
 # --- archive prune (H282): a retention act bounding the append-only recovery
 # store. Report-only by default; --apply deletes; exactly one of --before/--keep;
 # never touches a held row (the archive is a recovery convenience, not the root of
