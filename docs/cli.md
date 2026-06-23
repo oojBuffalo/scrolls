@@ -2807,7 +2807,7 @@ $ scrolls export events --drift drifted > moved.jsonl        # the full custody 
 [exit 0]
 ```
 
-### `scrolls export archive [--id <id> | --source <S>] [--fidelity T] [--drift P]`
+### `scrolls export archive [--id <id> | --source <S>] [--fidelity T] [--drift P] [--since <ISO>]`
 
 Export the **prior-content archive** (`item_archive`, ADR 0106) as a lossless
 JSON Lines stream — the **portable recovery store** (roadmap H280), the third
@@ -2848,6 +2848,24 @@ archived history.
   handoff" — the items' *whole* archive (their earlier priors included), exactly as
   `--source` scopes by item, **not** a per-prior filter (roadmap H302).
 
+`--since <ISO>` is a third, **orthogonal** axis — a *time* window on
+`archived_at`, **not** an item-set sieve — so it is **not** part of that mutual
+exclusion: it composes with whichever item selector ran (`--id`, the
+library-filter group, or none), narrowing the resolved priors to those archived
+**at/after** the boundary (inclusive `>=`). This is the **incremental recovery
+backup since the last sweep** — the `export events --since` analogue on the
+archive axis (roadmap H303). Re-importing the overlapping union of a full backup
+and a later `--since` increment stays idempotent: `import archive` dedups by
+`(item_id, prior_hash)`, so the increment adds only genuinely new priors
+(`test_incremental_export_archive_re_imports_idempotently_over_the_full_backup`).
+The boundary is normalized through the shared `parse_since` validator (a `Z`
+suffix, an offset, or a date-only `2026-06-15` all accepted); a non-timestamp
+value is a loud usage error (exit 2, stderr JSON, validated before any item
+resolution — never a silently-empty backup that could mask a typo;
+`test_export_archive_rejects_a_malformed_since`), while a window after every prior
+is a valid empty document
+(`test_export_archive_empty_since_window_is_a_valid_empty_document`).
+
 The whole library's recovery store travels when no scope is given (the backup
 case). `--id` selects one precise item while the library-filter group selects a
 slice of the held library — two different selection modes — so combining `--id`
@@ -2883,6 +2901,9 @@ $ scrolls export archive --source web > web-priors.jsonl   # one source's recove
 [exit 0]
 
 $ scrolls export archive --drift drifted > moved-priors.jsonl   # the recoverable priors of the moved items, for a recapture handoff
+[exit 0]
+
+$ scrolls export archive --since 2026-06-22 > priors-since-last-sweep.jsonl   # incremental: only priors archived on/after the boundary
 [exit 0]
 ```
 

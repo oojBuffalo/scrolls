@@ -6303,6 +6303,183 @@ def test_cmd_export_archive_unknown_tier_on_the_programmatic_path_is_exit_1(
     assert "error" in json.loads(captured.err)
 
 
+# --- export archive --since <ISO>: the incremental recovery-store backup, the
+# `export events --since` analogue on the archive axis — an orthogonal *time*
+# window on archived_at (H303) ------------------------------------------------
+
+
+def test_export_archive_since_windows_to_the_priors_at_or_after_the_boundary(
+    scrolls_home, capsys
+):
+    """`--since <ISO>` carries only priors archived at/after the boundary — the
+    incremental backup since the last sweep. The chain archives [v0@06-20,
+    v1@06-21, v2@06-22] (held = v3); a mid-chain boundary windows the earlier
+    priors out, the boundary is inclusive (``>=``), a date-only form normalizes to
+    that day's midnight UTC (the `parse_since` shape), and a boundary before every
+    prior carries the whole store (the un-windowed shape unchanged)."""
+    _seed_archived_chain_cli("web:demo")  # priors v0@06-20, v1@06-21, v2@06-22
+    capsys.readouterr()
+
+    def priors(*args):
+        assert main(["export", "archive", *args]) == 0
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        return [row["prior_hash"] for row in rows]
+
+    # mid-chain: only the prior archived strictly after the boundary survives
+    assert priors("--since", "2026-06-21T12:00:00+00:00") == ["sha256:v2"]
+    # inclusive at the exact stamp: the boundary prior itself is kept (>=, not >)
+    assert priors("--since", "2026-06-21T00:00:00+00:00") == ["sha256:v1", "sha256:v2"]
+    # a date-only boundary normalizes to that day's midnight UTC — picks v2 alone
+    assert priors("--since", "2026-06-22") == ["sha256:v2"]
+    # a boundary at/before the first prior carries the whole store (un-windowed)
+    assert priors("--since", "2026-06-20T00:00:00+00:00") == [
+        "sha256:v0", "sha256:v1", "sha256:v2"
+    ]
+    # no --since is the same whole store — the window is opt-in
+    assert priors() == ["sha256:v0", "sha256:v1", "sha256:v2"]
+
+
+def test_export_archive_empty_since_window_is_a_valid_empty_document(
+    scrolls_home, capsys
+):
+    """A boundary after every archived prior carries nothing — a valid empty backup
+    (exit 0, empty stdout), never an error: an incremental sweep that finds no new
+    priors since the last one is the honest empty document, the `export events
+    --since` / unmatched-`--id` precedent."""
+    _seed_archived_chain_cli("web:demo")  # newest prior archived 2026-06-22
+    capsys.readouterr()
+    assert main(["export", "archive", "--since", "2026-06-23T00:00:00+00:00"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_export_archive_since_is_an_orthogonal_window_composing_with_the_item_scope(
+    scrolls_home, capsys
+):
+    """`--since` is a *time* window, not an item-set sieve, so it ANDs with whichever
+    item selector ran — it is **not** part of the `--id` vs library-filter mutual
+    exclusion. With a 3-prior `web:demo` chain and a 1-prior `arxiv:sib` (archived
+    06-20), `--source web --since <mid>` keeps only web:demo's later prior (arxiv
+    excluded by source, web:demo's earlier priors by the window), and `--id web:demo
+    --since <inclusive>` keeps that item's at/after-boundary priors."""
+    _seed_archived_chain_cli("web:demo")  # web, priors v0@06-20, v1@06-21, v2@06-22
+    _seed_one_prior_cli("arxiv:sib")       # arxiv, one prior y0@06-20 (excluded by source)
+    capsys.readouterr()
+
+    def rows(*args):
+        assert main(["export", "archive", *args]) == 0
+        return [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    # --source AND --since: the source picks web's items, the window picks the later prior
+    web_recent = rows("--source", "web", "--since", "2026-06-21T12:00:00+00:00")
+    assert [(r["item_id"], r["prior_hash"]) for r in web_recent] == [
+        ("web:demo", "sha256:v2")
+    ]
+
+    # --id AND --since: one item's at/after-boundary priors (inclusive at the stamp)
+    by_id = rows("--id", "web:demo", "--since", "2026-06-21T00:00:00+00:00")
+    assert [r["prior_hash"] for r in by_id] == ["sha256:v1", "sha256:v2"]
+
+    # sanity: dropping the window widens the same --source scope to the whole web store
+    assert len(rows("--source", "web")) == 3
+
+
+def test_export_archive_rejects_a_malformed_since(scrolls_home, capsys):
+    """A non-timestamp `--since` is a loud usage error (exit 2, stderr JSON, no
+    stdout), never a silently-empty backup that could mask a typo — the `export
+    events --since` / `maintain --trend` precedent, validated before any item
+    resolution."""
+    _seed_archived_chain_cli("web:demo")
+    capsys.readouterr()
+    assert main(["export", "archive", "--since", "not-a-date"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""  # never a partial backup
+    assert "error" in json.loads(captured.err)
+
+
+def test_incremental_export_archive_re_imports_idempotently_over_the_full_backup(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """The headline incremental-backup guarantee (H303): a `--since` mid-chain
+    backup carries only the later priors, and re-importing the full backup *then*
+    the overlapping incremental one yields the *same* archive as importing the full
+    backup alone — the union is idempotent because `import archive` dedups by
+    `(item_id, prior_hash)` (ADR 0106).
+
+    The real maintenance shape: a worker takes a full backup, then later re-exports
+    only `--since` the last sweep; restoring both onto a peer must never
+    double-count the overlap. Pin it: seed a 3-prior chain in A, write a full
+    `export archive` and an incremental `--since` (which must carry strictly fewer
+    priors — non-vacuous), rebuild B from full **+** incremental and C from full
+    alone, then assert B's and C's recovery stores are byte-for-byte identical and
+    the whole recovery read-family reads the same on both."""
+    item_id = "web:demo"
+    db_a = _seed_archived_chain_cli(item_id)  # priors v0@06-20, v1@06-21, v2@06-22
+    assert len(list_archived(db_a, item_id)) == 3
+
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # the full backup (all 3 priors) and the incremental window (strictly fewer)
+    assert main(["export", "archive"]) == 0
+    full = capsys.readouterr().out
+    full_path = tmp_path / "archive-full.jsonl"
+    full_path.write_text(full, encoding="utf-8")
+    assert main(["export", "archive", "--since", "2026-06-21T12:00:00+00:00"]) == 0
+    incremental = capsys.readouterr().out
+    incremental_path = tmp_path / "archive-incremental.jsonl"
+    incremental_path.write_text(incremental, encoding="utf-8")
+    # non-vacuous: the incremental is a strict subset of the full backup (1 < 3),
+    # and its priors are all present in the full backup (a genuine overlap)
+    assert len(incremental.splitlines()) == 1
+    assert len(full.splitlines()) == 3
+    assert set(incremental.splitlines()).issubset(set(full.splitlines()))
+
+    def build_library(home, *archive_files):
+        monkeypatch.setenv("SCROLLS_HOME", str(home))
+        main(["init"])
+        capsys.readouterr()
+        assert main(["import", "items", str(items_path)]) == 0
+        for path in archive_files:
+            assert main(["import", "archive", str(path)]) == 0
+        capsys.readouterr()
+        return get_paths().db_path
+
+    # B: full THEN the overlapping incremental — the re-import-the-window workflow
+    db_b = build_library(tmp_path / "library-b", full_path, incremental_path)
+    # C: the full backup alone — the reference the union must equal
+    db_c = build_library(tmp_path / "library-c", full_path)
+
+    # the union is idempotent: re-importing the incremental added nothing the full
+    # backup did not already carry — B's recovery store == C's, record-for-record
+    assert archived_records(db_b, [item_id]) == archived_records(db_c, [item_id])
+    assert len(archived_records(db_b, [item_id])) == 3  # not 4 — the overlap deduped
+
+    # and the whole recovery read-family reads identically on the two rebuilds
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family(home):
+        monkeypatch.setenv("SCROLLS_HOME", str(home))
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_b = read_family(tmp_path / "library-b")
+    assert len(family_b["show_all"].splitlines()) == 3  # the full chain survived
+    assert family_b == read_family(tmp_path / "library-c")
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 

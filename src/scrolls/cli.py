@@ -733,6 +733,16 @@ def build_parser() -> argparse.ArgumentParser:
         "the recoverable priors of the moved items for a recapture handoff). ANDs "
         "with --fidelity/--source; mutually exclusive with --id",
     )
+    export_archive_parser.add_argument(
+        "--since",
+        default=None,
+        help="Only priors archived at/after this ISO-8601 boundary (e.g. "
+        "2026-06-15) — the incremental recovery backup since the last sweep, the "
+        "`export events --since` analogue. An orthogonal *time* window on "
+        "archived_at, not an item-set sieve: composes with --id/--source/"
+        "--fidelity/--drift; re-importing the overlapping union stays idempotent "
+        "(the archive dedups by (item_id, prior_hash))",
+    )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
         help="Export a scoped, self-contained custody bundle for a query "
@@ -1514,7 +1524,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.export_command == "archive":
             return _cmd_export_archive(
-                args.id, args.source, args.fidelity, args.drift
+                args.id, args.source, args.fidelity, args.drift, args.since
             )
         if args.export_command == "bundle":
             return _cmd_export_bundle(
@@ -2532,6 +2542,7 @@ def _cmd_export_archive(
     source: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    since: str | None = None,
 ) -> int:
     # the portable recovery store (H280): the prior-content archive (ADR 0106) as a
     # lossless JSONL stream, the recovery-store sibling of `export events`. A library
@@ -2558,6 +2569,14 @@ def _cmd_export_archive(
     # (exit 2) before reaching here; on the library path `list_items` raises
     # ValueError (the empty-vocabulary belt-and-braces → exit 1, the `export events`
     # precedent).
+    #
+    # `--since <ISO>` (H303) is a third, *orthogonal* axis — a time window on
+    # `archived_at`, not an item-set sieve — so it is **not** part of the mutual
+    # exclusion: it composes with whichever item-set selector ran (`--id`, the
+    # library-filter group, or none), narrowing the resolved priors to those
+    # archived at/after the boundary. The incremental-backup window (`export events
+    # --since` analogue): re-importing the overlapping union stays idempotent (the
+    # archive dedups by `(item_id, prior_hash)`, ADR 0106).
     if ref is not None and (
         source is not None or fidelity is not None or drift is not None
     ):
@@ -2569,6 +2588,15 @@ def _cmd_export_archive(
             }),
             file=sys.stderr,
         )
+        return 2
+    # Validated before any item resolution so a malformed boundary is a loud usage
+    # error (exit 2, the `export events --since`/`maintain --trend` precedent), never
+    # a silently-empty backup that could mask a typo; an empty window is still a
+    # valid empty document.
+    try:
+        boundary = parse_since(since)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 2
     paths = get_paths()
     item_ids: list[str] | None = None
@@ -2604,7 +2632,9 @@ def _cmd_export_archive(
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     records = (
-        archived_records(paths.db_path, item_ids) if paths.db_path.exists() else []
+        archived_records(paths.db_path, item_ids, since=boundary)
+        if paths.db_path.exists()
+        else []
     )
     # the JSONL stream *is* the artifact (the `export items`/`export events` rule) —
     # `scrolls export archive > archive.jsonl`

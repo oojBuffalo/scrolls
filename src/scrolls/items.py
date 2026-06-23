@@ -1071,7 +1071,10 @@ class ArchiveRecord:
 
 
 def archived_records(
-    db_path: Path, item_ids: Iterable[str] | None = None
+    db_path: Path,
+    item_ids: Iterable[str] | None = None,
+    *,
+    since: str | None = None,
 ) -> list[ArchiveRecord]:
     """The archive's prior captures as portable `ArchiveRecord`s — the export read.
 
@@ -1081,6 +1084,20 @@ def archived_records(
     to a set of ``item_ids`` when given (the bundle scopes the archive to its
     in-scope items, the items-block symmetry); the whole archive otherwise (the
     whole-library backup).
+
+    `since` is a **pre-normalized** UTC ISO boundary (see `parse_since`): only
+    priors ``archived_at >= since`` travel — the incremental-backup window
+    (`scrolls export archive --since`, roadmap H303), the `events_for_items`
+    `since` twin on the recovery-store axis, so a maintenance worker re-exports
+    only what was archived since the last backup. ``None`` (the default, and the
+    bundle/doctor callers' value) carries the whole scoped store, so those reads
+    are unchanged. It is an orthogonal *time* window, not an item-set sieve: it
+    composes with the ``item_ids`` scope (the `--id`/`--source`/`--fidelity`/
+    `--drift` resolution) rather than replacing it; the lexicographic compare is
+    apples-to-apples because `archived_at` is stamped in the same ``+00:00``
+    isoformat shape `parse_since` normalizes to (the `archived_at <= at`
+    restore-by-version precedent). `import_archive`'s `(item_id, prior_hash)`
+    dedup makes the union of overlapping incremental backups idempotent.
 
     Ordered by ``(archived_at, item_id, prior_hash)`` — fully content-determined,
     independent of the per-library autoincrement `id` (never exported) — so a
@@ -1111,7 +1128,8 @@ def archived_records(
             snapshot=json.loads(row["snapshot"]),
         )
         for row in rows
-        if wanted is None or row["item_id"] in wanted
+        if (wanted is None or row["item_id"] in wanted)
+        and (since is None or row["archived_at"] >= since)
     ]
     records.sort(key=lambda r: (r.archived_at, r.item_id, r.prior_hash or ""))
     return records

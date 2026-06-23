@@ -676,6 +676,31 @@ def test_archived_records_filters_by_item_id_set(db_path):
     assert archived_records(db_path, []) == []
 
 
+def test_archived_records_windows_by_since_boundary(db_path):
+    # `since` (H303) is an orthogonal time window on archived_at: only priors
+    # archived at/after the (pre-normalized) boundary travel — the incremental
+    # backup, the `events_for_items` since twin. Inclusive (>=), composes with the
+    # item-id scope.
+    _archive_a_prior(db_path, "web:a", old_hash="sha256:oa", new_hash="sha256:na",
+                     archived_at="2026-06-20T00:00:00+00:00")
+    _archive_a_prior(db_path, "web:b", old_hash="sha256:ob", new_hash="sha256:nb",
+                     archived_at="2026-06-22T00:00:00+00:00")
+    # a mid-window boundary keeps only the later prior
+    assert [r.item_id for r in
+            archived_records(db_path, since="2026-06-21T00:00:00+00:00")] == ["web:b"]
+    # inclusive at the exact stamp — the boundary prior itself is kept
+    assert {r.item_id for r in
+            archived_records(db_path, since="2026-06-20T00:00:00+00:00")} == {
+                "web:a", "web:b"}
+    # an empty window (after every prior) carries nothing
+    assert archived_records(db_path, since="2026-06-23T00:00:00+00:00") == []
+    # composes with the item-id scope (AND): web:b's later prior, web:a windowed out
+    assert [r.item_id for r in archived_records(
+        db_path, ["web:a", "web:b"], since="2026-06-21T00:00:00+00:00")] == ["web:b"]
+    # None (the default) is the whole store — the bundle/doctor callers' value
+    assert {r.item_id for r in archived_records(db_path, since=None)} == {"web:a", "web:b"}
+
+
 def test_archived_records_orders_content_deterministically(db_path):
     # ordered by (archived_at, item_id, prior_hash), independent of insert/local id —
     # so a re-export after import reproduces the stream regardless of restored ids
