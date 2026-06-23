@@ -856,6 +856,121 @@ def test_restore_by_version_rolls_back_to_a_specific_earlier_capture(
     assert _custody()["score"] == 100
 
 
+# --- the decide-before-you-restore leg (H289): read `archive diff`, then act,
+#     and the act matches exactly what the read predicted — the H287 analogue on
+#     the H288 read ------------------------------------------------------------
+
+
+def test_archive_diff_decides_then_restore_acts_exactly_as_predicted(
+    home, capsys, tmp_path
+):
+    """*decide-before-you-restore* (H289): the read that precedes the rollback.
+
+    H287 dogfoods restore-by-version (roll back by ``--hash``/``--at``); it never
+    exercised the **read an operator runs first** — `archive diff` (H288), the
+    decide-before-you-restore inspection that answers *what would a restore change,
+    and would it change anything at all?* before `archive restore` (H286) writes.
+    This leg runs the whole decide → act loop offline: hold a topic, adopt one
+    divergent peer capture (so a single prior is archived), then **diff → restore →
+    diff again → restore again**, asserting at each step that the act lands exactly
+    on the diff's prediction.
+
+    The two custody points the leg pins — the decide-before-you-restore twins of the
+    restore-by-version leg's "the rollback lands the chosen version":
+
+    - **read-then-act convergence** — `archive diff`'s ``would_restore`` *is* the
+      subsequent `archive restore`'s ``restored``, and the diff's
+      ``prior_hash``/``held_hash`` are exactly the version a restore lands and the
+      copy it displaces. The read and the write fold the *same*
+      `select_archived_snapshot` selector + ``content_hash`` compare, so the decision
+      an operator reads can never disagree with the write they then run. Pinned on
+      **both** outcomes: the would-change case (diff says ``true`` → restore adopts)
+      *and* the idempotent case (a second diff against the just-restored prior says
+      ``false`` + empty ``changed_fields`` → a restore is an ``unchanged`` no-op); and
+
+    - **the diff is a true read** — the held ``content_hash`` is untouched across each
+      diff, only the `restore` between them moves it (so an operator can inspect as
+      many times as they like before deciding), and `doctor`'s ``custody.score`` holds
+      at 100 the whole way (no inspection, and no reversible rollback, ever lowers
+      integrity — custody §2.4).
+    """
+
+    def _custody() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]
+
+    # 1. HOLD the topic in full; the arxiv paper is the one a peer re-captures.
+    lib = home("library")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv" and original.content_hash == ORIG_HASH
+    capsys.readouterr()  # drain the kb report
+    held0 = get_item(lib.db_path, original.id)  # the rendered row (carries markdown_path)
+    assert _custody()["score"] == 100
+
+    # 2. ADOPT one divergent peer capture: the prior (our original) is archived, the
+    #    held copy flips to the peer's. Built from the held DB row so the recapture
+    #    carries the rendered markdown_path (the H287 discipline — an adoption replaces
+    #    every column, so a recapture lacking it would orphan the scroll file).
+    recapture = _divergent_recapture(held0, PEER_HASH, "Adds a worked attention example.")
+    incoming = tmp_path / "peer.jsonl"
+    incoming.write_text(dump_items_export([recapture]), encoding="utf-8")
+    assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+    assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert get_item(lib.db_path, original.id).content_hash == PEER_HASH
+
+    # 3. DECIDE — `archive diff` (default selector = the latest, our only, prior):
+    #    what would a restore get back, and what would it cost?
+    assert main(["archive", "diff", original.id]) == 0
+    diff = json.loads(capsys.readouterr().out)
+    assert diff["selector"] == {"latest": True}
+    assert diff["held_hash"] == PEER_HASH      # what we hold now (the peer's capture)
+    assert diff["prior_hash"] == ORIG_HASH     # the version a restore would land
+    assert diff["held_fidelity"] == "full" and diff["prior_fidelity"] == "full"
+    # the model-complete fields a restore would surface — exactly the three the peer
+    # recapture diverged on, nothing more (a full→full swap, no fidelity loss).
+    assert diff["changed_fields"] == ["content_hash", "extracted_text", "raw_text"]
+    assert diff["would_restore"] is True       # the held copy and the prior differ
+    # the diff is a *read* — it wrote nothing; the held copy is still the peer's.
+    assert get_item(lib.db_path, original.id).content_hash == PEER_HASH
+
+    # 4. ACT — `archive restore` with the same (default) selector, and assert it lands
+    #    exactly on the diff's prediction: read-then-act convergence.
+    assert main(["archive", "restore", original.id]) == 0
+    restore = json.loads(capsys.readouterr().out)
+    assert restore["selector"] == diff["selector"]          # same version selected
+    assert restore["restored"] == diff["would_restore"]     # would_restore *is* restored
+    assert restore["prior_hash"] == diff["prior_hash"]      # landed the version diff named
+    assert restore["held_hash"] == diff["held_hash"]        # displaced the copy diff named
+    assert restore["outcome"] == "adopted"
+    # the rollback happened: the held copy flipped to our original.
+    assert get_item(lib.db_path, original.id).content_hash == ORIG_HASH
+    assert _custody()["score"] == 100  # a reversible swap never lowers integrity
+
+    # 5. DECIDE AGAIN — `archive diff --hash <ORIG>` against the now-restored prior:
+    #    there is nothing left to restore, exactly the idempotency the first diff's
+    #    `would_restore` chain implies.
+    assert main(["archive", "diff", original.id, "--hash", ORIG_HASH]) == 0
+    diff2 = json.loads(capsys.readouterr().out)
+    assert diff2["selector"] == {"hash": ORIG_HASH}
+    assert diff2["held_hash"] == ORIG_HASH and diff2["prior_hash"] == ORIG_HASH
+    assert diff2["changed_fields"] == []        # the prior already *is* the held copy
+    assert diff2["would_restore"] is False
+    # still a read — the held copy is untouched between the two diffs.
+    assert get_item(lib.db_path, original.id).content_hash == ORIG_HASH
+
+    # 6. ACT AGAIN — restoring the already-held version is the `unchanged` no-op the
+    #    second diff predicted: would_restore is restored, on the idempotent case too.
+    assert main(["archive", "restore", original.id, "--hash", ORIG_HASH]) == 0
+    restore2 = json.loads(capsys.readouterr().out)
+    assert restore2["selector"] == diff2["selector"]
+    assert restore2["restored"] == diff2["would_restore"]   # False == False, never lies
+    assert restore2["outcome"] == "unchanged"
+    assert get_item(lib.db_path, original.id).content_hash == ORIG_HASH
+    assert _custody()["score"] == 100
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 

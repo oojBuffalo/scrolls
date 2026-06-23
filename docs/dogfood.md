@@ -302,20 +302,107 @@ one is archived, so no version is ever destroyed and the held copy can flip to *
 prior on demand (custody §2.4). `archive show` after each rollback recovers exactly
 the version just left, the proof the whole history stays reversible.
 
+## Deciding before you restore — `archive diff`
+
+Restore-by-version above *acts* — it rolls back to a version I name. But a careful
+custodian wants to **look before they leap**: *what* would a restore change, and
+*would it change anything at all*? `archive diff <id>` (ADR 0106, roadmap H288) is
+that read — it folds the **same** `select_archived_snapshot` selector
+(`--hash`/`--at`, default the latest) `archive restore` uses against the
+currently-held copy and reports the delta *without writing*: the held↔prior
+`content_hash`, each side's fidelity tier, the model-complete `changed_fields` a
+restore would surface, and `would_restore` (would a restore actually move the held
+copy, or is the prior already what I hold?). Because the diff and the restore share
+one selector and one `content_hash` compare, **the decision the diff shows can never
+disagree with the restore I then run** — `would_restore` *is* the restore's
+`restored`.
+
+`tests/test_dogfood.py` pins the whole decide → act loop offline as
+`test_archive_diff_decides_then_restore_acts_exactly_as_predicted`: hold the topic,
+adopt one divergent peer capture (one prior archived), then **diff → restore → diff
+again → restore again**, asserting each act lands exactly on the diff's prediction —
+on both the would-change case and the idempotent no-op.
+
+```bash
+# I adopted one peer capture; my original is archived as the prior.
+scrolls import items peer.jsonl --accept-incoming   # → {"adopted": ["arxiv:1706.03762"]}
+
+# 1. DECIDE — what would restoring the prior change, and would it change anything?
+scrolls archive diff arxiv:1706.03762
+#   → would_restore: true, changed_fields: [content_hash, extracted_text, raw_text]
+#     held = the peer's capture, prior = my original (both still full fidelity)
+
+# 2. ACT — restore lands exactly what the diff predicted (read-then-act convergence).
+scrolls archive restore arxiv:1706.03762            # → restored: true, outcome: adopted
+scrolls doctor                                       # → custody.score 100 (held = my original)
+
+# 3. DECIDE AGAIN — diff the version I just restored: nothing left to restore.
+scrolls archive diff arxiv:1706.03762 --hash sha256:06.03762
+#   → would_restore: false, changed_fields: []   (the prior already *is* what I hold)
+
+# 4. ACT AGAIN — restoring the already-held version is the no-op the diff predicted.
+scrolls archive restore arxiv:1706.03762 --hash sha256:06.03762   # → restored: false, outcome: unchanged
+```
+
+**Decide (`archive diff`).** The held copy is the peer's capture; the prior is my
+original. The diff names exactly the fields a restore would surface (the three the
+peer recapture diverged on, no more — a full→full swap, no fidelity loss) and
+predicts the write:
+
+```json
+{ "selector": { "latest": true }, "prior_hash": "sha256:06.03762",
+  "held_hash": "sha256:peer-recapture", "held_fidelity": "full", "prior_fidelity": "full",
+  "changed_fields": ["content_hash", "extracted_text", "raw_text"], "would_restore": true }
+```
+
+**Act (`archive restore`).** Run with the same selector, the restore lands exactly
+what the diff named — `would_restore` *is* `restored`, the prior the diff showed is
+the version restored, the held copy the diff showed is the one displaced:
+
+```json
+{ "selector": { "latest": true }, "prior_hash": "sha256:06.03762",
+  "held_hash": "sha256:peer-recapture", "outcome": "adopted", "restored": true }
+```
+
+**Decide again (`archive diff --hash`).** Diff the version I just restored: held and
+prior are now the same capture, so there is nothing left to restore — the idempotency
+the first diff's chain implied, read *before* I'd act on it:
+
+```json
+{ "selector": { "hash": "sha256:06.03762" }, "held_hash": "sha256:06.03762",
+  "prior_hash": "sha256:06.03762", "changed_fields": [], "would_restore": false }
+```
+
+**Act again (`archive restore --hash`).** Restoring the already-held version is the
+`unchanged` no-op the second diff predicted — `would_restore: false` *is*
+`restored: false` on the idempotent case too:
+
+```json
+{ "selector": { "hash": "sha256:06.03762" }, "outcome": "unchanged", "restored": false }
+```
+
+The custody point is the decide-before-you-restore twin of restore-by-version's: a
+diff is a true **read** — the held `content_hash` is untouched across every diff, only
+the `restore` between them moves it, and `doctor`'s `custody.score` holds at 100 the
+whole way. So an operator can inspect a rollback as many times as they like, on any
+version, before committing to it, and the write they finally run is exactly the one the
+read promised (custody §2.4).
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Eight tests: each leg on its own — the core hold/detect/take legs, the scoped
+Nine tests: each leg on its own — the core hold/detect/take legs, the scoped
 drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
-flow, and the *restore-by-version* roll-back above — plus
+flow, the *restore-by-version* roll-back, and the *decide-before-you-restore*
+`archive diff` → `archive restore` loop above — plus
 `test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
 sequence in order, unattended. The lossless round-trip leg shares its guarantee
 with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle
 envelope is ADR 0103; the accept-incoming adoption + prior-content archive (and its
-restore-by-version reads) are ADR 0106.
+restore-by-version and decide-before-you-restore reads) are ADR 0106.
 
 ## The recurring sibling — `scrolls maintain`
 
