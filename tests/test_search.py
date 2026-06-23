@@ -1,13 +1,14 @@
 """Tests for SQLite FTS5 search (IDEAS.md §14 Pass 3)."""
 
 import dataclasses
+import json
 import sqlite3
 
 import pytest
 
 from scrolls.db import MIGRATIONS, init_db
 from scrolls.items import ScrollItem, insert_item, update_item
-from scrolls.search import count_matches, search_items
+from scrolls.search import count_matches, hit_payload, search_items
 
 
 @pytest.fixture
@@ -334,6 +335,90 @@ def test_search_work_membership_spans_beyond_the_matched_rows(db_path):
     (hit,) = search_items(db_path, "transformer")
     assert hit.id == "arxiv:1706.03762"
     assert hit.works[0].representations == 2  # the unmatched sibling still counts
+
+
+# --- Explainable ranking: which fields a query landed in, and how strong ---
+# A hit's BM25 `score` is opaque (a negative float whose magnitude depends on the
+# query and corpus): it tells an agent the *order* but not *why*. `matched_fields`
+# names the indexed fields the query terms actually landed in, and `match_strength`
+# distils that into the qualitative confidence the BM25 column weights imply (title
+# 5× > summary 2× > body 1×), so a hit explains its own rank.
+
+
+def test_search_hit_explains_a_title_match(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:Transformer", "Transformer architecture",
+        "A neural sequence model. It learns from data.",
+    ))
+    (hit,) = search_items(db_path, "Transformer")
+    # the token lands only in the title (not the summary/body), so the hit is a
+    # strong match: it ranks for the highest-weighted field
+    assert hit.matched_fields == ("title",)
+    assert hit.match_strength == "strong"
+
+
+def test_search_hit_explains_a_body_only_match(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:Cooking", "Cooking pasta",
+        "A short opener. Then photosynthesis appears late in the body.",
+    ))
+    # the summary is the first sentence ("A short opener") — so "photosynthesis"
+    # lives only in the body, the lowest-weighted field
+    (hit,) = search_items(db_path, "photosynthesis")
+    assert hit.matched_fields == ("extracted_text",)
+    assert hit.match_strength == "weak"
+
+
+def test_search_hit_explains_a_summary_match_as_moderate(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:Pelican", "Pelican",
+        "Pelicans have a distinctive throat pouch. They are large birds.",
+    ))
+    # "pouch" is in the first sentence (the summary, and therefore the body) but
+    # not the title — the highest-weighted field it landed in is the summary
+    (hit,) = search_items(db_path, "pouch")
+    assert "title" not in hit.matched_fields
+    assert "summary" in hit.matched_fields
+    assert hit.match_strength == "moderate"
+
+
+def test_search_matched_fields_are_in_bm25_weight_order(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite database",
+        "SQLite is a database engine. It embeds a database in the app.",
+    ))
+    # the token lands in all three indexed fields; the explanation lists them in
+    # BM25-weight order (title, summary, extracted_text), strongest first
+    (hit,) = search_items(db_path, "database")
+    assert hit.matched_fields == ("title", "summary", "extracted_text")
+    assert hit.match_strength == "strong"
+
+
+def test_search_explains_a_match_split_across_columns(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:NN", "Neural foundations",
+        "An opener sentence. The networks emerge later in the discussion.",
+    ))
+    # "neural" lands only in the title, "networks" only in the body — the hit
+    # matched (both tokens present, AND-ed across columns) and the explanation
+    # names *both* fields it landed in, never an empty set (the OR-per-field
+    # semantics, not all-tokens-in-one-field)
+    (hit,) = search_items(db_path, "neural networks")
+    assert hit.matched_fields == ("title", "extracted_text")
+    assert hit.match_strength == "strong"
+
+
+def test_search_payload_carries_the_match_explanation(db_path):
+    insert_item(db_path, make_item(
+        "wikipedia:en:SQLite", "SQLite database",
+        "SQLite is a database engine.",
+    ))
+    (hit,) = search_items(db_path, "database")
+    # the JSON-ready form (shared by `scrolls search` + MCP `search_scrolls`)
+    # carries both keys; the agent receives `matched_fields` as a JSON array
+    payload = json.loads(json.dumps(hit_payload(hit)))
+    assert payload["matched_fields"] == ["title", "summary", "extracted_text"]
+    assert payload["match_strength"] == "strong"
 
 
 def test_search_reflects_updates(db_path):

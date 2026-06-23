@@ -1201,7 +1201,7 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     assert hit["title"] == "SQLite"
     assert set(hit) == {
         "id", "source", "title", "url", "stage", "score", "snippet", "fidelity",
-        "drift", "last_checked", "works",
+        "drift", "last_checked", "works", "matched_fields", "match_strength",
     }
     # a freshly fetched Wikipedia article holds a re-derivable body — full custody
     assert hit["fidelity"] == "full"
@@ -1209,6 +1209,11 @@ def test_search_returns_ranked_hits_json(scrolls_home, fake_wikipedia_api, capsy
     assert hit["drift"] == "unverified"
     # …and so no last-checked timestamp to report (H84 honest absence)
     assert hit["last_checked"] is None
+    # the rank explanation: "database engine" lands in the summary and body, not
+    # the title "SQLite" — a summary-led match, the moderate band (the opaque
+    # score made legible)
+    assert hit["matched_fields"] == ["summary", "extracted_text"]
+    assert hit["match_strength"] == "moderate"
     # a lone item is no duplicate of any saved work (ADR 0101)
     assert hit["works"] == []
 

@@ -161,6 +161,13 @@ def search_scrolls(
     view `get_scroll`/`list_scrolls` surface, so how a category was produced
     reads identically whether you browsed or searched. The key is omitted for a
     user-set or unclassified hit (honest absence).
+
+    Finally, each hit explains its rank so you needn't interpret the opaque
+    `score`: `matched_fields` names the indexed fields the query landed in, in
+    weight order (title > summary > extracted_text), and `match_strength` is the
+    qualitative confidence — `strong` for a title hit, `moderate` for a summary
+    hit, `weak` for a body-only hit — so a top hit that ranks because the query
+    is in its *title* is legible as such, not just by a smaller negative number.
     """
     paths = get_paths()
     hits = search_items(

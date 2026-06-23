@@ -391,6 +391,18 @@ def test_search_scrolls_finds_ingested_content(scrolls_home, fake_wikipedia_api)
     assert hits[0]["snippet"]
 
 
+def test_search_scrolls_hits_carry_the_match_explanation(scrolls_home, fake_wikipedia_api):
+    # the explainable-ranking axis travels over MCP too: each hit names which
+    # indexed fields the query landed in (`matched_fields`) and the qualitative
+    # strength of the strongest (`match_strength`), the same keys `scrolls search`
+    # surfaces — one home, via the shared `hit_payload`.
+    mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
+    # the query term is the page title ("SQLite"), the highest-weighted field
+    (hit,) = mcp_server.search_scrolls("SQLite")
+    assert "title" in hit["matched_fields"]
+    assert hit["match_strength"] == "strong"
+
+
 def test_search_scrolls_before_init_returns_empty(scrolls_home):
     assert mcp_server.search_scrolls("anything") == []
 

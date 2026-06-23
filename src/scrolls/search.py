@@ -31,7 +31,7 @@ so an agent searching "attention is all you need" sees the two top hits *are*
 one work and which form to prefer, rather than treating them as unrelated
 results. Computed by the same DOI clustering `scrolls works` reports.
 
-Finally, a hit carries the derived `classification` view (roadmap H26): how its
+A hit also carries the derived `classification` view (roadmap H26): how its
 category was produced — the engine, the rules precedence tier, the ruleset
 fingerprint, the LLM model — the same view `scrolls list`/`show` surface, so an
 agent reads a category's provenance identically whether it browsed to the item
@@ -39,6 +39,18 @@ or searched for it. Built per-hit from the row's own `provenance` column
 (`classification_view`), so it costs no extra query and stays scope-honest;
 omitted entirely when no engine stamped the category (the honest-absence shape
 `list` keeps), via the shared `hit_payload` serializer.
+
+Finally, a hit *explains its own rank*: the raw BM25 `score` is opaque (a
+negative float whose magnitude depends on the query and corpus), so each hit
+also carries `matched_fields` — the indexed fields the query terms landed in, in
+BM25-weight order (title/summary/extracted_text) — and `match_strength`, the
+qualitative confidence those weights imply (`strong` title hit / `moderate`
+summary hit / `weak` body-only hit). Computed by column-restricted FTS matches
+over the already-ranked hit rowids (never hauling a match's body text), with an
+any-token (OR) test per field so a hit whose terms split across columns names
+*both* fields it landed in. Grounded in the very column weights that produced
+the order, it is custody's ranking signal — provenance and holdings, not
+engagement (custody-vision §3.5) — not an invented relevance score.
 """
 
 from __future__ import annotations
@@ -68,6 +80,19 @@ from scrolls.works import WorkRef, work_membership
 _BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
 _SNIPPET_TOKENS = 12
 
+# The indexed FTS columns in BM25-weight order (highest first), the same order
+# `_BM25_WEIGHTS` weights them. A hit's `matched_fields` lists the subset of these
+# its query terms actually landed in, and `match_strength` names the strength of
+# the highest-weighted one — so the explanation is grounded in the very weights
+# that produced the rank, never an invented relevance score (custody-vision §3.5:
+# provenance and fidelity, not engagement, rank a custody library).
+_FTS_FIELDS = ("title", "summary", "extracted_text")
+_STRENGTH_BY_FIELD = {
+    "title": "strong",
+    "summary": "moderate",
+    "extracted_text": "weak",
+}
+
 # Presence, not content: the fidelity tier (ADR 0097) needs to know only
 # *whether* each body column is populated, so the query asks SQLite for the
 # booleans and never moves a match's (potentially multi-kilobyte) body text.
@@ -79,7 +104,8 @@ _PRESENCE = (
 )
 
 _QUERY = f"""\
-SELECT items.id, items.source, items.title, items.url, items.stage,
+SELECT items_fts.rowid AS rowid,
+       items.id, items.source, items.title, items.url, items.stage,
        bm25(items_fts, {_BM25_WEIGHTS}) AS score,
        snippet(items_fts, -1, '[', ']', '…', {_SNIPPET_TOKENS}) AS snippet,
        items.provenance,
@@ -205,6 +231,14 @@ class SearchHit:
     # for a user-set or unclassified hit. `hit_payload` drops the key in that
     # case, the honest-absence shape `list`/`show` keep.
     classification: dict[str, Any] | None = None
+    # Which indexed fields the query terms landed in (BM25-weight order:
+    # title/summary/extracted_text), and the qualitative strength of the
+    # highest-weighted one (`strong`/`moderate`/`weak`) — the explanation behind
+    # the opaque `score`. Built by the `search_items` annotation pass from
+    # column-restricted FTS matches over the hit rowids (never the body text);
+    # `()`/`"weak"` until that pass runs, never empty for a real match.
+    matched_fields: tuple[str, ...] = ()
+    match_strength: str = "weak"
 
 
 def search_items(
@@ -250,7 +284,8 @@ def search_items(
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
     """
-    match = _escape_query(query)
+    tokens = _escape_tokens(query)
+    match = " ".join(tokens)
     clauses, params = _search_filters(
         source, category, stage, tag, concept, fidelity, drift
     )
@@ -261,9 +296,14 @@ def search_items(
     register_facet_functions(conn)
     try:
         rows = conn.execute(sql, (match, *params, limit)).fetchall()
+        rowids = [row[0] for row in rows]
+        hits = [_hit(row[1:]) for row in rows]
+        # The match explanation rides the *same* open connection and the already
+        # ranked+capped rowids, so it adds three column-restricted FTS matches
+        # over a small set, never a re-scan of the whole index nor a body haul.
+        explanations = _match_explanations(conn, tokens, rowids) if rowids else {}
     finally:
         conn.close()
-    hits = [_hit(row) for row in rows]
     if not hits:
         return hits
     # Annotate each hit with the work(s) it represents (ADR 0101). Membership
@@ -287,8 +327,10 @@ def search_items(
             works=membership.get(hit.id, ()),
             drift=drift_posture(verdicts.get(hit.id)),
             last_checked=last_checked(verdicts.get(hit.id)),
+            matched_fields=explanations.get(rowid, ()),
+            match_strength=_match_strength(explanations.get(rowid, ())),
         )
-        for hit in hits
+        for hit, rowid in zip(hits, rowids)
     ]
 
 
@@ -379,10 +421,74 @@ def hit_payload(hit: SearchHit) -> dict[str, Any]:
     return data
 
 
-def _escape_query(query: str) -> str:
-    """Quote each token so user input is never parsed as FTS5 syntax."""
+def _escape_tokens(query: str) -> list[str]:
+    """The query's tokens, each quoted so user input never hits FTS5 syntax.
+
+    Each token becomes a `"phrase"` literal, so reserved words (`AND`/`OR`/`NEAR`)
+    and punctuation are matched as text, not parsed as operators. Raises
+    `ValueError` when nothing searchable remains. The shared root of both the
+    implicit-AND match (`_escape_query`) and the per-field OR explanation
+    (`_match_explanations`), so the two never tokenize a query differently.
+    """
     tokens = [token.replace('"', "") for token in query.split()]
-    tokens = [token for token in tokens if token]
+    tokens = [f'"{token}"' for token in tokens if token]
     if not tokens:
         raise ValueError("search query has no searchable tokens")
-    return " ".join(f'"{token}"' for token in tokens)
+    return tokens
+
+
+def _escape_query(query: str) -> str:
+    """The implicit-AND FTS match: every query token must appear (anywhere)."""
+    return " ".join(_escape_tokens(query))
+
+
+def _match_explanations(
+    conn: sqlite3.Connection, tokens: list[str], rowids: list[int]
+) -> dict[int, tuple[str, ...]]:
+    """Per-hit, the indexed fields the query terms landed in (BM25-weight order).
+
+    For each indexed column, one column-restricted FTS match — `field : (t1 OR t2
+    …)` — intersected with the already ranked+capped hit `rowids`, so it asks the
+    index "which of *these* hits does each field match", never re-scanning the
+    library nor hauling a match's (potentially multi-kilobyte) body text. The OR
+    over tokens (not AND) is deliberate: the overall hit ANDs its tokens *across*
+    columns, so a hit can match because one token is in the title and another in
+    the body — listing each field that holds *any* query token names exactly where
+    the match landed, where an all-tokens-in-one-field test would report an empty
+    set for a legitimately matched hit. Returns rowid → matched fields in
+    `_FTS_FIELDS` order; a rowid absent from the map matched no single field, which
+    cannot happen for a real hit (every token of a match lives in some indexed
+    column).
+    """
+    any_token = " OR ".join(tokens)
+    placeholders = ",".join("?" * len(rowids))
+    per_rowid: dict[int, set[str]] = {}
+    for field in _FTS_FIELDS:
+        matched = conn.execute(
+            f"SELECT rowid FROM items_fts "
+            f"WHERE items_fts MATCH ? AND rowid IN ({placeholders})",
+            (f"{field} : ({any_token})", *rowids),
+        ).fetchall()
+        for (rowid,) in matched:
+            per_rowid.setdefault(rowid, set()).add(field)
+    return {
+        rowid: tuple(f for f in _FTS_FIELDS if f in fields)
+        for rowid, fields in per_rowid.items()
+    }
+
+
+def _match_strength(matched_fields: tuple[str, ...]) -> str:
+    """The qualitative match confidence: the strength of the strongest field hit.
+
+    A fold over `matched_fields` returning the `_STRENGTH_BY_FIELD` band of the
+    highest-weighted field the query landed in — `strong` for a title hit,
+    `moderate` for a summary hit, `weak` for a body-only hit — so the one-word
+    signal an agent reads is grounded in the BM25 column weights that produced the
+    rank, not an invented probability the lexical score can't support. Defaults to
+    `weak` only for the structurally-impossible empty case (a real match always
+    lands in ≥1 indexed field).
+    """
+    for field in _FTS_FIELDS:  # BM25-weight order, strongest first
+        if field in matched_fields:
+            return _STRENGTH_BY_FIELD[field]
+    return "weak"

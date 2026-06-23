@@ -4057,6 +4057,25 @@ errors. `score` is SQLite's `bm25()`: results are ordered best-first and
 (`test_search_respects_limit_flag`). No matches prints `[]`; a blank
 query is an error (`test_search_blank_query_is_an_error`).
 
+The raw `score` is opaque — a negative float whose magnitude depends on the
+query and corpus, so it tells an agent the *order* but not *why*. Each hit
+therefore also explains its own rank: **`matched_fields`** names the indexed
+fields the query terms actually landed in, in BM25-weight order
+(`title`/`summary`/`extracted_text`), and **`match_strength`** distils that into
+the qualitative confidence those weights imply — `strong` for a title hit,
+`moderate` for a summary hit, `weak` for a body-only hit
+(`test_search_hit_explains_a_title_match`,
+`test_search_hit_explains_a_body_only_match`,
+`test_search_hit_explains_a_summary_match_as_moderate`). The fields are read by
+column-restricted FTS matches over the already-ranked hit rowids, never by
+hauling a match's body text, and an *any-token* (OR) test per field, so a hit
+whose tokens split across columns — one in the title, another in the body —
+names *both* fields it landed in rather than reporting an empty set
+(`test_search_explains_a_match_split_across_columns`). Because the explanation
+is grounded in the very column weights that produced the rank, it is custody's
+ranking signal (provenance/holdings, not engagement — custody-vision §3.5), not
+an invented relevance score.
+
 `--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
 ranked match (`test_search_filters_by_source_and_category`,
 `test_search_filters_by_tag`, `test_search_filters_by_concept`, ADRs
@@ -4122,7 +4141,9 @@ drill-from-`facets drift` convergence on the ranked surface. The MCP twin
 (`test_search_scrolls_filters_by_drift_posture`).
 
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
-(matches bracketed, `…` for elided context), the per-item custody axes —
+(matches bracketed, `…` for elided context), the rank explanation —
+`matched_fields` (the indexed fields the query landed in, BM25-weight order) and
+`match_strength` (`strong`/`moderate`/`weak`, the strongest field's band) — the per-item custody axes —
 `fidelity` (the custody tier — `full`/`partial`/`reference`, ADR 0097/0100 — at
 which the library still holds the match, the same tier `scrolls list` and
 `scrolls facets fidelity` report), `drift` (the custody **drift posture** —
@@ -4176,7 +4197,7 @@ those; the tally re-reads the full match set only when the cap actually hid rows
 
 ```console
 $ scrolls search "sqlite fts5"
-[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": []}]
+[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": [], "matched_fields": ["title", "summary", "extracted_text"], "match_strength": "strong"}]
 [exit 0]
 
 $ scrolls search "attention transformer"
