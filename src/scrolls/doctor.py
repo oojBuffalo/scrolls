@@ -41,6 +41,7 @@ from scrolls.kb_llm import (
 )
 from scrolls.items import (
     ScrollItem,
+    archived_records,
     get_fidelity,
     list_items,
     make_item_id,
@@ -94,17 +95,20 @@ def run_doctor(
     `enrichment.stale` equals `enrichment.by_source[S]` — pinned in
     `tests/test_custody_convergence.py`.
 
-    Three checks are **not** source-attributable, so a scoped audit skips them:
+    Four checks are **not** source-attributable, so a scoped audit skips them:
     `orphan_scrolls` (an unowned scroll file belongs to no source, and scoping
     the item set would falsely flag *other* sources' legitimately-owned scrolls
-    as orphans), `fts` (a single library-wide index, not a per-source view), and the
+    as orphans), `fts` (a single library-wide index, not a per-source view), the
     `custody.works` at-risk-works alarm (roadmap H263) — a *work* is a cross-source
     consolidation (a preprint + its published record), so scoping the item set
     fragments works (a 2-representation work split arxiv+crossref drops below the
-    floor and vanishes), making "no work is at risk" a falsehood the scope produced.
-    All three are whole-library views left to an unscoped `scrolls doctor`; under a
-    source scope they report empty/`skipped` (the works block keeps `status:
-    "skipped"`, never a fabricated "0 at risk"). The exit-code rule is unchanged —
+    floor and vanishes), making "no work is at risk" a falsehood the scope produced
+    — and the `custody.archive` integrity check (roadmap H293), which folds over the
+    single whole-library prior-content recovery store (not a per-source view, like
+    `fts`). All four are whole-library views left to an unscoped `scrolls doctor`;
+    under a source scope they report empty/`skipped` (the works/archive blocks keep
+    `status: "skipped"`, never a fabricated "0 at risk"/"0 mismatched"). The
+    exit-code rule is unchanged —
     structural `issues > fixed` fails — now over only <S>'s attributable findings (an
     unknown source holds nothing, so it is the honest empty audit: `score: 100`,
     zeroed counts, never an error).
@@ -184,6 +188,30 @@ def run_doctor(
                 "at_risk": 0,
                 "most_at_risk": None,
             },
+            "archive": {
+                # The archive-integrity audit (roadmap H293): every archived prior's
+                # recorded `prior_hash` (the advertised fingerprint `archive list`/
+                # `archive restore --hash` key on) must equal its `snapshot` body's
+                # own `content_hash`. At archival time `adopt_incoming` writes
+                # `prior.content_hash` to *both*, so they agree by construction — but
+                # a corrupt/hand-edited bundle or a bad `import archive` could land a
+                # row where they diverge, and then `archive restore --hash <prior_hash>`
+                # silently adopts content with a *different* hash than advertised (a
+                # custody-honesty bug invisible until restore). Report-only —
+                # `checked`/`mismatched`/`events`, never `issues`/`fixed`/the exit
+                # code: the archive is a recovery convenience, not the root of trust
+                # (ADR 0106, the drift/conflicts/works report-view precedent), and
+                # doctor never auto-rewrites it (the suggested-block orphan discipline
+                # — no fabricated repair command). `status` is `"skipped"` under a
+                # `--source` scope: the archive is a single whole-library recovery
+                # store (like `fts`/`orphan_scrolls`), not source-attributable, so a
+                # scoped audit leaves the honest default rather than reading a
+                # scope-induced "0 mismatched" over a partial store.
+                "status": "skipped",
+                "checked": 0,
+                "mismatched": 0,
+                "events": [],
+            },
         },
     }
     if not paths.db_path.exists():
@@ -202,6 +230,7 @@ def run_doctor(
         _check_orphan_scrolls(paths, report, items)
         _check_fts(paths, report, fix)
         _check_at_risk_works(paths, report, items)
+        _check_archive_integrity(paths, report)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
     _check_custody_conflicts(paths, report, items)
@@ -603,6 +632,67 @@ def _check_at_risk_works(
     works = works_over(items)
     verdicts = latest_events(paths.db_path)
     report["custody"]["works"] = {"status": "ok", **at_risk_signal(works, verdicts)}
+
+
+def _check_archive_integrity(paths: LibraryPaths, report: dict) -> None:
+    """Archive-integrity audit — does each prior's advertised hash match its body? (roadmap H293).
+
+    The prior-content archive (`item_archive`, ADR 0106) records each archived
+    capture's ``prior_hash`` — the fingerprint `archive list`/`archive restore
+    --hash` advertise and key on — *separately* from the model-complete ``snapshot``
+    body (which carries its own ``content_hash``). At archival time `adopt_incoming`
+    writes ``prior.content_hash`` to *both*, so they agree by construction. But the
+    archive travels: `export archive`/`import archive` and the portable
+    `--with-archive` bundle move these rows between libraries, and a corrupt or
+    hand-edited stream — or a bad `import archive` — could land a row whose
+    ``prior_hash`` no longer equals its snapshot's ``content_hash``. That is a real
+    custody-honesty bug, invisible until restore: `archive restore --hash <prior_hash>`
+    would silently adopt content with a *different* hash than the fingerprint it was
+    selected by.
+
+    This folds over `archived_records` (the whole library-wide store) and reports any
+    row whose ``prior_hash`` diverges from ``snapshot["content_hash"]``, with the
+    offending ``{item_id, prior_hash, snapshot_hash}`` and **no fabricated repair
+    command** — doctor never auto-rewrites the archive (the suggested-block orphan
+    discipline; raw is sacred, custody §2.4). A **report view only**, like the
+    drift/conflicts/works blocks: it never feeds the structural ``issues``/``fixed``
+    or the exit code — the archive is a recovery convenience, not the root of trust
+    (ADR 0106: SQLite's held rows + the verify ledger are canonical), so a corrupt
+    recovery row degrades recoverability, not the library's integrity.
+
+    A NULL ``prior_hash`` is **not** a defect — it is vacuously skipped (neither
+    ``checked`` nor ``mismatched``): a prior with no advertised fingerprint carries
+    nothing to verify (the `import_archive` NULL-safe-identity precedent), so the
+    check stays silent rather than inventing a divergence from a row it cannot key
+    on. ``checked`` therefore counts only the rows that carried a fingerprint to
+    compare. Called **only on the unscoped audit** (the `source is None` branch
+    beside `_check_orphan_scrolls`/`_check_fts`/`_check_at_risk_works`): the archive
+    is a single whole-library recovery store, not source-attributable, so a
+    `--source` audit leaves the block at its honest `status: "skipped"` default
+    rather than reading a scope-induced "0 mismatched" over a store it never scoped.
+    """
+    archive = report["custody"]["archive"]
+    archive["status"] = "ok"
+    mismatched = []
+    for record in archived_records(paths.db_path):
+        if record.prior_hash is None:  # no advertised fingerprint — vacuously fine
+            continue
+        archive["checked"] += 1
+        snapshot_hash = record.snapshot.get("content_hash")
+        if record.prior_hash != snapshot_hash:
+            mismatched.append(
+                {
+                    "item_id": record.item_id,
+                    "prior_hash": record.prior_hash,
+                    "snapshot_hash": snapshot_hash,
+                }
+            )
+    archive["mismatched"] = len(mismatched)
+    # Deterministic order (item, then advertised hash) so the report is a stable
+    # diff line — the `archived_records` content-determined ordering on the audit axis.
+    archive["events"] = sorted(
+        mismatched, key=lambda e: (e["item_id"], e["prior_hash"])
+    )
 
 
 def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:

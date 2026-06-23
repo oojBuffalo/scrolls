@@ -21,7 +21,13 @@ from scrolls.cli import main
 from scrolls.custody import CustodyEvent, record_events
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
-from scrolls.items import ScrollItem, insert_item, list_items, make_item_id
+from scrolls.items import (
+    adopt_incoming,
+    insert_item,
+    list_items,
+    make_item_id,
+    ScrollItem,
+)
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
 from scrolls.search import search_items
@@ -1047,6 +1053,11 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             # at-risk-works alarm is computed (status ok) and names none (H263)
             "status": "ok", "total": 0, "at_risk": 0, "most_at_risk": None,
         },
+        "archive": {
+            # no accept-incoming adoption has archived a prior, so the integrity
+            # check is computed (status ok) and finds nothing to verify (H293)
+            "status": "ok", "checked": 0, "mismatched": 0, "events": [],
+        },
     }
 
 
@@ -1699,3 +1710,152 @@ def test_summaries_by_source_never_feeds_issues_or_the_exit_code(paths, capsys):
     assert exit_code == 0
     assert report["issues"] == 0
     assert report["custody"]["summaries"]["by_source"] == {"arxiv": 1, "web": 1}
+
+
+# --- archive integrity: prior_hash ≡ snapshot.content_hash (roadmap H293) ---
+#
+# Every archived prior records `prior_hash` (the advertised fingerprint
+# `archive list`/`archive restore --hash` key on) *separately* from its `snapshot`
+# body (which carries its own `content_hash`). At archival time `adopt_incoming`
+# writes `prior.content_hash` to both, so they agree by construction — but a
+# corrupt/hand-edited bundle or a bad `import archive` could land a row where they
+# diverge, and then `archive restore --hash <prior_hash>` silently adopts content
+# with a *different* hash than advertised. The check folds over `archived_records`
+# and flags any divergence, report-only (never `issues`/`fixed`/the exit code: the
+# archive is a recovery convenience, not the root of trust — ADR 0106).
+
+
+def _seed_archived_prior(
+    paths, url="https://example.com/post", *, held_hash="sha256:held"
+):
+    """Hold an item, then adopt a divergent capture so one prior is archived.
+
+    Leaves the held copy carrying the incoming content and one recoverable prior
+    in `item_archive` whose `prior_hash` equals its snapshot's `content_hash` (the
+    honest-by-construction shape). Returns the archived prior's item id.
+    """
+    held = _web_item(url, fetched=True, content_hash=held_hash)
+    insert_item(paths.db_path, held)
+    incoming = replace(
+        held, extracted_text="a later capture", content_hash="sha256:moved"
+    )
+    adopt_incoming(paths.db_path, incoming, archived_at="2026-06-22T00:00:00+00:00")
+    return held.id
+
+
+def _tamper_archive(db_path, item_id, **columns):
+    """Out-of-band rewrite of one archive row — a corrupt/hand-edited store."""
+    assignments = ", ".join(f"{name} = ?" for name in columns)
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            f"UPDATE item_archive SET {assignments} WHERE item_id = ?",
+            tuple(columns.values()) + (item_id,),
+        )
+    conn.close()
+
+
+def test_clean_archive_reports_no_mismatch(paths):
+    # a well-formed prior (prior_hash == snapshot.content_hash) is honest custody
+    _seed_archived_prior(paths)
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert archive == {"status": "ok", "checked": 1, "mismatched": 0, "events": []}
+
+
+def test_empty_archive_reports_ok_with_zero_checked(paths):
+    # an un-superseded library has no archived priors — the honest empty audit,
+    # `status: "ok"` (the table was read), not the skipped default
+    _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert archive == {"status": "ok", "checked": 0, "mismatched": 0, "events": []}
+
+
+def test_uninitialized_library_leaves_archive_skipped(scrolls_home):
+    # no db → run_doctor returns early; the archive block stays at its honest
+    # skipped default (never a fabricated "0 mismatched")
+    archive = run_doctor(get_paths())["custody"]["archive"]
+    assert archive["status"] == "skipped"
+    assert archive["mismatched"] == 0
+    assert archive["events"] == []
+
+
+def test_archive_integrity_flags_a_prior_hash_snapshot_hash_divergence(paths):
+    item_id = _seed_archived_prior(paths)
+    # corrupt the advertised fingerprint so it no longer matches the snapshot body
+    _tamper_archive(paths.db_path, item_id, prior_hash="sha256:tampered")
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert archive["status"] == "ok"
+    assert archive["checked"] == 1
+    assert archive["mismatched"] == 1
+    assert archive["events"] == [
+        {
+            "item_id": item_id,
+            "prior_hash": "sha256:tampered",
+            "snapshot_hash": "sha256:held",
+        }
+    ]
+
+
+def test_archive_mismatch_never_feeds_issues_or_the_exit_code(paths, capsys):
+    # report-only like drift/conflicts/works: a tampered archive is a custody-honesty
+    # signal, not repairable structural drift — doctor must not auto-rewrite the store
+    item_id = _seed_archived_prior(paths)
+    _tamper_archive(paths.db_path, item_id, prior_hash="sha256:tampered")
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["issues"] == 0
+    assert report["fixed"] == 0
+    assert report["custody"]["archive"]["mismatched"] == 1
+    # no fabricated repair command on the offending event (no auto-rewrite — the
+    # suggested-block orphan discipline; the event carries only the three fields)
+    assert set(report["custody"]["archive"]["events"][0]) == {
+        "item_id",
+        "prior_hash",
+        "snapshot_hash",
+    }
+
+
+def test_null_prior_hash_archive_row_is_not_a_defect(paths):
+    # a NULL `prior_hash` is vacuously skipped (the `import_archive` NULL-safe
+    # precedent): there is no advertised fingerprint to verify, so the row is
+    # neither checked nor mismatched — even when the snapshot still carries a hash
+    item_id = _seed_archived_prior(paths)
+    _tamper_archive(paths.db_path, item_id, prior_hash=None)
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert archive["checked"] == 0
+    assert archive["mismatched"] == 0
+    assert archive["events"] == []
+
+
+def test_archive_integrity_flags_only_the_corrupt_row(paths):
+    # two priors, one tampered: the clean row is checked-and-clean, the corrupt one
+    # is named once with its diverging hashes
+    clean = _seed_archived_prior(paths, "https://example.com/a", held_hash="sha256:a")
+    bad = _seed_archived_prior(paths, "https://example.com/b", held_hash="sha256:b")
+    _tamper_archive(paths.db_path, bad, prior_hash="sha256:wrong")
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert archive["checked"] == 2
+    assert archive["mismatched"] == 1
+    assert [e["item_id"] for e in archive["events"]] == [bad]
+    assert clean not in {e["item_id"] for e in archive["events"]}
+
+
+def test_archive_check_skipped_under_a_source_scope(paths):
+    # the archive is a single whole-library recovery store (like fts/orphan_scrolls),
+    # not source-attributable — a `--source` audit leaves it at the skipped default
+    # rather than reading a scope-induced "0 mismatched" over a partial store
+    item_id = _seed_archived_prior(paths)
+    _tamper_archive(paths.db_path, item_id, prior_hash="sha256:tampered")
+    archive = run_doctor(paths, source="web")["custody"]["archive"]
+    assert archive == {"status": "skipped", "checked": 0, "mismatched": 0, "events": []}
+
+
+def test_archive_events_are_ordered_by_item_then_hash(paths):
+    # deterministic ordering so the report is a stable line for diffs/dogfood reads
+    a = _seed_archived_prior(paths, "https://example.com/a", held_hash="sha256:a")
+    b = _seed_archived_prior(paths, "https://example.com/b", held_hash="sha256:b")
+    _tamper_archive(paths.db_path, a, prior_hash="sha256:x")
+    _tamper_archive(paths.db_path, b, prior_hash="sha256:y")
+    archive = run_doctor(paths)["custody"]["archive"]
+    assert [e["item_id"] for e in archive["events"]] == sorted([a, b])

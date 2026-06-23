@@ -274,5 +274,28 @@ operator act (custody §2.4), not an ambient MCP capability.
   against an absent held) and `tests/test_cli.py` (held-vs-prior delta + writes-nothing,
   default/`--hash`/`--at` selection, `would_restore` true/false, the fidelity-tier delta,
   unmatched + unknown-id exit 1, both-selectors + malformed-`--at` exit 2).
+- **A `doctor` archive-integrity check.** **Shipped (roadmap H293):** now that the
+  archive *travels* (`export archive`/`import archive`, the `--with-archive` bundle),
+  a corrupt or hand-edited stream — or a bad `import archive` — could land a row whose
+  advertised `prior_hash` (the fingerprint `archive list`/`archive restore --hash` key
+  on) no longer equals its `snapshot` body's own `content_hash`, and then `archive
+  restore --hash <prior_hash>` would silently adopt content with a *different* hash than
+  advertised (invisible until restore). `doctor`'s new `custody.archive` block folds over
+  `archived_records` and reports any such divergence with the offending `{item_id,
+  prior_hash, snapshot_hash}` (`checked`/`mismatched`/`events`). The decisive choices: it
+  is **report-only** — never `issues`/`fixed`/the exit code (the drift/conflicts/works
+  precedent), because the archive is a *recovery convenience*, not the root of trust (the
+  held rows + verify ledger are canonical), so a corrupt recovery row degrades
+  recoverability, not the library's integrity; it carries **no fabricated repair command**
+  (doctor never auto-rewrites the archive — the suggested-block orphan discipline, raw is
+  sacred §2.4); a **NULL `prior_hash` is not a defect** but is *vacuously skipped* (no
+  advertised fingerprint to verify — the `import_archive` NULL-safe-identity precedent — so
+  `checked` counts only fingerprint-bearing rows); and it runs **only on the unscoped
+  audit** (the archive is a single whole-library recovery store, not source-attributable,
+  like `fts`/`orphan_scrolls`, so a `--source` audit leaves it `status: "skipped"`). The
+  MCP `get_library_health` twin carries it for free (it returns the whole `custody` block).
+  Pure fold, no schema change. Verified offline: `tests/test_doctor.py` (clean/empty/null/
+  scoped/divergence/ordering, report-only + exit-0) and `tests/test_mcp.py` (the
+  `get_library_health` twin converges with the CLI `doctor` field-for-field).
 - **An MCP `archive diff` read twin** stays deferred with the MCP accept-incoming *write*
   twin — added when a workflow shows the read-only CLI surface insufficient.

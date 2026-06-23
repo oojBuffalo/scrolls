@@ -2226,6 +2226,42 @@ def test_get_library_health_carries_the_conflicts_aggregate(scrolls_home):
     assert health == run_doctor(get_paths())["custody"]["conflicts"]
 
 
+def test_get_library_health_carries_the_archive_integrity_block(scrolls_home):
+    """H293: the archive-integrity audit (`custody.archive`) rides the MCP
+    `get_library_health` twin for free (the tool returns `run_doctor`'s whole custody
+    block), so an agent operating purely over MCP can read whether any archived prior's
+    advertised `prior_hash` diverges from its snapshot body — and it converges with the
+    CLI `doctor` by construction."""
+    import sqlite3
+
+    from scrolls.doctor import run_doctor
+
+    _seed_with_archived_prior()  # one honest prior: prior_hash == snapshot.content_hash
+    clean = mcp_server.get_library_health()["archive"]
+    assert clean == {"status": "ok", "checked": 1, "mismatched": 0, "events": []}
+
+    # corrupt the advertised fingerprint so it no longer matches the snapshot body
+    conn = sqlite3.connect(get_paths().db_path)
+    with conn:
+        conn.execute(
+            "UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+            ("sha256:tampered", "web:demo"),
+        )
+    conn.close()
+
+    health = mcp_server.get_library_health()["archive"]
+    assert health["mismatched"] == 1
+    assert health["events"] == [
+        {
+            "item_id": "web:demo",
+            "prior_hash": "sha256:tampered",
+            "snapshot_hash": "sha256:held",
+        }
+    ]
+    # converges field-for-field with the CLI doctor (the audit-twin guarantee)
+    assert health == run_doctor(get_paths())["custody"]["archive"]
+
+
 def _seed_string_twin_pages(db):
     """A rendered, concept- and tag-bearing pair so a compiled library has a
     concept page and a tag page for the string twins to serve.
