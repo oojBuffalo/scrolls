@@ -1859,3 +1859,131 @@ def test_archive_events_are_ordered_by_item_then_hash(paths):
     _tamper_archive(paths.db_path, b, prior_hash="sha256:y")
     archive = run_doctor(paths)["custody"]["archive"]
     assert [e["item_id"] for e in archive["events"]] == sorted([a, b])
+
+
+# --- archive integrity survives the JSONL-backup round-trip (roadmap H295) ---
+#
+# H293 (above) added the report-only archive-integrity check; H294
+# (`tests/test_cli.py`) pins that the *clean* recovery read-family survives an
+# `export items` + `export archive` → `import items` + `import archive` round
+# trip. The untested guarantee these tie together: a *corruption* (an archived
+# prior whose advertised `prior_hash` diverges from its snapshot's
+# `content_hash`) must NOT be laundered by the JSONL backup — it has to trip the
+# alarm *identically* on a library rebuilt from the backup, never read clean
+# (vision §2.4 — provenance/fidelity travel with every result; a backup may not
+# silently repair a corruption it cannot actually fix). Correct-by-construction:
+# `import_archive` stores the snapshot verbatim and dedups by
+# `(item_id, prior_hash)`, never re-deriving `prior_hash` — so a regression
+# guard, mutation-checked by *repairing* the backup row before import (the alarm
+# then clears on the rebuild, proving the tie is load-bearing).
+
+
+def _export_jsonl_backup(tmp_path, capsys):
+    """Back up the *current* library to two JSONL files — `export items` +
+    `export archive`, the whole-library backup (no bundle). Returns the two file
+    paths. Reads `get_paths()` from the env, so call it before switching
+    `SCROLLS_HOME` to the rebuild target."""
+    capsys.readouterr()  # clear anything buffered
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert main(["export", "archive"]) == 0
+    archive_path = tmp_path / "archive.jsonl"
+    archive_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    return items_path, archive_path
+
+
+def _rebuild_from_backup(root, monkeypatch, items_path, archive_path):
+    """Rebuild a fresh library at `root` from the two JSONL backups (held rows
+    then their archived priors) and return its `Paths`. Switches `SCROLLS_HOME`,
+    so the source library's `run_doctor(paths)` must be read *before* this call."""
+    monkeypatch.setenv("SCROLLS_HOME", str(root))
+    assert main(["init"]) == 0
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(archive_path)]) == 0
+    return get_paths()
+
+
+def _repair_archive_backup(jsonl_text):
+    """Rewrite an `export archive` JSONL so every prior's advertised `prior_hash`
+    matches its snapshot's `content_hash` again — the honest store a clean
+    library would have exported, the inverse of `_tamper_archive` on the backup
+    wire. Used to prove the alarm-on-the-rebuild is load-bearing (repairing the
+    backup must clear it)."""
+    out = []
+    for line in jsonl_text.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("prior_hash") is not None:
+            row["prior_hash"] = row["snapshot"].get("content_hash")
+        out.append(json.dumps(row))
+    return "".join(s + "\n" for s in out)
+
+
+def _seed_corrupt_plus_clean_archive(paths):
+    """Seed `paths` with two archived priors — one clean, one whose `prior_hash`
+    was tampered to diverge from its snapshot's `content_hash`. Returns the
+    corrupt prior's item id (the one the integrity alarm must name)."""
+    _seed_archived_prior(paths, "https://example.com/clean", held_hash="sha256:clean")
+    corrupt = _seed_archived_prior(
+        paths, "https://example.com/corrupt", held_hash="sha256:held"
+    )
+    _tamper_archive(paths.db_path, corrupt, prior_hash="sha256:tampered")
+    return corrupt
+
+
+def test_archive_integrity_alarm_survives_the_jsonl_backup_round_trip(
+    paths, tmp_path, monkeypatch, capsys
+):
+    # A corrupt archived prior carried through `export archive` → `import archive`
+    # is flagged *identically* by `doctor`'s `custody.archive` on the rebuilt
+    # library — the backup does not launder the corruption (H293 × H294 tie).
+    corrupt = _seed_corrupt_plus_clean_archive(paths)
+
+    archive_a = run_doctor(paths)["custody"]["archive"]
+    # sanity: A names exactly the corrupt row, the clean prior passes — a genuine
+    # mismatch travels (a vacuous all-clean read would pass the A==B tie falsely)
+    assert archive_a["status"] == "ok"
+    assert archive_a["checked"] == 2
+    assert archive_a["mismatched"] == 1
+    assert archive_a["events"] == [
+        {
+            "item_id": corrupt,
+            "prior_hash": "sha256:tampered",
+            "snapshot_hash": "sha256:held",
+        }
+    ]
+
+    items_path, archive_path = _export_jsonl_backup(tmp_path, capsys)
+    paths_b = _rebuild_from_backup(
+        tmp_path / "library-b", monkeypatch, items_path, archive_path
+    )
+
+    # the rebuilt library holds the whole archive (both priors travelled) and trips
+    # the alarm on the same offending event set with the same checked/mismatched —
+    # byte-for-byte the report A read, never read clean
+    archive_b = run_doctor(paths_b)["custody"]["archive"]
+    assert archive_b == archive_a
+
+
+def test_repairing_the_archive_backup_clears_the_alarm_on_the_rebuilt_library(
+    paths, tmp_path, monkeypatch, capsys
+):
+    # Mutation guard: the alarm-on-the-rebuild is load-bearing. If the divergence is
+    # *repaired* in the backup before import, the rebuilt library reads clean — so
+    # the flag on B genuinely tracks the backup's content, not a phantom.
+    _seed_corrupt_plus_clean_archive(paths)
+    assert run_doctor(paths)["custody"]["archive"]["mismatched"] == 1  # A is dirty
+
+    items_path, archive_path = _export_jsonl_backup(tmp_path, capsys)
+    archive_path.write_text(
+        _repair_archive_backup(archive_path.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+
+    paths_b = _rebuild_from_backup(
+        tmp_path / "library-b", monkeypatch, items_path, archive_path
+    )
+    archive_b = run_doctor(paths_b)["custody"]["archive"]
+    assert archive_b == {"status": "ok", "checked": 2, "mismatched": 0, "events": []}
