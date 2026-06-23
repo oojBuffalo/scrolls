@@ -966,6 +966,51 @@ def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
     return snapshots[0] if snapshots else None
 
 
+def select_archived_snapshot(
+    db_path: Path,
+    item_id: str,
+    *,
+    prior_hash: str | None = None,
+    at: str | None = None,
+) -> tuple[ArchiveEntry, ScrollItem] | None:
+    """Select one archived prior of `item_id` *by version* — the restore-by-version read (H286).
+
+    The selector behind `scrolls archive restore` (ADR 0106's deferred
+    restore-by-version): over the **same** newest-first archive history
+    `archive show --all` reads — the `list_archived` metadata zipped with the
+    `archived_snapshots` bodies, row-for-row by the shared ``id DESC`` order — it
+    picks exactly one prior to re-adopt:
+
+    * ``prior_hash`` — the newest archived prior whose recorded ``prior_hash``
+      matches (the hash `archive list` prints; identical priors collapse to the
+      newest, the bytes being the same).
+    * ``at`` — the **newest** prior archived *at or before* the (pre-normalized,
+      via `parse_since`) UTC ISO boundary: restore the version held as of a point
+      in time. Inclusive (``<=``), and selected by ``archived_at`` (not merely the
+      first by id), so a re-imported archive whose local ids no longer track time
+      still picks the genuinely newest qualifying prior.
+    * neither — the head (latest), exactly `latest_archived`/`archive show`'s
+      default, so a bare restore re-adopts the same prior that read emits
+      (convergence by construction).
+
+    The CLI enforces *at most one* selector; defensively, ``prior_hash`` wins if
+    both are passed. Returns the chosen ``(ArchiveEntry, ScrollItem)`` pair — the
+    recovery metadata (which version, when) plus the model-complete prior body to
+    re-adopt — or ``None`` when the id has no archived prior at all, or none matches
+    the selector: the could-not-recover signal the CLI maps to exit 1. A pre-v8 /
+    unknown id yields empty reads → ``None``.
+    """
+    pairs = list(zip(list_archived(db_path, item_id), archived_snapshots(db_path, item_id)))
+    if prior_hash is not None:
+        return next((p for p in pairs if p[0].prior_hash == prior_hash), None)
+    if at is not None:
+        candidates = [p for p in pairs if p[0].archived_at <= at]
+        # the newest prior at/before the boundary; max returns the first maximal
+        # element, and `pairs` is id-DESC, so ties resolve to the highest-id row
+        return max(candidates, key=lambda p: p[0].archived_at, default=None)
+    return pairs[0] if pairs else None
+
+
 # --- portable prior-content archive (the recovery store travels, roadmap H280) ---
 #
 # ADR 0106 made adoption custody-safe *locally*: the superseded prior is archived

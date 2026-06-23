@@ -109,6 +109,7 @@ from scrolls.items import (
     merge_item,
     preview_import_archive,
     prune_archive,
+    select_archived_snapshot,
     select_prunable_archive,
     update_item,
 )
@@ -1060,6 +1061,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit every archived prior capture for the id (newest first) as a JSONL "
         "stream, not just the latest — the full recoverable history",
     )
+    archive_restore_parser = archive_sub.add_parser(
+        "restore",
+        help="Restore a specific archived prior in place (accept-incoming) — "
+        "restore-by-version, default the latest; the displaced copy is itself "
+        "archived (JSON output)",
+    )
+    archive_restore_parser.add_argument(
+        "id", help="Item id (e.g. web:demo), or the item's URL, with an archived prior"
+    )
+    archive_restore_parser.add_argument(
+        "--hash",
+        dest="prior_hash",
+        default=None,
+        metavar="H",
+        help="Restore the archived prior with this content hash (the `archive list` "
+        "prior_hash) — a specific version, not just the latest",
+    )
+    archive_restore_parser.add_argument(
+        "--at",
+        dest="at",
+        default=None,
+        metavar="ISO",
+        help="Restore the newest prior archived at or before this ISO-8601 timestamp "
+        "(date-only ok → that day's UTC midnight) — the version held as of a point "
+        "in time. At most one of --hash/--at; default is the latest archived prior",
+    )
+    archive_restore_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Predict the restore (the same decision the live run emits, plus "
+        "dry_run: true) and write nothing — the preview-never-drifts discipline",
+    )
     archive_prune_parser = archive_sub.add_parser(
         "prune",
         help="Drop archived prior captures by a retention policy — bounds the "
@@ -1367,6 +1401,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "archive":
         if args.archive_command == "show":
             return _cmd_archive_show(args.id, args.all_history)
+        if args.archive_command == "restore":
+            return _cmd_archive_restore(
+                args.id,
+                prior_hash=args.prior_hash,
+                at=args.at,
+                dry_run=args.dry_run,
+            )
         if args.archive_command == "prune":
             return _cmd_archive_prune(args.before, args.keep, args.apply)
         return _cmd_archive_list(args.item_id)
@@ -4033,6 +4074,143 @@ def _cmd_archive_show(ref: str, all_history: bool = False) -> int:
         )
         return 1
     sys.stdout.write(dump_items_export(priors))
+    return 0
+
+
+def _restore_outcome(counts: dict[str, int]) -> str:
+    """The single disposition of a one-prior restore — the readable ``outcome`` field.
+
+    Exactly one prior feeds the accept-incoming merge, so exactly one count is set:
+    ``adopted`` (the held copy was replaced by the chosen prior, the displaced copy
+    itself archived), ``unchanged`` (the prior already *is* the held copy — the
+    idempotent no-op), or ``imported`` (the id was absent — the archived prior
+    re-created it). Read in that custody-priority order so the field names the write
+    that actually happened.
+    """
+    for key in ("adopted", "imported", "unchanged"):
+        if counts.get(key):
+            return key
+    return "unchanged"
+
+
+def _cmd_archive_restore(
+    ref: str,
+    *,
+    prior_hash: str | None = None,
+    at: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Restore a *specific* archived prior in place — restore-by-version (H286, ADR 0106).
+
+    `archive show <id> | import items --accept-incoming` already restores the
+    **latest** archived prior; this picks a *specific* version and adopts it through
+    the **same** custody-safe write (`_merge_items` accept-incoming → `adopt_incoming`),
+    so there is **no new write path** — just a selection over the H285 archive history
+    (`select_archived_snapshot`) feeding the existing adoption. ``--hash <prior_hash>``
+    picks the archived prior with that content hash; ``--at <ISO>`` picks the newest
+    prior archived at/before the boundary (the `verify --stale-before` normalization,
+    inclusive); the default is the latest — byte-identical to `archive show`'s default
+    (convergence by construction). At most one selector (the explicit gate); both is a
+    usage error (exit 2).
+
+    Custody-safe because the adoption archives the *currently-held* copy before
+    replacing it (raw is never destroyed — custody §2.4): restoring an older version
+    is fully reversible, and `archive show` afterward recovers the just-displaced
+    copy. Idempotent: restoring the already-held content is an ``unchanged`` no-op
+    (no archive row, no event). A deleted id whose archive survives is re-created
+    from the prior (``imported``).
+
+    Honest exits: an unresolvable ref is a usage error (exit 2, the `archive show`
+    precedent); a malformed ``--at`` is a loud usage error (exit 2, the `archive
+    prune --before` precedent); an id with no archived prior — or none matching the
+    selector — is a could-not-recover (exit 1, the `archive show` signal).
+    ``--dry-run`` predicts the decision (the same payload the live run emits, plus
+    ``dry_run: true``) via the read-only `_preview_merge_items` and writes nothing —
+    the "preview never drifts from reality" discipline (H245/H273).
+    """
+    paths = get_paths()
+    try:
+        item_id = resolve_item_id(ref)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 2
+    # at most one version selector — the explicit gate (the `archive prune` /
+    # `reconcile` opt-in precedent); none means "the latest" (today's behavior)
+    if prior_hash is not None and at is not None:
+        print(
+            json.dumps({
+                "error": "archive restore takes at most one version selector: "
+                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+    boundary: str | None = None
+    if at is not None:
+        # a malformed --at is a loud usage error (exit 2, the `archive prune --before`
+        # / `verify --stale-before` precedent), never a silently empty selection
+        try:
+            boundary = parse_since(at)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        if boundary is None:
+            print(
+                json.dumps({"error": "--at needs an ISO-8601 timestamp boundary"}),
+                file=sys.stderr,
+            )
+            return 2
+    selector: dict = (
+        {"hash": prior_hash} if prior_hash is not None
+        else {"at": boundary} if boundary is not None
+        else {"latest": True}
+    )
+    selected = (
+        select_archived_snapshot(
+            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
+        )
+        if paths.db_path.exists()
+        else None
+    )
+    if selected is None:
+        suffix = f" (from {ref})" if item_id != ref else ""
+        scoped = (
+            f" matching {json.dumps(selector)}"
+            if prior_hash is not None or boundary is not None
+            else ""
+        )
+        print(
+            json.dumps(
+                {"error": f"no archived prior capture for {item_id}{suffix}{scoped}"}
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    entry, prior = selected
+    held = get_item(paths.db_path, item_id)
+    held_hash = held.content_hash if held is not None else None
+    if dry_run:
+        counts, _conflicts, _new, _held, adopted = _preview_merge_items(
+            paths.db_path, [prior], accept_incoming=True
+        )
+    else:
+        counts, _conflicts, adopted = _merge_items(
+            paths.db_path, [prior], accept_incoming=True
+        )
+    outcome = _restore_outcome(counts)
+    decision = {
+        "id": item_id,
+        "selector": selector,
+        "prior_hash": entry.prior_hash,      # the restored version's content hash
+        "archived_at": entry.archived_at,    # when that version was archived
+        "held_hash": held_hash,              # what was held before (archived if adopted)
+        "outcome": outcome,                  # adopted | unchanged | imported
+        "restored": outcome in ("adopted", "imported"),
+        "dry_run": dry_run,
+    }
+    if not dry_run:
+        _warn_adopted(adopted)
+    print(json.dumps(decision))
     return 0
 
 

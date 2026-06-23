@@ -230,7 +230,26 @@ operator act (custody §2.4), not an ambient MCP capability.
   is its head, `[]` for never-superseded, pre-v8 tolerant) and `tests/test_cli.py`
   (`--all` N lines for an N-adoption item, default one line, convergence with the head,
   never-superseded exit-1).
-- **Restore-by-version.** Restoring a *specific* older archived version (not only the
+- **Restore-by-version.** ~~Restoring a *specific* older archived version (not only the
   latest) is left until a multi-supersession workflow needs it (roadmap H286, a selector
   — `--hash`/`--at` — over the H285 `archived_snapshots` stream, feeding the existing
-  accept-incoming adoption write).
+  accept-incoming adoption write).~~ **Shipped (roadmap H286):** `scrolls archive restore
+  <id> [--hash H | --at ISO]` restores a *specific* archived prior in place — `--hash`
+  picks the prior with that content hash, `--at` the **newest** prior archived at/before
+  the boundary (the `verify --stale-before` normalization, inclusive), default the latest
+  (byte-identical to `archive show`). The decisive choice: a new
+  `items.select_archived_snapshot(db_path, item_id, *, prior_hash, at)` folds the **same**
+  newest-first `list_archived`/`archived_snapshots` reads `archive show --all` uses (so a
+  bare restore re-adopts exactly what `archive show` emits — convergence by construction),
+  then feeds the selected prior to the **existing** accept-incoming merge (`_merge_items` →
+  `adopt_incoming`) — **no new write path**, so restore-by-version is still custody-safe
+  (the displaced current copy is itself archived, recoverable — fully reversible) and
+  idempotent (restoring the already-held content is an `unchanged` no-op). At most one
+  selector (exit 2); an unmatched selector is a could-not-recover (exit 1); `--dry-run`
+  predicts via the read-only `_preview_merge_items` and writes nothing. CLI-only (a
+  custody-changing write), no schema change. Verified offline: `tests/test_items.py`
+  (`select_archived_snapshot` default/by-hash/by-`--at`-boundary, unmatched → `None`,
+  never-superseded + pre-v8 tolerant) and `tests/test_cli.py` (restore by hash / by `--at`
+  / default latest, the displaced copy archived + recoverable, idempotent no-op, unmatched
+  selector + unknown id exit 1, both-selectors + malformed-`--at` exit 2, `--dry-run`
+  writes nothing).

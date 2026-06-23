@@ -36,6 +36,7 @@ from scrolls.items import (
     get_item,
     insert_item,
     latest_archived,
+    list_archived,
     list_items,
     make_item_id,
     update_item,
@@ -4244,6 +4245,183 @@ def test_archive_show_all_unknown_id_is_a_could_not_recover(scrolls_home, capsys
     assert main(["archive", "show", "arxiv:1706.03762", "--all"]) == 1
     err = json.loads(capsys.readouterr().err)
     assert "no archived prior" in err["error"]
+
+
+# --- archive restore (H286): restore a *specific* archived prior in place via the
+# accept-incoming adoption (the displaced copy itself archived — fully reversible).
+# --hash / --at select the version; default the latest; idempotent; --dry-run
+# predicts and writes nothing (ADR 0106's deferred restore-by-version). ---
+
+
+def _seed_archived_chain_at(scrolls_home, steps):
+    """Seed a rich item (held `sha256:abc`), then adopt a chain of divergent captures
+    at *controlled* `archived_at` timestamps (via `adopt_incoming` directly, bypassing
+    the now-stamp the live import flow uses) so `archive restore --at` has a spaced
+    history to bisect. `steps` is a list of `(content_hash, archived_at)`. Returns the
+    seeded id; the held copy ends as the last step's hash."""
+    seeded = _seed_rich_item(scrolls_home)
+    db = get_paths().db_path
+    held = get_item(db, seeded.id)
+    for new_hash, at in steps:
+        incoming = dataclasses.replace(held, content_hash=new_hash, raw_text=f"body {new_hash}")
+        adopt_incoming(db, incoming, archived_at=at)
+        held = incoming
+    return seeded.id
+
+
+def test_archive_restore_by_hash_adopts_that_version_and_archives_the_displaced(
+    scrolls_home, tmp_path, capsys
+):
+    """`archive restore <id> --hash H` re-adopts the archived prior with content hash
+    H — a *specific* older version, not just the latest — through the accept-incoming
+    write, and the *currently-held* copy it displaces is itself archived (recoverable),
+    so restore-by-version is fully reversible (ADR 0106 / custody §2.4)."""
+    # archive ends holding priors [abc, v1, v2] (newest-first v2,v1,abc); held = v3
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    db = get_paths().db_path
+    assert get_item(db, item_id).content_hash == "sha256:v3"
+    capsys.readouterr()
+
+    # restore the *oldest* prior by its hash
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc"]) == 0
+    out, err = capsys.readouterr()
+    decision = json.loads(out)
+    assert decision["restored"] is True and decision["outcome"] == "adopted"
+    assert decision["selector"] == {"hash": "sha256:abc"}
+    assert decision["prior_hash"] == "sha256:abc"   # the restored version
+    assert decision["held_hash"] == "sha256:v3"     # what it displaced
+    # the held copy is the restored prior now
+    assert get_item(db, item_id).content_hash == "sha256:abc"
+    # …and the displaced copy (v3) was itself archived — fully reversible
+    assert latest_archived(db, item_id).content_hash == "sha256:v3"
+    # loud on stderr: a held copy was replaced (the accept-incoming custody signal)
+    assert item_id in json.loads(err)["warning"]
+
+
+def test_archive_restore_default_restores_the_latest_prior(
+    scrolls_home, tmp_path, capsys
+):
+    """With no selector, restore re-adopts the *latest* archived prior — the
+    behaviour of `archive show <id> | import items --accept-incoming`, just in one
+    command. The selector echoes ``{latest: true}``."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)  # latest prior = v2
+    db = get_paths().db_path
+    capsys.readouterr()
+    assert main(["archive", "restore", item_id]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["selector"] == {"latest": True}
+    assert decision["restored"] is True and decision["prior_hash"] == "sha256:v2"
+    assert get_item(db, item_id).content_hash == "sha256:v2"  # the latest prior
+    assert latest_archived(db, item_id).content_hash == "sha256:v3"  # v3 displaced
+
+
+def test_archive_restore_by_at_picks_the_version_held_as_of_a_time(
+    scrolls_home, capsys
+):
+    """`archive restore <id> --at ISO` re-adopts the newest prior archived at/before
+    the boundary — the version held as of a point in time. Priors stamped 06-22/23/24;
+    --at 06-23T12:00 picks the 06-23 prior (the 06-24 one is after the boundary)."""
+    item_id = _seed_archived_chain_at(scrolls_home, [
+        ("sha256:m1", "2026-06-22T00:00:00+00:00"),
+        ("sha256:m2", "2026-06-23T00:00:00+00:00"),
+        ("sha256:m3", "2026-06-24T00:00:00+00:00"),
+    ])  # archive: [m2@06-24, m1@06-23, abc@06-22]; held = m3
+    db = get_paths().db_path
+    capsys.readouterr()
+    assert main(["archive", "restore", item_id, "--at", "2026-06-23T12:00:00+00:00"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    # the newest prior at/before the boundary is m1 (archived 06-23), not m2 (06-24)
+    assert decision["prior_hash"] == "sha256:m1"
+    assert decision["archived_at"] == "2026-06-23T00:00:00+00:00"  # when m1 was archived
+    # the selector echoes the (normalized) boundary the operator passed, not the
+    # selected prior's archived_at
+    assert decision["selector"] == {"at": "2026-06-23T12:00:00+00:00"}
+    assert get_item(db, item_id).content_hash == "sha256:m1"
+
+
+def test_archive_restore_is_idempotent_when_the_prior_is_already_held(
+    scrolls_home, tmp_path, capsys
+):
+    """Restoring a prior that already *is* the held copy is an ``unchanged`` no-op —
+    no second archive row, no event (idempotency falls out of the content-hash
+    compare, the `import --accept-incoming` precedent)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    db = get_paths().db_path
+    capsys.readouterr()
+    # first restore of the oldest prior adopts it (held becomes abc)
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc"]) == 0
+    capsys.readouterr()
+    rows_after_first = len(list_archived(db, item_id))
+    # abc is still in the archive *and* now the held copy → a second restore is a no-op
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc"]) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["restored"] is False and decision["outcome"] == "unchanged"
+    assert get_item(db, item_id).content_hash == "sha256:abc"
+    assert len(list_archived(db, item_id)) == rows_after_first  # no churn
+
+
+def test_archive_restore_dry_run_predicts_and_writes_nothing(
+    scrolls_home, tmp_path, capsys
+):
+    """`--dry-run` predicts the same decision the live run would emit (``dry_run:
+    true``, ``restored: true``) but the held copy is untouched and no prior is
+    archived — the preview-never-drifts discipline (H245/H273)."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 2)  # held = v2
+    db = get_paths().db_path
+    rows_before = len(list_archived(db, item_id))
+    capsys.readouterr()
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc", "--dry-run"]) == 0
+    out, err = capsys.readouterr()
+    decision = json.loads(out)
+    assert decision["dry_run"] is True
+    assert decision["restored"] is True and decision["outcome"] == "adopted"
+    assert decision["prior_hash"] == "sha256:abc"
+    # nothing was written: the held copy still v2, no new archive row, no warning
+    assert get_item(db, item_id).content_hash == "sha256:v2"
+    assert len(list_archived(db, item_id)) == rows_before
+    assert err == ""
+
+
+def test_archive_restore_unmatched_selector_is_a_could_not_recover(
+    scrolls_home, tmp_path, capsys
+):
+    """A `--hash`/`--at` that no archived prior matches is a could-not-recover (exit
+    1) — the held copy is never touched on a miss."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 2)
+    db = get_paths().db_path
+    capsys.readouterr()
+    # a hash no prior carries
+    assert main(["archive", "restore", item_id, "--hash", "sha256:ghost"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
+    # an --at boundary before the whole history
+    assert main(["archive", "restore", item_id, "--at", "2020-01-01T00:00:00+00:00"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
+    # the held copy survived both misses untouched
+    assert get_item(db, item_id).content_hash == "sha256:v2"
+
+
+def test_archive_restore_rejects_both_selectors_and_a_malformed_at(
+    scrolls_home, tmp_path, capsys
+):
+    """At most one version selector (the explicit gate, exit 2); a malformed `--at`
+    is a loud usage error (exit 2, the `archive prune --before` precedent), never a
+    silently empty selection."""
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 1)
+    capsys.readouterr()
+    assert main(["archive", "restore", item_id, "--hash", "sha256:abc",
+                 "--at", "2026-06-23"]) == 2
+    assert "at most one" in json.loads(capsys.readouterr().err)["error"]
+    assert main(["archive", "restore", item_id, "--at", "not-a-timestamp"]) == 2
+    assert "ISO-8601" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_archive_restore_unknown_id_is_a_could_not_recover(scrolls_home, capsys):
+    """`archive restore` for an id with no archived prior (never superseded) exits 1 —
+    the same could-not-recover signal as `archive show`."""
+    _seed_rich_item(scrolls_home)
+    capsys.readouterr()
+    assert main(["archive", "restore", "arxiv:1706.03762"]) == 1
+    assert "no archived prior" in json.loads(capsys.readouterr().err)["error"]
 
 
 # --- archive prune (H282): a retention act bounding the append-only recovery

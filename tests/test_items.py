@@ -27,6 +27,7 @@ from scrolls.items import (
     preview_import_archive,
     prune_archive,
     replace_items,
+    select_archived_snapshot,
     select_prunable_archive,
     update_item,
 )
@@ -435,6 +436,63 @@ def test_archived_snapshots_tolerates_pre_v8_library(tmp_path):
     import sqlite3
     sqlite3.connect(legacy).close()  # an empty db, no item_archive table
     assert archived_snapshots(legacy, "web:a") == []
+
+
+# --- restore-by-version selection (`archive restore --hash/--at`, H286) ---
+
+
+def test_select_archived_snapshot_defaults_to_the_latest_prior(db_path):
+    # no selector → the head of the history, exactly latest_archived / archive show
+    # (convergence by construction — the bare restore re-adopts what archive show emits).
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    entry, snap = select_archived_snapshot(db_path, "web:a")
+    assert snap == latest_archived(db_path, "web:a")
+    assert entry.prior_hash == "sha256:h2"  # the newest archived prior
+
+
+def test_select_archived_snapshot_by_hash_picks_that_version(db_path):
+    # --hash selects the prior with that content hash at any depth in the history,
+    # not just the latest — the oldest prior here.
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    entry, snap = select_archived_snapshot(db_path, "web:a", prior_hash="sha256:h0")
+    assert snap.content_hash == "sha256:h0"
+    assert snap.raw_text == "body h0"          # the model-complete oldest prior body
+    assert entry.prior_hash == "sha256:h0"
+
+
+def test_select_archived_snapshot_by_at_picks_newest_at_or_before(db_path):
+    # priors archived 06-22 (h0), 06-23 (h1), 06-24 (h2); --at 06-23T12:00 → h1, the
+    # newest archived at/before the boundary (h2, archived 06-24, is after it).
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2", "sha256:h3"])
+    entry, snap = select_archived_snapshot(
+        db_path, "web:a", at="2026-06-23T12:00:00+00:00")
+    assert snap.content_hash == "sha256:h1"
+    assert entry.archived_at == "2026-06-23T00:00:00+00:00"
+    # the boundary is inclusive (at *or* before): exactly 06-23 still selects h1
+    _, eq = select_archived_snapshot(db_path, "web:a", at="2026-06-23T00:00:00+00:00")
+    assert eq.content_hash == "sha256:h1"
+    # a boundary past everything selects the latest (== the default)
+    _, future = select_archived_snapshot(db_path, "web:a", at="2030-01-01T00:00:00+00:00")
+    assert future == latest_archived(db_path, "web:a")
+
+
+def test_select_archived_snapshot_unmatched_selector_is_none(db_path):
+    _archive_chain(db_path, "web:a", ["sha256:h1", "sha256:h2"])
+    # a hash no prior carries → no recovery
+    assert select_archived_snapshot(db_path, "web:a", prior_hash="sha256:ghost") is None
+    # an --at boundary before the whole history → nothing at/before it
+    assert select_archived_snapshot(
+        db_path, "web:a", at="2020-01-01T00:00:00+00:00") is None
+
+
+def test_select_archived_snapshot_none_for_never_superseded_or_pre_v8(db_path, tmp_path):
+    insert_item(db_path, make_item(id="web:a", source="web", source_id=None,
+                                   url="https://a.example", content_hash="sha256:x"))
+    assert select_archived_snapshot(db_path, "web:a") is None
+    import sqlite3
+    legacy = tmp_path / "legacy.sqlite"
+    sqlite3.connect(legacy).close()  # pre-v8: no item_archive table
+    assert select_archived_snapshot(legacy, "web:a") is None
 
 
 # --- archive retention / prune (bound the append-only recovery store, H282) ---

@@ -1569,6 +1569,50 @@ The recovery **read** also travels over MCP (H281): `list_archived` is the twin 
 store. The **write** stays **CLI-only**: the `import … --accept-incoming` adoption, and
 the symmetric restore, are explicit operator acts (custody §2.4).
 
+### `scrolls archive restore <id> [--hash H | --at ISO] [--dry-run]`
+
+**Restores** a *specific* archived prior in place (H286, ADR 0106's deferred
+restore-by-version). `archive show <id> | import items --accept-incoming` already
+restores the **latest** prior; `restore` picks a chosen *version* and adopts it
+through the **same** custody-safe write (`adopt_incoming` — no new write path), just a
+selection over the `archive show --all` history feeding the existing adoption:
+
+- `--hash H` — restore the archived prior whose content hash is `H` (the `archive
+  list` `prior_hash`). A specific version at any depth in the history, not just the
+  latest.
+- `--at ISO` — restore the **newest** prior archived **at or before** the boundary
+  (date-only ok → that day's UTC midnight, the `verify --stale-before` normalization;
+  the boundary is **inclusive**). The version held *as of* a point in time.
+- neither — the **latest** archived prior (today's behaviour, byte-identical to
+  `archive show`'s default). At most one selector (both is a usage error → exit 2).
+
+Restore-by-version stays **fully reversible**: the adoption archives the
+*currently-held* copy before replacing it (raw is never destroyed — custody §2.4), so
+`archive show` afterward recovers the just-displaced copy. **Idempotent**: restoring a
+prior that already *is* the held copy is an `unchanged` no-op (no archive row, no
+event). A held id is replaced (`adopted`); a deleted id whose archive survives is
+re-created (`imported`).
+
+```console
+$ scrolls archive restore web:demo --hash sha256:abc      # an older version, by hash
+{"id": "web:demo", "selector": {"hash": "sha256:abc"}, "prior_hash": "sha256:abc", "archived_at": "2026-06-20T00:00:00+00:00", "held_hash": "sha256:v3", "outcome": "adopted", "restored": true, "dry_run": false}
+{"warning": "1 held copy(ies) replaced by the incoming capture (accept-incoming — prior archived, recoverable via `scrolls archive show`): `web:demo`"}   # stderr
+[exit 0]
+
+$ scrolls archive restore web:demo --at 2026-06-21       # the version held as of a date
+{"id": "web:demo", "selector": {"at": "2026-06-21T00:00:00+00:00"}, "prior_hash": "sha256:v1", "archived_at": "2026-06-21T00:00:00+00:00", "held_hash": "sha256:abc", "outcome": "adopted", "restored": true, "dry_run": false}
+[exit 0]
+```
+
+`restored` is `true` when the held copy actually moved (`adopted`/`imported`), `false`
+on the `unchanged` no-op; `held_hash` names the copy that was displaced (archived if
+`adopted`). An id with no archived prior — or none matching the selector — is a loud
+could-not-recover (exit 1, the `archive show` signal), the held copy untouched on a
+miss. A malformed `--at` is a usage error (exit 2, the `archive prune --before`
+precedent). **CLI-only** (a custody-changing write); `--dry-run` predicts the same
+decision (`dry_run: true`) and writes nothing (the preview-never-drifts discipline,
+H245/H273).
+
 ### `scrolls archive prune (--before ISO | --keep N) [--apply]`
 
 **Bounds** the append-only recovery store by a retention policy (H282). The
