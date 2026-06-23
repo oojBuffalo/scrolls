@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import sqlite3
 
 import pytest
 
@@ -2729,6 +2730,125 @@ def test_archive_recovery_read_family_survives_the_with_archive_round_trip(
 
     # the whole recovery read-family is byte/field-identical across the round trip
     assert read_family() == family_a
+
+
+# --- the archive-integrity alarm survives the --with-archive bundle (roadmap H296) ---
+#
+# H293 added the report-only archive-integrity check (`doctor`'s `custody.archive`
+# flags any archived prior whose advertised `prior_hash` diverges from its
+# snapshot's `content_hash`); H291 (above) proves the *clean* recovery read-family
+# round-trips a `--with-archive` bundle; H295 (`tests/test_doctor.py`) proves the
+# *alarm* survives the JSONL-backup path. The untested cell these tie together: a
+# *corruption* must not be laundered by the **portable bundle** transport either —
+# a tampered prior carried in the bundle's fenced archive block has to trip the
+# alarm *identically* on a bundle-rebuilt library, never read clean (vision §2.4 —
+# a shareable briefing may not silently repair a corruption it cannot actually
+# fix). Correct-by-construction: `import bundle` restores the archive through
+# `parse_bundle_archive` → `import_archive`, the *same* verbatim-snapshot restore
+# behind the JSONL path, and the bundle block carries the same
+# `prior_hash`/`snapshot` columns the JSONL does — so a regression guard,
+# mutation-checked by *repairing* the prior on the bundle wire before import (the
+# alarm then clears on the rebuild, proving the tie is load-bearing).
+
+
+def _tamper_archive(db_path, item_id, **columns):
+    """Out-of-band rewrite of one archive row — a corrupt/hand-edited store (the
+    `tests/test_doctor.py` helper, here so the bundle path can seed a corruption)."""
+    assignments = ", ".join(f"{name} = ?" for name in columns)
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            f"UPDATE item_archive SET {assignments} WHERE item_id = ?",
+            tuple(columns.values()) + (item_id,),
+        )
+    conn.close()
+
+
+def _seed_corrupt_plus_clean_archive(db):
+    """Seed `db` with two archived priors — both in the `database` bundle scope —
+    one clean, one whose `prior_hash` was tampered to diverge from its snapshot's
+    `content_hash`. Returns the corrupt prior's item id (the row the integrity
+    alarm must name). The bundle-path twin of the `tests/test_doctor.py` helper."""
+    _seed_archived_prior(db, "wikipedia:en:clean")
+    corrupt_id = "wikipedia:en:corrupt"
+    _seed_archived_prior(db, corrupt_id)
+    _tamper_archive(db, corrupt_id, prior_hash="sha256:tampered")
+    return corrupt_id
+
+
+def test_archive_integrity_alarm_survives_the_with_archive_bundle_round_trip(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # A corrupt archived prior carried in a `--with-archive` bundle's fenced archive
+    # block is flagged *identically* by `doctor`'s `custody.archive` on the
+    # bundle-rebuilt library — the portable briefing does not launder the corruption
+    # (H293 × H291/H280 tie, the bundle-path twin of H295).
+    main(["init"])
+    db_a = get_paths().db_path
+    corrupt = _seed_corrupt_plus_clean_archive(db_a)
+
+    archive_a = run_doctor(get_paths())["custody"]["archive"]
+    # sanity: A names exactly the corrupt row, the clean prior passes — a genuine
+    # mismatch travels (a vacuous all-clean read would pass the A==B tie falsely)
+    assert archive_a["status"] == "ok"
+    assert archive_a["checked"] == 2
+    assert archive_a["mismatched"] == 1
+    assert archive_a["events"] == [
+        {
+            "item_id": corrupt,
+            "prior_hash": "sha256:tampered",
+            "snapshot_hash": "sha256:held",
+        }
+    ]
+
+    # round-trip a --with-archive bundle (the whole `database` scope = both items)
+    capsys.readouterr()
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+
+    # the rebuilt library holds the whole archive (both priors travelled) and trips
+    # the alarm on the same offending event set with the same checked/mismatched —
+    # byte-for-byte the report A read, never read clean
+    assert len(archived_records(db_b)) == 2
+    archive_b = run_doctor(get_paths())["custody"]["archive"]
+    assert archive_b == archive_a
+
+
+def test_repairing_the_prior_on_the_bundle_wire_clears_the_alarm_on_the_rebuild(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # Mutation guard: the alarm-on-the-rebuild is load-bearing. If the divergence is
+    # *repaired* on the bundle wire before import (the corrupt `prior_hash` rewritten
+    # back to its snapshot's `content_hash`), the rebuilt library reads clean — so the
+    # flag on B genuinely tracks the bundle's content, not a phantom that always fires.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_corrupt_plus_clean_archive(db_a)
+    assert run_doctor(get_paths())["custody"]["archive"]["mismatched"] == 1  # A dirty
+
+    capsys.readouterr()
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    bundle = capsys.readouterr().out
+    # the tampered prior_hash appears exactly once on the wire (the corrupt archive
+    # row's column; the snapshot keeps its honest content_hash) — repair it in place
+    assert bundle.count("sha256:tampered") == 1
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(bundle.replace("sha256:tampered", "sha256:held"), "utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+
+    archive_b = run_doctor(get_paths())["custody"]["archive"]
+    assert archive_b == {"status": "ok", "checked": 2, "mismatched": 0, "events": []}
 
 
 def test_html_bundle_carries_the_archive_block_only_with_the_flag(scrolls_home):
