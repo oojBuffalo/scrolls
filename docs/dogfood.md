@@ -632,21 +632,53 @@ increments whose overlapping union restores losslessly — every recoverable pri
 lands exactly once, and the whole inspect → decide → act family reads identically on
 the library rebuilt from full + increment (cap 4, custody §2.4).
 
+**The append-only boundary — a prune does *not* travel in an increment.** The recovery
+store can only ever *grow* across the incremental transport: `import archive` appends
+and dedups by `(item_id, prior_hash)` (ADR 0106) and has **no delete path**, so an
+`archive prune` on A — a retention *removal* — leaves no trace an `export archive
+--since` increment could carry. Prune the pre-T0 priors, ship only the `--since T0`
+increment, and a peer **B** rebuilt from an *earlier* full backup (taken before the
+prune, so it still holds the pruned prior) plus that increment **still holds the pruned
+prior**. The prune and the window meet at the *same* boundary T0 — the prune drops
+`< T0`, the increment carries `>= T0` — so the pruned prior is exactly the part the
+increment can never reach:
+
+```bash
+# ── machine A: after the full backup, prune the pre-T0 priors ──
+scrolls archive prune --before 2026-06-19T00:00:00+00:00 --apply
+#   → {"dropped": 1, "remaining": 2, ...}   drops sha256:06.03762 (the original@06-18)
+scrolls export archive --since 2026-06-19T00:00:00+00:00 > archive-incremental.jsonl
+#   increment priors → [sha256:prune-v1 (06-19), sha256:prune-v2 (06-20)]  — never the pruned original
+
+# ── peer B (earlier full + increment) STILL holds the pruned prior ──
+scrolls archive show arxiv:1706.03762 --all   # → 3 priors, INCLUDING sha256:06.03762
+#   A holds 2 (the original is gone); B holds 3 — the prune did NOT travel
+```
+
+To propagate retention you re-take a **full** backup. A fresh peer **C** rebuilt from a
+*post-prune* `export archive` (which simply omits the pruned prior) matches A's recovery
+store exactly — retention travels through a fresh full backup, never through an
+increment. `tests/test_dogfood.py::test_a_prune_does_not_propagate_through_an_incremental_backup`
+pins both directions (cap 4, custody §2.4).
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Twelve tests: each leg on its own — the core hold/detect/take legs, the scoped
+Thirteen tests: each leg on its own — the core hold/detect/take legs, the scoped
 drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
 flow, the *restore-by-version* roll-back, the *decide-before-you-restore*
 `archive diff` → `archive restore` loop, the *cross-machine recovery* leg (the whole
 decide → act loop run on a library rebuilt from a `--with-archive` bundle), the
 *JSONL-backup recovery* leg (the same decide → act loop on a library rebuilt from an
-`export items` + `export archive` backup), and the *incremental-backup recovery* leg
+`export items` + `export archive` backup), the *incremental-backup recovery* leg
 above (a full `export archive` at T0 + a later `export archive --since T0` increment,
-restored as an idempotent union onto a fresh peer) — plus
+restored as an idempotent union onto a fresh peer), and the *append-only-boundary* leg
+(an `archive prune` on A does **not** travel in a later increment — a peer rebuilt from
+an earlier full backup keeps the pruned prior; retention propagates only through a fresh
+full backup) — plus
 `test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
 sequence in order, unattended. The lossless round-trip leg shares its guarantee
 with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle

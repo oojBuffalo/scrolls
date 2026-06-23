@@ -1497,6 +1497,169 @@ def test_incremental_backup_workflow_round_trips_the_recovery_family(
     assert read_family() == family_a
 
 
+# --- the append-only boundary (H308): an `archive prune` on A does NOT
+#     propagate through a later `export archive --since` increment, so a peer
+#     rebuilt from an earlier full backup + the increment KEEPS the pruned prior;
+#     retention propagation requires a fresh full backup, not an increment ------
+
+
+def test_a_prune_does_not_propagate_through_an_incremental_backup(
+    home, capsys, tmp_path, monkeypatch
+):
+    """*the incremental backup is honestly append-only* (H308): an `archive prune`
+    on machine A is a retention *removal*, and `import archive` has no delete path —
+    it only appends/dedups by ``(item_id, prior_hash)`` (ADR 0106) — so a prune
+    leaves no trace an `export archive --since` increment could carry.
+
+    H306 proves the union of a full backup + an overlapping increment *grows* the
+    recovery store losslessly; the unstated boundary is that it can only ever grow.
+    An operator who prunes old priors on A and then ships only an increment would
+    wrongly assume the prune travelled. It does not: a peer **B** rebuilt from an
+    *earlier* full backup (taken before the prune, so it still holds the pruned
+    prior) + the increment **still holds the pruned prior** afterwards. The prune
+    and the `--since` window meet at the *same* boundary T0 — the prune drops
+    everything ``< T0``, the increment carries everything ``>= T0`` — so the pruned
+    prior is *exactly* the part the increment can never reach.
+
+    To propagate retention you re-take a **full** backup: a fresh peer **C** rebuilt
+    from a post-prune full backup (which simply omits the pruned prior) matches A's
+    recovery store. The remedy is a fresh full backup, not an increment.
+    """
+    V1, V2, V3 = "sha256:prune-v1", "sha256:prune-v2", "sha256:prune-v3"
+    # the boundary shared by BOTH the prune (drops < T0) and the increment (carries
+    # >= T0): they partition the archive cleanly at T0, so the pruned prior is the
+    # one part the increment can never reach.
+    T0 = "2026-06-19T00:00:00+00:00"
+
+    def _custody() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]
+
+    def _archive_priors(db_path) -> list[str]:
+        """A's recovery store as prior hashes, oldest-first (archived_at order)."""
+        return [r.prior_hash for r in archived_records(db_path, [original.id])]
+
+    def _rebuild_peer(name: str, items_file, *archive_files) -> object:
+        """Restore a fresh machine from a holdings snapshot + archive backup(s)."""
+        peer = home(name)
+        assert main(["init"]) == 0
+        capsys.readouterr()
+        assert main(["import", "items", str(items_file)]) == 0
+        for archive_file in archive_files:
+            assert main(["import", "archive", str(archive_file)]) == 0
+        assert main(["doctor", "--fix"]) == 0
+        assert main(["kb"]) == 0
+        capsys.readouterr()
+        return peer
+
+    # 1. HOLD on machine A, then adopt original → v1@06-18 → v2@06-19. The held copy
+    #    ends as v2; the archive holds [original@06-18, v1@06-19].
+    a = home("machine-a")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv" and original.content_hash == ORIG_HASH
+    capsys.readouterr()  # drain the kb report
+    held0 = get_item(a.db_path, original.id)  # the rendered row (carries markdown_path)
+
+    clock = {"now": T0}
+    monkeypatch.setattr(cli, "datetime", _scripted_clock(clock))
+    for new_hash, archived_at, note in (
+        (V1, "2026-06-18T00:00:00+00:00", "Adds a worked attention example."),
+        (V2, "2026-06-19T00:00:00+00:00", "Adds the multi-head derivation."),
+    ):
+        clock["now"] = archived_at
+        incoming = tmp_path / f"{new_hash.split(':')[1]}.jsonl"
+        incoming.write_text(
+            dump_items_export([_divergent_recapture(held0, new_hash, note)]),
+            encoding="utf-8",
+        )
+        assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+        assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert _archive_priors(a.db_path) == [ORIG_HASH, V1]
+
+    # 2. The EARLIER FULL backup's recovery store (taken BEFORE the prune): the whole
+    #    archive so far. This is the archive B will rebuild from — it still holds the
+    #    original@06-18 that the prune will later remove from A. (B re-snapshots the
+    #    holdings with the head, so it restores the *latest* `export items`, step 5a.)
+    assert main(["export", "archive"]) == 0
+    full_path = tmp_path / "archive-full.jsonl"
+    full_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert [r["prior_hash"] for r in _read_jsonl_lines(full_path.read_text())] == [
+        ORIG_HASH,
+        V1,
+    ]
+
+    # 3. Adopt MORE after T0: v3@06-20 — genuine new content for the increment to
+    #    carry. The archive grows to [original@06-18, v1@06-19, v2@06-20].
+    clock["now"] = "2026-06-20T00:00:00+00:00"
+    incoming = tmp_path / "prune-v3.jsonl"
+    incoming.write_text(
+        dump_items_export([_divergent_recapture(held0, V3, "Adds the positional study.")]),
+        encoding="utf-8",
+    )
+    assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+    assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    assert _archive_priors(a.db_path) == [ORIG_HASH, V1, V2]
+
+    # 4. PRUNE on A: drop priors archived strictly before T0 — exactly the
+    #    original@06-18 (v1@06-19 sits ON the inclusive boundary and survives). This
+    #    is the retention *removal* the operator wants to propagate.
+    assert main(["archive", "prune", "--before", T0, "--apply"]) == 0
+    prune_report = json.loads(capsys.readouterr().out)
+    assert prune_report["dropped"] == 1 and prune_report["remaining"] == 2
+    assert [e["prior_hash"] for e in prune_report["archived"]] == [ORIG_HASH]
+    assert _archive_priors(a.db_path) == [V1, V2]  # the original is gone from A
+
+    # 5. Both of A's post-prune backups, taken while A is the active library:
+    #
+    #    (a) the INCREMENTAL backup — the latest holdings + only `export archive
+    #        --since T0`. The increment carries [v1@06-19, v2@06-20]; it never had
+    #        the pruned original (archived BEFORE T0 → outside the `--since` window).
+    assert main(["export", "items"]) == 0
+    items_inc = tmp_path / "items-inc.jsonl"
+    items_inc.write_text(capsys.readouterr().out, encoding="utf-8")  # head = v3
+    assert main(["export", "archive", "--since", T0]) == 0
+    inc_path = tmp_path / "archive-incremental.jsonl"
+    inc_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert [r["prior_hash"] for r in _read_jsonl_lines(inc_path.read_text())] == [V1, V2]
+
+    #    (b) a FRESH FULL backup — the latest holdings + the WHOLE post-prune
+    #        recovery store. It simply omits the pruned original (it's gone from A),
+    #        so it is the transport that propagates the retention (used for peer C).
+    assert main(["export", "items"]) == 0
+    items_post = tmp_path / "items-post-prune.jsonl"
+    items_post.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert main(["export", "archive"]) == 0
+    full2_path = tmp_path / "archive-full-post-prune.jsonl"
+    full2_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert [r["prior_hash"] for r in _read_jsonl_lines(full2_path.read_text())] == [V1, V2]
+
+    # 6. Rebuild peer B from the EARLIER FULL backup + the increment. The full
+    #    restores [original, v1]; the increment adds v2 and dedups v1 — B's recovery
+    #    store reconstructs THREE priors, INCLUDING the original A pruned.
+    b = _rebuild_peer("machine-b", items_inc, full_path, inc_path)
+    assert get_item(b.db_path, original.id).content_hash == V3  # head matches A
+    assert _custody()["score"] == 100  # the extra recovery prior is custody-harmless
+    assert _archive_priors(b.db_path) == [ORIG_HASH, V1, V2]
+
+    # THE BOUNDARY: A pruned the original, but B (earlier full + increment) STILL
+    #    holds it — the increment is additive-only; the prune did NOT travel. A and
+    #    B's recovery stores genuinely DIVERGE on the pruned prior.
+    assert ORIG_HASH not in _archive_priors(a.db_path)
+    assert ORIG_HASH in _archive_priors(b.db_path)
+    assert _archive_priors(a.db_path) != _archive_priors(b.db_path)
+
+    # 7. THE REMEDY: retention propagates only through a FRESH FULL backup. Peer C,
+    #    rebuilt from the post-prune full backup (step 5b — which omits the original),
+    #    matches A's recovery store exactly: the prune travelled.
+    c = _rebuild_peer("machine-c", items_post, full2_path)
+    assert get_item(c.db_path, original.id).content_hash == V3  # head still matches A
+    assert _custody()["score"] == 100
+    assert _archive_priors(c.db_path) == _archive_priors(a.db_path) == [V1, V2]
+    assert ORIG_HASH not in _archive_priors(c.db_path)  # the prune travelled
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
