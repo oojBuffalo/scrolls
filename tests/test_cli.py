@@ -6480,6 +6480,144 @@ def test_incremental_export_archive_re_imports_idempotently_over_the_full_backup
     assert family_b == read_family(tmp_path / "library-c")
 
 
+# --- export archive --since is byte-stable across the recovery-store round-trip:
+# a windowed backup re-exported from an `import archive`-rebuilt library reproduces
+# the same stream byte-for-byte, even though the rebuild renumbers local ids (H305)
+
+
+def _seed_interleaved_archive_cli(x_id="web:demo", y_id="arxiv:sib"):
+    """Seed two items whose priors are archived in an order that *differs* from the
+    content-determined `(archived_at, item_id, prior_hash)` export order, so an
+    `import archive` rebuild genuinely renumbers the local autoincrement `id`.
+
+    Adoption order (the per-library `id` order): X@06-23, Y@06-20, X@06-24, Y@06-21.
+    Content-determined export order: Y@06-20, Y@06-21, X@06-23, X@06-24. The two
+    differ, so windowing on `id` and windowing on `archived_at` pick *different*
+    subsets — and a rebuild that imports in content order assigns local ids that no
+    longer match A's (`arxiv:sib`'s 06-21 prior is the last-adopted, highest id in
+    A but an early row in B). Each item's own chain stays monotonic in `archived_at`
+    so `latest_archived` keeps its newest-prior meaning. Returns the db_path."""
+    main(["init"])
+    db = get_paths().db_path
+
+    def _hold(item_id):
+        held = ScrollItem(
+            id=item_id, source=item_id.split(":")[0], url=f"https://{item_id}.example",
+            saved_at="2026-06-11T00:00:00+00:00", title=f"Held {item_id}",
+            raw_text=f"<raw>The original database capture for {item_id}.</raw>",
+            extracted_text=f"The original database capture for {item_id}.",
+            content_hash=f"sha256:{item_id}:v0",
+            markdown_path=f"scrolls/{item_id}.md", stage="rendered",
+        )
+        insert_item(db, held)
+        return held
+
+    held = {x_id: _hold(x_id), y_id: _hold(y_id)}
+    # interleave adoptions so id-order (X,Y,X,Y) ≠ content-order (Y,Y,X,X)
+    for item_id, n, at in (
+        (x_id, 1, "2026-06-23T00:00:00+00:00"),
+        (y_id, 1, "2026-06-20T00:00:00+00:00"),
+        (x_id, 2, "2026-06-24T00:00:00+00:00"),
+        (y_id, 2, "2026-06-21T00:00:00+00:00"),
+    ):
+        incoming = dataclasses.replace(
+            held[item_id],
+            raw_text=f"<raw>A v{n} database capture for {item_id}.</raw>",
+            extracted_text=f"A v{n} database capture for {item_id}.",
+            content_hash=f"sha256:{item_id}:v{n}",
+        )
+        adopt_incoming(db, incoming, archived_at=at)
+        held[item_id] = incoming
+    return db
+
+
+def _archive_id_order(db):
+    """The (item_id, archived_at) of each prior in local `id` order — the per-library
+    insertion order, which `export archive` deliberately does *not* key on."""
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    try:
+        return [
+            (row[0], row[1])
+            for row in conn.execute(
+                "SELECT item_id, archived_at FROM item_archive ORDER BY id"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def test_export_archive_since_is_byte_stable_across_the_recovery_round_trip(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """`export archive --since <mid>` reproduces byte-for-byte from an
+    `import archive`-rebuilt library — the incremental backup is reproducible, not
+    just the full one (H305).
+
+    H280 pins the *whole* `export archive` stream byte-identical across a rebuild:
+    the content-determined `(archived_at, item_id, prior_hash)` ordering survives
+    the local-`id` reshuffle `import archive` causes. The untested cell is the
+    *windowed* (`--since`) stream — the window edge selects a subset, and a naive
+    impl that windowed on the per-library `id` rather than `archived_at` would pick
+    a *different* subset once the rebuild renumbered the rows. Pin it: seed two
+    items whose priors are archived in an order that *differs* from the content
+    order (so the rebuild genuinely renumbers), `export archive --since <mid>` from
+    A, rebuild a fresh B via `import items` + `import archive`, then re-window B and
+    assert the two windowed streams are byte-identical."""
+    boundary = "2026-06-21T00:00:00+00:00"
+    db_a = _seed_interleaved_archive_cli()
+    assert len(archived_records(db_a)) == 4  # four priors across the two items
+
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # the windowed (incremental) backup from A and the full one for the rebuild
+    assert main(["export", "archive", "--since", boundary]) == 0
+    window_a = capsys.readouterr().out
+    assert main(["export", "archive"]) == 0
+    full_a = capsys.readouterr().out
+    full_path = tmp_path / "archive-full.jsonl"
+    full_path.write_text(full_a, encoding="utf-8")
+
+    # non-vacuous: the window drops the one pre-boundary prior (arxiv:sib@06-20),
+    # keeps the other three, and carries multiple rows so line order matters
+    assert len(window_a.splitlines()) == 3
+    assert len(full_a.splitlines()) == 4
+    assert set(window_a.splitlines()).issubset(set(full_a.splitlines()))
+    excluded = json.loads(
+        next(ln for ln in full_a.splitlines() if ln not in window_a.splitlines())
+    )
+    assert (excluded["item_id"], excluded["archived_at"]) == (
+        "arxiv:sib",
+        "2026-06-20T00:00:00+00:00",
+    )
+
+    # rebuild a fresh B from the whole-library backup (held rows + every prior); the
+    # archive imports in content order, renumbering the local ids relative to A
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(full_path)]) == 0
+    capsys.readouterr()
+
+    # the reshuffle is real, not assumed: the same priors sit in a *different* local
+    # `id` order on B than on A (so a `--since` that keyed on `id` would diverge here)
+    assert _archive_id_order(db_a) != _archive_id_order(db_b)
+    assert len(archived_records(db_b)) == 4
+
+    # yet the windowed re-export from B is byte-identical to A's — the window selects
+    # on archived_at, not the reshuffled local id, so the incremental backup is
+    # reproducible across the round trip, not just the full one (H280, windowed)
+    assert main(["export", "archive", "--since", boundary]) == 0
+    window_b = capsys.readouterr().out
+    assert window_b == window_a
+
+
 # --- the --since family shares one boundary-normalization contract: `history
 # --since` ≡ `export events --since` ≡ `export archive --since` pick *coherent*
 # windows from the one `parse_since` validator (inclusive >=) (H304) ----------
