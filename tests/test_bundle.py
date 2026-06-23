@@ -2625,6 +2625,112 @@ def test_import_bundle_dry_run_predicts_the_archive_restore(
     assert live["archive"] == preview["archive"]
 
 
+def _seed_archived_chain(db, item_id="wikipedia:en:SQLite", *, query_token="database"):
+    """Hold an item, then adopt a *chain* of divergent captures at controlled
+    `archived_at` stamps — a multi-supersession item whose archive holds several
+    recoverable priors, not just one (the H280 single-prior helper's deeper cousin).
+
+    The held copy ends as v3; the archive ends holding [v0@06-20, v1@06-21, v2@06-22]
+    (newest-first v2). Strictly-increasing `archived_at` is deliberate: the export
+    orders by `(archived_at, …)` and the rebuilt library inserts in that order, so
+    A's adoption order and B's import order both yield the same `id DESC` newest-first
+    history — `archive show --all` reads identically on either side. Every capture
+    keeps `query_token` in its text so the whole item rides a query of that token's
+    bundle scope. Returns the archived priors oldest-first ([v0, v1, v2])."""
+    held = make_item(item_id, "SQLite", f"The original {query_token} capture.",
+                     content_hash="sha256:v0")
+    insert_item(db, held)
+    priors = ["sha256:v0"]
+    for n, at in ((1, "2026-06-20T00:00:00+00:00"),
+                  (2, "2026-06-21T00:00:00+00:00"),
+                  (3, "2026-06-22T00:00:00+00:00")):
+        incoming = dataclasses.replace(
+            held,
+            extracted_text=f"A v{n} {query_token} capture.",
+            raw_text=f"<raw>A v{n} {query_token} capture.</raw>",
+            content_hash=f"sha256:v{n}",
+        )
+        adopt_incoming(db, incoming, archived_at=at)
+        held = incoming
+        if n < 3:
+            priors.append(f"sha256:v{n}")
+    return priors  # archived priors oldest-first: [v0, v1, v2]; held = v3
+
+
+def test_archive_recovery_read_family_survives_the_with_archive_round_trip(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    """The whole archive-recovery *read* family reads identically on a library rebuilt
+    from a `export bundle --with-archive` (H291).
+
+    H280 makes the prior-content archive travel in the portable bundle; H285/H286/H288
+    read and recover over it. The H280 round-trip pinned only that `archive show`'s
+    *latest head* recovers post-rebuild — the untested integration tie is that the whole
+    *family* behaves identically: the full history (`archive show --all`), the
+    decide-before-you-restore delta (`archive diff`, held↔prior hashes / fidelities /
+    `changed_fields` / `would_restore`), and the predicted restore (`archive restore
+    --dry-run`). If they all agree field-for-field across the round-trip boundary, the
+    bundle carries enough for the *entire* recovery surface, not just the newest prior.
+
+    Adopt a multi-supersession chain in source A, round-trip a `--with-archive` bundle
+    into a fresh source B, then assert every read agrees across A and B over all three
+    selectors (`--hash`, `--at`, default-latest)."""
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_archived_chain(db_a)  # archive [v0, v1, v2]; held = v3
+    item_id = "wikipedia:en:SQLite"
+    assert get_item(db_a, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db_a, item_id)) == 3  # a genuine multi-supersession chain
+
+    # the selectors the family reads over: the oldest prior by hash, a point-in-time
+    # boundary mid-chain (picks v1@06-21, the newest at/before it), and default-latest
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family():
+        """Run the whole recovery read-family — non-mutating (reads + a dry-run), so
+        it is safe to run identically on A and on B."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_a = read_family()
+    # sanity: the family read something non-trivial in A — the full 3-prior chain and a
+    # real would-change delta (a vacuous all-empty read would pass the A==B tie falsely)
+    assert len(family_a["show_all"].splitlines()) == 3
+    assert family_a["diff:--hash sha256:v0"]["would_restore"] is True
+    assert family_a["restore:--at 2026-06-21T12:00:00+00:00"]["prior_hash"] == "sha256:v1"
+
+    # round-trip a --with-archive bundle into a fresh library B
+    capsys.readouterr()
+    assert main(["export", "bundle", "database", "--with-archive"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    capsys.readouterr()
+
+    # the rebuilt library holds the same head and the same chain depth before reading
+    assert get_item(db_b, item_id).content_hash == "sha256:v3"
+    assert len(list_archived(db_b, item_id)) == 3
+
+    # the whole recovery read-family is byte/field-identical across the round trip
+    assert read_family() == family_a
+
+
 def test_html_bundle_carries_the_archive_block_only_with_the_flag(scrolls_home):
     # the HTML form embeds the archive block under `--with-archive` for parity with
     # the Markdown form (export-only — re-import via the Markdown bundle); omitted by
