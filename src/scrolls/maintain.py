@@ -306,8 +306,10 @@ def conflicts_headline(
     return f"_Conflicts: {count} ({clause})._"
 
 
-def archive_integrity_headline(archive: dict[str, Any]) -> str | None:
-    """The readable archive-integrity ``_Archive:_`` line (roadmap H298).
+def archive_integrity_headline(
+    archive: dict[str, Any], change: int | None = None, *, span: str = "since last run"
+) -> str | None:
+    """The readable archive-integrity ``_Archive:_`` line (roadmap H298/H299).
 
     The readable surfacing of `doctor`'s `custody.archive` integrity check (H293):
     every archived prior's advertised ``prior_hash`` — the fingerprint `archive
@@ -333,27 +335,51 @@ def archive_integrity_headline(archive: dict[str, Any]) -> str | None:
     block and the `status` `archive_mismatched` scalar (H298) carry, so the three
     surfaces converge by construction.
 
-    **Omitted entirely** (returns ``None``, never a fabricated ``_Archive: 0 …_``)
-    when there is nothing to flag — a clean archive (``mismatched == 0``) *or* a
-    skipped audit (``status != "ok"``: a `--source` `maintain` pass, which leaves the
-    archive block at its `status: "skipped"` default since the whole-library-only
-    `_check_archive_integrity` never ran, or a pre-H293/uninitialized report). This
-    follows the H277 `_Conflicts:_`/`_Attention:_` omit-when-clean briefing posture,
-    not the always-rendered `conflicts_headline`: a tampered backup is the exception
-    worth a line, a clean store is the silent norm. The `maintain` report carries the
-    key with this ``None`` when clean (the `attention`-precedent stable shape).
+    **The cross-run movement clause (H299).** `change` is the signed first→last
+    movement in the mismatch count — the delta's ``archive_mismatched.change`` for
+    the report, the trend's ``archive_mismatched_change`` for the window: ``▲`` a
+    **rise** (new corruption landed — a bad `import archive` / a hand-edited
+    `--with-archive` bundle, worse), ``▼`` a **fall** (a prior was re-imported clean
+    or the backup rebuilt — better), and a `0` change the explicit ``no change`` (the
+    corruption persists, unrepaired). `span` names what it is measured against —
+    ``since last run`` for the report's delta, ``over N runs`` for the trend's
+    window. A ``change`` of ``None`` — a first run, a scoped non-persisting pass, or a
+    <2-run trend — drops the clause, the bare H298 point-in-time line.
 
-    Unlike `conflicts_headline`/`at_risk_headline`, this carries **no cross-run
-    movement clause** — that (the H283/H299 ``▲``/``▼`` trend on the archive axis)
-    rides the snapshot `archive_mismatched` scalar and ships in H299; H298 is the
-    point-in-time readable count.
+    **Omitted entirely** (returns ``None``, never a fabricated ``_Archive: 0 …_``)
+    when there is nothing to flag — a *steady-clean* store (``mismatched == 0`` with
+    no fall to report) *or* a skipped audit (``status != "ok"``: a `--source`
+    `maintain` pass, which leaves the archive block at its `status: "skipped"` default
+    since the whole-library-only `_check_archive_integrity` never ran, or a
+    pre-H293/uninitialized report — the skip dominates any movement, since a skipped
+    audit makes no claim). This keeps the H277 `_Conflicts:_`/`_Attention:_`
+    omit-when-clean briefing posture rather than the always-rendered
+    `conflicts_headline`: a tampered backup is the exception worth a line, a clean
+    store is the silent norm. **The one exception (H299): a *repaired* backup** — the
+    count just fell *to* zero (``mismatched == 0`` with ``change < 0``) — still
+    renders, because a fix is the direction worth surfacing, not silently swallowing
+    (the roadmap's "a repaired backup"); a steady-zero store stays omitted. The
+    `maintain` report and the `--trend` envelope carry the key with this ``None`` when
+    omitted (the `attention`-precedent stable shape).
     """
     if archive.get("status") != "ok":
         return None
     mismatched = archive.get("mismatched", 0)
-    if mismatched <= 0:
+    # The omit-when-clean briefing posture (H298), trend-aware (H299): the steady-clean
+    # norm stays silent, but a *fall to zero* (a repaired backup) is the one clean state
+    # still worth a line — surface the fix, never a fabricated steady `_Archive: 0 …_`.
+    if mismatched <= 0 and not (change is not None and change < 0):
         return None
-    return f"_Archive: {mismatched} prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    base = f"_Archive: {mismatched} prior(s) fail integrity (prior_hash ≠ snapshot)"
+    if change is None:
+        return f"{base}._"
+    if change > 0:
+        clause = f"▲{change} {span}"
+    elif change < 0:
+        clause = f"▼{abs(change)} {span}"
+    else:
+        clause = f"no change {span}"
+    return f"{base} ({clause})._"
 
 
 def _finding_present(report: dict[str, Any], category: str) -> bool:
@@ -692,6 +718,13 @@ def compute_delta(
         # baseline lacking it (a pre-H279 snapshot) reads zero, never null — the run
         # happened, the conflict count was simply not yet tracked (ADR 0082).
         "conflicts": scalar("conflicts"),
+        # the archive-integrity mismatch count (H293/H298/H299): a scalar like
+        # `conflicts`, so the delta subtracts it — the archive-over-time leg H298
+        # deferred. A baseline lacking it (a pre-H298 snapshot) reads zero, never
+        # null — the run happened, the archive integrity was simply not yet tracked
+        # (ADR 0082). Reported, never a posture trigger (the archive is a recovery
+        # convenience, not the root of trust — H293; the held copy is untouched).
+        "archive_mismatched": scalar("archive_mismatched"),
     }
 
 
@@ -815,6 +848,10 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     # trend ends at the last run, like `score`'s `last`); an empty window reads 0.
     last_at_risk = runs[-1].get("snapshot", {}).get("at_risk", 0) if runs else 0
     last_conflicts = runs[-1].get("snapshot", {}).get("conflicts", 0) if runs else 0
+    # the current archive-integrity mismatch count (H299): a logged snapshot is always
+    # a whole-library unscoped pass (scoped passes don't persist), so its
+    # `archive_mismatched` is always a real whole-library count, status "ok".
+    last_archive = runs[-1].get("snapshot", {}).get("archive_mismatched", 0) if runs else 0
     if n < 2:
         return {
             "runs": n,
@@ -825,11 +862,17 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "stale_change": None,
             "at_risk_change": None,
             "conflicts_change": None,
+            "archive_mismatched_change": None,
             # a single point has no trajectory → the bare readable lines (no clause),
             # the same honest-absence the null `at_risk_change`/`conflicts_change`
-            # carry (H268/H283).
+            # carry (H268/H283). The archive line keeps its omit-when-clean posture —
+            # bare when corrupt, `None` when clean (synthesizing the always-"ok" block
+            # a logged snapshot implies, H299).
             "at_risk_headline": at_risk_headline(last_at_risk, None),
             "conflicts_headline": conflicts_headline(last_conflicts, None),
+            "archive_integrity_headline": archive_integrity_headline(
+                {"status": "ok", "mismatched": last_archive}, None
+            ),
             "posture": "insufficient-history",
         }
 
@@ -877,6 +920,18 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     # the integrity score nor the drift axis — the held copy is never overwritten).
     conflicts_change = _stale(last_snap, "conflicts") - _stale(first_snap, "conflicts")
 
+    # the archive-integrity movement (H293/H298/H299): the net first→last change in
+    # the count of archived priors whose advertised `prior_hash` no longer equals
+    # their snapshot body's `content_hash`. A scalar like `conflicts_change`,
+    # degrade-safe 0 for a pre-H298 endpoint; reported, never a posture trigger — the
+    # archive is a recovery convenience, not the root of trust (H293), so a corrupt
+    # prior moves neither the integrity score nor the drift axis (the held copy is
+    # untouched). Unlike conflicts (a benign expected divergence) it is a genuine
+    # defect, yet still kept out of posture for that same not-the-root-of-trust reason.
+    archive_mismatched_change = _stale(last_snap, "archive_mismatched") - _stale(
+        first_snap, "archive_mismatched"
+    )
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -897,6 +952,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "stale_change": stale_change,
         "at_risk_change": at_risk_change,
         "conflicts_change": conflicts_change,
+        "archive_mismatched_change": archive_mismatched_change,
         # the readable consolidation-loss trend line (roadmap H268): the last run's
         # at-risk count + the net movement across the window, the trend twin of the
         # report's `_At-risk works:_` line (and of the briefing `_At-risk work:_`
@@ -910,6 +966,18 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         # H279 deferred). The window span replaces the report's "since last run".
         "conflicts_headline": conflicts_headline(
             last_conflicts, conflicts_change, span=f"over {n} runs"
+        ),
+        # the readable archive-integrity trend line (roadmap H299): the last run's
+        # mismatch count + the net movement across the window, the trend twin of the
+        # report's `_Archive:_` line (the archive-over-time leg H298 deferred). The
+        # window span replaces the report's "since last run". Synthesizes the
+        # always-"ok" block a logged snapshot implies (every persisted run audited
+        # the whole archive); keeps the omit-when-clean posture, surfacing a fall to
+        # zero as a repaired backup.
+        "archive_integrity_headline": archive_integrity_headline(
+            {"status": "ok", "mismatched": last_archive},
+            archive_mismatched_change,
+            span=f"over {n} runs",
         ),
         "posture": posture,
     }
@@ -1119,18 +1187,22 @@ def assemble_report(
             current["conflicts"],
             None if delta is None else delta["conflicts"]["change"],
         ),
-        # the readable archive-integrity line (roadmap H298): the count of archived
-        # priors whose advertised `prior_hash` diverges from their snapshot body
-        # (`doctor`'s `custody.archive`, H293), surfaced for the scheduled pass an
-        # operator skims — `maintain` was previously blind to this axis. Rendered
-        # from the live audit's archive block (not the distilled snapshot, which keeps
-        # only the `archive_mismatched` scalar `status` reads), so it converges with
-        # `doctor`'s `custody.archive.mismatched` by construction. `None` (the
-        # `attention` stable-shape precedent) on a clean store or a `--source` pass
-        # (the whole-library-only check leaves the block `status: "skipped"`) — never
-        # a fabricated `_Archive: 0 …_` line.
+        # the readable archive-integrity line (roadmap H298/H299): the count of
+        # archived priors whose advertised `prior_hash` diverges from their snapshot
+        # body (`doctor`'s `custody.archive`, H293), plus its signed movement since the
+        # last run (H299) — surfaced for the scheduled pass an operator skims, which
+        # was previously blind to this axis. The *count* is rendered from the live
+        # audit's archive block (not the distilled snapshot, which keeps only the
+        # `archive_mismatched` scalar `status` reads), so it converges with `doctor`'s
+        # `custody.archive.mismatched` by construction (only the clause is added); the
+        # *change* is the delta's `archive_mismatched.change`. A scoped non-persisting
+        # pass records no baseline (`delta` is None) → the bare H298 line; a `--source`
+        # pass also leaves the block `status: "skipped"` → `None` regardless (the
+        # `attention` stable-shape precedent). Never a fabricated steady `_Archive: 0
+        # …_`, but a fall to zero (a repaired backup) is surfaced (H299).
         "archive_integrity_headline": archive_integrity_headline(
-            report["custody"].get("archive", {})
+            report["custody"].get("archive", {}),
+            None if delta is None else delta["archive_mismatched"]["change"],
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

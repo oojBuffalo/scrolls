@@ -657,7 +657,7 @@ enrichment/summary axis carrying no stale debt
 
 Finally, the **trend layer** is pinned to the per-run history the same way
 (roadmap H143). `maintain --trend` reports the net first→last movement on
-`drift_change`/`coverage_change`/`stale_change`/`at_risk_change`/`conflicts_change`
+`drift_change`/`coverage_change`/`stale_change`/`at_risk_change`/`conflicts_change`/`archive_mismatched_change`
 (and the scalar `score.change`) by reading only the window's *endpoints*
 (`compute_trend`), while
 `maintain --history` shows the per-run before/after/change `compute_delta` records
@@ -671,11 +671,17 @@ trend sees "2 → 4 works at risk over the last 5 runs" without re-auditing each
 import-conflict** count (`doctor`'s `custody.conflicts.items`) — recorded as the
 scalar `conflicts` in each snapshot since H279 and *differenced* since H283 — the
 *peer-divergence-over-time* axis ("1 → 0 unresolved conflicts after a `reconcile`").
-Like `coverage_change`/`stale_change` both are **reported axes, never a `posture`
-trigger** — the at-risk count re-views the same `fidelity`/`drift` the score and
-`drift_change` already move the posture on (folding it in would double-count the
-loss), and the conflict count moves neither the score nor the drift axis (the held
-copy is never overwritten — raw is sacred, custody §2.4). The
+`archive_mismatched_change` (roadmap H293/H298/H299) is the matching axis for the
+**archive-integrity mismatch** count (`doctor`'s `custody.archive.mismatched`) —
+recorded as the scalar `archive_mismatched` in each snapshot since H298 and *differenced*
+since H299 — the *recovery-store-corruption-over-time* axis ("0 → 2 corrupt priors after
+a bad bundle import, then → 0 once repaired"). Like `coverage_change`/`stale_change` all
+three are **reported axes, never a `posture` trigger** — the at-risk count re-views the
+same `fidelity`/`drift` the score and `drift_change` already move the posture on (folding
+it in would double-count the loss), the conflict count moves neither the score nor the
+drift axis (the held copy is never overwritten — raw is sacred, custody §2.4), and the
+archive mismatch is a corrupt *recovery convenience*, not the root of trust (the held
+copy is intact — H293), so it too stays out of the integrity-first posture. The
 invariant pins that the trend's net change equals the **telescoped sum** of those
 per-run deltas across the window — on every axis — so the trajectory a worker reads
 can never silently disagree with the step-by-step history it also reads. It asserts the identity over a non-monotone multi-run window (drift up then
@@ -1828,18 +1834,28 @@ list`/`archive restore --hash` key on — no longer equals their model-complete
 corrupt/laundered recovery row a bad `import archive` or hand-edited `--with-archive`
 bundle could land, invisible until restore). H293 put that check on the JSON read
 surfaces only; this is the readable line for the scheduled pass an operator skims, the
-`conflicts_headline` sibling on the archive axis. **Omitted entirely** (the field is
-`null`, never a fabricated `_Archive: 0 …_`) when there is nothing to flag — a clean
-store (`mismatched == 0`) *or* a skipped audit: the archive is a single **whole-library**
-recovery store, so a `--source S` pass leaves it `status: "skipped"` (the
-whole-library-only check never runs) and the line is dropped, while a `--fidelity` pass
-(whose audit stays whole-library) still computes it. Unlike the always-rendered
-at-risk/conflict lines it follows the omit-when-clean briefing posture (a tampered
-backup is the exception worth a line). It carries **no `▲`/`▼` movement clause yet** —
-the point-in-time count only; the cross-run trend on this axis is the H299 follow-up.
-Converges with the `custody.archive_mismatched` snapshot scalar (what `scrolls status`
-reads) and `doctor`'s `custody.archive.mismatched` by construction
+`conflicts_headline` sibling on the archive axis. It carries the signed cross-run
+movement (roadmap H299): `_Archive: N prior(s) fail integrity (prior_hash ≠ snapshot)
+(▲M since last run)._`, where `▲M` is a **rise** (new corruption landed — a bad `import
+archive` / hand-edited bundle, worse), `▼M` a **fall** (a prior re-imported clean or the
+backup rebuilt — better), and a `0` change reads `(no change since last run)` (the
+corruption persists, unrepaired). The *count* is the live audit's `custody.archive.mismatched`;
+the *change* is the delta's `archive_mismatched.change`, so a first run / scoped
+non-persisting pass drops the clause (the bare H298 line). **Omitted entirely** (the
+field is `null`, never a fabricated `_Archive: 0 …_`) when there is nothing to flag — a
+**steady-clean** store (`mismatched == 0` with no fall to report) *or* a skipped audit:
+the archive is a single **whole-library** recovery store, so a `--source S` pass leaves
+it `status: "skipped"` (the whole-library-only check never runs, so the line is dropped
+regardless of any baseline), while a `--fidelity` pass (whose audit stays whole-library)
+still computes it. Unlike the always-rendered at-risk/conflict lines it follows the
+omit-when-clean briefing posture (a tampered backup is the exception worth a line) —
+**with one H299 exception: a *repaired* backup** (the count just fell *to* zero) still
+renders the `▼` line, since a fix is the direction worth surfacing, not silently
+swallowing; a steady-zero store stays omitted. The count converges with the
+`custody.archive_mismatched` snapshot scalar (what `scrolls status` reads) and `doctor`'s
+`custody.archive.mismatched` by construction — only the clause is added
 (`test_maintain_report_carries_the_archive_integrity_headline`,
+`test_maintain_report_embeds_the_archive_integrity_trend_clause`,
 `test_maintain_omits_the_archive_headline_on_a_clean_library`,
 `test_maintain_source_pass_omits_the_archive_headline`).
 
@@ -1877,8 +1893,9 @@ ruleset is still held, so rising coverage is not "improving" integrity, a librar
 overdue for a re-check is not "regressing", and growing stale debt does not move
 the posture. `posture` stays integrity-only. A window of fewer than two runs is
 not a trajectory, so it carries null deltas (`score`, `drift_change`,
-`coverage_change`, `stale_change`, `at_risk_change`, and `conflicts_change` all null)
-and `posture: insufficient-history` (honest absence). `--trend` only shapes a
+`coverage_change`, `stale_change`, `at_risk_change`, `conflicts_change`, and
+`archive_mismatched_change` all null) and `posture: insufficient-history` (honest
+absence). `--trend` only shapes a
 `--history` read; passed alone it is a usage error (exit 2), never a
 silently-ignored flag that runs a full pass.
 
@@ -1903,6 +1920,20 @@ unresolved conflicts over the last 3 runs") without parsing `conflicts_change`. 
 the same bare `_Conflicts: N._` under a `<2`-run window
 (`test_trend_carries_the_readable_conflicts_line_over_the_window`,
 `test_trend_conflicts_line_is_bare_under_two_runs`).
+
+The trend also carries the matching **`archive_integrity_headline`** — the trend twin of
+the report's readable archive line (roadmap H299): `_Archive: N prior(s) fail integrity
+(prior_hash ≠ snapshot) (▲M over K runs)._`, the window's last archive-mismatch count
+plus the net `archive_mismatched_change` movement across its `K` runs, so a human reads
+the corruption trajectory ("1 → 2 corrupt priors over the last 3 runs") without parsing
+`archive_mismatched_change`. Same `▲`/`▼`/`no change` convention and `over K runs` span
+as the conflict trend line. Unlike the always-rendered at-risk/conflict trend lines it
+keeps the report's omit-when-clean posture: the field is `null` for a steady-clean
+window, the bare `_Archive: N …_` for a corrupt `<2`-run window (`None` if that one run
+is clean), but a **fall to zero** across the window (a repaired backup) still renders the
+`▼` line (`test_trend_carries_the_readable_archive_line_over_the_window`,
+`test_trend_archive_line_shows_a_repaired_backup_falling_to_zero`,
+`test_trend_archive_line_is_omitted_when_steady_clean`).
 
 This is **report-only and idempotent** (custody-vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or

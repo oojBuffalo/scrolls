@@ -379,6 +379,75 @@ def test_archive_integrity_headline_tolerates_an_absent_block():
     assert archive_integrity_headline({}) is None
 
 
+# --- archive_integrity_headline cross-run trend clause (roadmap H299) -------
+#
+# The H283 conflicts-trend analogue on the archive axis: the same readable line now
+# embeds the signed cross-run movement (`▲`/`▼`), so successive maintenance passes
+# show *new* corruption / a *repaired* backup, not just the current count. Unlike
+# `conflicts_headline` (always rendered), the archive line keeps H298's omit-when-
+# clean briefing posture for the *steady-clean* norm — but a repair (count fell to
+# 0) is the one clean state still worth a line, the direction the roadmap wants
+# visible.
+
+
+def test_archive_integrity_headline_renders_a_rise_with_an_up_arrow():
+    # new corruption landed since last run (a bad import/edited bundle) — ▲ worse
+    assert archive_integrity_headline(_archive_block(3), 2) == (
+        "_Archive: 3 prior(s) fail integrity (prior_hash ≠ snapshot) (▲2 since last run)._"
+    )
+
+
+def test_archive_integrity_headline_renders_no_movement_when_corruption_persists():
+    # a still-corrupt store that did not move reads the explicit "no change" — the
+    # alarm stays up, the operator sees it is unrepaired (a baseline exists)
+    assert archive_integrity_headline(_archive_block(2), 0) == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot) "
+        "(no change since last run)._"
+    )
+
+
+def test_archive_integrity_headline_renders_a_repaired_backup_falling_to_zero():
+    # the roadmap's "repaired backup": the count fell to 0 this run — the one clean
+    # state still worth a line, the ▼ "better" direction, NOT omitted like the
+    # steady-clean norm (so a fix is visible, not silently swallowed)
+    assert archive_integrity_headline(_archive_block(0), -2) == (
+        "_Archive: 0 prior(s) fail integrity (prior_hash ≠ snapshot) (▼2 since last run)._"
+    )
+
+
+def test_archive_integrity_headline_is_omitted_when_steady_clean_with_a_baseline():
+    # clean and stayed clean (count 0, no movement) → still omitted: a baseline that
+    # never carried a mismatch is the silent norm, never a fabricated `_Archive: 0
+    # (no change)…_` line (H298's omit-when-clean preserved across the trend)
+    assert archive_integrity_headline(_archive_block(0), 0) is None
+
+
+def test_archive_integrity_headline_on_no_baseline_is_the_point_in_time_line():
+    # a first run / scoped non-persisting pass has no baseline → the bare H298 line
+    # (no movement clause) when corrupt, and still omitted when clean
+    assert archive_integrity_headline(_archive_block(2), None) == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    assert archive_integrity_headline(_archive_block(0), None) is None
+
+
+def test_archive_integrity_headline_skip_omits_even_with_movement():
+    # a skipped audit (a `--source` pass, status != "ok") makes NO claim, so even a
+    # non-null change cannot manufacture a line — the skip dominates the movement
+    assert archive_integrity_headline(_archive_block(0, status="skipped"), -2) is None
+    assert archive_integrity_headline(_archive_block(3, status="skipped"), 2) is None
+
+
+def test_archive_integrity_headline_span_is_parametrized_for_the_trend_twin():
+    # the trend twin names the window span ("over N runs") instead of "since last run"
+    assert archive_integrity_headline(_archive_block(4), 2, span="over 4 runs") == (
+        "_Archive: 4 prior(s) fail integrity (prior_hash ≠ snapshot) (▲2 over 4 runs)._"
+    )
+    assert archive_integrity_headline(_archive_block(0), -3, span="over 3 runs") == (
+        "_Archive: 0 prior(s) fail integrity (prior_hash ≠ snapshot) (▼3 over 3 runs)._"
+    )
+
+
 def test_delta_on_first_run_has_null_befores_and_changes():
     current = custody_snapshot(
         _doctor_report(100, {"full": 3, "partial": 0, "reference": 0}, {"unverified": 3})
@@ -542,6 +611,40 @@ def test_delta_tolerates_a_baseline_lacking_conflicts():
     assert delta["conflicts"] == {"before": 0, "after": 1, "change": 1}
 
 
+def test_delta_reports_archive_mismatched_change_against_a_baseline():
+    """H299: the archive-integrity mismatch count is a scalar the delta subtracts, so
+    a worker reads whether the recovery store gained/lost corrupt priors since last
+    run — the archive-over-time leg H298 deferred."""
+    previous = {
+        "recorded_at": "2026-06-20T09:00:00+00:00",
+        "score": 100, "tiers": {"full": 2}, "drift": {"checked": 0},
+        "archive_mismatched": 1,
+    }
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {}, archive_mismatched=3))
+    delta = compute_delta(previous, current)
+    # two more archived priors fail integrity since last run (a bad import/bundle)
+    assert delta["archive_mismatched"] == {"before": 1, "after": 3, "change": 2}
+
+
+def test_delta_archive_mismatched_on_first_run_is_null():
+    # no baseline → the archive before/change is null, never a fabricated zero
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {}, archive_mismatched=2))
+    delta = compute_delta(None, current)
+    assert delta["archive_mismatched"] == {"before": None, "after": 2, "change": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_archive_mismatched():
+    """A pre-H298 baseline (no `archive_mismatched` axis) reads as zero for that axis,
+    never null — the run happened, the archive integrity was simply not yet tracked
+    (ADR 0082), exactly as `conflicts`/`at_risk` degrade."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `archive_mismatched` key
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {"checked": 2},
+                                              archive_mismatched=1))
+    delta = compute_delta(previous, current)
+    assert delta["archive_mismatched"] == {"before": 0, "after": 1, "change": 1}
+
+
 def test_snapshot_round_trips_and_missing_reads_as_none(tmp_path):
     path = tmp_path / ".maintenance" / "last-run.json"
     assert load_snapshot(path) is None  # no file yet → first run
@@ -656,6 +759,7 @@ def _run(
     summaries_stale=0,
     at_risk=0,
     conflicts=0,
+    archive_mismatched=0,
 ):
     return {
         "recorded_at": recorded_at,
@@ -667,6 +771,7 @@ def _run(
             "summaries_stale": summaries_stale,
             "at_risk": at_risk,
             "conflicts": conflicts,
+            "archive_mismatched": archive_mismatched,
         },
         "delta": {},
     }
@@ -682,6 +787,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["stale_change"] is None  # nor an enrichment/summary debt direction
         assert trend["at_risk_change"] is None  # nor a consolidation-loss direction
         assert trend["conflicts_change"] is None  # nor a peer-divergence direction
+        assert trend["archive_mismatched_change"] is None  # nor an archive-integrity direction
         assert trend["runs"] == len(window)
 
 
@@ -952,6 +1058,102 @@ def test_trend_conflicts_line_is_bare_under_two_runs():
     assert one["conflicts_headline"] == "_Conflicts: 3._"
     empty = compute_trend([])
     assert empty["conflicts_headline"] == "_Conflicts: 0._"
+
+
+# --- the archive-integrity-over-time trend axis (roadmap H299) -------------
+
+
+def test_trend_archive_reads_zero_for_a_pre_h298_endpoint():
+    """A window endpoint recorded before the snapshot tracked `archive_mismatched` (a
+    pre-H298 schema) reads 0 for the missing axis, so the movement is still computed,
+    never a crash (the missing-axis-zero posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, archive_mismatched=2)])
+    assert trend["archive_mismatched_change"] == 2
+
+
+def test_trend_carries_the_readable_archive_line_over_the_window():
+    """H299: the trend summary distils the archive-integrity trajectory into one
+    readable line — the last run's count + the net movement across the window — so a
+    human reads the corruption trend without parsing `archive_mismatched_change`. The
+    span is the window ("over N runs"), the trend twin of the report's "since last
+    run". A steady score with a rising archive count is still `holding` — the archive
+    is a recovery convenience, not the root of trust (H293), so it never shifts the
+    integrity-first posture (the H283/H267 reported-not-posture discipline)."""
+    trend = compute_trend(
+        [_run("t1", 100, archive_mismatched=2), _run("t3", 100, archive_mismatched=4)]
+    )
+    assert trend["archive_mismatched_change"] == 2
+    assert trend["posture"] == "holding"
+    # last count 4, net +2 across the 2-run window
+    assert trend["archive_integrity_headline"] == (
+        "_Archive: 4 prior(s) fail integrity (prior_hash ≠ snapshot) (▲2 over 2 runs)._"
+    )
+
+
+def test_trend_archive_line_renders_a_fall_when_priors_are_repaired():
+    """A negative net movement reads ▼ — corrupt priors were re-imported clean / the
+    backup was rebuilt across the window (the line tracks `archive_mismatched_change`'s
+    sign)."""
+    trend = compute_trend(
+        [_run("t1", 100, archive_mismatched=3), _run("t2", 100, archive_mismatched=2),
+         _run("t3", 100, archive_mismatched=1)]
+    )
+    assert trend["archive_mismatched_change"] == -2
+    assert trend["archive_integrity_headline"] == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot) (▼2 over 3 runs)._"
+    )
+
+
+def test_trend_archive_line_shows_a_repaired_backup_falling_to_zero():
+    """The roadmap's "repaired backup": the corruption cleared entirely across the
+    window. Unlike the steady-clean norm (omitted), a fall *to* zero is the one clean
+    state still worth a line — the ▼ is the visible fix, not a silent omission."""
+    trend = compute_trend(
+        [_run("t1", 100, archive_mismatched=2), _run("t2", 100, archive_mismatched=0)]
+    )
+    assert trend["archive_mismatched_change"] == -2
+    assert trend["archive_integrity_headline"] == (
+        "_Archive: 0 prior(s) fail integrity (prior_hash ≠ snapshot) (▼2 over 2 runs)._"
+    )
+
+
+def test_trend_archive_line_reads_no_change_when_corruption_persists():
+    """A steady non-zero archive count over the window reads the explicit "no change"
+    clause (a baseline exists) — the alarm stays up, the operator sees it unrepaired."""
+    trend = compute_trend(
+        [_run("t1", 100, archive_mismatched=2), _run("t2", 100, archive_mismatched=2)]
+    )
+    assert trend["archive_mismatched_change"] == 0
+    assert trend["archive_integrity_headline"] == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot) "
+        "(no change over 2 runs)._"
+    )
+
+
+def test_trend_archive_line_is_omitted_when_steady_clean():
+    """A clean store that stayed clean across the window keeps H298's omit-when-clean
+    posture — the key is present with `None`, never a fabricated `_Archive: 0 …_`."""
+    trend = compute_trend(
+        [_run("t1", 100, archive_mismatched=0), _run("t2", 100, archive_mismatched=0)]
+    )
+    assert trend["archive_mismatched_change"] == 0
+    assert trend["archive_integrity_headline"] is None
+
+
+def test_trend_archive_line_is_bare_or_omitted_under_two_runs():
+    """A <2-run window has no trajectory: a corrupt last run carries the bare H298
+    line (no change clause, the null `archive_mismatched_change`), a clean one is
+    omitted (the omit-when-clean norm), and an empty window is omitted (the honest 0)."""
+    one = compute_trend([_run("t1", 100, archive_mismatched=3)])
+    assert one["archive_mismatched_change"] is None
+    assert one["archive_integrity_headline"] == (
+        "_Archive: 3 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    clean = compute_trend([_run("t1", 100, archive_mismatched=0)])
+    assert clean["archive_integrity_headline"] is None
+    empty = compute_trend([])
+    assert empty["archive_integrity_headline"] is None
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -3077,6 +3279,93 @@ def test_maintain_source_pass_omits_the_archive_headline(home, capsys):
         "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
     )
     assert fid["custody"]["archive_mismatched"] == 1
+
+
+# --- the archive-integrity cross-run trend on the maintain report (H299) -------
+#
+# H298 surfaced the point-in-time count; H299 embeds the signed cross-run movement
+# (the H283 conflicts-trend analogue), so successive whole-library passes show *new*
+# corruption (▲) / a *repaired* backup (▼), not just the current count. The report's
+# clause reads the delta vs the last recorded snapshot; the `--trend` envelope reads
+# the window. A `--source` pass records no baseline, so its line stays the bare H298
+# omission (already covered above) — the trend rides the whole-library pass only.
+
+
+def test_maintain_report_embeds_the_archive_integrity_trend_clause(home, capsys):
+    """H299: two whole-library passes difference the archive-mismatch count — the
+    second pass's `_Archive:_` line carries the signed movement since the first
+    (▲ new corruption), and a third pass that repairs a prior reads the ▼ fall. The
+    count still converges with `doctor`/`status` (the H298 tie) — only the clause is
+    added."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    first_id = _archive_a_prior(home.db_path, url="https://example.com/one")
+    _tamper_prior_hash(home.db_path, first_id, "sha256:tampered")
+    capsys.readouterr()
+
+    # pass 1: no baseline → the bare point-in-time line (H298), the trend has nothing
+    # to difference against yet
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["archive_integrity_headline"] == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
+    )
+    assert first["delta"]["first_run"] is True
+
+    # a second prior is corrupted between passes (a bad import / hand-edited bundle)
+    second_id = _archive_a_prior(home.db_path, url="https://example.com/two")
+    _tamper_prior_hash(home.db_path, second_id, "sha256:tampered")
+    capsys.readouterr()
+
+    # pass 2: the baseline (1) is differenced → the ▲ rise clause, the scalar tracks 2
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["archive_integrity_headline"] == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot) (▲1 since last run)._"
+    )
+    assert second["custody"]["archive_mismatched"] == 2
+    assert second["delta"]["archive_mismatched"] == {"before": 1, "after": 2, "change": 1}
+    # the count still converges three ways — only the clause is new (the H298 tie holds)
+    assert run_doctor(home)["custody"]["archive"]["mismatched"] == 2
+
+    # the first prior is repaired (its advertised hash restored to the snapshot body)
+    _tamper_prior_hash(home.db_path, first_id, "sha256:held")
+    capsys.readouterr()
+
+    # pass 3: the baseline (2) is differenced → the ▼ fall clause, the repaired backup
+    assert main(["maintain", "--no-recheck"]) == 0
+    third = json.loads(capsys.readouterr().out)
+    assert third["archive_integrity_headline"] == (
+        "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot) (▼1 since last run)._"
+    )
+    assert third["custody"]["archive_mismatched"] == 1
+    assert third["delta"]["archive_mismatched"] == {"before": 2, "after": 1, "change": -1}
+
+
+def test_maintain_trend_carries_the_archive_integrity_line(home, capsys):
+    """The `--history --trend` envelope distils the archive-integrity trajectory into
+    one readable line over the window, the trend twin of the report's per-run clause —
+    so a worker reading the trend sees the corruption trajectory, not just one diff."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    first_id = _archive_a_prior(home.db_path, url="https://example.com/one")
+    _tamper_prior_hash(home.db_path, first_id, "sha256:tampered")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # run 1: mismatched 1
+    capsys.readouterr()
+
+    second_id = _archive_a_prior(home.db_path, url="https://example.com/two")
+    _tamper_prior_hash(home.db_path, second_id, "sha256:tampered")
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0  # run 2: mismatched 2
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    trend = json.loads(capsys.readouterr().out)["trend"]
+    assert trend["archive_mismatched_change"] == 1  # 1 → 2 across the window
+    assert trend["archive_integrity_headline"] == (
+        "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot) (▲1 over 2 runs)._"
+    )
 
 
 def test_maintain_history_does_not_carry_at_risk_works(home, capsys):

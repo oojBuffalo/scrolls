@@ -312,12 +312,31 @@ operator act (custody §2.4), not an ambient MCP capability.
   `_Archive: 0 …_`) on a clean store *or* a skipped audit — the archive is whole-library,
   so a `--source` `maintain` pass leaves it `status: "skipped"` and the line drops (a
   `--fidelity` pass, whose audit stays whole-library, still computes it); it follows the
-  omit-when-clean briefing posture (H277), not the always-rendered at-risk/conflict lines;
-  and it carries **no `▲`/`▼` movement clause** — the point-in-time count only. The
-  cross-run trend on this axis (the H283 conflicts-trend analogue) is the **H299**
-  follow-up; the snapshot now records `archive_mismatched` so that delta has a baseline.
+  omit-when-clean briefing posture (H277), not the always-rendered at-risk/conflict lines.
   Pure fold, no schema change. Verified offline: `tests/test_maintain.py` (the headline
   on a corrupt prior, omitted on a clean/`--source`-skipped library, the snapshot scalar)
   and `tests/test_cli.py` (the `status` scalar + the three-way convergence).
+- **The archive-integrity alarm's cross-run trend.** **Shipped (roadmap H299):** H298 left
+  the alarm point-in-time only (no `▲`/`▼` movement), so successive maintenance passes
+  showed the current count but never *new* corruption or a *repaired* backup. H299 lifts the
+  H283 conflicts-trend machinery to the archive axis: `compute_delta` subtracts the
+  `archive_mismatched` scalar (`delta["archive_mismatched"]`, degrade-safe 0 for a pre-H298
+  baseline), `compute_trend` differences it (a new `archive_mismatched_change` axis, the
+  telescoping sibling of `conflicts_change`), and the shared `archive_integrity_headline`
+  now embeds the signed movement — `_Archive: N prior(s) fail integrity (prior_hash ≠
+  snapshot) (▲M since last run)._` on the report (the delta's change), `(▲M over K runs)`
+  on the `--trend` window. Decisive choice: it keeps H298's **omit-when-clean** posture for
+  the steady-clean norm (never a fabricated `_Archive: 0 (no change)…_`) **with one
+  exception** — a *repaired* backup, the count falling *to* zero (`mismatched == 0` with
+  `change < 0`), still renders the `▼` line, because a fix is the direction worth surfacing,
+  not silently swallowing (the roadmap's "a repaired backup"). Reported, **never a posture
+  trigger** — the archive is a recovery convenience, not the root of trust (H293; the held
+  copy is untouched), so a moving mismatch count shifts neither the integrity score nor the
+  drift posture (the H283/H267 reported-not-posture discipline). The count still converges
+  three ways (the H298 tie) — only the clause is added. Pure fold, no schema change.
+  Verified offline: `tests/test_maintain.py` (the headline rise/fall/no-change/repair +
+  omit-when-clean, the delta scalar, the trend axis + readable line, the report-path clause
+  across persisted passes, the `--trend` envelope) and `tests/test_custody_convergence.py`
+  (the telescoping identity extended to the archive axis; the MCP/CLI strip set).
 - **An MCP `archive diff` read twin** stays deferred with the MCP accept-incoming *write*
   twin — added when a workflow shows the read-only CLI surface insufficient.
