@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
+from datetime import datetime
 
 import pytest
 
@@ -48,6 +49,7 @@ from scrolls.items import (
     list_items,
     make_item_id,
 )
+from scrolls.items_export import dump_items_export
 from scrolls.maintain import (
     custody_snapshot,
     load_snapshot,
@@ -688,6 +690,170 @@ def test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflic
     final = json.loads(capsys.readouterr().out)["custody"]
     assert final["score"] == 100
     assert final["conflicts"]["items"] == 0
+
+
+# --- the restore-by-version leg (H287): roll back to a *specific* earlier
+#     version across multiple supersessions — the H284 analogue on the
+#     H285/H286 reads -----------------------------------------------------------
+
+ORIG_HASH = "sha256:06.03762"  # _held_topic()'s arxiv capture (content_hash = source_id[-8:])
+
+
+def _divergent_recapture(held: ScrollItem, content_hash: str, note: str) -> ScrollItem:
+    """A successive divergent re-capture of the same arxiv source — same id, a fresh
+    content hash, a fuller body — still full-fidelity (raw + extracted + hash +
+    provenance), so each adoption is a flip of *which* faithful copy we hold, never
+    a loss. Built from the *held DB row* so it carries the rendered `markdown_path`
+    (an adoption replaces every column, so a recapture lacking it would orphan the
+    scroll file — the `_seed_with_archived_priors` discipline). The chain v1→v2→v3
+    stands in for an operator adopting several peer captures over time before
+    realising a *specific earlier* one was right."""
+    return replace(
+        held,
+        content_hash=content_hash,
+        raw_text=f"<recapture {content_hash} of {held.url}>",
+        extracted_text=f"{held.extracted_text} {note}",
+    )
+
+
+def _scripted_clock(holder: dict):
+    """A `datetime` stand-in whose `now()` reads `holder['now']`, so the dogfood can
+    archive successive accept-incoming adoptions at *spaced* UTC moments — the
+    real-world 'adoptions made over several days' an operator later bisects with
+    `archive restore --at`. Controlling the archive clock is the same offline
+    stand-in discipline this module applies to its two live edges (capture, recheck):
+    the archive timestamp is the one seam restore-by-version's `--at` selector reads."""
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(holder["now"])
+
+    return _Clock
+
+
+def test_restore_by_version_rolls_back_to_a_specific_earlier_capture(
+    home, capsys, tmp_path, monkeypatch
+):
+    """*restore-by-version* (H287): the multi-supersession sibling of the adopt leg.
+
+    H284 adopts *one* peer capture and restores the latest prior; this exercises the
+    case the H285/H286 reads were built for — an operator adopts a *chain* of
+    divergent captures (v1→v2→v3) over several days, then realises a *specific
+    earlier* version was right and rolls back to it by `--hash` (an intermediate) and
+    by `--at` (the original, as held at the earliest point in time), not merely the
+    latest. The full history is inspected via `archive show <id> --all` (H285) before
+    each rollback, then `archive restore <id> --hash/--at` (H286) selects the version.
+
+    The three custody points the leg pins, the restore-by-version twins of the adopt
+    leg's "adoption never lowers the score":
+
+    - **the held `content_hash` flips to the *chosen* prior**, not the latest —
+      `--hash` lands the intermediate v1 (the latest prior was v2), `--at` lands the
+      original (the earliest archived prior);
+    - **the displaced copy is itself archived** — after each rollback `archive show`
+      recovers exactly the version we just left, so the rollback is reversible
+      (custody §2.4: nothing is destroyed, every version stays recoverable); and
+    - **`doctor`'s `custody.score` holds at 100 throughout** — restore-by-version
+      swaps one full-fidelity capture for another and the displaced one is archived,
+      so integrity is never lowered across the whole chain of adoptions + rollbacks.
+    """
+
+    def _custody() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]
+
+    # 1. HOLD the topic in full; the arxiv paper is the one we'll recapture in a chain.
+    lib = home("library")
+    items = _held_topic()
+    _build(items)
+    original = items[0]
+    assert original.source == "arxiv" and original.content_hash == ORIG_HASH
+    capsys.readouterr()  # drain the kb report
+    held0 = get_item(lib.db_path, original.id)  # the rendered row (carries markdown_path)
+    start = _custody()
+    assert start["score"] == 100 and start["tiers"]["full"] == 3
+
+    # 2. ADOPT a chain of three divergent captures over three days, each archiving the
+    #    prior. A scripted clock spaces the archive timestamps so `--at` can bisect
+    #    them deterministically (the offline stand-in this module applies to the live
+    #    edges, here on the adoption clock).
+    clock = {"now": "2026-06-19T00:00:00+00:00"}
+    monkeypatch.setattr(cli, "datetime", _scripted_clock(clock))
+    chain = [
+        ("sha256:peer-v1", "2026-06-19T00:00:00+00:00", "Adds a worked attention example."),
+        ("sha256:peer-v2", "2026-06-20T00:00:00+00:00", "Adds the multi-head derivation."),
+        ("sha256:peer-v3", "2026-06-21T00:00:00+00:00", "Adds the positional-encoding proof."),
+    ]
+    for new_hash, archived_at, note in chain:
+        clock["now"] = archived_at
+        recapture = _divergent_recapture(held0, new_hash, note)
+        incoming = tmp_path / f"{new_hash.split(':')[1]}.jsonl"
+        incoming.write_text(dump_items_export([recapture]), encoding="utf-8")
+        assert main(["import", "items", str(incoming), "--accept-incoming"]) == 0
+        assert json.loads(capsys.readouterr().out)["adopted"] == [original.id]
+    # held is the newest capture; the original + two intermediates are archived.
+    assert get_item(lib.db_path, original.id).content_hash == "sha256:peer-v3"
+
+    # 3. INSPECT the full recoverable history (H285): three priors, newest first.
+    assert main(["archive", "show", original.id, "--all"]) == 0
+    history = _read_jsonl_lines(capsys.readouterr().out)
+    assert [snap["content_hash"] for snap in history] == [
+        "sha256:peer-v2", "sha256:peer-v1", ORIG_HASH,
+    ]
+    # …and the recovery index agrees, with the spaced archive timestamps --at bisects.
+    assert main(["archive", "list", "--id", original.id]) == 0
+    index = json.loads(capsys.readouterr().out)
+    assert index["count"] == 3
+    assert [e["prior_hash"] for e in index["archived"]] == [
+        "sha256:peer-v2", "sha256:peer-v1", ORIG_HASH,
+    ]
+    assert [e["archived_at"] for e in index["archived"]] == [
+        "2026-06-21T00:00:00+00:00",
+        "2026-06-20T00:00:00+00:00",
+        "2026-06-19T00:00:00+00:00",
+    ]
+    # three adoptions, every copy full-fidelity → the score never moved.
+    assert _custody()["score"] == 100
+
+    # 4. ROLL BACK by --hash to a *specific intermediate* (v1, NOT the latest prior v2).
+    clock["now"] = "2026-06-22T00:00:00+00:00"
+    assert main(["archive", "restore", original.id, "--hash", "sha256:peer-v1"]) == 0
+    by_hash = json.loads(capsys.readouterr().out)
+    assert by_hash["selector"] == {"hash": "sha256:peer-v1"}
+    assert by_hash["restored"] is True and by_hash["outcome"] == "adopted"
+    assert by_hash["prior_hash"] == "sha256:peer-v1"   # the chosen version
+    assert by_hash["held_hash"] == "sha256:peer-v3"    # what it displaced
+    # (a) the held content flipped to the *chosen* prior, not the latest (v2).
+    assert get_item(lib.db_path, original.id).content_hash == "sha256:peer-v1"
+    # (b) the displaced v3 is itself archived — `archive show` recovers it (reversible).
+    assert main(["archive", "show", original.id]) == 0
+    displaced = _read_jsonl_lines(capsys.readouterr().out)
+    assert len(displaced) == 1 and displaced[0]["content_hash"] == "sha256:peer-v3"
+    # (c) the score held at 100.
+    assert _custody()["score"] == 100
+
+    # 5. ROLL BACK by --at to the *original*, as held at the earliest point in time:
+    #    the newest prior archived at/before 06-19T12 is the original (06-19); v1/v2/v3
+    #    were archived later, so they fall after the boundary.
+    clock["now"] = "2026-06-23T00:00:00+00:00"
+    assert main(
+        ["archive", "restore", original.id, "--at", "2026-06-19T12:00:00+00:00"]
+    ) == 0
+    by_at = json.loads(capsys.readouterr().out)
+    assert by_at["selector"] == {"at": "2026-06-19T12:00:00+00:00"}
+    assert by_at["restored"] is True and by_at["outcome"] == "adopted"
+    assert by_at["prior_hash"] == ORIG_HASH                     # the original capture
+    assert by_at["archived_at"] == "2026-06-19T00:00:00+00:00"  # when it was archived
+    assert by_at["held_hash"] == "sha256:peer-v1"               # what it displaced
+    # (a) the held content rolled all the way back to our original capture.
+    assert get_item(lib.db_path, original.id).content_hash == ORIG_HASH
+    # (b) the displaced v1 is archived in turn — every version still recoverable.
+    assert main(["archive", "show", original.id]) == 0
+    displaced_again = _read_jsonl_lines(capsys.readouterr().out)
+    assert len(displaced_again) == 1 and displaced_again[0]["content_hash"] == "sha256:peer-v1"
+    # (c) the score never moved across the whole chain of adoptions + rollbacks.
+    assert _custody()["score"] == 100
 
 
 # --- the whole flow, unattended, in order ---------------------------------

@@ -223,19 +223,99 @@ the row but does not re-render the scroll view — a real agent runs `scrolls kb
 afterward to recompile `library/`; the held file the prior render left in place
 keeps the fidelity audit honest in the meantime.)
 
+## Rolling back to a specific earlier version — restore-by-version
+
+The adopt flow above takes *one* peer capture and, if I change my mind, restores
+the **latest** prior. The restore-by-version flow (ADR 0106, roadmap H285/H286)
+covers the case a real custodian hits after living with a source for a while: I
+adopted a **chain** of recaptures over several days (v1 → v2 → v3), then realised a
+*specific earlier* version — not the latest — was the right one. `archive show
+<id> --all` shows the **whole** recoverable history, and `archive restore <id>
+--hash H` / `--at ISO` rolls back to the version I name. The custody story is the
+adopt leg's, extended across many supersessions: **the held copy flips to the
+*chosen* prior, the displaced copy is itself archived, and the integrity score
+holds at 100 the whole way.**
+
+`tests/test_dogfood.py` pins it offline as
+`test_restore_by_version_rolls_back_to_a_specific_earlier_capture`: the same
+`_held_topic()` arxiv paper is recaptured three times via `import items
+--accept-incoming`, then rolled back twice — by `--hash` to an intermediate, by
+`--at` to the original. (A scripted clock spaces the three adoptions across days so
+`--at` has a real history to bisect — the same offline stand-in this module applies
+to capture and recheck, here on the adoption clock.)
+
+```bash
+# I adopted three divergent recaptures over three days; the prior is archived each time.
+scrolls import items in.jsonl --accept-incoming   # → {"adopted": ["arxiv:1706.03762"]}  ×3
+
+# 1. INSPECT the full recoverable history (newest first) — every version is still here.
+scrolls archive show arxiv:1706.03762 --all
+# → sha256:peer-v2 / sha256:peer-v1 / sha256:06.03762   (the three displaced priors)
+scrolls archive list --id arxiv:1706.03762            # the same, with archive timestamps
+scrolls doctor                                        # → custody.score 100 (held = peer-v3)
+
+# 2. ROLL BACK by --hash to a *specific intermediate* (v1, NOT the latest prior v2).
+scrolls archive restore arxiv:1706.03762 --hash sha256:peer-v1
+scrolls doctor                                        # → custody.score 100 (held = peer-v1)
+
+# 3. ROLL BACK by --at to the *original*, as held at the earliest point in time.
+scrolls archive restore arxiv:1706.03762 --at 2026-06-19T12:00:00+00:00
+scrolls doctor                                        # → custody.score 100 (held = the original)
+```
+
+**Inspect (`archive show --all`).** After three adoptions the archive holds three
+priors; `--all` re-emits **every** one as a re-importable `export items` line,
+newest first — not just the head `archive show` would give:
+
+```json
+{ "count": 3, "archived": [
+  { "prior_hash": "sha256:peer-v2", "superseded_by": "sha256:peer-v3", "archived_at": "2026-06-21T00:00:00+00:00" },
+  { "prior_hash": "sha256:peer-v1", "superseded_by": "sha256:peer-v2", "archived_at": "2026-06-20T00:00:00+00:00" },
+  { "prior_hash": "sha256:06.03762", "superseded_by": "sha256:peer-v1", "archived_at": "2026-06-19T00:00:00+00:00" } ] }
+```
+
+**Roll back by `--hash`.** The selector lands the *chosen* version — the
+intermediate `peer-v1`, even though the latest prior is `peer-v2` — and the
+currently-held `peer-v3` it displaces is archived in turn, so the rollback is
+itself reversible:
+
+```json
+{ "selector": { "hash": "sha256:peer-v1" }, "prior_hash": "sha256:peer-v1",
+  "held_hash": "sha256:peer-v3", "outcome": "adopted", "restored": true }
+```
+
+**Roll back by `--at`.** A point-in-time selector — the newest prior archived
+at/before the boundary. `--at 2026-06-19T12:00` lands the **original** capture
+(`06-19`); the v1/v2/v3 priors were archived later, so they fall after the line.
+The displaced `peer-v1` is archived in turn:
+
+```json
+{ "selector": { "at": "2026-06-19T12:00:00+00:00" }, "prior_hash": "sha256:06.03762",
+  "archived_at": "2026-06-19T00:00:00+00:00", "held_hash": "sha256:peer-v1",
+  "outcome": "adopted", "restored": true }
+```
+
+The custody point is the restore-by-version twin of the adopt leg's: across a whole
+chain of adoptions **and** two rollbacks, **`doctor`'s `custody.score` never leaves
+100** — each restore swaps one full-fidelity capture for another and the displaced
+one is archived, so no version is ever destroyed and the held copy can flip to *any*
+prior on demand (custody §2.4). `archive show` after each rollback recovers exactly
+the version just left, the proof the whole history stays reversible.
+
 ## Running the proof
 
 ```bash
 uv run pytest tests/test_dogfood.py
 ```
 
-Seven tests: each leg on its own — the core hold/detect/take legs, the scoped
-drift- and refresh-triage legs, and the accept-incoming *adopt-a-peer's-better-
-capture* flow above — plus `test_dogfood_flow_hold_prove_detect_take`, the whole
-hold → prove → detect → take sequence in order, unattended. The lossless
-round-trip leg shares its guarantee with `tests/test_roundtrip.py` (the JSONL
-backup invariant, ADR 0099); the bundle envelope is ADR 0103; the accept-incoming
-adoption + prior-content archive is ADR 0106.
+Eight tests: each leg on its own — the core hold/detect/take legs, the scoped
+drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
+flow, and the *restore-by-version* roll-back above — plus
+`test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
+sequence in order, unattended. The lossless round-trip leg shares its guarantee
+with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle
+envelope is ADR 0103; the accept-incoming adoption + prior-content archive (and its
+restore-by-version reads) are ADR 0106.
 
 ## The recurring sibling — `scrolls maintain`
 
