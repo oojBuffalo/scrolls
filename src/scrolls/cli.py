@@ -702,6 +702,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only the archived prior captures of one item id (or its URL); the "
         "whole library's recovery store otherwise",
     )
+    export_archive_parser.add_argument(
+        "--source",
+        default=None,
+        help="Only the archived priors of one source's held items (e.g. web, "
+        "arxiv) — the source-scoped recovery backup, the `export events --source` "
+        "analogue; resolves the source to its held item ids, then their whole "
+        "recovery store travels. Mutually exclusive with --id (one names a source, "
+        "the other an item)",
+    )
     export_bundle_parser = export_sub.add_parser(
         "bundle",
         help="Export a scoped, self-contained custody bundle for a query "
@@ -1482,7 +1491,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.drift,
             )
         if args.export_command == "archive":
-            return _cmd_export_archive(args.id)
+            return _cmd_export_archive(args.id, args.source)
         if args.export_command == "bundle":
             return _cmd_export_bundle(
                 args.query,
@@ -2494,7 +2503,7 @@ def _cmd_export_events(
     return 0
 
 
-def _cmd_export_archive(ref: str | None) -> int:
+def _cmd_export_archive(ref: str | None, source: str | None = None) -> int:
     # the portable recovery store (H280): the prior-content archive (ADR 0106) as a
     # lossless JSONL stream, the recovery-store sibling of `export events`. A library
     # rebuilt from `export items` + `export events` reads *that* an adoption happened
@@ -2502,8 +2511,24 @@ def _cmd_export_archive(ref: str | None) -> int:
     # carries them, so `scrolls archive show` works on the rebuilt library.
     #
     # `--id <ref>` scopes to one item's archived priors (resolving a URL to the id
-    # `add` would mint, the `archive list --id` precedent); the whole library's
-    # recovery store otherwise (the backup case). A bad ref is a loud usage error.
+    # `add` would mint, the `archive list --id` precedent); `--source <S>` scopes to
+    # *one source's* held items' priors (H301, the `export events --source` analogue
+    # — resolve the source to its held item ids, then their whole recovery store
+    # travels); the whole library's recovery store otherwise (the backup case).
+    #
+    # `--id` and `--source` are independent single-scope selectors — one names an
+    # item, the other a source — so supplying both is a loud usage error (exit 2,
+    # the `archive restore` "at most one version selector" precedent).
+    if ref is not None and source is not None:
+        print(
+            json.dumps({
+                "error": "export archive takes at most one scope selector: "
+                "--id <ref> (one item) or --source <S> (one source)"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+    paths = get_paths()
     item_ids: list[str] | None = None
     if ref is not None:
         try:
@@ -2511,7 +2536,16 @@ def _cmd_export_archive(ref: str | None) -> int:
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
-    paths = get_paths()
+    elif source is not None:
+        # resolve the source to its held item ids (the `export events --source`
+        # enumeration), then their archived priors travel. A source with no held
+        # items resolves to an empty id set → a valid empty backup (the unmatched
+        # `--id` precedent), never an error; a missing/pre-init library likewise.
+        item_ids = (
+            [item.id for item in list_items(paths.db_path, source=source)]
+            if paths.db_path.exists()
+            else []
+        )
     records = (
         archived_records(paths.db_path, item_ids) if paths.db_path.exists() else []
     )

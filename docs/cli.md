@@ -2807,7 +2807,7 @@ $ scrolls export events --drift drifted > moved.jsonl        # the full custody 
 [exit 0]
 ```
 
-### `scrolls export archive [--id <id>]`
+### `scrolls export archive [--id <id> | --source <S>]`
 
 Export the **prior-content archive** (`item_archive`, ADR 0106) as a lossless
 JSON Lines stream — the **portable recovery store** (roadmap H280), the third
@@ -2827,10 +2827,17 @@ replaced it), and the nested **model-complete `snapshot`** (the same lossless
 importer the library already trusts. The stream **is** the artifact, so it prints
 raw on stdout (the `export items` exception to the JSON-on-stdout rule); there is
 no path argument. `--id <ref>` scopes to one item's archived priors (an id, or a
-URL resolved to the id `add` would mint — the `archive list --id` precedent); the
-whole library's recovery store otherwise (the backup case). An empty (or pre-`init`)
-library — or an `--id` with no archived prior — produces an empty document, never
-an error (`test_export_archive_empty_library_is_valid`,
+URL resolved to the id `add` would mint — the `archive list --id` precedent);
+`--source <S>` scopes to *one source's* held items' priors (e.g. `--source web` —
+the source-scoped recovery backup, the `export events --source` analogue: it
+resolves the source to its held item ids, then their whole recovery store travels,
+so an operator can "back up just one source's recoverable history"); the whole
+library's recovery store otherwise (the backup case). `--id` and `--source` are
+independent single-scope selectors — one names an item, the other a source — so
+supplying both is a loud usage error (exit 2, stderr JSON;
+`test_export_archive_rejects_both_id_and_source`). An empty (or pre-`init`)
+library — an `--id` with no archived prior, or a `--source` with no held items —
+produces an empty document, never an error (`test_export_archive_empty_library_is_valid`,
 `test_export_archive_unmatched_id_is_an_empty_document`); a malformed URL `--id`
 is a loud error (`test_export_archive_bad_url_id_is_a_usage_error`). Restore with
 `scrolls import archive`.
@@ -2848,6 +2855,9 @@ $ scrolls export archive
 [exit 0]
 
 $ scrolls export archive --id wikipedia:en:SQLite > sqlite-priors.jsonl   # one item's recovery store
+[exit 0]
+
+$ scrolls export archive --source web > web-priors.jsonl   # one source's recovery store
 [exit 0]
 ```
 

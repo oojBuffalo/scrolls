@@ -5877,6 +5877,173 @@ def test_scoped_export_archive_excludes_the_unscoped_items_history(
     assert main(["archive", "show", item_x, "--all"]) == 1  # the family cannot read X
 
 
+# --- export archive --source <S>: the source-scoped recovery-store backup, the
+# `export events --source` analogue on the archive axis (H301) ----------------
+
+
+def test_export_archive_source_filter_scopes_to_one_source(scrolls_home, capsys):
+    """`--source <S>` selects exactly the held items of one source — unlike `--id`
+    (one item) it gathers *all* of a source's items' archived priors. Two `web`
+    items and one `arxiv` item, each with an archived prior: `--source web` carries
+    the two web priors and excludes the arxiv one (the `--id` selection test's
+    source-scoped twin)."""
+    db = _seed_archived_chain_cli("web:demo")  # web, 3-prior chain
+    _seed_one_prior_cli("web:two")             # web, 1-prior chain (same source)
+    _seed_one_prior_cli("arxiv:sib")           # arxiv, 1-prior chain (excluded)
+    capsys.readouterr()
+    assert main(["export", "archive", "--source", "web"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # the two web items' priors travel (3 + 1), none of arxiv's
+    assert {json.loads(line)["item_id"] for line in lines} == {"web:demo", "web:two"}
+    assert len(lines) == 4
+
+
+def test_source_scoped_export_archive_round_trips_a_sources_recovery_read_family(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """The *source*-scoped `export archive --source web` round-trips the whole
+    recovery read-family for every web item identically — the H300 `--id` twin one
+    level up (a source spans many items) — while a *different*-source item's archive
+    is correctly *excluded* from the backup.
+
+    H300 pins the per-*item* `export archive --id X` round-trip. `--source S` folds a
+    different read: resolve the source to its held item ids (the `export events
+    --source` enumeration), then *all* their archived priors travel — the operator
+    move "back up *one source's* recoverable history." Pin it: a 3-prior chain on
+    `web:demo` *and* a 1-prior chain on `web:two` (same source) *and* a 1-prior chain
+    on `arxiv:sib` (a different source) in A, `export archive --source web` (+ a
+    whole-library `export items`), rebuild a fresh B, then assert `web:demo`'s
+    `archive show --all` (byte-for-byte), `archive diff`, and `archive restore
+    --dry-run` agree field-for-field across A and B over all three selectors
+    (`--hash`/`--at`/default-latest), `web:two`'s prior travelled too, and
+    `arxiv:sib`'s archive is *absent* on B (a vacuous "everything travelled" would
+    pass falsely)."""
+    db_a = _seed_archived_chain_cli("web:demo")  # web, 3-prior chain, held = v3
+    _seed_one_prior_cli("web:two")               # web, 1-prior chain, held = y1
+    _seed_one_prior_cli("arxiv:sib")             # arxiv, 1-prior chain (excluded)
+    assert get_item(db_a, "web:demo").content_hash == "sha256:v3"
+    assert len(list_archived(db_a, "web:demo")) == 3
+    assert len(list_archived(db_a, "web:two")) == 1
+    assert len(list_archived(db_a, "arxiv:sib")) == 1  # arxiv has a real archive in A
+
+    selectors = (["--hash", "sha256:v0"], ["--at", "2026-06-21T12:00:00+00:00"], [])
+
+    def read_family(item_id):
+        """The whole recovery read-family for one item — non-mutating (reads + a
+        dry-run), so it is safe to run identically on A and on B."""
+        out = {}
+        capsys.readouterr()
+        assert main(["archive", "show", item_id, "--all"]) == 0
+        out["show_all"] = capsys.readouterr().out  # raw JSONL, compared byte-for-byte
+        for sel in selectors:
+            key = " ".join(sel) or "latest"
+            capsys.readouterr()
+            assert main(["archive", "diff", item_id, *sel]) == 0
+            out[f"diff:{key}"] = json.loads(capsys.readouterr().out)
+            capsys.readouterr()
+            assert main(["archive", "restore", item_id, *sel, "--dry-run"]) == 0
+            out[f"restore:{key}"] = json.loads(capsys.readouterr().out)
+        return out
+
+    family_demo_a = read_family("web:demo")
+    # sanity: a non-trivial read in A — the full 3-prior chain and a real
+    # would-change delta (a vacuous all-empty read would pass the A==B tie falsely)
+    assert len(family_demo_a["show_all"].splitlines()) == 3
+    assert family_demo_a["diff:--hash sha256:v0"]["would_restore"] is True
+    assert family_demo_a["restore:--at 2026-06-21T12:00:00+00:00"]["prior_hash"] == "sha256:v1"
+
+    # back A up: whole-library held rows, but ONLY the web source's recovery store
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive", "--source", "web"]) == 0
+    scoped = capsys.readouterr().out
+    archive_path = tmp_path / "archive-web.jsonl"
+    archive_path.write_text(scoped, encoding="utf-8")
+    # the scoped backup carries only the two web items' priors (3 + 1), no arxiv
+    assert {json.loads(line)["item_id"] for line in scoped.splitlines()} == {
+        "web:demo", "web:two"
+    }
+    assert len(scoped.splitlines()) == 4
+
+    # rebuild a fresh B from the whole-library items + the web-scoped recovery store
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(archive_path)]) == 0
+    capsys.readouterr()
+
+    # B holds all three held heads (the whole-library items backup) ...
+    assert get_item(db_b, "web:demo").content_hash == "sha256:v3"
+    assert get_item(db_b, "web:two").content_hash == "sha256:y1"
+    assert get_item(db_b, "arxiv:sib").content_hash == "sha256:y1"
+    # ... but only the web source's recovery store travelled; arxiv's is absent
+    assert len(list_archived(db_b, "web:demo")) == 3
+    assert len(list_archived(db_b, "web:two")) == 1
+    assert list_archived(db_b, "arxiv:sib") == []
+    capsys.readouterr()
+    assert main(["archive", "show", "arxiv:sib", "--all"]) == 1  # no history → exit 1
+
+    # web:demo's whole recovery read-family is byte/field-identical across the round trip
+    assert read_family("web:demo") == family_demo_a
+
+
+def test_source_scoped_export_archive_excludes_other_sources(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """Mutation guard: the scope genuinely *selects* one source — `export archive
+    --source arxiv` carries arxiv's history and leaves the web items' out, so the
+    web items' recovery family cannot read on the rebuild. Inverts the H301 happy
+    path (scope arxiv instead of web), so a bug that ignored `--source` and dumped
+    the whole archive would fail here."""
+    _seed_archived_chain_cli("web:demo")  # web, 3-prior chain
+    _seed_one_prior_cli("web:two")        # web, 1-prior chain
+    _seed_one_prior_cli("arxiv:sib")      # arxiv, 1-prior chain
+
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    capsys.readouterr()
+    assert main(["export", "archive", "--source", "arxiv"]) == 0  # scope the *other* source
+    scoped = capsys.readouterr().out
+    archive_path = tmp_path / "archive-arxiv.jsonl"
+    archive_path.write_text(scoped, encoding="utf-8")
+    # only arxiv's single prior travelled — the four web priors are excluded
+    assert [json.loads(line)["item_id"] for line in scoped.splitlines()] == ["arxiv:sib"]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    main(["import", "items", str(items_path)])
+    main(["import", "archive", str(archive_path)])
+    capsys.readouterr()
+
+    # arxiv's history is recoverable on B; the web items' are empty — the scope excluded them
+    assert len(list_archived(db_b, "arxiv:sib")) == 1
+    assert list_archived(db_b, "web:demo") == []
+    assert list_archived(db_b, "web:two") == []
+    capsys.readouterr()
+    assert main(["archive", "show", "web:demo", "--all"]) == 1  # the family cannot read web:demo
+
+
+def test_export_archive_rejects_both_id_and_source(scrolls_home, capsys):
+    """`--id` (one item) and `--source` (one source) are independent single-scope
+    selectors; supplying both is a loud usage error (exit 2, stderr JSON, no
+    stdout) — the `archive restore` "at most one version selector" precedent."""
+    _seed_archived_prior()
+    capsys.readouterr()
+    assert main(["export", "archive", "--id", "web:demo", "--source", "web"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""  # never a partial backup
+    assert "error" in json.loads(captured.err)
+
+
 # --- export events --fidelity / --drift: the custody-filter family on the
 # whole-library custody-ledger backup (H260) ---------------------------------
 
