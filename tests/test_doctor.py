@@ -1726,20 +1726,26 @@ def test_summaries_by_source_never_feeds_issues_or_the_exit_code(paths, capsys):
 
 
 def _seed_archived_prior(
-    paths, url="https://example.com/post", *, held_hash="sha256:held"
+    paths,
+    url="https://example.com/post",
+    *,
+    held_hash="sha256:held",
+    archived_at="2026-06-22T00:00:00+00:00",
 ):
     """Hold an item, then adopt a divergent capture so one prior is archived.
 
     Leaves the held copy carrying the incoming content and one recoverable prior
     in `item_archive` whose `prior_hash` equals its snapshot's `content_hash` (the
-    honest-by-construction shape). Returns the archived prior's item id.
+    honest-by-construction shape). `archived_at` stamps the prior's `archived_at`
+    column so callers can place it on either side of an `export archive --since`
+    window. Returns the archived prior's item id.
     """
     held = _web_item(url, fetched=True, content_hash=held_hash)
     insert_item(paths.db_path, held)
     incoming = replace(
         held, extracted_text="a later capture", content_hash="sha256:moved"
     )
-    adopt_incoming(paths.db_path, incoming, archived_at="2026-06-22T00:00:00+00:00")
+    adopt_incoming(paths.db_path, incoming, archived_at=archived_at)
     return held.id
 
 
@@ -1984,6 +1990,161 @@ def test_repairing_the_archive_backup_clears_the_alarm_on_the_rebuilt_library(
 
     paths_b = _rebuild_from_backup(
         tmp_path / "library-b", monkeypatch, items_path, archive_path
+    )
+    archive_b = run_doctor(paths_b)["custody"]["archive"]
+    assert archive_b == {"status": "ok", "checked": 2, "mismatched": 0, "events": []}
+
+
+# --- archive integrity survives the *incremental*-backup round-trip (roadmap H309) ---
+#
+# H295 (above) pins the alarm un-launderable across the whole-library JSONL backup;
+# H296 across the portable bundle. The `export archive --since` increment is a third
+# transport — a *windowed subset* of the JSONL backup (H303) — and nothing pins that
+# a corrupt prior riding *only in the increment* is flagged identically on a peer
+# rebuilt from an earlier full backup + that increment. It is correct-by-construction
+# for the same reason the JSONL round-trip is: `import_archive` stores the snapshot
+# verbatim and dedups by `(item_id, prior_hash)`, never re-deriving `prior_hash` — so
+# the windowed transport cannot silently repair a corruption it cannot actually fix
+# (vision §2.4 — fidelity/provenance travel with every result). The split below makes
+# the increment genuinely load-bearing: the clean prior is archived *before* the full
+# backup is taken (so it rides only the full), the corrupt prior *after* (so it rides
+# only the `--since` increment). Mutation-checked by *repairing* the increment before
+# import — the alarm then clears on the rebuild, proving the flag tracks the
+# increment's content, not a phantom.
+
+# the increment boundary: the clean prior is archived strictly before it (rides the
+# earlier full backup), the corrupt prior at/after it (rides only the increment).
+_INC_FULL_AT = "2026-06-20T00:00:00+00:00"
+_INC_SINCE = "2026-06-21T00:00:00+00:00"
+_INC_CORRUPT_AT = "2026-06-22T00:00:00+00:00"
+
+
+def _seed_split_archive_backups(paths, tmp_path, capsys):
+    """Seed A so a clean prior rides an *earlier full* `export archive` and a corrupt
+    prior rides *only* a later `export archive --since` increment, then return the
+    backup files that split them across transports — `(items, full_archive,
+    increment, corrupt_item_id)`.
+
+    The full archive is exported *before* the corrupt prior exists, so it cannot
+    carry it; the increment windows on `archived_at >= _INC_SINCE`, so it carries the
+    corrupt prior and not the clean one. The latest holdings (both items) are
+    re-snapshot for the peer, exactly as the H306 incremental-backup dogfood does.
+    """
+    # 1. clean prior on A, archived early — then take the *earlier full backup* now,
+    #    before the corrupt prior is born, so the full backup cannot launder it later.
+    _seed_archived_prior(
+        paths,
+        "https://example.com/clean",
+        held_hash="sha256:clean",
+        archived_at=_INC_FULL_AT,
+    )
+    capsys.readouterr()  # clear anything buffered
+    assert main(["export", "archive"]) == 0
+    full_archive = tmp_path / "archive-full.jsonl"
+    full_archive.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # 2. a corrupt prior is archived *after* the full backup, and tampered so its
+    #    advertised `prior_hash` diverges from its snapshot's `content_hash`.
+    corrupt = _seed_archived_prior(
+        paths,
+        "https://example.com/corrupt",
+        held_hash="sha256:held",
+        archived_at=_INC_CORRUPT_AT,
+    )
+    _tamper_archive(paths.db_path, corrupt, prior_hash="sha256:tampered")
+
+    # 3. the cheap increment: re-snapshot the latest holdings (both items) for the
+    #    peer, then `export archive --since` the boundary — carrying only the corrupt
+    #    prior (archived at/after `_INC_SINCE`), not the clean one (before it).
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert main(["export", "archive", "--since", _INC_SINCE]) == 0
+    increment = tmp_path / "archive-increment.jsonl"
+    increment.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # the split is genuine: the corrupt prior rides *only* the increment, the clean
+    # prior *only* the full backup — so the corrupt prior reaches B solely by the
+    # incremental transport (a vacuous overlap would let the full backup carry it).
+    inc_rows = [json.loads(l) for l in increment.read_text().splitlines() if l.strip()]
+    assert [r["prior_hash"] for r in inc_rows] == ["sha256:tampered"]
+    assert [r["snapshot"]["content_hash"] for r in inc_rows] == ["sha256:held"]
+    full_rows = [
+        json.loads(l) for l in full_archive.read_text().splitlines() if l.strip()
+    ]
+    assert [r["prior_hash"] for r in full_rows] == ["sha256:clean"]
+
+    return items_path, full_archive, increment, corrupt
+
+
+def _rebuild_from_increment(root, monkeypatch, items_path, full_archive, increment):
+    """Rebuild a fresh peer at `root` from the latest holdings, an earlier full
+    `export archive`, and a later `--since` increment, and return its `Paths`. The
+    corrupt prior rides only the increment, so importing it last is what carries the
+    corruption onto the peer. Switches `SCROLLS_HOME`, so read the source library's
+    `run_doctor(paths)` before this call."""
+    monkeypatch.setenv("SCROLLS_HOME", str(root))
+    assert main(["init"]) == 0
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(full_archive)]) == 0
+    assert main(["import", "archive", str(increment)]) == 0
+    return get_paths()
+
+
+def test_archive_integrity_alarm_survives_the_incremental_backup_round_trip(
+    paths, tmp_path, monkeypatch, capsys
+):
+    # A corrupt archived prior carried *only* in an `export archive --since`
+    # increment is flagged *identically* by `doctor`'s `custody.archive` on a peer
+    # rebuilt from an earlier full backup + that increment — the incremental
+    # transport laundered nothing (the H295/H296 twin on the `--since` path).
+    items_path, full_archive, increment, corrupt = _seed_split_archive_backups(
+        paths, tmp_path, capsys
+    )
+
+    archive_a = run_doctor(paths)["custody"]["archive"]
+    # sanity: A names exactly the corrupt row, the clean prior passes — a genuine
+    # mismatch travels (a vacuous all-clean read would pass the A==B tie falsely)
+    assert archive_a["status"] == "ok"
+    assert archive_a["checked"] == 2
+    assert archive_a["mismatched"] == 1
+    assert archive_a["events"] == [
+        {
+            "item_id": corrupt,
+            "prior_hash": "sha256:tampered",
+            "snapshot_hash": "sha256:held",
+        }
+    ]
+
+    paths_b = _rebuild_from_increment(
+        tmp_path / "library-b", monkeypatch, items_path, full_archive, increment
+    )
+
+    # the corrupt prior — carried to B solely by the increment — trips the alarm on
+    # the rebuild byte-for-byte as it did on A, never read clean.
+    archive_b = run_doctor(paths_b)["custody"]["archive"]
+    assert archive_b == archive_a
+
+
+def test_repairing_the_increment_clears_the_alarm_on_the_rebuilt_peer(
+    paths, tmp_path, monkeypatch, capsys
+):
+    # Mutation guard: the alarm-on-the-rebuild is load-bearing and tracks the
+    # *increment's* content. If the divergence is repaired in the increment before
+    # import, the rebuilt peer reads clean (both priors honest) — so the flag on B
+    # genuinely follows what the incremental transport carries, not a phantom.
+    items_path, full_archive, increment, _ = _seed_split_archive_backups(
+        paths, tmp_path, capsys
+    )
+    assert run_doctor(paths)["custody"]["archive"]["mismatched"] == 1  # A is dirty
+
+    increment.write_text(
+        _repair_archive_backup(increment.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+
+    paths_b = _rebuild_from_increment(
+        tmp_path / "library-b", monkeypatch, items_path, full_archive, increment
     )
     archive_b = run_doctor(paths_b)["custody"]["archive"]
     assert archive_b == {"status": "ok", "checked": 2, "mismatched": 0, "events": []}
