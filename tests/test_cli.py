@@ -6618,6 +6618,184 @@ def test_export_archive_since_is_byte_stable_across_the_recovery_round_trip(
     assert window_b == window_a
 
 
+# --- a custody-scoped *incremental* backup (`export archive --source S --since T`
+# and `--fidelity F --since T`) is byte-stable across the recovery-store round-trip
+# — the composition of H305 (the windowed round-trip) and H302 (the custody-scoped
+# round-trip): the AND of an item-set sieve and a time window, neither keyed on the
+# local id, so the intersection survives the rebuild's reshuffle byte-for-byte (H307)
+
+
+def _seed_scoped_windowed_archive_cli():
+    """Seed a multi-source, multi-prior, mixed-fidelity recovery store whose priors
+    straddle a `--since` boundary on *both* a source scope and a fidelity scope, and
+    whose archival adoption order differs from the content-determined export order so
+    an `import archive` rebuild genuinely renumbers the local `id`s.
+
+    Holdings (priors archived around a 06-22 boundary):
+
+    - ``web:full``   — source web, *full* fidelity, a 3-prior chain v0@06-20,
+      v1@06-22, v2@06-24 (held v3): two priors at/after the 06-22 edge, one before.
+    - ``web:ref``    — source web, *reference* fidelity (held copy degraded to a
+      pointer), one prior r0@06-21 (before the boundary).
+    - ``arxiv:full`` — source arxiv, *full* fidelity, one prior a0@06-25 (after).
+
+    So ``--source web --since 06-22`` keeps web:full's {v1@06-22, v2@06-24} (2 of
+    web's 4 priors — a strict, non-vacuous subset; the inclusive edge keeps v1), and
+    ``--fidelity full --since 06-22`` keeps web:full's two + arxiv:full's a0 (3 of the
+    full tier's 4 priors, across two sources, so line order matters). The adoptions
+    interleave the items so the per-library `id` order differs from the
+    `(archived_at, item_id, prior_hash)` export order. Returns the db_path."""
+    main(["init"])
+    db = get_paths().db_path
+
+    full = ScrollItem(
+        id="web:full", source="web", url="https://web-full.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held web:full",
+        raw_text="<raw>The original database capture.</raw>",
+        extracted_text="The original database capture.",
+        content_hash="sha256:v0",
+        markdown_path="scrolls/web-full.md", stage="rendered",
+    )
+    arx = ScrollItem(
+        id="arxiv:full", source="arxiv", url="https://arxiv-full.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held arxiv:full",
+        raw_text="<raw>The original arxiv capture.</raw>",
+        extracted_text="The original arxiv capture.",
+        content_hash="sha256:a0",
+        markdown_path="scrolls/arxiv-full.md", stage="rendered",
+    )
+    for held in (full, arx):
+        insert_item(db, held)
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://web-ref.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held (full prior)",
+        raw_text="<raw>The original reference capture.</raw>",
+        extracted_text="The original reference capture.",
+        content_hash="sha256:r0",
+        markdown_path="scrolls/web-ref.md", stage="rendered"))
+
+    def _adopt_full(item, n, at):
+        incoming = dataclasses.replace(
+            item,
+            raw_text=f"<raw>A v{n} database capture.</raw>",
+            extracted_text=f"A v{n} database capture.",
+            content_hash=f"sha256:v{n}",
+        )
+        adopt_incoming(db, incoming, archived_at=at)
+        return incoming
+
+    # interleave the adoptions so id-order ≠ content-order: each item's own chain
+    # stays monotonic in archived_at (latest_archived keeps its newest-prior meaning)
+    full = _adopt_full(full, 1, "2026-06-20T00:00:00+00:00")  # prior v0@06-20
+    full = _adopt_full(full, 2, "2026-06-22T00:00:00+00:00")  # prior v1@06-22
+    adopt_incoming(db, ScrollItem(  # web:ref's prior r0@06-21 — a full capture
+        id="web:ref", source="web", url="https://web-ref.example",
+        saved_at="2026-06-11T00:00:00+00:00", title="Held (reference now)",
+        content_hash="sha256:r1", stage="detected"),  # superseded by a pointer-only head
+        archived_at="2026-06-21T00:00:00+00:00")
+    adopt_incoming(db, dataclasses.replace(  # arxiv:full's prior a0@06-25
+        arx,
+        raw_text="<raw>A v1 arxiv capture.</raw>",
+        extracted_text="A v1 arxiv capture.",
+        content_hash="sha256:a1",
+    ), archived_at="2026-06-25T00:00:00+00:00")
+    _adopt_full(full, 3, "2026-06-24T00:00:00+00:00")  # prior v2@06-24
+    return db
+
+
+def test_scoped_incremental_export_archive_is_byte_stable_across_the_round_trip(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """A *custody-scoped incremental* backup — `export archive --source S --since T`
+    and `--fidelity F --since T` — reproduces byte-for-byte from an `import
+    archive`-rebuilt library: the composition of H305 (the windowed round-trip) and
+    H302 (the custody-scoped round-trip) (H307).
+
+    H305 pins the `--since` window survives the local-`id` reshuffle a rebuild
+    causes; H302 pins the `--source`/`--fidelity` item-set sieve round-trips. The
+    untested cell is their **AND** — a backup that is *both* scoped *and* windowed.
+    Correct-by-construction: the window selects on `archived_at` and the scope on the
+    held row's custody value (resolved through the same `list_items` sieve), neither
+    on the local `id`, and `archived_records` orders content-deterministically
+    `(archived_at, item_id, prior_hash)`, so the intersection's membership *and* line
+    order both survive the reshuffle. Pin it on a multi-source, multi-prior,
+    mixed-fidelity seed whose adoption order differs from the export order (so the
+    rebuild genuinely renumbers): export each scoped+windowed stream from A, rebuild a
+    fresh B, re-export the same stream from B, assert byte-identity — and, separately,
+    that the scope-AND-window is a strict, non-vacuous subset of *both* the whole
+    store and the un-windowed scope."""
+    boundary = "2026-06-22T00:00:00+00:00"  # the inclusive edge sits on web:full's v1
+    db_a = _seed_scoped_windowed_archive_cli()
+    assert len(archived_records(db_a)) == 5  # the whole recovery store across 3 items
+
+    # back A up: the whole-library held rows + the *whole* recovery store (the rebuild
+    # input — a scoped backup would not carry the excluded items' priors B needs)
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    items_path = tmp_path / "library.jsonl"
+    items_path.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert main(["export", "archive"]) == 0
+    full_a = capsys.readouterr().out
+    full_path = tmp_path / "archive-full.jsonl"
+    full_path.write_text(full_a, encoding="utf-8")
+
+    # the two custody-scoped + windowed (incremental) streams from A, each asserted a
+    # strict, non-vacuous subset of *both* the un-windowed scope and the whole store —
+    # the AND genuinely narrows on the time axis *and* the custody axis
+    scopes = {"source": ["--source", "web"], "fidelity": ["--fidelity", "full"]}
+    windowed_a = {}
+    for key, scope in scopes.items():
+        capsys.readouterr()
+        assert main(["export", "archive", *scope]) == 0  # the un-windowed scope
+        unwindowed = capsys.readouterr().out
+        assert main(["export", "archive", *scope, "--since", boundary]) == 0
+        windowed_a[key] = capsys.readouterr().out
+        win, un, whole = (
+            set(windowed_a[key].splitlines()),
+            set(unwindowed.splitlines()),
+            set(full_a.splitlines()),
+        )
+        assert win, f"{key}: the window is non-vacuous"
+        assert win < un, f"{key}: a strict subset of the un-windowed scope"
+        assert un < whole, f"{key}: the scope is a strict subset of the whole store"
+
+    # the source window keeps web:full's two at/after-boundary priors (the inclusive
+    # 06-22 edge is load-bearing — v1@06-22 is kept) and drops the pre-boundary ones
+    assert len(windowed_a["source"].splitlines()) == 2
+    assert {json.loads(ln)["item_id"] for ln in windowed_a["source"].splitlines()} == {
+        "web:full"
+    }
+    # the fidelity window spans two sources (web:full + arxiv:full), so line order matters
+    assert len(windowed_a["fidelity"].splitlines()) == 3
+    assert {json.loads(ln)["item_id"] for ln in windowed_a["fidelity"].splitlines()} == {
+        "web:full",
+        "arxiv:full",
+    }
+
+    # rebuild a fresh B from the whole-library backup (held rows + every prior); the
+    # archive imports in content order, renumbering the local ids relative to A
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "items", str(items_path)]) == 0
+    assert main(["import", "archive", str(full_path)]) == 0
+    capsys.readouterr()
+
+    # the reshuffle is real, not assumed: the priors sit in a *different* local `id`
+    # order on B than on A (so a `--since`/scope that keyed on `id` would diverge here)
+    assert _archive_id_order(db_a) != _archive_id_order(db_b)
+    assert len(archived_records(db_b)) == 5
+
+    # the scoped+windowed re-export from B is byte-identical to A's on *both* axes —
+    # the AND of the custody sieve and the time window is reproducible across the round
+    # trip, neither leg keyed on the reshuffled local id
+    for key, scope in scopes.items():
+        capsys.readouterr()
+        assert main(["export", "archive", *scope, "--since", boundary]) == 0
+        assert capsys.readouterr().out == windowed_a[key], f"{key}: byte-identical on B"
+
+
 # --- the --since family shares one boundary-normalization contract: `history
 # --since` ≡ `export events --since` ≡ `export archive --since` pick *coherent*
 # windows from the one `parse_since` validator (inclusive >=) (H304) ----------
