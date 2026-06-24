@@ -121,6 +121,7 @@ def search_scrolls(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
@@ -168,6 +169,11 @@ def search_scrolls(
     qualitative confidence — `strong` for a title hit, `moderate` for a summary
     hit, `weak` for a body-only hit — so a top hit that ranks because the query
     is in its *title* is legible as such, not just by a smaller negative number.
+    `strength` filters on that same axis: it keeps only the hits whose query lands
+    at or above a band — `strong` (in the title), `moderate` (title or summary), or
+    `weak` (any field) — ANDed into the ranked match before the cap, so it returns
+    the top hits at that strength (e.g. only the matches whose query is in the
+    *title*). The rank-axis companion of `fidelity`/`drift`.
     """
     paths = get_paths()
     hits = search_items(
@@ -181,6 +187,7 @@ def search_scrolls(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     return [hit_payload(hit) for hit in hits]
 

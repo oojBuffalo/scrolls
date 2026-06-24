@@ -1340,13 +1340,18 @@ def _stats_item(item_id, **overrides):
 
 
 def _core_stats(stats):
-    """The returned/matched/truncated trio, dropping the H98 `custody` member.
+    """The returned/matched/truncated trio, dropping the derived tally members.
 
-    The `--stats` envelope's `stats` block now also carries a `custody` tally
-    (roadmap H98); these G2 truncation/scope tests pin the *denominator*, so they
-    drop `custody` and let the dedicated H98 tests below own its value.
+    The `search`/`list` `--stats` block now also carries a `custody` tally (roadmap
+    H98) and, on `search`, a `strength` tally (roadmap H313); these G2
+    truncation/scope tests pin the *denominator*, so they drop both and let the
+    dedicated H98/H313 tests below own their values.
     """
-    return {key: value for key, value in stats.items() if key != "custody"}
+    return {
+        key: value
+        for key, value in stats.items()
+        if key not in ("custody", "strength")
+    }
 
 
 def test_search_stats_envelope_echoes_scope_and_marks_truncation(scrolls_home, capsys):
@@ -1615,6 +1620,120 @@ def test_stats_custody_is_opt_in_absent_from_the_bare_array(scrolls_home, capsys
         main(argv)
         out = json.loads(capsys.readouterr().out)
         assert isinstance(out, list)  # no envelope → nowhere for a custody block
+
+
+# --- H313/H314: stats.strength — the rank-quality tally + the --strength filter ---
+# Each hit carries its own `match_strength` (H312); `search --stats` folds those into
+# a `{strong, moderate, weak}` histogram beside `stats.custody` (H313), and
+# `--strength <band>` keeps only the matches at or above that band (H314), the
+# rank-axis sibling of `--fidelity`/`--drift`.
+
+
+def _seed_strength_mix(db):
+    """Three scrolls matching `alpha`, one landing in each rank-strength band.
+
+    `alpha` in the title (strong), in the summary but not the title (moderate), and
+    only in the body (weak) — so the matched-scope strength tally is the non-trivial
+    `{strong:1, moderate:1, weak:1}` every H313/H314 assertion can drill.
+    """
+    insert_item(db, _stats_item(
+        "web:strong", title="alpha overview",
+        extracted_text="intro about things", summary="intro about things"))
+    insert_item(db, _stats_item(
+        "web:moderate", title="overview",
+        extracted_text="alpha appears in the summary. more body text here.",
+        summary="alpha appears in the summary"))
+    insert_item(db, _stats_item(
+        "web:weak", title="another overview",
+        extracted_text="a first sentence. later the alpha token appears in body.",
+        summary="a first sentence"))
+
+
+_MIX_STRENGTH = {"strong": 1, "moderate": 1, "weak": 1}
+
+
+def test_search_stats_strength_tallies_the_matched_scope(scrolls_home, capsys):
+    # roadmap H313: `search --stats` carries a `stats.strength` histogram over the
+    # matched scope, beside `stats.custody`, summing to `stats.matched`.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["strength"] == _MIX_STRENGTH
+    assert sum(stats["strength"].values()) == stats["matched"] == 3
+
+
+def test_search_stats_strength_covers_the_matched_scope_past_the_cap(scrolls_home, capsys):
+    # the truncated case: `--limit 1` returns one ranked hit, but the strength tally
+    # re-reads the full match set past the cap (the H98 custody-tally precedent).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 3 and stats["truncated"] is True
+    assert stats["strength"] == _MIX_STRENGTH  # over the matched 3, not the returned 1
+
+
+def test_search_stats_strength_is_opt_in_absent_from_the_bare_array(scrolls_home, capsys):
+    # the strength member rides only the opt-in envelope; the bare default array is
+    # unchanged (a list hit has no rank, so `list --stats` carries no strength block).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    main(["search", "alpha"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+    main(["list", "--stats"])
+    assert "strength" not in json.loads(capsys.readouterr().out)["stats"]
+
+
+def test_search_strength_filter_keeps_the_band_and_echoes_scope(scrolls_home, capsys):
+    # roadmap H314: --strength strong keeps only title hits; the honored filter rides
+    # the scope echo (G2), and the strength tally narrows to the kept scope.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    exit_code = main(["search", "alpha", "--strength", "strong", "--stats"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in payload["results"]] == ["web:strong"]
+    assert payload["scope"]["strength"] == "strong"
+    assert payload["stats"]["matched"] == 1
+    # the kept scope is all strong: the narrowed tally re-states it
+    assert payload["stats"]["strength"] == {"strong": 1, "moderate": 0, "weak": 0}
+
+
+def test_search_strength_drills_from_the_unfiltered_tally(scrolls_home, capsys):
+    # the drill-from-strength tie: the --strength <band> matched count equals the sum
+    # of the unfiltered tally's bands at or above <band> (threshold semantics).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    order = ["strong", "moderate", "weak"]
+    matched_by_band = {}
+    for band in order:
+        main(["search", "alpha", "--strength", band, "--stats"])
+        matched_by_band[band] = json.loads(capsys.readouterr().out)["stats"]["matched"]
+    # cumulative: strong=1, moderate=strong+moderate=2, weak=all=3
+    assert matched_by_band == {"strong": 1, "moderate": 2, "weak": 3}
+
+
+def test_search_unknown_strength_band_is_exit_2(scrolls_home, capsys):
+    # a closed vocabulary at the argparse layer (choices=) — exit 2, like a bad
+    # --stage/--fidelity, never a silent empty selection.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        main(["search", "alpha", "--strength", "bogus"])
+    assert exc.value.code == 2
 
 
 # --- H155: stats.custody.by_source — the per-source split on the browse envelopes -

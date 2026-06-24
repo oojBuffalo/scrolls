@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,12 @@ _STRENGTH_BY_FIELD = {
     "summary": "moderate",
     "extracted_text": "weak",
 }
+
+# The strength bands in descending field-weight order (strongest first), 1:1 with
+# `_FTS_FIELDS` so band index `i` names the same field as `_FTS_FIELDS[i]`. The
+# closed vocabulary `tally_strength` partitions over and `--strength` filters by;
+# derived from `_STRENGTH_BY_FIELD` so the order can never drift from the weights.
+STRENGTH_BANDS = tuple(_STRENGTH_BY_FIELD[field] for field in _FTS_FIELDS)
 
 # Presence, not content: the fidelity tier (ADR 0097) needs to know only
 # *whether* each body column is populated, so the query asks SQLite for the
@@ -159,6 +166,41 @@ _DRIFT_CLAUSE = (
     "WHERE ce.item_id = items.id ORDER BY ce.id DESC LIMIT 1)) = ?"
 )
 
+# The match-strength filter (the rank axis, H314) as a WHERE clause. A hit's
+# `match_strength` is the band of the highest-weighted indexed field its query
+# terms landed in (`_match_strength` over `matched_fields`), computed *post-cap* on
+# the returned rows — but a filter must scope the *ranked* selection before the
+# LIMIT, exactly as `--fidelity`/`--drift` do, so the band rides a column-restricted
+# FTS sub-match rather than a post-sieve. The semantics is a **threshold** (at or
+# above the band): `--strength strong` keeps title hits, `--strength moderate` keeps
+# title-or-summary hits, `--strength weak` keeps every match — because a hit reads
+# `match_strength == band` exactly when its query lands in `band`'s column *or* a
+# higher-weighted one, and the prefix `_FTS_FIELDS[:i+1]` for band index `i` names
+# precisely those columns. The clause restricts a fresh `items_fts` MATCH to that
+# column set with the same any-token (OR) test `_match_explanations` reads
+# `matched_fields` off, and intersects the result with the outer hit rowids — so a
+# row is kept by exactly the field-landing its own `match_strength` reports. The
+# match string is the bound parameter (`{col …} : (t1 OR t2 …)`), built per call
+# from the band's columns and the query tokens.
+_STRENGTH_CLAUSE = (
+    "items_fts.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)"
+)
+
+
+def _strength_match(strength: str, tokens: list[str]) -> str:
+    """The column-restricted FTS match string behind `--strength` (H314).
+
+    `strength` names a band in `STRENGTH_BANDS` (strongest first, 1:1 with
+    `_FTS_FIELDS`), so the columns *at or above* it are the prefix
+    `_FTS_FIELDS[:i+1]` — `strong` → title, `moderate` → title+summary, `weak` →
+    every field. Restricts the bound query to that column set with the same
+    any-token (OR) test `_match_explanations` reads `matched_fields` off, so the
+    filter keeps exactly the hits whose `match_strength` is the band or stronger.
+    """
+    columns = _FTS_FIELDS[: STRENGTH_BANDS.index(strength) + 1]
+    any_token = " OR ".join(tokens)
+    return f"{{{' '.join(columns)}}} : ({any_token})"
+
 
 def _search_filters(
     source: str | None,
@@ -168,20 +210,25 @@ def _search_filters(
     concept: str | None,
     fidelity: str | None,
     drift: str | None,
+    strength: str | None = None,
+    tokens: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """The shared facet clauses for the ranked query and its count.
 
     `item_filters` covers the stored-column facets (source/category/stage/tag/
-    concept) the ranked query and `facets` share. `fidelity` and `drift` are the
-    two facets that are *derived*, not stored columns, so each rides a UDF as a
-    WHERE clause: `fidelity` (ADR 0097) folds the content-presence booleans
-    through `scrolls_fidelity`; `drift` (H58) folds the item's latest verify
-    verdict through `scrolls_drift`. Because both AND into the SQL *before* the
-    LIMIT, they scope the top-k ranked selection (the top hits at that tier/
-    posture), never a post-cap sieve; `count_matches` appends the identical
-    clauses, so the G2 truncation marker counts only the kept set. An unknown
-    tier/posture is a `ValueError` (a closed vocabulary, like `list_items`),
-    raised before any DB access so it never depends on library state.
+    concept) the ranked query and `facets` share. `fidelity`, `drift`, and
+    `strength` are the facets that are *derived*, not stored columns, so each rides
+    a clause: `fidelity` (ADR 0097) folds the content-presence booleans through the
+    `scrolls_fidelity` UDF; `drift` (H58) folds the item's latest verify verdict
+    through `scrolls_drift`; `strength` (H314) restricts a fresh `items_fts` MATCH
+    to the columns at or above the band and intersects it with the hit rowids (the
+    `_STRENGTH_CLAUSE`, with `_strength_match` building the bound query from
+    `tokens`). Because all three AND into the SQL *before* the LIMIT, they scope the
+    top-k ranked selection (the top hits at that tier/posture/strength), never a
+    post-cap sieve; `count_matches` appends the identical clauses, so the G2
+    truncation marker counts only the kept set. An unknown tier/posture/band is a
+    `ValueError` (a closed vocabulary, like `list_items`), raised before any DB
+    access so it never depends on library state.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     if fidelity is not None:
@@ -200,6 +247,14 @@ def _search_filters(
             )
         clauses.append(_DRIFT_CLAUSE)
         params.append(drift)
+    if strength is not None:
+        if strength not in STRENGTH_BANDS:
+            raise ValueError(
+                f"unknown match strength {strength!r}; "
+                f"choose one of {', '.join(STRENGTH_BANDS)}"
+            )
+        clauses.append(_STRENGTH_CLAUSE)
+        params.append(_strength_match(strength, tokens or []))
     return clauses, params
 
 
@@ -252,6 +307,7 @@ def search_items(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
 
@@ -281,13 +337,22 @@ def search_items(
     so it scopes the ranked selection (the top hits at that posture). An unknown
     posture is a `ValueError` (closed vocabulary).
 
+    `strength` is the rank-axis companion (H314): it keeps only the matches whose
+    query lands at or above a field-weight band (`strong`/`moderate`/`weak`) — the
+    same band each hit's own `match_strength` reports. `--strength strong` keeps
+    title hits, `moderate` keeps title-or-summary hits, `weak` keeps every match.
+    Like `fidelity`/`drift` it rides a SQL clause ANDed before the LIMIT (a
+    column-restricted `items_fts` sub-match), so it scopes the ranked selection (the
+    top hits at that strength), not a post-cap sieve. An unknown band is a
+    `ValueError` (closed vocabulary).
+
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
     """
     tokens = _escape_tokens(query)
     match = " ".join(tokens)
     clauses, params = _search_filters(
-        source, category, stage, tag, concept, fidelity, drift
+        source, category, stage, tag, concept, fidelity, drift, strength, tokens
     )
     if not db_path.exists():
         return []
@@ -344,6 +409,7 @@ def count_matches(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> int:
     """Total items matching `query` in scope, ignoring the result cap.
 
@@ -357,11 +423,14 @@ def count_matches(
     the query the same way `search_items` does; a missing database is an empty
     library (0 matches). `drift` (the ledger-axis filter) is honored too, so a
     `--drift verified --stats` result is never marked truncated by hits at
-    postures it never showed.
+    postures it never showed. `strength` (the rank-axis filter, H314) is honored
+    too, so a `--strength strong --stats` result is never marked truncated by
+    weaker-landing hits it never showed.
     """
-    match = _escape_query(query)
+    tokens = _escape_tokens(query)
+    match = " ".join(tokens)
     clauses, params = _search_filters(
-        source, category, stage, tag, concept, fidelity, drift
+        source, category, stage, tag, concept, fidelity, drift, strength, tokens
     )
     if not db_path.exists():
         return 0
@@ -426,20 +495,17 @@ def _escape_tokens(query: str) -> list[str]:
 
     Each token becomes a `"phrase"` literal, so reserved words (`AND`/`OR`/`NEAR`)
     and punctuation are matched as text, not parsed as operators. Raises
-    `ValueError` when nothing searchable remains. The shared root of both the
-    implicit-AND match (`_escape_query`) and the per-field OR explanation
-    (`_match_explanations`), so the two never tokenize a query differently.
+    `ValueError` when nothing searchable remains. The shared root of the
+    implicit-AND match (`" ".join(tokens)`, the same string `search_items`/
+    `count_matches` MATCH on), the per-field OR explanation (`_match_explanations`),
+    and the `--strength` column-restricted sub-match (`_strength_match`), so they
+    never tokenize a query differently.
     """
     tokens = [token.replace('"', "") for token in query.split()]
     tokens = [f'"{token}"' for token in tokens if token]
     if not tokens:
         raise ValueError("search query has no searchable tokens")
     return tokens
-
-
-def _escape_query(query: str) -> str:
-    """The implicit-AND FTS match: every query token must appear (anywhere)."""
-    return " ".join(_escape_tokens(query))
 
 
 def _match_explanations(
@@ -492,3 +558,21 @@ def _match_strength(matched_fields: tuple[str, ...]) -> str:
         if field in matched_fields:
             return _STRENGTH_BY_FIELD[field]
     return "weak"
+
+
+def tally_strength(strengths: Iterable[str]) -> dict[str, int]:
+    """Per-band match-strength counts from a stream of `match_strength` values.
+
+    The rank-axis analogue of `custody.tally_custody` (H98): it folds each matched
+    hit's own `match_strength` into the `{strong, moderate, weak}` histogram, every
+    band present in `STRENGTH_BANDS` order with zeros included, so the shape is
+    stable for a renderer to read. The bands partition the matched scope — each hit
+    has exactly one `match_strength` — so the counts sum to `stats.matched` by
+    construction, the drill-from-strength tie behind `--strength` (H314): the
+    `--strength <band>` result count equals the sum of the bands at or above
+    `<band>` in this tally (threshold semantics, strongest-first prefix).
+    """
+    counts = {band: 0 for band in STRENGTH_BANDS}
+    for strength in strengths:
+        counts[strength] += 1
+    return counts

@@ -25,6 +25,7 @@ def scope_envelope(
     scope: dict[str, Any],
     matched: int,
     custody: dict[str, Any] | None = None,
+    strength: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Wrap `results` in the scope-honest `{scope, stats, results}` envelope.
 
@@ -53,6 +54,16 @@ def scope_envelope(
     to the tally's inner shape: a caller folding a per-source `by_source` split into
     the `custody` dict (roadmap H155) rides through `stats.custody` intact, no
     envelope change.
+
+    `strength`, when given, is the `search.tally_strength` histogram over the same
+    *matched* scope (roadmap H313): `{strong, moderate, weak}` counts of each hit's
+    `match_strength`, added to `stats.strength` beside `stats.custody` so a reader
+    sees not just *how much* matched but the *rank-quality* distribution of it (how
+    many matched on a title vs only a body) without a second call. It partitions the
+    matched scope, so the band counts sum to `stats.matched` (the drill-from-strength
+    tie behind `--strength`, H314). Omitted when the caller passes nothing — the
+    rank-quality tally is a `search`-only axis (only a search hit has a
+    `match_strength`), so `list`/`related`/`works` keep the lean stats shape.
     """
     returned = len(results)
     applied = {key: value for key, value in scope.items() if value is not None}
@@ -63,6 +74,8 @@ def scope_envelope(
     }
     if custody is not None:
         stats["custody"] = custody
+    if strength is not None:
+        stats["strength"] = strength
     return {
         "scope": applied,
         "stats": stats,

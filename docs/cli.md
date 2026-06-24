@@ -4047,7 +4047,7 @@ $ scrolls show x:9999
 [exit 1]
 ```
 
-### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--stats]`
+### `scrolls search <query> [--limit N] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--strength W] [--stats]`
 
 FTS5 BM25 over title/summary/extracted text, title weighted highest
 (`src/scrolls/search.py`, `tests/test_search.py`). Query tokens are
@@ -4140,6 +4140,31 @@ drill-from-`facets drift` convergence on the ranked surface. The MCP twin
 `search_scrolls(drift=)` carries the same selection
 (`test_search_scrolls_filters_by_drift_posture`).
 
+`--strength W` is the **rank-axis** filter on the ranked surface — the act-axis
+companion of the `match_strength` explanation and the rank sibling of
+`--fidelity`/`--drift` (roadmap H314): a match-strength **band**
+(`strong`/`moderate`/`weak`, the same closed vocabulary — a typo is a usage error,
+exit 2 — `test_search_unknown_strength_band_is_exit_2`). Unlike the *categorical*
+custody filters, `--strength` is a **threshold** (at or above): `--strength strong`
+keeps only the matches whose query lands in the **title**, `--strength moderate`
+keeps title-or-summary matches, and `--strength weak` keeps every match — because a
+hit reads `match_strength == band` exactly when its query lands in that band's
+column *or* a higher-weighted one (`test_search_strength_is_a_threshold_at_or_above_the_band`).
+Like `--fidelity`/`--drift` it ANDs into the SQL **before** the cap, so it scopes
+the *ranked* selection (the top hits at that strength) and `count_matches` stays the
+honest uncapped denominator (`test_search_strength_applies_before_the_limit`); it
+rides a column-restricted `items_fts` sub-match over the columns at or above the
+band — the same any-token (OR) test the per-hit `match_strength` is read off — so a
+hit is *selected* by exactly the field-landing it *shows*
+(`test_search_strength_filter_agrees_with_the_per_hit_strength`). It composes with
+every other facet, including `--fidelity` (the rank and holdings axes AND
+independently, `test_search_strength_composes_with_fidelity`). Because the bands are
+ordered, the `--strength <band>` matched count equals the sum of the
+`stats.strength` tally's bands *at or above* `<band>` — the (cumulative)
+drill-from-strength convergence (`test_search_strength_drills_from_the_unfiltered_tally`).
+The MCP twin `search_scrolls(strength=)` carries the same selection
+(`test_search_scrolls_filters_by_match_strength`).
+
 Hit keys: `id`, `source`, `title`, `url`, `stage`, `score`, `snippet`
 (matches bracketed, `…` for elided context), the rank explanation —
 `matched_fields` (the indexed fields the query landed in, BM25-weight order) and
@@ -4195,6 +4220,19 @@ those; the tally re-reads the full match set only when the cap actually hid rows
 (truncated), reusing the page otherwise. The tier/posture counts sum to
 `stats.matched` (`test_search_stats_custody_covers_the_matched_scope_past_the_cap`).
 
+`stats` also carries a `strength` member (roadmap H313) — the rank-quality
+histogram `{strong, moderate, weak}` over the same **matched** scope, beside
+`custody`. Each hit already carries its own `match_strength` (the explanation
+above), so the envelope folds those into per-band counts that **partition** the
+matched scope — they sum to `stats.matched`, so a reader sees not just *how much*
+matched but the *rank quality* of it ("12 matched: 2 strong, 4 moderate, 6 weak"),
+and the `--strength <band>` count is the cumulative sum of the bands at or above
+`<band>` (`test_search_stats_strength_tallies_the_matched_scope`,
+`test_search_stats_strength_covers_the_matched_scope_past_the_cap`). Like `custody`
+it is a `search`-only axis (only a ranked hit has a `match_strength`), so `list
+--stats` carries no `strength` block
+(`test_search_stats_strength_is_opt_in_absent_from_the_bare_array`).
+
 ```console
 $ scrolls search "sqlite fts5"
 [{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": [], "matched_fields": ["title", "summary", "extracted_text"], "match_strength": "strong"}]
@@ -4209,11 +4247,15 @@ $ scrolls search "sqlite fts5" --source arxiv
 [exit 0]
 
 $ scrolls search "sqlite fts5" --limit 1 --stats
-{"scope": {"query": "sqlite fts5", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 2, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}}, "results": [{"id": "x:1111", ...}]}
+{"scope": {"query": "sqlite fts5", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 2, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}, "strength": {"strong": 1, "moderate": 2, "weak": 0}}, "results": [{"id": "x:1111", ...}]}
+[exit 0]
+
+$ scrolls search "sqlite fts5" --strength strong   # only matches whose query is in the title
+[{"id": "x:1111", "source": "x", "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "url": "https://x.com/karpathy/status/1111", "stage": "rendered", "score": -2.9315057596986334, "snippet": "@karpathy: [SQLite] [FTS5] is criminally underrated for local search.", "fidelity": "full", "works": [], "matched_fields": ["title", "summary", "extracted_text"], "match_strength": "strong"}]
 [exit 0]
 
 $ scrolls search "sqlite fts5" --source arxiv --stats
-{"scope": {"query": "sqlite fts5", "source": "arxiv", "limit": 20}, "stats": {"returned": 0, "matched": 0, "truncated": false, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}}}, "results": []}
+{"scope": {"query": "sqlite fts5", "source": "arxiv", "limit": 20}, "stats": {"returned": 0, "matched": 0, "truncated": false, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}}, "strength": {"strong": 0, "moderate": 0, "weak": 0}}, "results": []}
 [exit 0]
 
 $ scrolls search "   "

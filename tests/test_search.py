@@ -926,6 +926,169 @@ def test_search_drift_composes_with_fidelity(db_path):
     assert [h.id for h in hits] == ["wikipedia:en:A"]
 
 
+# --- The rank axis: the strength tally (H313) and the --strength filter (H314) ---
+# Each hit's `match_strength` is the band of the highest-weighted field its query
+# landed in (H312). `tally_strength` folds those into a `{strong, moderate, weak}`
+# histogram (the rank-axis analogue of `tally_custody`), and `--strength` keeps only
+# the matches at or above a band — the rank-axis sibling of `--fidelity`/`--drift`.
+
+
+def _seed_strength_mix(db_path):
+    """Three `widget` matches, one landing in each band (strong/moderate/weak).
+
+    `widget` in the title (strong), in the first sentence = summary (moderate), and
+    only late in the body (weak), so the same token reads at each rank-strength
+    band — the strength-axis analogue of `_seed_mixed_fidelity`.
+    """
+    insert_item(db_path, make_item(
+        "wikipedia:en:Strong", "Widget overview",
+        "An intro line. The body explains a widget in detail.",  # title -> strong
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Moderate", "Gadget notes",
+        "A widget appears in the summary. More text about gadgets.",  # summary -> moderate
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:Weak", "Unrelated topic",
+        "A first sentence. Much later the widget finally shows up.",  # body -> weak
+    ))
+
+
+def test_tally_strength_partitions_into_the_three_bands():
+    # the rank-axis analogue of tally_custody: every band present in STRENGTH_BANDS
+    # order with zeros, and each value counted into exactly one band.
+    from scrolls.search import STRENGTH_BANDS, tally_strength
+
+    assert STRENGTH_BANDS == ("strong", "moderate", "weak")
+    counts = tally_strength(["strong", "weak", "strong", "moderate"])
+    assert counts == {"strong": 2, "moderate": 1, "weak": 1}
+    assert list(counts) == ["strong", "moderate", "weak"]  # canonical order
+    assert tally_strength([]) == {"strong": 0, "moderate": 0, "weak": 0}
+
+
+def test_search_strength_strong_keeps_only_title_hits(db_path):
+    # --strength strong keeps the matches whose query lands in the title.
+    _seed_strength_mix(db_path)
+    hits = search_items(db_path, "widget", strength="strong")
+    assert [h.id for h in hits] == ["wikipedia:en:Strong"]
+
+
+def test_search_strength_is_a_threshold_at_or_above_the_band(db_path):
+    # the one real design choice: --strength is a *threshold* (at or above), not an
+    # exact band — moderate keeps title-or-summary hits, weak keeps every match.
+    _seed_strength_mix(db_path)
+    assert {h.id for h in search_items(db_path, "widget", strength="moderate")} == {
+        "wikipedia:en:Strong", "wikipedia:en:Moderate",
+    }
+    assert {h.id for h in search_items(db_path, "widget", strength="weak")} == {
+        h.id for h in search_items(db_path, "widget")  # weak == unfiltered
+    }
+
+
+def test_search_strength_filter_agrees_with_the_per_hit_strength(db_path):
+    # row-shows-≡-filter on the rank axis: every hit the filter returns reads at the
+    # band or stronger (the threshold), so the filter and the hit never disagree.
+    _seed_strength_mix(db_path)
+    order = ["strong", "moderate", "weak"]
+    for band in order:
+        kept = set(order[: order.index(band) + 1])  # the band and everything above
+        hits = search_items(db_path, "widget", strength=band)
+        assert hits  # non-vacuous: the seed has a match at each band
+        assert all(hit.match_strength in kept for hit in hits)
+
+
+def test_search_strength_drills_from_the_tally(db_path):
+    # the drill-from-strength tie (H313 is the drill surface for H314): the
+    # --strength <band> count equals the sum of the tally bands at or above it.
+    from scrolls.search import tally_strength
+
+    _seed_strength_mix(db_path)
+    tally = tally_strength(h.match_strength for h in search_items(db_path, "widget"))
+    assert tally == {"strong": 1, "moderate": 1, "weak": 1}
+    order = ["strong", "moderate", "weak"]
+    for band in order:
+        at_or_above = sum(tally[b] for b in order[: order.index(band) + 1])
+        assert count_matches(db_path, "widget", strength=band) == at_or_above
+
+
+def test_search_strength_applies_before_the_limit(db_path):
+    # the filter scopes the *ranked* selection in SQL, so the cap returns the top-k
+    # hits at that band and count_matches stays the honest uncapped denominator —
+    # not a post-sieve of an already-capped page (which couldn't count past the cap).
+    for index in range(3):
+        insert_item(db_path, make_item(
+            f"wikipedia:en:Title_{index}", f"Widget {index} reference",
+            "An intro. The body mentions a gadget.",  # title -> strong
+        ))
+    for index in range(2):
+        insert_item(db_path, make_item(
+            f"wikipedia:en:Body_{index}", f"Topic {index}",
+            "A first sentence. Later a widget appears in the body.",  # body -> weak
+        ))
+    hits = search_items(db_path, "widget", strength="strong", limit=2)
+    assert len(hits) == 2  # capped to the top-2 strong hits
+    assert all(hit.match_strength == "strong" for hit in hits)
+    # the denominator counts every strong match in scope, past the cap
+    assert count_matches(db_path, "widget", strength="strong") == 3
+
+
+def test_search_strength_ands_with_other_facets(db_path):
+    # --strength composes with --source: only the strong arxiv match.
+    insert_item(db_path, make_item(
+        "arxiv:2401.0001", "Widget paper", "An intro. Body about widgets.",
+        source="arxiv",  # title -> strong
+    ))
+    insert_item(db_path, make_item(
+        "arxiv:2401.0002", "A study", "A widget appears in the summary line.",
+        source="arxiv",  # summary -> moderate
+    ))
+    insert_item(db_path, make_item(
+        "web:abc", "Widget blog", "An intro. Body about widgets.",
+        source="web",  # strong, but wrong source
+    ))
+    hits = search_items(db_path, "widget", source="arxiv", strength="strong")
+    assert [h.id for h in hits] == ["arxiv:2401.0001"]
+
+
+def test_search_strength_composes_with_fidelity(db_path):
+    # the rank axis ANDs independently with the holdings axis.
+    insert_item(db_path, make_item(
+        "wikipedia:en:A", "Widget engine", "An intro. Body about a widget.",
+        raw_text="An intro. Body about a widget.", content_hash="sha256:a",
+        stage="rendered",  # title -> strong, full
+    ))
+    insert_item(db_path, make_item(
+        "wikipedia:en:B", "Notes", "A widget appears in the summary line.",
+        raw_text="x", content_hash="sha256:b", stage="rendered",  # moderate, full
+    ))
+    hits = search_items(db_path, "widget", strength="strong", fidelity="full")
+    assert [h.id for h in hits] == ["wikipedia:en:A"]
+
+
+def test_search_unknown_strength_band_raises(db_path):
+    # a closed vocabulary, like --fidelity/--drift — never a silent empty selection.
+    _seed_strength_mix(db_path)
+    with pytest.raises(ValueError):
+        search_items(db_path, "widget", strength="bogus")
+
+
+def test_search_unknown_strength_raises_even_on_a_missing_db(tmp_path):
+    # the closed-vocabulary error never depends on library state.
+    missing = tmp_path / "absent.sqlite"
+    with pytest.raises(ValueError):
+        search_items(missing, "widget", strength="bogus")
+    assert not missing.exists()
+
+
+def test_count_matches_honors_the_strength_filter(db_path):
+    # the denominator narrows with the rank filter, so a --strength --stats result
+    # is never marked truncated by weaker-landing hits it never showed.
+    _seed_strength_mix(db_path)
+    assert count_matches(db_path, "widget") == 3
+    assert count_matches(db_path, "widget", strength="strong") == 1
+    assert count_matches(db_path, "widget", strength="weak") == 3
+
+
 # --- count_matches: the honest denominator behind G2's truncation marker ----
 
 

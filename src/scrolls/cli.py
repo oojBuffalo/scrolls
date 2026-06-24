@@ -149,7 +149,7 @@ from scrolls.related import filter_related, scored_related
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
-from scrolls.search import count_matches, hit_payload, search_items
+from scrolls.search import count_matches, hit_payload, search_items, tally_strength
 from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
@@ -1287,6 +1287,15 @@ def build_parser() -> argparse.ArgumentParser:
         "match before --limit, so it returns the top hits at that posture",
     )
     search_parser.add_argument(
+        "--strength",
+        choices=("strong", "moderate", "weak"),
+        default=None,
+        help="Only hits whose query lands at or above this rank-strength band — "
+        "strong (title), moderate (title or summary), weak (any field); the "
+        "rank-axis companion of --fidelity/--drift, ANDed into the ranked match "
+        "before --limit, so it returns the top hits at that strength",
+    )
+    search_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1632,6 +1641,7 @@ def main(argv: list[str] | None = None) -> int:
             args.stats,
             args.fidelity,
             args.drift,
+            args.strength,
         )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
@@ -3906,6 +3916,7 @@ def _cmd_search(
     stats: bool = False,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
@@ -3920,6 +3931,7 @@ def _cmd_search(
             concept=concept,
             fidelity=fidelity,
             drift=drift,
+            strength=strength,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -3942,6 +3954,7 @@ def _cmd_search(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     # `stats.custody` (roadmap H98): the custody tally over the *matched* scope, not
     # just the returned page — each hit already carries its `fidelity`/`drift` (the
@@ -3951,6 +3964,7 @@ def _cmd_search(
     matched_hits = hits if matched <= len(hits) else search_items(
         paths.db_path, query, limit=matched, source=source, category=category,
         stage=stage, tag=tag, concept=concept, fidelity=fidelity, drift=drift,
+        strength=strength,
     )
     custody = tally_custody((hit.fidelity, hit.drift) for hit in matched_hits)
     # `stats.custody.by_source` (roadmap H155): the query-matched scope split per
@@ -3963,6 +3977,12 @@ def _cmd_search(
     # weakest source distilled from the lean `by_source` beside it (no per-source
     # coverage on the browse-stats projection, H155 — `include_coverage=False`).
     custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
+    # `stats.strength` (roadmap H313): the rank-quality tally over the same matched
+    # scope, beside `stats.custody` — each hit already carries its own
+    # `match_strength` (H312), so fold those into the `{strong, moderate, weak}`
+    # histogram. The bands partition the matched scope (sum to `stats.matched`), so
+    # `--strength <band>` drills to the sum of the bands at or above `<band>` (H314).
+    strength_tally = tally_strength(hit.match_strength for hit in matched_hits)
     scope = {
         "query": query,
         "source": source,
@@ -3972,9 +3992,12 @@ def _cmd_search(
         "concept": concept,
         "fidelity": fidelity,
         "drift": drift,
+        "strength": strength,
         "limit": limit,
     }
-    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
+    print(json.dumps(scope_envelope(
+        rows, scope=scope, matched=matched, custody=custody, strength=strength_tally
+    )))
     return 0
 
 

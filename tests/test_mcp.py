@@ -526,6 +526,60 @@ def test_search_scrolls_rejects_an_unknown_drift_posture(scrolls_home):
         mcp_server.search_scrolls("database", drift="drift")
 
 
+def test_search_scrolls_filters_by_match_strength(scrolls_home):
+    # the rank-axis filter on the ranked surface — the MCP twin of `scrolls search
+    # --strength` (H314) and the rank sibling of fidelity/drift. Keeps only the
+    # matches whose query lands at or above a band (a threshold), the same per-hit
+    # `match_strength` each hit already shows.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:strong", source="web", url="https://ex.com/strong",
+        saved_at="2026-06-12T00:00:00+00:00", title="widget overview",
+        extracted_text="An intro line. The body discusses a gadget.", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:moderate", source="web", url="https://ex.com/moderate",
+        saved_at="2026-06-12T00:00:01+00:00", title="gadget notes",
+        extracted_text="A widget appears in the summary. More body text.",
+        summary="A widget appears in the summary", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:weak", source="web", url="https://ex.com/weak",
+        saved_at="2026-06-12T00:00:02+00:00", title="unrelated topic",
+        extracted_text="A first sentence. Later the widget appears in the body.",
+        summary="A first sentence", stage="fetched"))
+
+    # strong keeps the title hit; moderate adds the summary hit; weak keeps all
+    assert [r["id"] for r in mcp_server.search_scrolls("widget", strength="strong")] == [
+        "web:strong"
+    ]
+    assert {r["id"] for r in mcp_server.search_scrolls("widget", strength="moderate")} == {
+        "web:strong", "web:moderate"
+    }
+    assert {r["id"] for r in mcp_server.search_scrolls("widget", strength="weak")} == {
+        "web:strong", "web:moderate", "web:weak"
+    }
+    # every returned hit reads at the band or stronger (the threshold)
+    order = ["strong", "moderate", "weak"]
+    for band in order:
+        kept = set(order[: order.index(band) + 1])
+        hits = mcp_server.search_scrolls("widget", strength=band)
+        assert hits and all(h["match_strength"] in kept for h in hits)
+
+
+def test_search_scrolls_rejects_an_unknown_match_strength(scrolls_home):
+    # the same closed vocabulary as `scrolls search --strength`; never a silent empty
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.search_scrolls("widget", strength="strongest")
+
+
 def test_list_scrolls_browses_by_facet(scrolls_home):
     # The enumeration counterpart to search_scrolls (ADR 0060): no query,
     # filtered by the same facets, bounded by a limit.
