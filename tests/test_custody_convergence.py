@@ -3831,6 +3831,28 @@ def _library_markers(text):
     return markers
 
 
+def _library_content_duplicate_markers(text):
+    """Map item title → the sibling ids named by its `· also held as …` clause (H333).
+
+    The content-identity counterpart of `_library_markers`: a compiled `library/`
+    list-page row for an item the library holds byte-identical copies of trails a
+    `· also held as `<id>`, `<id>`` clause naming its *other* held ids (H333, the
+    Markdown surface of the per-item `content_duplicate_ids` read). This parses the
+    backticked sibling ids out of that trailing clause, keyed by the row's link
+    title (unique in the fixture). The clause is the last segment on the row, so the
+    greedy `.*` consumes the custody marker before it; `re.findall` then lifts each
+    backticked id in render order (sorted — the group's stable ordering). A unique or
+    NULL-hash row carries no clause and contributes nothing, so the parsed map's keys
+    are exactly the rows that name a sibling (the honest omit).
+    """
+    markers = {}
+    for line in text.splitlines():
+        m = re.match(r"^\s*- \[([^\]]+)\]\([^)]+\).* · also held as (.+?)\s*$", line)
+        if m:
+            markers[m.group(1)] = re.findall(r"`([^`]+)`", m.group(2))
+    return markers
+
+
 def _library_headline(text):
     """Parse the compiled `_Custody:_` scope headline into non-zero count maps.
 
@@ -7136,3 +7158,135 @@ def test_content_duplicate_browse_filter_converges_with_doctor_groups(scrolls_ho
     assert "web:m1" not in members and "web:m2" not in members
     assert main(["list", "--content-duplicate"]) == 0
     assert {r["id"] for r in json.loads(capsys.readouterr().out)} == members
+
+
+def _seed_rendered_content_identity(db):
+    """A *rendered* library with a known byte-identical structure, for the compiled
+    `library/` "also held as" marker (H333) to be parsed back off the pages.
+
+    The compiled-page counterpart of `_seed_content_identity`: every content-bearing
+    item carries a `markdown_path` (so `compile_kb` includes it — "Only items with a
+    `markdown_path` appear") and lands on a `sources/<S>.md` list page. Two content
+    groups exercise the marker's whole-library sibling scope (H328):
+
+    - group A (``sha256:gA``) — three ids under one source (``web:a``/``web:b``/
+      ``web:c``), so each row names *both* the others, sorted (the multi-sibling case);
+    - group B (``sha256:gB``) — the same bytes under two *different* sources
+      (``web:x``/``blog:y``), a cross-source group whose members live on different
+      pages, so each single-source page names the cross-source sibling (the
+      whole-library scope — a content group spans sources);
+
+    plus ``web:uniq`` (a distinct hash → no clause) and a rendered NULL-hash reference
+    ``web:ref`` (no content → no clause), so the omit cases are non-vacuous on the
+    compiled surface. Neither group shares a DOI/work, so every member renders as a
+    plain top-level row (no consolidation). Returns the expected ``{frozenset(ids)}``
+    the whole-library fold yields, for the rendered markers to be tied against.
+    """
+    def rendered(item_id, source, title, content_hash):
+        slug = title.lower().replace(" ", "-")
+        insert_item(db, _item(
+            item_id, title, source=source, stage="rendered",
+            markdown_path=f"scrolls/{source}/{slug}.md",
+            extracted_text="topic body", raw_text="<raw>topic</raw>",
+            content_hash=content_hash))
+
+    rendered("web:a", "web", "Alpha", "sha256:gA")
+    rendered("web:b", "web", "Bravo", "sha256:gA")
+    rendered("web:c", "web", "Charlie", "sha256:gA")
+    rendered("web:x", "web", "Xray", "sha256:gB")
+    rendered("blog:y", "blog", "Yankee", "sha256:gB")
+    rendered("web:uniq", "web", "Unique", "sha256:uniq")
+    insert_item(db, _item(  # rendered reference pointer, no content → NULL hash
+        "web:ref", "Reference", source="web", stage="rendered",
+        markdown_path="scrolls/web/reference.md"))
+    return {
+        frozenset({"web:a", "web:b", "web:c"}),
+        frozenset({"web:x", "blog:y"}),
+    }
+
+
+def _rendered_content_duplicate_siblings(sources_dir, items):
+    """Reconstruct ``{item id: [sibling ids]}`` off the compiled `sources/*.md` pages.
+
+    Unions the `· also held as …` markers across every source page (a cross-source
+    group's members live on different pages, H328), keying each parsed row's title
+    back to its item id. Every item starts at the honest empty `[]`; a row that names
+    siblings overrides it — so a unique/NULL-hash item (no clause) keeps `[]`, exactly
+    the per-item `content_duplicate_ids` read.
+    """
+    title_to_id = {item.title: item.id for item in items}
+    siblings = {item.id: [] for item in items}
+    for page in sorted(sources_dir.glob("*.md")):
+        markers = _library_content_duplicate_markers(page.read_text(encoding="utf-8"))
+        for title, named in markers.items():
+            siblings[title_to_id[title]] = named
+    return siblings
+
+
+def test_compiled_library_page_agrees_on_the_content_duplicate_marker(scrolls_home, capsys):
+    # roadmap H339: H333 put the `· also held as `<id>`` content-identity marker on
+    # the compiled `library/` list-page rows — the Markdown surface of the per-item
+    # `content_duplicate_ids` read (H328). Fold it into the content-identity
+    # convergence guard (H332): the siblings a human reads off the compiled pages
+    # reconstruct exactly `doctor`'s content-duplicate groups *and* equal the per-item
+    # `show`/`get_scroll` siblings, id for id — the compiled-marker analogue of
+    # `test_compiled_library_page_agrees_on_the_per_item_custody_marker` (H91/H93) on
+    # the content-identity axis. So the rendered marker can never silently drift from
+    # the JSON audit or the per-item read an agent makes.
+    import dataclasses
+
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    expected_groups = _seed_rendered_content_identity(db)
+    capsys.readouterr()
+
+    # --- the divergence-truth source: `doctor`'s whole-library content-duplicate groups
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert {frozenset(g["ids"]) for g in dup["groups"]} == expected_groups
+
+    # --- the per-item read (CLI `show` ≡ MCP `get_scroll`): id → its named siblings ---
+    items = list_items(db)
+    cli_siblings, mcp_siblings = {}, {}
+    for item in items:
+        assert main(["show", item.id]) == 0
+        cli_siblings[item.id] = json.loads(capsys.readouterr().out)["content_duplicate_ids"]
+        mcp_siblings[item.id] = mcp_server.get_scroll(item.id)["content_duplicate_ids"]
+    assert cli_siblings == mcp_siblings  # CLI ≡ MCP, per item
+
+    # --- the compiled human-readable surface (H333): the rendered "also held as" markers
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    sources_dir = get_paths().library_dir / "sources"
+    rendered = _rendered_content_duplicate_siblings(sources_dir, items)
+
+    # 1. the rendered siblings equal the per-item read, id for id (the H332 by-construction
+    #    tie made executable on the compiled surface — same sorted ids, render order)
+    assert rendered == cli_siblings
+    # 2. and reconstruct exactly `doctor`'s groups (the whole-library truth source) — the
+    #    cross-source group B's two members, named on different pages, rejoin into one group
+    assert _groups_from_per_item(rendered) == expected_groups
+    # 3. the unique and the rendered NULL-hash reference rows carry no clause (honest omit)
+    assert rendered["web:uniq"] == [] and rendered["web:ref"] == []
+    # group A's three rows each name both the others, sorted (the multi-sibling case)
+    assert rendered["web:a"] == ["web:b", "web:c"]
+
+    # --- sabotage: re-hash one member of group A → it shrinks to a 2-id group, and the
+    # recompiled markers fall in lockstep with `doctor` (the rendered marker tracks the
+    # data, not a constant baked into the page — a hard-coded marker would fail this tie)
+    charlie = next(it for it in items if it.id == "web:c")
+    assert update_item(db, dataclasses.replace(charlie, content_hash="sha256:nowunique"))
+    capsys.readouterr()
+
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    shrunk = {frozenset(g["ids"]) for g in dup["groups"]}
+    assert shrunk == {frozenset({"web:a", "web:b"}), frozenset({"web:x", "blog:y"})}
+
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    rendered = _rendered_content_duplicate_siblings(sources_dir, list_items(db))
+    assert _groups_from_per_item(rendered) == shrunk
+    # web:c now names no sibling (its content is unique); web:a/web:b name only each other
+    assert rendered["web:c"] == []
+    assert rendered["web:a"] == ["web:b"] and rendered["web:b"] == ["web:a"]
