@@ -30,6 +30,7 @@ from scrolls.items import (
     ScrollItem,
     adopt_incoming,
     archived_records,
+    delete_item,
     get_item,
     insert_item,
     item_to_dict,
@@ -1236,6 +1237,113 @@ def test_bundle_html_duplicates_line_omitted_when_unique(scrolls_home):
     assert '<p class="custody-duplicates">' not in build_bundle_html(
         db, "nothingmatcheshere"
     )
+
+
+# --- the `_Duplicates:_` line travels the bundle round-trip (roadmap H336) ---
+# H331 put the `_Duplicates:_` line on the shareable `export bundle`; the untested
+# guarantee is that a recipient who rebuilds a library *from the bundle alone* and
+# re-exports sees the *same* redundancy count — not a count silently lost because
+# `content_hash` did not travel. It is a genuine, distinct cap-9 claim: the line is
+# folded over the rebuilt rows' `content_hash` (the H325 fold), so it holds *only
+# if* the lossless round-trip carries that column — the H238/H244 byte-identity
+# guarantee (`test_with_archive_bundle_re_exports_byte_identically`) on the
+# content-identity axis.
+
+
+def _duplicates_line(bundle: str) -> str | None:
+    """The single `_Duplicates:_` briefing line, or None when omitted (clean scope)."""
+    for line in bundle.splitlines():
+        if line.startswith("_Duplicates:"):
+            return line
+    return None
+
+
+def test_content_duplicates_line_travels_the_bundle_round_trip(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # roadmap H336: `export bundle <Q>` from A → `import bundle` (+ the documented
+    # `doctor --fix` / `kb` rebuild) into a fresh library B → `export bundle <Q>`
+    # from B re-renders the *same* `_Duplicates:_` line, byte-identical and present.
+    # The byte-identical pair holds distinct URLs (the `make_item` `id`-derived url),
+    # so it is a content-identity duplicate (same `content_hash`), *not* a
+    # URL-spelling one — `doctor --fix` must leave both copies held (H337's
+    # discipline), so the redundancy survives the rebuild.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                                content_hash="deadbeef"))
+    insert_item(db_a, make_item("wikipedia:en:B", "Beta database", "Body.",
+                                content_hash="deadbeef"))
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    first = capsys.readouterr().out
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(first, encoding="utf-8")
+    # non-vacuous: the sender's bundle carries the line, so the round-trip has
+    # something to preserve
+    assert _duplicates_line(first) == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+
+    # a fresh, empty library B rebuilt from the bundle alone
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 2
+
+    # the documented restore: rebuild derived artifacts from the imported rows.
+    # `doctor --fix` collapses URL-spelling dupes but never a content-identity pair
+    # (distinct normalized URLs here), so both byte-identical copies stay held.
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    second = capsys.readouterr().out
+
+    # the line is present on the rebuilt library AND byte-identical to the
+    # sender's — the `content_hash` column travelled, so the fold reproduces it
+    assert _duplicates_line(second) is not None
+    assert _duplicates_line(second) == _duplicates_line(first)
+
+
+def test_content_duplicates_round_trip_drops_the_line_when_a_copy_is_pruned(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the mutation half of H336: the re-exported line is non-vacuous — pruning one
+    # of the two byte-identical copies in the rebuilt library B before the
+    # re-export drops the `_Duplicates:_` line in lockstep (the group falls to one
+    # in-scope member, no redundancy left), proving the line tracks the rebuilt
+    # rows' `content_hash`, not a constant baked into the bundle.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                                content_hash="deadbeef"))
+    insert_item(db_a, make_item("wikipedia:en:B", "Beta database", "Body.",
+                                content_hash="deadbeef"))
+    capsys.readouterr()
+    assert main(["export", "bundle", "database"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    capsys.readouterr()
+
+    # prune one of the two byte-identical copies before the re-export (the FTS
+    # delete trigger keeps search in sync, so it drops out of the bundle scope too)
+    assert delete_item(db_b, "wikipedia:en:B") is True
+
+    assert main(["export", "bundle", "database"]) == 0
+    second = capsys.readouterr().out
+    # only one in-scope member of the group remains → the redundancy is gone
+    assert [i.id for i in parse_bundle(second)] == ["wikipedia:en:A"]
+    assert _duplicates_line(second) is None
 
 
 def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
