@@ -145,7 +145,7 @@ from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_i
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
-from scrolls.related import filter_related, scored_related
+from scrolls.related import filter_related, scored_related, tally_relation_strength
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
@@ -3832,7 +3832,15 @@ def _cmd_related(
     # weakest source distilled from the lean `by_source` beside it (no per-source
     # coverage on the browse-stats projection, H155 — `include_coverage=False`).
     custody["attention"] = weakest_source(custody["by_source"], include_coverage=False)
-    print(json.dumps(scope_envelope(rows, scope=scope, matched=matched, custody=custody)))
+    # `stats.strength` (roadmap H323): the relation-strength tally over the matched
+    # neighbourhood, the H313 analogue on the relation axis — folding each hit's own
+    # `relation_strength` (H322) the same way `search --stats` folds `match_strength`.
+    # Partitions the matched scope (each hit has one band), so the counts sum to
+    # `matched`, the drill-from-strength tie H324's `--strength` filter reads.
+    strength = tally_relation_strength(hit.relation_strength for hit in hits)
+    print(json.dumps(scope_envelope(
+        rows, scope=scope, matched=matched, custody=custody, strength=strength
+    )))
     return 0
 
 

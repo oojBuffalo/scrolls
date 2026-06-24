@@ -4430,10 +4430,17 @@ maps `search`/`list --stats` carry, here folded over the anchor's *related
 neighbourhood* (the full scored set, pre-cap, excluding the anchor itself),
 so a reader sees "of the N items related to this one, how much is held in
 full and how much has drifted" without a second `facets` call. Each map sums
-to `matched`. Opt-in: without it the output is the bare array unchanged
+to `matched`. `stats` also carries a `strength` tally (roadmap H323) — the
+`{strong, moderate, weak}` `relation_strength` histogram over that same matched
+neighbourhood (the relation-axis analogue of `search --stats`'s `strength`,
+roadmap H313), so a reader sees the relationship-quality distribution ("how many
+neighbours are identity-/citation-grade bonds vs weak corroboration") in one call;
+the bands sum to `matched`, the drill-from-tally tie behind `--strength`. Opt-in:
+without it the output is the bare array unchanged
 (`test_cli_related_stats_is_opt_in_default_stays_a_bare_array`,
 `test_cli_related_stats_echoes_anchor_and_marks_truncation`,
-`test_cli_related_stats_custody_tallies_the_matched_related_set`).
+`test_cli_related_stats_custody_tallies_the_matched_related_set`,
+`test_cli_related_stats_carries_a_relation_strength_tally`).
 
 ```console
 $ scrolls related x:2222
@@ -4441,7 +4448,7 @@ $ scrolls related x:2222
 [exit 0]
 
 $ scrolls related x:2222 --limit 1 --stats
-{"scope": {"item": "x:2222", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 3}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}}, "results": [{"id": "arxiv:1706.03762", ...}]}
+{"scope": {"item": "x:2222", "limit": 1}, "stats": {"returned": 1, "matched": 3, "truncated": true, "custody": {"tiers": {"full": 0, "partial": 0, "reference": 3}, "drift": {"verified": 0, "unverified": 3, "drifted": 0, "rotted": 0, "error": 0}}, "strength": {"strong": 3, "moderate": 0, "weak": 0}}, "results": [{"id": "arxiv:1706.03762", ...}]}
 [exit 0]
 ```
 

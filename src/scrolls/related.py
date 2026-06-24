@@ -122,6 +122,25 @@ def relation_strength(kinds: Iterable[str]) -> str:
     return "weak"
 
 
+def tally_relation_strength(strengths: Iterable[str]) -> dict[str, int]:
+    """Per-band relation-strength counts from a stream of `relation_strength` values.
+
+    The relationship-surface analogue of `search.tally_strength` (roadmap H323):
+    it folds each related hit's own `relation_strength` into the
+    `{strong, moderate, weak}` histogram, every band present in
+    `RELATION_STRENGTH_BANDS` order with zeros included, so the shape is stable for
+    a reader. The bands partition the matched neighbourhood — each hit has exactly
+    one `relation_strength` — so the counts sum to `stats.matched` by construction,
+    the drill-from-strength tie behind `--strength` (H324): the `--strength <band>`
+    result count equals the sum of the bands at or above `<band>` in this tally
+    (threshold semantics, the strongest-first prefix of `RELATION_STRENGTH_BANDS`).
+    """
+    counts = {band: 0 for band in RELATION_STRENGTH_BANDS}
+    for strength in strengths:
+        counts[strength] += 1
+    return counts
+
+
 @dataclass(frozen=True)
 class RelatedHit:
     id: str

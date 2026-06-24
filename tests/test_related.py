@@ -512,14 +512,19 @@ def _related_pool(db, count):
 
 
 def _core_stats(stats):
-    """The returned/matched/truncated trio, dropping the H99 `custody` member.
+    """The returned/matched/truncated trio, dropping the H99/H323 tally members.
 
-    `related --stats` now also carries a `custody` tally over the matched related
-    set (roadmap H99, the parity with `search`/`list --stats`); these G2
-    truncation/scope tests pin the *denominator*, so they drop `custody` and let
-    the dedicated H99 tests below own its value.
+    `related --stats` also carries a `custody` tally over the matched related set
+    (roadmap H99) and a `strength` relation-strength tally (roadmap H323), the
+    parity with `search`/`list --stats`; these G2 truncation/scope tests pin the
+    *denominator*, so they drop both tallies and let the dedicated H99/H323 tests
+    below own their values.
     """
-    return {key: value for key, value in stats.items() if key != "custody"}
+    return {
+        key: value
+        for key, value in stats.items()
+        if key not in ("custody", "strength")
+    }
 
 
 def test_find_related_is_the_capped_view_of_scored_related(db):
@@ -699,6 +704,84 @@ def test_cli_related_stats_custody_is_opt_in_absent_from_the_bare_array(db, caps
 
     main(["related", "web:anchor"])
     assert isinstance(json.loads(capsys.readouterr().out), list)
+
+
+# --- H323: stats.strength — the relation-strength tally over the matched set ---
+
+
+def _related_strength_mix(db):
+    """An anchor + three neighbours, one per relation-strength band: a same-work
+    (shared DOI) sibling → `strong`, a shared-tag neighbour → `moderate`, a
+    same-domain-only neighbour → `weak`. The anchor carries all three signals so
+    each neighbour matches by exactly one.
+    """
+    insert_item(db, make_item(
+        "web:anchor", url="https://blog.example.org/anchor", domain="blog.example.org",
+        tags=("shared",), links=("https://doi.org/10.1234/abc",)))
+    insert_item(db, make_item(  # same work (DOI) → strong
+        "pubmed:strong", links=("https://doi.org/10.1234/abc",)))
+    insert_item(db, make_item("web:moderate", tags=("shared",)))  # shared tag → moderate
+    insert_item(db, make_item(  # same domain only → weak
+        "web:weak", url="https://blog.example.org/other", domain="blog.example.org"))
+
+
+def test_cli_related_stats_carries_a_relation_strength_tally(db, capsys):
+    # roadmap H323: `related --stats` carries a `strength` tally over the matched
+    # neighbourhood, the H313 analogue on the relation axis — the bands sum to
+    # `matched` (every related hit has exactly one `relation_strength`).
+    _related_strength_mix(db)
+    capsys.readouterr()
+
+    assert main(["related", "web:anchor", "--stats"]) == 0
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["strength"] == {"strong": 1, "moderate": 1, "weak": 1}
+    assert sum(stats["strength"].values()) == stats["matched"] == 3
+    # and the tally folds exactly the per-hit bands the rows show
+    rows = json.loads(json.dumps(stats["strength"]))  # plain dict, band order stable
+    assert list(rows) == ["strong", "moderate", "weak"]  # RELATION_STRENGTH_BANDS order
+
+
+def test_cli_related_stats_strength_covers_the_matched_set_past_the_cap(db, capsys):
+    # the load-bearing claim (the H313/H98 shape): a `--limit 1` cap returns one
+    # hit but the strength tally still covers the *whole* matched neighbourhood.
+    _related_strength_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor", "--limit", "1", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["returned"] == 1 and stats["matched"] == 3 and stats["truncated"] is True
+    assert stats["strength"] == {"strong": 1, "moderate": 1, "weak": 1}  # the matched 3
+
+
+def test_cli_related_stats_strength_present_even_when_empty(db, capsys):
+    # an isolated anchor: the strength member is present as the stable zeroed shape
+    # (the H323/H98 empty-envelope posture), never omitted.
+    insert_item(db, make_item("web:lonely"))
+    capsys.readouterr()
+
+    main(["related", "web:lonely", "--stats"])
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["strength"] == {"strong": 0, "moderate": 0, "weak": 0}
+
+
+def test_cli_related_stats_strength_is_opt_in_absent_from_the_bare_array(db, capsys):
+    # the strength member rides only the opt-in envelope — the bare default array
+    # carries no envelope and so no strength tally.
+    _related_strength_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor"])
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+
+
+def test_tally_relation_strength_unit(db):
+    # the fold is the closed-vocab histogram in band order, zeros included.
+    from scrolls.related import tally_relation_strength
+
+    assert tally_relation_strength(["strong", "weak", "strong"]) == {
+        "strong": 2, "moderate": 0, "weak": 1,
+    }
+    assert tally_relation_strength([]) == {"strong": 0, "moderate": 0, "weak": 0}
 
 
 # --- H155: stats.custody.by_source — the per-source split on `related --stats` ---

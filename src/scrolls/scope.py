@@ -55,15 +55,16 @@ def scope_envelope(
     the `custody` dict (roadmap H155) rides through `stats.custody` intact, no
     envelope change.
 
-    `strength`, when given, is the `search.tally_strength` histogram over the same
-    *matched* scope (roadmap H313): `{strong, moderate, weak}` counts of each hit's
-    `match_strength`, added to `stats.strength` beside `stats.custody` so a reader
-    sees not just *how much* matched but the *rank-quality* distribution of it (how
-    many matched on a title vs only a body) without a second call. It partitions the
-    matched scope, so the band counts sum to `stats.matched` (the drill-from-strength
-    tie behind `--strength`, H314). Omitted when the caller passes nothing — the
-    rank-quality tally is a `search`-only axis (only a search hit has a
-    `match_strength`), so `list`/`related`/`works` keep the lean stats shape.
+    `strength`, when given, is a `{strong, moderate, weak}` strength histogram over
+    the same *matched* scope, added to `stats.strength` beside `stats.custody` so a
+    reader sees not just *how much* matched but the *rank-quality* distribution of it
+    without a second call. It partitions the matched scope, so the band counts sum to
+    `stats.matched` (the drill-from-strength tie behind `--strength`). Two surfaces
+    feed it: `search --stats` folds each hit's `match_strength` (`search.tally_strength`,
+    roadmap H313 — title vs body), and `related --stats` folds each neighbour's
+    `relation_strength` (`related.tally_relation_strength`, roadmap H323 — same-work/link
+    vs topical vs corroboration). Omitted when the caller passes nothing — `list`/`works`
+    have no per-row strength, so they keep the lean stats shape.
     """
     returned = len(results)
     applied = {key: value for key, value in scope.items() if value is not None}
