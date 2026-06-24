@@ -2907,7 +2907,7 @@ $ scrolls export archive --since 2026-06-22 > priors-since-last-sweep.jsonl   # 
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--format markdown|html] [--with-archive]`
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--strength {strong|moderate|weak}] [--format markdown|html] [--with-archive]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -3043,6 +3043,27 @@ HTML form, which render **byte-convergent** counts from the one shared
 `test_bundle_html_carries_strength_headline_and_markers`,
 `test_bundle_forms_converge_on_strength_counts`); an empty scope has nothing to rank, so
 the headline and markers are simply omitted (`test_bundle_strength_absent_on_empty_scope`).
+
+`--strength {strong|moderate|weak}` is the **rank-axis third scope** (roadmap H318)
+— the *act* companion of that `_Strength:_` explanation, beside the two custody axes
+`--fidelity`/`--drift`. It keeps only the matches whose query lands **at or above** a
+field-weight band — `strong` keeps title hits, `moderate` title-or-summary, `weak`
+everything — the same threshold the `search --strength` band applies (H314), threaded
+straight to `search_items`/`count_matches` through the shared gather step. So an operator
+ships "only the strong (title-hit) matches about X" as a portable briefing. Because the
+bundle carries **no cap**, the sieve simply narrows the complete matched set (no
+before-/after-cap split, unlike `search`/`context`); the re-folded `_Strength:_` headline
+then describes exactly the kept slice (`test_bundle_strength_keeps_band_and_stronger`). It
+**ANDs** with the facets and the custody axes — `--strength strong --fidelity full` ships
+only the title-hit matches whose content you can re-derive offline
+(`test_bundle_strength_ANDs_with_fidelity`) — is echoed in the title scope note
+(`test_bundle_strength_scope_is_named_in_the_title`), and the lossless round-trip holds
+over it: `import bundle` re-holds exactly the strength-scoped rows, with no leakage of the
+weaker matches (`test_bundle_strength_round_trips_losslessly`). An unknown band is rejected
+by argparse `choices` (exit 2) on the CLI and by `search_items` (`ValueError`) on the
+programmatic path (`test_export_bundle_cli_rejects_unknown_strength`,
+`test_bundle_strength_unknown_raises_valueerror`); the scope applies to the HTML form too
+(both share the gather step, `test_bundle_html_strength_scope`).
 
 `--format` (default `markdown`) chooses the output form (roadmap H39). `markdown`
 is the **canonical, lossless, re-importable** bundle described above — the form

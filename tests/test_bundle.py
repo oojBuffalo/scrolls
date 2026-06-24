@@ -3715,3 +3715,143 @@ def test_bundle_strength_absent_on_empty_scope(scrolls_home):
     html_bundle = build_bundle_html(db, "nonexistentquery")
     assert "<p>No matching scrolls.</p>" in html_bundle
     assert 'class="rank-strength"' not in html_bundle
+
+
+# --- the rank-axis filter on the portable bundle (H318) ----------------------
+#
+# `scrolls export bundle <query> --strength {strong|moderate|weak}` scopes the
+# shareable bundle to one rank-strength band — the rank-axis third beside H258's
+# `--fidelity`/`--drift`, the act companion of H317's `_Strength:_` explanation.
+# It threads straight through `_gather_scope` into the same `search_items`/
+# `count_matches` column-restricted sub-match `search --strength` (H314) built, so
+# the same threshold semantics hold (at or above the band: `strong` keeps title
+# hits, `moderate` title-or-summary, `weak` everything). The bundle carries no cap,
+# so the sieve simply narrows the complete matched set; the re-folded `_Strength:_`
+# headline (H317) describes exactly the kept slice, and the lossless round-trip
+# holds (`import bundle` re-holds exactly the strength-scoped rows — the H216/H258
+# custody-scope round-trip on the rank axis). Closed vocabulary.
+
+
+def test_bundle_strength_keeps_band_and_stronger(scrolls_home):
+    # threshold semantics (the H314 band): --strength strong keeps only the title
+    # hit; --strength moderate keeps title-or-summary; --strength weak keeps all —
+    # and the re-folded `_Strength:_` headline counts exactly the kept slice
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    strong = build_bundle(db, "widget", strength="strong")
+    assert [i.id for i in parse_bundle(strong)] == ["wikipedia:en:Strong"]
+    assert "_Strength: strong 1 (of 1)._" in strong
+
+    moderate = build_bundle(db, "widget", strength="moderate")
+    assert sorted(i.id for i in parse_bundle(moderate)) == [
+        "wikipedia:en:Moderate",
+        "wikipedia:en:Strong",
+    ]
+    assert "_Strength: strong 1, moderate 1 (of 2)._" in moderate
+
+    weak = build_bundle(db, "widget", strength="weak")
+    assert len(parse_bundle(weak)) == 3
+    assert "_Strength: strong 1, moderate 1, weak 1 (of 3)._" in weak
+
+
+def test_bundle_strength_ANDs_with_fidelity(scrolls_home):
+    # the rank axis intersects the holdings axis: a title hit that is also a
+    # full-fidelity holding survives --strength strong --fidelity full; a partial
+    # holding is dropped by the fidelity axis even though it is a title hit
+    main(["init"])
+    db = get_paths().db_path
+    # a full-fidelity title hit and a partial-fidelity title hit, both rank strong
+    insert_item(db, make_item(
+        "wikipedia:en:FullStrong", "The Widget Compendium",
+        "An assortment of small machines.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:PartialStrong", "Widget Atlas",
+        "A directory of devices.",
+        raw_text=None, content_hash=None, markdown_path=None, stage="detected",
+    ))
+
+    both = build_bundle(db, "widget", strength="strong", fidelity="full")
+    assert [i.id for i in parse_bundle(both)] == ["wikipedia:en:FullStrong"]
+
+
+def test_bundle_strength_scope_is_named_in_the_title(scrolls_home):
+    # provenance of *what slice* was shared: the title scope note echoes the active
+    # rank band beside any facet/custody echo
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    bundle = build_bundle(db, "widget", strength="strong")
+    assert bundle.startswith("# Scrolls Custody Bundle: widget (strength=strong)\n")
+
+
+def test_bundle_strength_round_trips_losslessly(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the take-it-with-me proof on the rank axis: `export bundle --strength
+    # moderate` → `import bundle` into a fresh library re-holds exactly the
+    # moderate-or-stronger rows, with no leakage of the weak-only match
+    main(["init"])
+    _seed_strength_scope(get_paths().db_path)
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "widget", "--strength", "moderate"]) == 0
+    bundle_text = capsys.readouterr().out
+    bundle_path = tmp_path / "moderate.md"
+    bundle_path.write_text(bundle_text, encoding="utf-8")
+    assert sorted(i.id for i in parse_bundle(bundle_text)) == [
+        "wikipedia:en:Moderate",
+        "wikipedia:en:Strong",
+    ]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["imported"] == 2
+    # exactly the kept slice landed; the weak-only match never travelled
+    assert get_item(db_b, "wikipedia:en:Strong") is not None
+    assert get_item(db_b, "wikipedia:en:Moderate") is not None
+    assert get_item(db_b, "wikipedia:en:Weak") is None
+
+
+def test_bundle_html_strength_scope(scrolls_home):
+    # the HTML form shares `_gather_scope`, so --strength scopes it identically and
+    # names the rank slice in its heading
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    html_bundle = build_bundle_html(db, "widget", strength="strong")
+    assert "Scrolls Custody Bundle: widget (strength=strong)" in html_bundle
+    assert html_bundle.count('<section class="scroll">') == 1
+    assert "Strength: strong 1 (of 1)." in html_bundle
+
+
+def test_bundle_strength_unknown_raises_valueerror(scrolls_home):
+    # closed vocabulary on the library path (the belt for a direct/programmatic
+    # caller; the CLI also rejects via argparse choices) — ValueError, not a silent
+    # empty bundle that would read as honest absence
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    with pytest.raises(ValueError):
+        build_bundle(db, "widget", strength="bogus")
+    with pytest.raises(ValueError):
+        build_bundle_html(db, "widget", strength="bogus")
+
+
+def test_export_bundle_cli_rejects_unknown_strength(scrolls_home):
+    # the CLI closed-vocab is argparse `choices` → exit 2 (SystemExit), before the
+    # command body runs
+    main(["init"])
+    with pytest.raises(SystemExit) as exc:
+        main(["export", "bundle", "widget", "--strength", "bogus"])
+    assert exc.value.code == 2

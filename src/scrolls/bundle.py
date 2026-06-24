@@ -195,6 +195,7 @@ def _gather_scope(
     concept: str | None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> tuple[
     list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent], dict[str, str]
 ]:
@@ -228,6 +229,16 @@ def _gather_scope(
     raises ValueError (a closed vocabulary; the CLI also rejects it via argparse
     `choices`). The bundle carries no cap, so unlike `search`/`context` there is
     no before-/after-cap distinction — the sieve simply narrows the complete set.
+
+    `strength` (roadmap H318) is the rank-axis third scope beside the two custody
+    axes — the act companion of the `_Strength:_` explanation (H317). It threads to
+    the same `search_items`/`count_matches` column-restricted sub-match
+    `search --strength` (H314) built, keeping only the matches whose query lands at
+    or above a field-weight band (`strong` title hits, `moderate` title-or-summary,
+    `weak` everything), so an operator ships "only the strong matches about X" as a
+    portable briefing. The narrowed set's `strengths` map re-folds H317's
+    `_Strength:_` headline over exactly the kept slice. ANDs with the facets and the
+    custody axes; an unknown band raises ValueError (the same closed vocabulary).
     """
     matched = count_matches(
         db_path,
@@ -239,6 +250,7 @@ def _gather_scope(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     hits = search_items(
         db_path,
@@ -251,6 +263,7 @@ def _gather_scope(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
     verdicts = latest_events(db_path) if items else {}
@@ -313,6 +326,7 @@ def build_bundle(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     with_archive: bool = False,
 ) -> str:
     """Render the self-contained custody bundle for a query (briefing + block).
@@ -340,6 +354,16 @@ def build_bundle(
     unknown tier/posture raises ValueError (closed vocabulary; the CLI also
     rejects it via argparse `choices`).
 
+    `strength` (roadmap H318) is the rank-axis third scope — the act companion of
+    H317's `_Strength:_` explanation. It narrows the bundle to one rank-strength
+    band (threshold semantics: `strong` keeps title hits, `moderate`
+    title-or-summary, `weak` everything — the `search --strength` band, H314) so an
+    operator ships "only the strong (title-hit) matches about X". ANDs with the
+    facets and the custody axes, is echoed in the title scope note, and re-folds the
+    `_Strength:_` headline over exactly the kept slice; an unknown band raises
+    ValueError (the same closed vocabulary; the CLI also rejects via argparse
+    `choices`).
+
     `with_archive` (roadmap H280) appends a *third* sentinel-fenced region — the
     in-scope items' prior-content archive (`item_archive`, ADR 0106): the
     recoverable superseded captures, so "take it with me" includes the recovery
@@ -359,11 +383,14 @@ def build_bundle(
     # so each briefing entry can name its drift posture (H42) from the same
     # `latest_events` doctor aggregates — no per-item query, no disagreement.
     items, verdicts, events, strengths = _gather_scope(
-        db_path, query, source, category, stage, tag, concept, fidelity, drift
+        db_path, query, source, category, stage, tag, concept, fidelity, drift,
+        strength,
     )
 
     title = f"# Scrolls Custody Bundle: {query}"
-    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
+    scope = _scope_note(
+        source, category, stage, tag, concept, fidelity, drift, strength
+    )
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
@@ -517,6 +544,7 @@ def build_bundle_html(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     with_archive: bool = False,
 ) -> str:
     """Render the scoped custody bundle as a self-contained, offline HTML briefing.
@@ -531,7 +559,8 @@ def build_bundle_html(
 
     `fidelity`/`drift` (roadmap H258) scope the briefing to one holdings tier or
     drift posture, exactly as in `build_bundle` — both share `_gather_scope`, so
-    the two forms cannot disagree about what the custody scope selects.
+    the two forms cannot disagree about what the custody scope selects. `strength`
+    (roadmap H318) is the rank-axis third scope, threaded identically.
 
     **Export-only — not a re-import unit.** The canonical lossless round-trip
     stays a property of the Markdown form (`build_bundle`/`import bundle`); the
@@ -542,10 +571,13 @@ def build_bundle_html(
     blank query, like `build_bundle`.
     """
     items, verdicts, events, strengths = _gather_scope(
-        db_path, query, source, category, stage, tag, concept, fidelity, drift
+        db_path, query, source, category, stage, tag, concept, fidelity, drift,
+        strength,
     )
 
-    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
+    scope = _scope_note(
+        source, category, stage, tag, concept, fidelity, drift, strength
+    )
     heading = f"Scrolls Custody Bundle: {query}"
     title = heading + (f" ({scope})" if scope else "")
 
@@ -1205,13 +1237,15 @@ def _scope_note(
     concept: str | None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> str:
     """A `source=…, category=…` summary of the active facets, else '' (as `context`).
 
     `fidelity`/`drift` (roadmap H258, the per-item custody scopes) report their
     value verbatim, so a custody-scoped bundle's title names which holdings tier /
     drift posture it covers — the provenance of *what slice* was shared, beside
-    the existing query/facet echo.
+    the existing query/facet echo. `strength` (roadmap H318, the rank-axis scope)
+    reports likewise, so a rank-scoped bundle names which strength band it covers.
     """
     parts = []
     if source is not None:
@@ -1228,6 +1262,8 @@ def _scope_note(
         parts.append(f"fidelity={fidelity}")
     if drift is not None:
         parts.append(f"drift={drift}")
+    if strength is not None:
+        parts.append(f"strength={strength}")
     return ", ".join(parts)
 
 

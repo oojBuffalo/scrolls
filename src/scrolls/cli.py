@@ -805,6 +805,17 @@ def build_parser() -> argparse.ArgumentParser:
         "ANDs with --fidelity",
     )
     export_bundle_parser.add_argument(
+        "--strength",
+        choices=("strong", "moderate", "weak"),
+        default=None,
+        help="Only scrolls whose query lands at or above this rank-strength band "
+        "— strong (title), moderate (title or summary), weak (any field); the "
+        "rank-axis companion of --fidelity/--drift. The bundle carries no cap, so "
+        "the sieve narrows the complete matched set (e.g. --strength strong to "
+        "share only the matches whose query is in the title). The rendered "
+        "_Strength:_ headline describes the kept set. ANDs with --fidelity/--drift",
+    )
+    export_bundle_parser.add_argument(
         "--format",
         choices=("markdown", "html"),
         default="markdown",
@@ -1558,6 +1569,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.format,
                 args.fidelity,
                 args.drift,
+                args.strength,
                 args.with_archive,
             )
         return _cmd_export_opml()
@@ -2674,6 +2686,7 @@ def _cmd_export_bundle(
     fmt: str = "markdown",
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     with_archive: bool = False,
 ) -> int:
     paths = get_paths()
@@ -2684,6 +2697,7 @@ def _cmd_export_bundle(
     # to one custody tier/posture; an unknown value is rejected by argparse
     # `choices` (exit 2) before reaching here, and on the library path by
     # `search_items` (ValueError → exit 1, the empty-vocabulary belt-and-braces).
+    # `strength` (H318) is the rank-axis third scope, rejected the same way.
     # `--with-archive` (H280) appends the in-scope items' prior-content archive in a
     # third fenced block (opt-in — the bundle stays lean by default).
     builder = build_bundle_html if fmt == "html" else build_bundle
@@ -2698,6 +2712,7 @@ def _cmd_export_bundle(
             concept=concept,
             fidelity=fidelity,
             drift=drift,
+            strength=strength,
             with_archive=with_archive,
         )
     except ValueError as exc:
