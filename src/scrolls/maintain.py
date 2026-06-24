@@ -171,6 +171,19 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     the scalar reads the honest `0` — the same skipped→0 the whole-library-only
     `at_risk` carries. Read defensively like the rest: a report predating H293 (no
     `archive` block) reads the honest `0`, never a `KeyError`.
+
+    Includes the **content-duplicate redundancy scalars** (`content_duplicate_groups`
+    / `content_duplicate_items`, roadmap H327) — the count of byte-identical holding
+    groups (`custody.content_duplicates.total_groups`) and their member total
+    (`.total_items`): held items sharing a non-null `content_hash` across different ids
+    (H325). These are the JSON-`status` counterpart of the readable `_Duplicates:_`
+    `maintain` line, the `archive_mismatched` precedent — `status` carries the machine
+    scalars where `maintain` renders the line. A **pure read** of the report `run_doctor`
+    already produced (no extra query), so they converge with `doctor`'s
+    `custody.content_duplicates` and the `maintain` headline by construction. A
+    content group spans sources, so like the whole-library-only `at_risk` a `--source`
+    audit leaves the block `status: "skipped"` and these read the honest `0`. Read
+    defensively: a report predating H325 (no `content_duplicates` block) reads `0`.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
@@ -184,6 +197,25 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "at_risk": custody.get("works", {}).get("at_risk", 0),
         "conflicts": custody.get("conflicts", {}).get("items", 0),
         "archive_mismatched": custody.get("archive", {}).get("mismatched", 0),
+        # the content-identity redundancy scalars (roadmap H327): the count of
+        # byte-identical holding groups (`custody.content_duplicates.total_groups`)
+        # and their member total (`.total_items`) — the JSON-`status` counterpart of
+        # the readable `_Duplicates:_` `maintain` line (the archive scalar precedent,
+        # H298: `status` renders no readable duplicates line, so it carries the
+        # machine scalars instead, beside `archive_mismatched`/`conflicts`/`at_risk`).
+        # A pure read of the report `run_doctor` already produced (no extra query), so
+        # the scalars converge with `doctor`'s `custody.content_duplicates` and the
+        # `maintain` headline by construction. Like the whole-library-only `at_risk`,
+        # a `--source` audit leaves the block `status: "skipped"` and these read the
+        # honest 0 — a content group spans sources, so a scoped item set fragments it
+        # below the 2-id floor (H325). Read defensively: a report predating H325 (no
+        # `content_duplicates` block) reads 0, never a `KeyError`.
+        "content_duplicate_groups": custody.get("content_duplicates", {}).get(
+            "total_groups", 0
+        ),
+        "content_duplicate_items": custody.get("content_duplicates", {}).get(
+            "total_items", 0
+        ),
     }
 
 
@@ -385,6 +417,63 @@ def archive_integrity_headline(
     else:
         clause = f"no change {span}"
     return f"{base} ({clause})._"
+
+
+def duplicates_headline(content_duplicates: dict[str, Any]) -> str | None:
+    """The readable content-duplicate ``_Duplicates:_`` line (roadmap H327).
+
+    The readable surfacing of `doctor`'s `custody.content_duplicates` redundancy
+    report (H325) for the scheduled `maintain` pass an operator skims: held items
+    sharing a non-null ``content_hash`` across *different* ids — the same bytes
+    saved from two URLs, a mirror, a cross-post, or one work captured by two source
+    adapters (a genuinely new custody *shape*, custody-vision §2.7, distinct from
+    the URL-spelling auto-mergeable dupes and from canonical DOI works). H325 put
+    the fold on the JSON read surfaces (`doctor`, MCP `get_library_health`) but
+    `maintain`'s readable custody summary — which already folds
+    score/tiers/drift/`conflicts_headline`/`archive_integrity_headline`/`at_risk_works`
+    — was *blind* to it. This is the `archive_integrity_headline` (H298) sibling on
+    the content-identity axis:
+
+        ``_Duplicates: 2 group(s) of byte-identical content (5 item(s))._``
+
+    `content_duplicates` is `doctor`'s `custody.content_duplicates` block
+    (``{status, groups, total_groups, total_items}``). The counts are its
+    ``total_groups`` (N, the redundancy clusters) and ``total_items`` (M, every
+    member across them, H325/H326) — the same numbers `doctor`'s JSON block carries
+    and the `status` `content_duplicate_groups`/`content_duplicate_items` scalars the
+    snapshot carries (H327), so the three surfaces converge by construction.
+
+    **Omitted entirely** (returns ``None``, never a fabricated ``_Duplicates: 0 …_``)
+    when there is nothing to flag — a library with no byte-identical holdings
+    (``total_groups == 0``) *or* a skipped audit (``status != "ok"``: a `--source`
+    `maintain` pass leaves the block at its `status: "skipped"` default, since the
+    whole-library-only `_check_content_duplicates` never ran — a content group spans
+    sources, so a scoped item set fragments it below the 2-id floor, H325 — or a
+    pre-H325/uninitialized report). This keeps the
+    `archive_integrity_headline`/`_Conflicts:_` omit-when-clean briefing posture: a
+    redundancy worth a glance is the exception worth a line, no duplicates is the
+    silent norm.
+
+    **No trend clause, no fall-to-zero exception** (unlike
+    `archive_integrity_headline`'s H299 ``▲``/``▼`` and its repaired-backup line):
+    content duplicates are **report-only, never a defect** — holding two faithful
+    copies is a redundancy fact an operator may *want*, and there is no `--fix` merge
+    that "repairs" them (raw is sacred; the no-fabricated-act discipline, H325). A
+    count that fell to zero is just an operator pruning a copy, not a fix worth
+    surfacing, so both the steady-clean and fallen-clean states stay silently
+    omitted. The point-in-time line is the H298 analogue; the cross-run movement leg
+    is a separable follow-up the snapshot scalars (H327) already feed.
+    """
+    if content_duplicates.get("status") != "ok":
+        return None
+    total_groups = content_duplicates.get("total_groups", 0)
+    if total_groups <= 0:
+        return None
+    total_items = content_duplicates.get("total_items", 0)
+    return (
+        f"_Duplicates: {total_groups} group(s) of byte-identical content "
+        f"({total_items} item(s))._"
+    )
 
 
 def render_archive_integrity(
@@ -1247,6 +1336,22 @@ def assemble_report(
         "archive_integrity_headline": archive_integrity_headline(
             report["custody"].get("archive", {}),
             None if delta is None else delta["archive_mismatched"]["change"],
+        ),
+        # the readable content-duplicate line (roadmap H327): the count of
+        # byte-identical holding groups + their member total (`doctor`'s
+        # `custody.content_duplicates`, H325) — surfaced for the scheduled pass an
+        # operator skims, which was previously blind to this redundancy axis. Folds
+        # the *same* live audit block `doctor` reports (not the distilled snapshot
+        # scalars, which `status` reads), so it converges with `doctor`'s
+        # `custody.content_duplicates` and the `status` scalars by construction.
+        # Omit-when-clean and **point-in-time** (no ▲/▼ trend clause): unlike the
+        # loss/divergence lines, content duplicates are report-only, never a defect
+        # — no duplicates is the silent norm, a redundancy cluster the exception
+        # worth a line, and there is no `--fix` repair to track over time (H325). A
+        # `--source` pass leaves the block `status: "skipped"` → `None` (a content
+        # group spans sources), and an honest empty/clean library renders no line.
+        "duplicates_headline": duplicates_headline(
+            report["custody"].get("content_duplicates", {})
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

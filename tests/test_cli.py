@@ -159,6 +159,10 @@ def _custody_headline(score):
         # the archive-integrity mismatch count (H298): no archived prior → the
         # honest 0 (a clean recovery store)
         "archive_mismatched": 0,
+        # the content-duplicate redundancy scalars (H327): an empty/uninitialized
+        # library holds no byte-identical content → the honest 0s
+        "content_duplicate_groups": 0,
+        "content_duplicate_items": 0,
     }
 
 

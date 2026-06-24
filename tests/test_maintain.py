@@ -54,6 +54,7 @@ from scrolls.maintain import (
     compute_trend,
     conflicts_headline,
     custody_snapshot,
+    duplicates_headline,
     last_run_boundary,
     load_snapshot,
     log_path,
@@ -75,7 +76,8 @@ from scrolls.render import write_scroll
 
 
 def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
-                   coverage=None, at_risk=0, conflicts=0, archive_mismatched=0):
+                   coverage=None, at_risk=0, conflicts=0, archive_mismatched=0,
+                   dup_groups=0, dup_items=0):
     """A minimal doctor report shaped like `run_doctor`'s custody block.
 
     `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
@@ -86,6 +88,9 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
     count (roadmap H275/H279); defaults to zero (no recorded divergence).
     `archive_mismatched` mirrors the `custody.archive.mismatched` archive-integrity
     count (roadmap H293/H298); defaults to zero (a clean recovery store).
+    `dup_groups`/`dup_items` mirror `custody.content_duplicates.total_groups`/
+    `.total_items` — the byte-identical holding groups and their members (roadmap
+    H325/H327); default to zero (no content-duplicate redundancy).
     """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
@@ -106,6 +111,9 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
                           "items": conflicts, "events": []},
             "archive": {"status": "ok", "checked": archive_mismatched,
                         "mismatched": archive_mismatched, "events": []},
+            "content_duplicates": {"status": "ok", "groups": [],
+                                   "total_groups": dup_groups,
+                                   "total_items": dup_items},
         }
     }
 
@@ -143,6 +151,11 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         # counterpart of the readable `_Archive:_` line, read off
         # `custody.archive.mismatched` (the count, not the whole event list)
         "archive_mismatched": 0,
+        # the content-duplicate redundancy scalars (H325/H327): the JSON-`status`
+        # counterpart of the readable `_Duplicates:_` line, read off
+        # `custody.content_duplicates.total_groups`/`.total_items`
+        "content_duplicate_groups": 0,
+        "content_duplicate_items": 0,
     }
 
 
@@ -211,6 +224,29 @@ def test_custody_snapshot_archive_mismatched_defaults_to_zero_without_an_archive
     report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
     del report["custody"]["archive"]
     assert custody_snapshot(report)["archive_mismatched"] == 0
+
+
+def test_custody_snapshot_records_the_content_duplicate_scalars():
+    # H327: the snapshot carries the byte-identical-holding-group count and its member
+    # total read off `custody.content_duplicates.total_groups`/`.total_items`, so
+    # `scrolls status` carries the machine duplicates scalars beside drift/at-risk/
+    # conflicts/archive — converging with `doctor`'s `custody.content_duplicates` and
+    # the readable `_Duplicates:_` `maintain` line by construction.
+    report = _doctor_report(80, {"full": 4}, {}, dup_groups=2, dup_items=5)
+    snap = custody_snapshot(report)
+    assert snap["content_duplicate_groups"] == 2
+    assert snap["content_duplicate_items"] == 5
+
+
+def test_custody_snapshot_content_duplicates_default_to_zero_without_a_block():
+    # A report predating H325 (no `content_duplicates` block) reads the honest 0,
+    # never a KeyError — the module's degrade-safely posture (ADR 0082), as the
+    # archive/conflicts/at-risk scalars do. A `--source` pass leaves the block
+    # `status: "skipped"` (a content group spans sources) but still carries 0s.
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["content_duplicates"]
+    assert custody_snapshot(report)["content_duplicate_groups"] == 0
+    assert custody_snapshot(report)["content_duplicate_items"] == 0
 
 
 # --- snapshot_headline (the one-line custody picture, roadmap H103) --------
@@ -446,6 +482,58 @@ def test_archive_integrity_headline_span_is_parametrized_for_the_trend_twin():
     assert archive_integrity_headline(_archive_block(0), -3, span="over 3 runs") == (
         "_Archive: 0 prior(s) fail integrity (prior_hash ≠ snapshot) (▼3 over 3 runs)._"
     )
+
+
+# --- duplicates_headline (the readable content-duplicate line, roadmap H327) ---
+#
+# The `archive_integrity_headline` (H298) sibling on the content-identity axis:
+# surfaces `doctor`'s `custody.content_duplicates` (H325) as a readable line for the
+# scheduled `maintain` pass an operator skims. Omit-when-clean (the H277 briefing
+# posture), never a fabricated `_Duplicates: 0 …_`. A point-in-time count, but unlike
+# archive it has NO trend/fall-to-zero leg: content duplicates are report-only, never
+# a defect, and there is no `--fix` repair to track over time (H325).
+
+
+def _dup_block(groups, items, *, status="ok"):
+    """A `custody.content_duplicates` block shaped like `doctor`'s, for the headline."""
+    return {
+        "status": status,
+        "groups": [],  # the headline reads only the totals, not the per-group list
+        "total_groups": groups,
+        "total_items": items,
+    }
+
+
+def test_duplicates_headline_reports_groups_and_their_member_total():
+    # byte-identical holdings under different ids: the readable line names N groups
+    # and M members — the same totals doctor's JSON block and the status scalars carry
+    assert duplicates_headline(_dup_block(2, 5)) == (
+        "_Duplicates: 2 group(s) of byte-identical content (5 item(s))._"
+    )
+    assert duplicates_headline(_dup_block(1, 2)) == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+
+
+def test_duplicates_headline_is_omitted_on_a_library_with_no_duplicates():
+    # no byte-identical holdings (0 groups) → no line, never a fabricated
+    # `_Duplicates: 0 …_` (the omit-when-clean briefing posture): a redundancy worth a
+    # glance is the exception, no duplicates the silent norm
+    assert duplicates_headline(_dup_block(0, 0)) is None
+
+
+def test_duplicates_headline_is_omitted_when_the_check_was_skipped():
+    # a `--source` maintain pass / pre-H325 report leaves the block `status:
+    # "skipped"` (a content group spans sources → the whole-library-only check never
+    # ran) → no line, even if a stale count lingers: a skipped audit makes no claim
+    assert duplicates_headline(_dup_block(0, 0, status="skipped")) is None
+    assert duplicates_headline(_dup_block(2, 5, status="skipped")) is None
+
+
+def test_duplicates_headline_tolerates_an_absent_block():
+    # a report missing the content_duplicates block entirely (pre-H325, degrade-safe
+    # ADR 0082) → no line, never a KeyError
+    assert duplicates_headline({}) is None
 
 
 def test_delta_on_first_run_has_null_befores_and_changes():
@@ -3279,6 +3367,109 @@ def test_maintain_source_pass_omits_the_archive_headline(home, capsys):
         "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._"
     )
     assert fid["custody"]["archive_mismatched"] == 1
+
+
+# --- the content-duplicate headline on the maintain report (roadmap H327) -------
+#
+# The `archive_integrity_headline` sibling on the content-identity axis: a
+# byte-identical pair of holdings surfaces a readable `_Duplicates:_` line on the
+# scheduled maintain pass — the readable side of H325's JSON-only redundancy report.
+# The count converges three ways: the readable line ≡ `doctor`'s
+# `custody.content_duplicates` ≡ the `status` content-duplicate scalars the snapshot
+# carries. Point-in-time and omit-when-clean (report-only, never a defect — no `--fix`
+# repair to track over time).
+
+
+def _held_duplicates(hash_value="sha256:dup"):
+    """Two distinct held web items carrying the *same* content_hash — byte-identical
+    content saved from two URLs (a mirror/cross-post), the H325 content-duplicate
+    shape (distinct ids, distinct URLs → not URL-spelling dupes)."""
+    return [
+        _rendered(
+            "web", None, "https://example.com/mirror-a", title="Mirror A",
+            extracted_text="same body", category="paper", domain="ml",
+            concepts=("X",), tags=("t",), content_hash=hash_value,
+        ),
+        _rendered(
+            "web", None, "https://example.com/mirror-b", title="Mirror B",
+            extracted_text="same body", category="paper", domain="ml",
+            concepts=("X",), tags=("t",), content_hash=hash_value,
+        ),
+    ]
+
+
+def test_maintain_report_carries_the_duplicates_headline(home, monkeypatch, capsys):
+    """Two byte-identical holdings under different ids surface a readable
+    `_Duplicates:_` line on the scheduled maintain pass — the readable side of H325's
+    JSON-only redundancy report. The count converges three ways (the H298 archive
+    precedent): the readable line ≡ `doctor`'s `custody.content_duplicates` ≡ the
+    `status` content-duplicate scalars the snapshot carries."""
+    _build(_held_duplicates())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    # the JSON-status scalar twins the snapshot carries (what `scrolls status` reads)
+    assert report["custody"]["content_duplicate_groups"] == 1
+    assert report["custody"]["content_duplicate_items"] == 2
+    # three-way convergence by construction (sabotage: hard-coding the headline counts
+    # fails this tie): the readable line is rendered from the same audit block doctor
+    # reports, and doctor's totals agree
+    audit = run_doctor(home)["custody"]["content_duplicates"]
+    assert (audit["total_groups"], audit["total_items"]) == (1, 2)
+    assert report["duplicates_headline"] == duplicates_headline(audit)
+
+
+def test_maintain_omits_the_duplicates_headline_on_a_library_with_no_duplicates(
+    home, monkeypatch, capsys
+):
+    """A library whose held items carry distinct content_hashes (`_held_topic`) → no
+    `_Duplicates:_` line (None), never a fabricated `_Duplicates: 0 …_`, and the
+    scalars read the honest 0."""
+    _build(_held_topic())
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["duplicates_headline"] is None
+    assert report["custody"]["content_duplicate_groups"] == 0
+    assert report["custody"]["content_duplicate_items"] == 0
+
+
+def test_maintain_source_pass_omits_the_duplicates_headline(home, capsys):
+    """A content group spans sources, so the redundancy check runs unscoped only
+    (`source is None`): a `--source` pass leaves the block `status: "skipped"` → no
+    readable line and 0 scalars, even with a real byte-identical pair present. The
+    whole-library audit still flags it — the scope skipped the check, it did not
+    clear the redundancy. A `--fidelity` pass leaves the audit whole-library (H255),
+    so the line DOES render — the archive-headline parity."""
+    _build(_held_duplicates())
+    capsys.readouterr()
+
+    assert main(["maintain", "--source", "web", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["duplicates_headline"] is None
+    assert report["custody"]["content_duplicate_groups"] == 0
+    assert report["custody"]["content_duplicate_items"] == 0
+    # the redundancy is real — only the scoped audit declined to look
+    whole = run_doctor(home)["custody"]["content_duplicates"]
+    assert (whole["total_groups"], whole["total_items"]) == (1, 2)
+
+    # a --fidelity pass leaves the audit whole-library (H255, like archive/at_risk), so
+    # the content-duplicate check IS computed — the line renders and the scalars read
+    capsys.readouterr()
+    assert main(["maintain", "--fidelity", "full", "--no-recheck"]) == 0
+    fid = json.loads(capsys.readouterr().out)
+    assert fid["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    assert fid["custody"]["content_duplicate_groups"] == 1
+    assert fid["custody"]["content_duplicate_items"] == 2
 
 
 # --- the archive-integrity cross-run trend on the maintain report (H299) -------
