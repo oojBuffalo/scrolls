@@ -4383,7 +4383,15 @@ Deterministic, explainable connections (IDEAS.md §10,
 through source detection, so a tweet linking to `arxiv.org/abs/X` finds
 item `arxiv:X`), shared concepts, shared tags, same category/domain as
 weak corroboration. `score` is an integer (higher = more connected) and
-every hit carries its `reasons` plus the neighbour's `fidelity` tier
+every hit carries its `reasons` plus a one-word `relation_strength` band
+(`strong`/`moderate`/`weak`, roadmap H322) — the relationship-surface analogue of
+`search`'s `match_strength`, the legible companion the opaque integer `score`
+lacks: it is the band of the *strongest contributing signal class* (a same-work or
+link edge → `strong`, shared concepts/tags → `moderate`, same category/domain →
+`weak`), grounded in the relation point weights so it names the *kind* of the
+strongest bond, not the multiplied magnitude (three shared tags, score 6, is still
+a `moderate` topical bond, not an identity one). Beside it travels the neighbour's
+`fidelity` tier
 (`full`/`partial`/`reference`, ADR 0097/0100), its custody `drift` posture
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H56, read from the
 verify ledger), and `last_checked` — *when* that drift verdict was taken, or
@@ -4429,7 +4437,7 @@ to `matched`. Opt-in: without it the output is the bare array unchanged
 
 ```console
 $ scrolls related x:2222
-[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "fidelity": "reference", "drift": "unverified", "last_checked": null}]
+[{"id": "arxiv:1706.03762", "source": "arxiv", "title": null, "url": "https://arxiv.org/abs/1706.03762", "stage": "detected", "score": 5, "reasons": ["links to it"], "relation_strength": "strong", "fidelity": "reference", "drift": "unverified", "last_checked": null}]
 [exit 0]
 
 $ scrolls related x:2222 --limit 1 --stats
@@ -5174,7 +5182,7 @@ The tools wrap the same engines as the CLI commands
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
-| `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons` and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
+| `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons`, a `relation_strength` band (`strong`/`moderate`/`weak`, H322 — the `match_strength` twin), and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
 | `get_works(min_representations=2, item=, fidelity=, drift=, at_risk=)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `fidelity`/`drift` keep whole works that *contain* a representation at that custody value, ANDing on the same rep (the contains-semantics consolidation filter, H262); `at_risk=True` keeps only the works no representation safely holds — the negation of *∃(full ∧ unmoved)*, the at-risk-works alarm (H263) as a browse predicate, ANDing with `fidelity`/`drift` (H265); `stats.custody` tallies the reported reps (H100) and carries an `at_risk` summary `{total, at_risk, most_at_risk}` over the reported works — the works-surface twin of `get_library_health`'s at-risk alarm, convergent by construction (H266) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

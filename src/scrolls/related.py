@@ -27,7 +27,18 @@ same work, *and* one points at the other), not double counting.
 
 Every hit carries human/agent-readable `reasons`, so downstream callers
 (and the MCP `get_related_scrolls`) can show *why* — same spirit as search
-snippets — plus the neighbour's custody `fidelity` tier (full/partial/
+snippets — plus a one-word `relation_strength` band (`strong`/`moderate`/`weak`,
+roadmap H322): the qualitative confidence the relation point weights imply, the
+relationship-surface analogue of search's `match_strength`. It is the band of the
+*strongest contributing signal class* — a same-work (shared DOI) or link edge is
+an identity-/citation-grade bond (`strong`), shared concepts/tags are curated
+topical overlap (`moderate`), and same category/domain is the weak corroboration
+"never enough on its own" (`weak`) — so an agent reads not just *what* relates the
+two but *how strongly*, and the legible band the opaque integer `score` lacks
+(the score gives the order, the band the kind). The band names the kind of the
+strongest bond, never the multiplied magnitude (three shared tags is still
+topical, not identity) — grounded in the weights, not an invented relevance.
+Beside it travels the neighbour's custody `fidelity` tier (full/partial/
 reference, ADR 0097), its custody `drift` posture (verified/unverified/
 drifted/rotted/error, roadmap H56), and `last_checked` — when that drift verdict
 was taken, or `null` when never re-checked (roadmap H86) — all read from the
@@ -39,6 +50,7 @@ under the capture, *and as of when* — the same per-item custody picture
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +74,53 @@ _CONCEPT_POINTS = 3
 _TAG_POINTS = 2
 _GROUP_POINTS = 1
 
+# The relation signal classes in descending point-weight order (strongest first),
+# each tagged with the qualitative band its presence implies. `relation_strength`
+# is the band of the *strongest contributing class* — the relationship-surface
+# analogue of search's `match_strength` = band of the highest-weighted matched
+# field (roadmap H322/H312). Grounded in the point weights above, not an invented
+# relevance: a same-work (shared DOI) or link edge is an identity-/citation-grade
+# bond (→ `strong`), shared concepts/tags are curated topical overlap
+# (→ `moderate`), and same category/domain is the weak corroboration that is
+# "never enough on its own" (→ `weak`). The band names the *kind* of the strongest
+# bond, never the multiplied magnitude — three shared tags (6 points, the weight of
+# one same-work edge) is still a topical bond, not an identity one, exactly as
+# `match_strength` bands on the field, not the BM25 score.
+_RELATION_KINDS = ("work", "link", "concept", "tag", "group")
+_STRENGTH_BY_KIND = {
+    "work": "strong",
+    "link": "strong",
+    "concept": "moderate",
+    "tag": "moderate",
+    "group": "weak",
+}
+# The strength bands in descending kind-weight order (strongest first), the closed
+# vocabulary `tally_relation_strength` partitions over and `--strength` filters by;
+# derived from `_STRENGTH_BY_KIND` so the band order can never drift from the
+# weights (the `search.STRENGTH_BANDS`-from-`_STRENGTH_BY_FIELD` precedent).
+RELATION_STRENGTH_BANDS = tuple(
+    dict.fromkeys(_STRENGTH_BY_KIND[kind] for kind in _RELATION_KINDS)
+)
+
+
+def relation_strength(kinds: Iterable[str]) -> str:
+    """The qualitative relation confidence: the band of the strongest signal class.
+
+    A fold over the contributing signal `kinds` returning the `_STRENGTH_BY_KIND`
+    band of the highest-weighted class present — `strong` for a same-work or link
+    bond, `moderate` for shared concepts/tags, `weak` for a same-category/domain-only
+    edge — so the one-word signal an agent reads is grounded in the relation point
+    weights that produced the rank, not the multiplied `score` magnitude (three
+    shared tags is still a topical bond). The relationship-surface analogue of
+    `search._match_strength` over `matched_fields` (H312). Defaults to `weak` only
+    for the structurally-impossible empty case (a real hit always has ≥1 signal).
+    """
+    present = set(kinds)
+    for kind in _RELATION_KINDS:  # descending weight, strongest first
+        if kind in present:
+            return _STRENGTH_BY_KIND[kind]
+    return "weak"
+
 
 @dataclass(frozen=True)
 class RelatedHit:
@@ -72,6 +131,7 @@ class RelatedHit:
     stage: str
     score: int
     reasons: tuple
+    relation_strength: str
     fidelity: str
     drift: str
     last_checked: str | None
@@ -191,10 +251,17 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
             continue
         score = 0
         reasons = []
+        # The signal classes that fired, parallel to `reasons` — folded into the
+        # one-word `relation_strength` band (the band of the strongest class
+        # present, roadmap H322). Tracked alongside the points rather than parsed
+        # back out of the reason strings, so the band can never drift from the
+        # signal that earned the score.
+        kinds: list[str] = []
 
         shared_dois = sorted(item_work_dois & item_dois(other))
         if shared_dois:
             score += _WORK_POINTS * len(shared_dois)
+            kinds.append("work")
             reasons.append(
                 "same work: "
                 + ", ".join(f"{DOI_RESOLVER}/{doi}" for doi in shared_dois)
@@ -202,10 +269,12 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
 
         if other.id in item_targets or _own_urls(other) & item_targets:
             score += _LINK_POINTS
+            kinds.append("link")
             reasons.append("links to it")
         other_targets = _link_targets(other)
         if item.id in other_targets or item_urls & other_targets:
             score += _LINK_POINTS
+            kinds.append("link")
             reasons.append("linked from it")
 
         shared_concepts = [
@@ -215,6 +284,7 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
         ]
         if shared_concepts:
             score += _CONCEPT_POINTS * len(shared_concepts)
+            kinds.append("concept")
             reasons.append("shared concepts: " + ", ".join(sorted(shared_concepts)))
 
         shared_tags = [
@@ -224,13 +294,16 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
         ]
         if shared_tags:
             score += _TAG_POINTS * len(shared_tags)
+            kinds.append("tag")
             reasons.append("shared tags: " + ", ".join(sorted(shared_tags)))
 
         if item.category and other.category == item.category:
             score += _GROUP_POINTS
+            kinds.append("group")
             reasons.append(f"same category: {item.category}")
         if item.domain and other.domain == item.domain:
             score += _GROUP_POINTS
+            kinds.append("group")
             reasons.append(f"same domain: {item.domain}")
 
         if score:
@@ -243,6 +316,7 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
                     stage=other.stage,
                     score=score,
                     reasons=tuple(reasons),
+                    relation_strength=relation_strength(kinds),
                     fidelity=get_fidelity(other),
                     drift=drift_posture(verdicts.get(other.id)),
                     last_checked=last_checked(verdicts.get(other.id)),

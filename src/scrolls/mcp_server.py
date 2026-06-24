@@ -414,8 +414,13 @@ def get_related_scrolls(
     preprint and its published article, bound by a shared DOI — the strongest
     signal, and one that binds representations even when no link edge does),
     then link edges, shared concepts, shared tags, and same category/domain.
-    Each hit's `reasons` say why it matched and its `fidelity` says at what
-    custody tier the library holds the neighbour (full/partial/reference,
+    Each hit's `reasons` say why it matched, and its `relation_strength` band
+    (`strong`/`moderate`/`weak`) says *how strongly* — the relationship-surface
+    twin of `search_scrolls`'s `match_strength`, grounded in the relation point
+    weights: a same-work or link edge is an identity-/citation-grade bond
+    (`strong`), shared concepts/tags are curated topical overlap (`moderate`), and
+    same category/domain is weak corroboration (`weak`). Its `fidelity` says at
+    what custody tier the library holds the neighbour (full/partial/reference,
     ADR 0097), the same tier `list_scrolls` and `search_scrolls` report.
     `fidelity` narrows the neighbourhood to neighbours held at one custody tier
     and `drift` to neighbours at one verify-ledger posture

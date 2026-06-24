@@ -323,6 +323,108 @@ def test_related_hits_carry_the_neighbours_drift_posture(db):
     assert by_id["github:never/repo"].drift == "unverified"  # honest default
 
 
+# --- Explainable relatedness: the qualitative relation-strength band (H322) ----
+#
+# `related` already carries the human-readable `reasons` (the *basis* of the
+# edge, like search's `matched_fields`) and an opaque integer `score` (the
+# magnitude, like the BM25 `score`); the missing piece — the relationship-surface
+# analogue of search's `match_strength` (H312) — is a one-word `relation_strength`
+# band (`strong`/`moderate`/`weak`) grounded in the relation signal-class point
+# weights: a same-work (DOI) or link edge is an identity-/citation-grade bond
+# (→ strong), shared concepts/tags are curated topical overlap (→ moderate), and
+# same category/domain is weak corroboration (→ weak). The band names the *kind*
+# of the strongest contributing class, never the multiplied magnitude.
+
+
+def test_same_work_hit_is_strong(db):
+    # A shared-DOI edge is identity-grade — the strongest signal — so it bands
+    # `strong`. (No hub item owns the DOI, so only the work signal fires.)
+    insert_item(db, make_item(
+        "arxiv:1", links=("https://doi.org/10.1234/abc",)))
+    insert_item(db, make_item(
+        "pubmed:1", links=("https://doi.org/10.1234/abc",)))
+    (hit,) = find_related(db, "arxiv:1")
+    assert hit.id == "pubmed:1"
+    assert any(reason.startswith("same work") for reason in hit.reasons)
+    assert hit.relation_strength == "strong"
+
+
+def test_link_edge_is_strong(db):
+    # A realized link edge between two held items is a structural bond — strong.
+    insert_item(db, make_item(
+        "x:1111",
+        url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",),
+    ))
+    insert_item(db, make_item("arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    (hit,) = find_related(db, "x:1111")
+    assert hit.id == "arxiv:2605.27848"
+    assert hit.relation_strength == "strong"
+
+
+def test_shared_concepts_only_is_moderate(db):
+    # Curated topical overlap, no identity bond → moderate.
+    insert_item(db, make_item("web:a", concepts=("agents",)))
+    insert_item(db, make_item("web:b", concepts=("agents",)))
+    (hit,) = find_related(db, "web:a")
+    assert hit.relation_strength == "moderate"
+
+
+def test_shared_tags_only_is_moderate(db):
+    insert_item(db, make_item("web:a", tags=("ml",)))
+    insert_item(db, make_item("web:b", tags=("ml",)))
+    (hit,) = find_related(db, "web:a")
+    assert hit.relation_strength == "moderate"
+
+
+def test_same_domain_only_is_weak(db):
+    # Same domain is the weakest corroboration — "never enough on its own" → weak.
+    insert_item(db, make_item("web:a", url="https://blog.example.org/1", domain="blog.example.org"))
+    insert_item(db, make_item("web:b", url="https://blog.example.org/2", domain="blog.example.org"))
+    (hit,) = find_related(db, "web:a")
+    assert hit.relation_strength == "weak"
+
+
+def test_relation_strength_is_the_strongest_class_not_the_magnitude(db):
+    # A hit bound by BOTH a shared DOI (strong) and a shared tag (moderate) bands
+    # `strong` — the strongest contributing class wins. And a hit bound by *three*
+    # shared tags (6 points, the same magnitude as one same-work edge) stays
+    # `moderate`: the band names the *kind* of the strongest bond, not the score.
+    insert_item(db, make_item(
+        "arxiv:1", links=("https://doi.org/10.1234/abc",), tags=("ml", "nlp", "agents")))
+    insert_item(db, make_item(
+        "pubmed:1", links=("https://doi.org/10.1234/abc",), tags=("ml",)))  # work + 1 tag
+    insert_item(db, make_item(
+        "web:tagged", tags=("ml", "nlp", "agents")))  # 3 tags, score 6, no identity bond
+
+    by_id = {hit.id: hit for hit in find_related(db, "arxiv:1")}
+    assert by_id["pubmed:1"].relation_strength == "strong"  # work dominates the tag
+    tagged = by_id["web:tagged"]
+    assert tagged.score == 6  # three shared tags, same magnitude as one work edge
+    assert tagged.relation_strength == "moderate"  # but still a topical bond
+
+
+def test_relation_strength_surfaces_on_the_cli(db, capsys):
+    insert_item(db, make_item("web:a", tags=("ml",)))
+    insert_item(db, make_item("web:b", tags=("ml",)))
+    capsys.readouterr()
+    assert main(["related", "web:a"]) == 0
+    (hit,) = json.loads(capsys.readouterr().out)
+    assert hit["relation_strength"] == "moderate"
+
+
+def test_relation_strength_surfaces_on_mcp(db):
+    from scrolls.mcp_server import get_related_scrolls
+
+    insert_item(db, make_item(
+        "x:1111", url="https://x.com/a/status/1111",
+        links=("https://arxiv.org/abs/2605.27848",)))
+    insert_item(db, make_item("arxiv:2605.27848", url="https://arxiv.org/abs/2605.27848"))
+    (hit,) = get_related_scrolls("x:1111")
+    assert hit["id"] == "arxiv:2605.27848"
+    assert hit["relation_strength"] == "strong"
+
+
 def test_cli_related_hit_exposes_drift(db, capsys):
     insert_item(db, make_item("x:1111", title="@a: thread", concepts=("ml",)))
     insert_item(db, make_item("arxiv:2605.27848", title="A Paper", concepts=("ml",)))
