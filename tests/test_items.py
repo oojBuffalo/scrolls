@@ -13,6 +13,7 @@ from scrolls.items import (
     archive_from_dict,
     archived_records,
     archived_snapshots,
+    content_duplicate_ids,
     delete_item,
     diff_snapshot,
     get_item,
@@ -785,3 +786,46 @@ def test_preview_import_archive_matches_a_real_import(db_path, tmp_path):
     assert predicted == actual == (1, 0)
     # with the row now present, the preview predicts the skip too
     assert preview_import_archive(fresh, records) == (0, 1)
+
+
+# --- per-item content-identity siblings (roadmap H328) ---------------------
+# `content_duplicate_ids` names the *other* held ids byte-identical to one item —
+# the per-item read companion of the whole-library `content_duplicate_groups`
+# report (H325). A pure fold reusing the H325 grouping primitive: the item's
+# content group minus itself, the honest empty `[]` when unique or NULL-hashed.
+
+
+def test_content_duplicate_ids_names_a_byte_identical_sibling():
+    # two ids holding the same bytes (one content_hash): each names the other —
+    # "this exact content is also held under <id>", the per-item redundancy read.
+    a = make_item(id="web:a", source="web", content_hash="sha256:dup")
+    b = make_item(id="web:b", source="web", content_hash="sha256:dup")
+    assert content_duplicate_ids(a, [a, b]) == ["web:b"]
+    assert content_duplicate_ids(b, [a, b]) == ["web:a"]
+
+
+def test_content_duplicate_ids_unique_item_names_none():
+    # a singleton content_hash is the normal case — no sibling holds the same bytes,
+    # so the per-item read is the honest empty list (not a fabricated self-match).
+    solo = make_item(id="web:solo", source="web", content_hash="sha256:solo")
+    other = make_item(id="web:other", source="web", content_hash="sha256:other")
+    assert content_duplicate_ids(solo, [solo, other]) == []
+
+
+def test_content_duplicate_ids_null_hash_names_none():
+    # a reference-only item holds no captured content (content_hash NULL): it
+    # fingerprints nothing, so it names no siblings even beside another NULL-hash
+    # item — the H325 NULL-safe rule on the per-item surface.
+    ref_a = make_item(id="web:ref-a", source="web", content_hash=None)
+    ref_b = make_item(id="web:ref-b", source="web", content_hash=None)
+    assert content_duplicate_ids(ref_a, [ref_a, ref_b]) == []
+
+
+def test_content_duplicate_ids_names_every_sibling_sorted():
+    # a three-id content group: one item names *both* the others, sorted (the
+    # group's stable ordering), never itself — the per-item read names ids, not a
+    # count (the per-item-vs-whole-library-report split).
+    a = make_item(id="web:a", source="web", content_hash="sha256:dup")
+    b = make_item(id="web:b", source="web", content_hash="sha256:dup")
+    c = make_item(id="web:c", source="web", content_hash="sha256:dup")
+    assert content_duplicate_ids(b, [c, a, b]) == ["web:a", "web:c"]

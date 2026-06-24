@@ -96,6 +96,7 @@ from scrolls.items import (
     archived_records,
     archived_snapshots,
     classification_provenance,
+    content_duplicate_ids,
     diff_snapshot,
     dump_archive_export,
     get_fidelity,
@@ -4114,6 +4115,14 @@ def _cmd_show(item_id: str) -> int:
     latest = events[0] if events else None
     payload["drift"] = drift_posture(latest)
     payload["last_checked"] = last_checked(latest)
+    # The per-item content-identity siblings (roadmap H328): the *other* held ids
+    # byte-identical to this one — "also held under X, Y" — the per-item read
+    # companion of `doctor`'s whole-library `custody.content_duplicates` count,
+    # empty when this content is unique. The custody-surface-propagation pattern
+    # `fidelity`/`drift` already follow; reuses the H325 grouping primitive.
+    payload["content_duplicate_ids"] = content_duplicate_ids(
+        item, list_items(paths.db_path)
+    )
     # The derived classification view alongside the raw provenance, so `show`
     # presents how the category was produced at parity with `list` (and MCP).
     classification = classification_provenance(item)

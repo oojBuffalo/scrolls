@@ -1125,6 +1125,42 @@ def test_get_scroll_carries_the_two_custody_axes_at_parity_with_list(scrolls_hom
     assert mcp_server.get_scroll("web:b")["drift"] == "unverified"
 
 
+def test_get_scroll_names_content_duplicate_siblings_at_parity_with_cli(scrolls_home, capsys):
+    # H328: the MCP inspect twin carries `content_duplicate_ids` — the *other*
+    # held ids byte-identical to this one — and reads byte-for-byte the same as the
+    # CLI `show` payload for the same item (the per-item read companion of the
+    # whole-library content-duplicate report, H325).
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A copy",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:dup", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="A byte-identical copy",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:dup", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:solo", source="web", url="https://ex.com/solo",
+        saved_at="2026-06-12T02:00:00+00:00", title="The only copy",
+        extracted_text="other", raw_text="<raw>other</raw>",
+        content_hash="sha256:solo", stage="rendered"))
+
+    assert mcp_server.get_scroll("web:a")["content_duplicate_ids"] == ["web:b"]
+    assert mcp_server.get_scroll("web:solo")["content_duplicate_ids"] == []
+
+    # byte-for-byte parity with the CLI `show` payload (one fold, both surfaces)
+    capsys.readouterr()
+    main(["show", "web:a"])
+    cli_ids = json.loads(capsys.readouterr().out)["content_duplicate_ids"]
+    assert mcp_server.get_scroll("web:a")["content_duplicate_ids"] == cli_ids
+
+
 def test_mcp_surfaces_carry_last_checked_at_parity(scrolls_home):
     # H84: the time axis of the custody picture rides every MCP browse/inspect
     # twin — `get_scroll`, `list_scrolls`, `search_scrolls` — and reads the same

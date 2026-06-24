@@ -1236,6 +1236,37 @@ def content_duplicate_groups(items: list[ScrollItem]) -> dict[str, Any]:
     }
 
 
+def content_duplicate_ids(item: ScrollItem, items: list[ScrollItem]) -> list[str]:
+    """The *other* held ids byte-identical to ``item`` — its content-duplicate siblings (roadmap H328).
+
+    The per-item read companion of the whole-library `content_duplicate_groups`
+    report (H325): where that report *counts groups* across the library, this
+    *names the siblings* of one item — "this exact content is also held under ids
+    X, Y" — so an operator inspecting a single scroll (`show`/`get_scroll`) sees
+    its redundancy without scanning the whole-library `doctor` report. The
+    custody-surface-propagation pattern every per-item custody fact follows: the
+    derived `fidelity`/`drift`/`last_checked` axes already ride the per-item read
+    (H61/H84), and content-identity is the unworked one.
+
+    A pure per-item fold over ``content_hash``, **reusing the H325 grouping
+    primitive** (a one-item slice of `content_duplicate_groups`): the item's
+    content-duplicate group minus itself. A NULL/empty ``content_hash``
+    fingerprints nothing — a reference-only item holds no captured content — so it
+    names no siblings (the H325 NULL-safe rule, short-circuited before the fold).
+    Returns ids sorted (the group's stable ordering), the honest empty `[]` when
+    the item is unique or its content is held under no other id. The per-item read
+    names *ids only*, never a count: the per-item surface names siblings, the
+    whole-library report counts groups (the `drift`-per-item-vs-`doctor`-aggregate
+    split).
+    """
+    if not item.content_hash:  # no captured content — nothing to fingerprint
+        return []
+    for group in content_duplicate_groups(items)["groups"]:
+        if group["content_hash"] == item.content_hash:
+            return [peer for peer in group["ids"] if peer != item.id]
+    return []
+
+
 def archive_export_dict(record: ArchiveRecord) -> dict[str, Any]:
     """One archive row as a JSON-serializable export object (roadmap H280).
 

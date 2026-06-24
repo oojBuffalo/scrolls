@@ -2095,6 +2095,56 @@ def test_last_checked_reads_the_same_across_list_search_show(scrolls_home, capsy
     assert list_ts == search_ts == show_ts == "2026-06-14T09:30:00+00:00"
 
 
+def test_show_names_the_content_duplicate_siblings(scrolls_home, capsys):
+    # H328: `show` carries `content_duplicate_ids` — the *other* held ids
+    # byte-identical to this one ("also held under <id>"), the per-item read
+    # companion of `doctor`'s whole-library content-duplicate report (H325).
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A copy",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:dup", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T01:00:00+00:00", title="A mirror",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:dup", stage="rendered"))
+    capsys.readouterr()
+
+    # the cross-source byte-identical sibling is named (a content group spans sources)
+    main(["show", "web:a"])
+    assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == ["arxiv:1"]
+    main(["show", "arxiv:1"])
+    assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == ["web:a"]
+
+
+def test_show_unique_item_names_no_content_duplicates(scrolls_home, capsys):
+    # H328: a singleton content_hash and a reference-only (NULL-hash) item each
+    # name no siblings — the honest empty list, the H325 NULL-safe rule per item.
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:solo", source="web", url="https://ex.com/solo",
+        saved_at="2026-06-12T00:00:00+00:00", title="Only copy",
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash="sha256:solo", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://ex.com/ref",
+        saved_at="2026-06-12T01:00:00+00:00", title="Reference only"))
+    capsys.readouterr()
+
+    main(["show", "web:solo"])
+    assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == []
+    main(["show", "web:ref"])
+    assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == []
+
+
 def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
     from scrolls.classify import RULESET_FINGERPRINT
 

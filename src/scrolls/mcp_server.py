@@ -59,6 +59,7 @@ from scrolls.works import works_for_item, works_over
 from scrolls.items import (
     archive_entry_dict,
     classification_provenance,
+    content_duplicate_ids,
     count_by_source,
     get_fidelity,
     get_item,
@@ -332,10 +333,12 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     Beside the raw record, the payload carries the derived per-item custody
     axes the browse surfaces report (roadmap H61/H84) — `fidelity` (the custody
     tier, full/partial/reference), `drift` (the verify-ledger posture, verified/
-    unverified/drifted/rotted/error), and `last_checked` (when that posture was
-    taken, or null when never re-checked) — plus the `classification` view
-    (omitted on honest absence), so the inspect surface reads at parity with
-    `list_scrolls`/`search_scrolls`.
+    unverified/drifted/rotted/error), `last_checked` (when that posture was
+    taken, or null when never re-checked), and `content_duplicate_ids` (the
+    *other* held ids byte-identical to this one, the per-item companion of the
+    whole-library content-duplicate report, empty when unique — roadmap H328) —
+    plus the `classification` view (omitted on honest absence), so the inspect
+    surface reads at parity with `list_scrolls`/`search_scrolls`.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
@@ -355,6 +358,13 @@ def get_scroll(item_id: str) -> dict[str, Any]:
     latest = events[0] if events else None
     payload["drift"] = drift_posture(latest)
     payload["last_checked"] = last_checked(latest)
+    # The per-item content-identity siblings (roadmap H328): the *other* held ids
+    # byte-identical to this one, the per-item read companion of the whole-library
+    # `get_library_health` content-duplicate count, matching the CLI `show`
+    # payload — empty when this content is unique (the H325 NULL-safe fold).
+    payload["content_duplicate_ids"] = content_duplicate_ids(
+        item, list_items(paths.db_path)
+    )
     # The derived classification view alongside raw provenance, matching the CLI
     # `show` payload so both inspect surfaces present how the category was made.
     classification = classification_provenance(item)
