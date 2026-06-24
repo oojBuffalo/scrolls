@@ -4359,3 +4359,100 @@ def test_get_maintenance_history_matches_cli_maintain_history(scrolls_home, caps
     assert main(["maintain", "--history", "--trend"]) == 0
     cli_trend = json.loads(capsys.readouterr().out)
     assert mcp_server.get_maintenance_history(trend=True) == cli_trend
+
+
+def _hold_content_pair(db, ids, content_hash):
+    """Hold a byte-identical content-duplicate pair (one new H325 group)."""
+    from scrolls.items import ScrollItem, insert_item
+
+    for ident in ids:
+        insert_item(db, ScrollItem(
+            id=ident, source="web", url=f"https://ex.com/{ident}",
+            saved_at="2026-06-12T00:00:00+00:00", title=ident,
+            extracted_text="body", raw_text="<raw>body</raw>",
+            content_hash=content_hash, stage="rendered"))
+
+
+def _log_a_content_duplicate_trajectory(db):
+    """Record two whole-library passes whose content-duplicate count climbs 1 → 2
+    groups (2 → 4 items) — a known content-identity trajectory for the trend axis."""
+    _hold_content_pair(db, ("web:a", "web:b"), "sha256:dup1")
+    mcp_server.run_maintenance()  # pass 1: 1 group / 2 items
+    _hold_content_pair(db, ("web:c", "web:d"), "sha256:dup2")
+    mcp_server.run_maintenance()  # pass 2: 2 groups / 4 items
+
+
+def test_get_maintenance_history_trend_carries_content_identity_at_cli_parity(
+    scrolls_home, capsys
+):
+    # H335: the content-identity trend axis (H330) rides `get_maintenance_history(
+    # trend=True)` — `content_duplicates_change` + the trend `duplicates_headline`
+    # — at byte-parity with CLI `maintain --history --trend`. H330 put the axis on
+    # the shared `compute_trend` and the MCP twin already calls it, so the keys flow
+    # through for free; this pins that they actually converge over a *real logged
+    # window* with a known content-duplicate trajectory (the keyset/parity tests
+    # predate H330). The MCP path is offline by default (`--no-recheck`), so the CLI
+    # comparison reads the *same* recorded log (one `read_log` + `compute_trend`).
+    main(["init"])
+    db = get_paths().db_path
+    _log_a_content_duplicate_trajectory(db)
+
+    trend = mcp_server.get_maintenance_history(trend=True)["trend"]
+    # the net first→last group movement: 1 → 2 groups across the window.
+    assert trend["content_duplicates_change"] == 1
+    # the readable trend twin of the report's `_Duplicates:_` line: the last run's
+    # 2 groups / 4 items + the ▲ movement clause, the window span "over 2 runs".
+    assert trend["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (4 item(s)) "
+        "(▲1 over 2 runs)._"
+    )
+
+    # byte-parity with CLI `maintain --history --trend` on the content-identity
+    # axis (the H247/H242 MCP-twin convergence discipline) — the whole envelope is
+    # equal, and so are the two content-identity members in particular.
+    capsys.readouterr()
+    assert main(["maintain", "--history", "--trend"]) == 0
+    cli_trend = json.loads(capsys.readouterr().out)["trend"]
+    assert mcp_server.get_maintenance_history(trend=True)["trend"] == cli_trend
+    assert trend["content_duplicates_change"] == cli_trend["content_duplicates_change"]
+    assert trend["duplicates_headline"] == cli_trend["duplicates_headline"]
+
+
+def test_get_maintenance_history_content_identity_trend_moves_with_the_log(
+    scrolls_home, capsys
+):
+    # H335 mutation guard: perturbing one logged snapshot's `content_duplicate_groups`
+    # moves both surfaces in lockstep — proof the parity above is non-vacuous (both
+    # read the same `read_log`, neither hard-codes the count). Rewrite the *first*
+    # logged run's group scalar 1 → 5 so the net first→last movement flips from a ▲1
+    # rise to a ▼3 fall, then re-read both surfaces: they agree, and they moved.
+    from scrolls.maintain import log_path
+
+    main(["init"])
+    db = get_paths().db_path
+    _log_a_content_duplicate_trajectory(db)
+
+    before = mcp_server.get_maintenance_history(trend=True)["trend"]
+    assert before["content_duplicates_change"] == 1  # the unperturbed ▲1 rise
+
+    path = log_path(get_paths())
+    lines = path.read_text(encoding="utf-8").splitlines()
+    first = json.loads(lines[0])
+    first["snapshot"]["content_duplicate_groups"] = 5
+    lines[0] = json.dumps(first)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    after = mcp_server.get_maintenance_history(trend=True)["trend"]
+    # the surface moved with the log (5 → 2 groups now reads a ▼3 fall, not ▲1)
+    assert after["content_duplicates_change"] == -3
+    assert after["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (4 item(s)) "
+        "(▼3 over 2 runs)._"
+    )
+
+    # and the CLI moved in lockstep — both read the same edited log
+    capsys.readouterr()
+    assert main(["maintain", "--history", "--trend"]) == 0
+    cli_after = json.loads(capsys.readouterr().out)["trend"]
+    assert after["content_duplicates_change"] == cli_after["content_duplicates_change"]
+    assert after["duplicates_headline"] == cli_after["duplicates_headline"]
