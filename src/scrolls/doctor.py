@@ -41,6 +41,7 @@ from scrolls.kb_llm import (
 )
 from scrolls.items import (
     ScrollItem,
+    archive_integrity_block,
     archived_records,
     get_fidelity,
     list_items,
@@ -671,27 +672,12 @@ def _check_archive_integrity(paths: LibraryPaths, report: dict) -> None:
     `--source` audit leaves the block at its honest `status: "skipped"` default
     rather than reading a scope-induced "0 mismatched" over a store it never scoped.
     """
-    archive = report["custody"]["archive"]
-    archive["status"] = "ok"
-    mismatched = []
-    for record in archived_records(paths.db_path):
-        if record.prior_hash is None:  # no advertised fingerprint — vacuously fine
-            continue
-        archive["checked"] += 1
-        snapshot_hash = record.snapshot.get("content_hash")
-        if record.prior_hash != snapshot_hash:
-            mismatched.append(
-                {
-                    "item_id": record.item_id,
-                    "prior_hash": record.prior_hash,
-                    "snapshot_hash": snapshot_hash,
-                }
-            )
-    archive["mismatched"] = len(mismatched)
-    # Deterministic order (item, then advertised hash) so the report is a stable
-    # diff line — the `archived_records` content-determined ordering on the audit axis.
-    archive["events"] = sorted(
-        mismatched, key=lambda e: (e["item_id"], e["prior_hash"])
+    # The shared whole-library fold (roadmap H319): the same divergence check the
+    # shareable `export bundle` runs over its in-scope items, so the JSON audit and
+    # the readable `_Archive:_` briefing line cannot disagree for the same record
+    # set. Deterministic `(item_id, prior_hash)` event order — a stable diff line.
+    report["custody"]["archive"] = archive_integrity_block(
+        archived_records(paths.db_path)
     )
 
 

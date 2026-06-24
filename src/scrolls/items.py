@@ -1135,6 +1135,56 @@ def archived_records(
     return records
 
 
+def archive_integrity_block(records: list[ArchiveRecord]) -> dict[str, Any]:
+    """The archive-integrity audit over a set of `ArchiveRecord`s (roadmap H293/H319).
+
+    Folds the divergence check `doctor`'s `custody.archive` block reports: every
+    archived prior's advertised ``prior_hash`` — the fingerprint `archive list` /
+    `archive restore --hash` key on — must equal its model-complete ``snapshot``
+    body's own ``content_hash``. They agree at archival time by construction
+    (`adopt_incoming` writes ``prior.content_hash`` to both), but the archive
+    *travels* (`export/import archive`, the `--with-archive` bundle), so a corrupt
+    or hand-edited stream could land a row where they diverge — a custody-honesty
+    bug invisible until restore (`archive restore --hash <prior_hash>` would
+    silently adopt content with a *different* hash than advertised).
+
+    Returns the ``{status, checked, mismatched, events}`` shape `doctor`'s JSON
+    block carries (``status`` always ``"ok"`` — the caller decides when to *run*
+    the check; `doctor` keeps the block ``"skipped"`` under a `--source` scope by
+    not calling this). A NULL ``prior_hash`` is **not** a defect — it carries no
+    fingerprint to verify, so it is vacuously skipped (counted in neither
+    ``checked`` nor ``mismatched``), the `import_archive` NULL-safe-identity
+    precedent. ``events`` is the offending ``{item_id, prior_hash, snapshot_hash}``
+    set in a deterministic ``(item_id, prior_hash)`` order — a stable diff line.
+
+    The single source of the divergence truth: `doctor` folds it over the whole
+    library (`archived_records(db)`) and the shareable `export bundle` over its
+    in-scope items (`archived_records(db, ids)`), so the JSON audit and the
+    readable `_Archive:_` briefing line cannot disagree for the same record set.
+    """
+    checked = 0
+    mismatched = []
+    for record in records:
+        if record.prior_hash is None:  # no advertised fingerprint — vacuously fine
+            continue
+        checked += 1
+        snapshot_hash = record.snapshot.get("content_hash")
+        if record.prior_hash != snapshot_hash:
+            mismatched.append(
+                {
+                    "item_id": record.item_id,
+                    "prior_hash": record.prior_hash,
+                    "snapshot_hash": snapshot_hash,
+                }
+            )
+    return {
+        "status": "ok",
+        "checked": checked,
+        "mismatched": len(mismatched),
+        "events": sorted(mismatched, key=lambda e: (e["item_id"], e["prior_hash"])),
+    }
+
+
 def archive_export_dict(record: ArchiveRecord) -> dict[str, Any]:
     """One archive row as a JSON-serializable export object (roadmap H280).
 

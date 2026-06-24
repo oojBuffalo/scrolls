@@ -958,6 +958,140 @@ def test_bundle_html_conflicts_line_omitted_on_a_clean_library(scrolls_home):
     )
 
 
+# --- readable archive-integrity `_Archive:_` line (roadmap H319) --------------
+# The readable completion of `doctor`'s `custody.archive` integrity check (H293):
+# the archive-axis sibling of the `_Conflicts:_` line above, on both bundle forms.
+# An archived prior whose advertised `prior_hash` no longer equals its snapshot's
+# `content_hash` is a custody-honesty bug invisible until restore — a corrupt or
+# hand-edited recovery store. The line is **in-scope** (the bundle's in-scope items'
+# archive, like `_Conflicts:_` and `--with-archive`) and renders unconditionally
+# (independent of `--with-archive`: the flag governs whether the archive *data*
+# travels, not whether custody honesty about it does — §2.4). Omit-when-clean.
+
+
+def _seed_corrupt_prior(db, item_id, title, *, archived_at="2026-06-22T00:00:00+00:00"):
+    """Hold a matchable item, archive a prior via an adoption, then tamper the
+    archived row's `prior_hash` so it diverges from its snapshot's `content_hash`
+    — the corrupt recovery store the integrity alarm must name. The held copy keeps
+    its title (so the bundle query still matches it)."""
+    held = make_item(item_id, title, "Body.", content_hash="deadbeef")
+    insert_item(db, held)
+    incoming = dataclasses.replace(held, extracted_text="a later capture",
+                                   content_hash="moved")
+    adopt_incoming(db, incoming, archived_at=archived_at)
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+            ("sha256:tampered", item_id),
+        )
+    conn.close()
+
+
+def test_bundle_carries_an_archive_integrity_line(scrolls_home):
+    # roadmap H319: an in-scope item whose archived prior is corrupt surfaces one
+    # `_Archive:_` line — the readable completion of `doctor`'s `custody.archive`.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    bundle = build_bundle(db, "database")
+    assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in bundle
+    # grouped with the divergence lines, below the scope custody headline
+    assert bundle.index("_Archive:") > bundle.index("_Custody:")
+
+
+def test_archive_line_renders_without_with_archive(scrolls_home):
+    # the line is independent of `--with-archive` (which only governs whether the
+    # archive *data* travels): custody honesty rides every briefing (§2.4)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    assert "_Archive: 1 prior(s) fail integrity" in build_bundle(db, "database")
+    assert "_Archive: 1 prior(s) fail integrity" in build_bundle(
+        db, "database", with_archive=True
+    )
+
+
+def test_archive_line_converges_with_doctor(scrolls_home):
+    # the count is the *same* `archive_integrity_block` fold `doctor`'s
+    # `custody.archive` reads — here the in-scope set is the whole library, so the
+    # readable line and the JSON audit report the same mismatch count
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    _seed_corrupt_prior(db, "wikipedia:en:Postgres", "Postgres database")
+    bundle = build_bundle(db, "database")  # matches both held items
+    mismatched = run_doctor(get_paths())["custody"]["archive"]["mismatched"]
+    assert mismatched == 2
+    assert f"_Archive: {mismatched} prior(s) fail integrity" in bundle
+
+
+def test_archive_line_is_in_scope(scrolls_home):
+    # the in-scope design (the `_Conflicts:_` / `--with-archive` semantics): a corrupt
+    # prior on an item *outside* the query scope is not named — the bundle reports
+    # custody honesty for the items it actually carries, not the whole library.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    _seed_corrupt_prior(db, "wikipedia:en:Tarragon", "Tarragon herb")  # off-scope
+    bundle = build_bundle(db, "database")  # matches SQLite only
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+    assert "_Archive:" not in bundle  # the off-scope corruption is not the bundle's
+
+
+def test_archive_line_omitted_on_a_clean_library(scrolls_home):
+    # honest absence: a clean (untampered) archived prior → no `_Archive:` line
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                     content_hash="deadbeef")
+    insert_item(db, held)
+    adopt_incoming(db, dataclasses.replace(held, extracted_text="later",
+                                           content_hash="moved"),
+                   archived_at="2026-06-22T00:00:00+00:00")
+    bundle = build_bundle(db, "database")
+    assert "_Custody:" in bundle
+    assert "_Archive:" not in bundle
+
+
+def test_archive_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H264/H277 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    bundle = build_bundle(db, "database")
+    assert "_Archive:" in bundle
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+
+
+def test_bundle_html_carries_an_archive_integrity_line(scrolls_home):
+    # roadmap H319: the HTML briefing carries the same archive pointer as the
+    # Markdown `_Archive:_` line, from the *same* `archive_integrity_block` fold —
+    # so the two readable forms (and `doctor`'s JSON) cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-archive">Archive: 1 prior(s) fail integrity '
+        "(prior_hash ≠ snapshot).</p>" in doc
+    )
+
+
+def test_bundle_html_archive_line_omitted_on_a_clean_library(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    doc = build_bundle_html(db, "database")
+    assert "Custody:" in doc  # the headline still renders
+    assert '<p class="custody-archive">' not in doc
+    # empty scope is a no-op too
+    assert '<p class="custody-archive">' not in build_bundle_html(
+        db, "nothingmatcheshere"
+    )
+
+
 def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
     # roadmap H159: the HTML briefing carries the same pointer, from the same
     # `weakest_source`, so the two readable forms cannot desync

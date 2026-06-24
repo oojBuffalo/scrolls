@@ -107,6 +107,7 @@ from scrolls.items import (
     ArchiveRecord,
     ScrollItem,
     archive_from_dict,
+    archive_integrity_block,
     archived_records,
     classification_phrase,
     classification_provenance,
@@ -117,6 +118,7 @@ from scrolls.items import (
     list_items,
 )
 from scrolls.items_export import dump_items_export
+from scrolls.maintain import archive_integrity_headline
 from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
 from scrolls.kb_llm import (
     members_hash,
@@ -169,6 +171,7 @@ code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px
 .custody-attention { font-weight: 600; color: #b3261e; }
 .custody-at-risk { font-weight: 600; color: #b3261e; }
 .custody-conflicts { font-weight: 600; color: #b3261e; }
+.custody-archive { font-weight: 600; color: #b3261e; }
 .custody-refresh { font-weight: 600; color: #9a6700; }
 .note { color: #6a6a6a; font-size: .85rem; }
 .custody-facts { list-style: none; padding-left: 0; }
@@ -446,6 +449,21 @@ def build_bundle(
     # scope carries an unresolved conflict ([] lines).
     conflicts = latest_conflict_events(db_path) if items else {}
     lines += render_custody_conflicts(items, conflicts)
+    # the readable archive-integrity pointer (roadmap H319): one `_Archive:_` line
+    # when any in-scope item's archived prior is corrupt — its advertised
+    # `prior_hash` no longer equals its snapshot's `content_hash`, a custody-honesty
+    # bug invisible until restore (`archive restore --hash` would adopt content with
+    # a different hash than advertised). The archive-axis sibling of the `_Conflicts:_`
+    # divergence line above, the readable completion of `doctor`'s `custody.archive`
+    # (H293). **In-scope** (the in-scope items' archive, like `_Conflicts:_` and the
+    # `--with-archive` block) and rendered **unconditionally** — independent of
+    # `--with-archive`: the flag governs whether the archive *data* travels, not
+    # whether custody honesty about it does (§2.4). Folds the *same*
+    # `archive_integrity_block` over the *same* in-scope `archived_records` `doctor`
+    # reads whole-library, rendered by the *same* `archive_integrity_headline` the
+    # `maintain` line uses, so the readable line, the JSON audit, and the maintenance
+    # summary converge by construction; honest no-op on a clean/empty scope ([] lines).
+    lines += _archive_integrity_lines(db_path, items)
     # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
     # naming the source(s) whose classifications/summaries are stale and the exact
     # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-
@@ -614,6 +632,13 @@ def build_bundle_html(
     # above and below `_refresh_html` (the Markdown order); honest no-op when no held
     # item in scope carries an unresolved conflict
     body += _conflicts_html(db_path, items)
+    # the readable archive-integrity pointer (roadmap H319), the HTML twin of the
+    # Markdown `_Archive:_` line — folds the *same* `archive_integrity_block` over the
+    # same in-scope `archived_records` and renders via the same
+    # `archive_integrity_headline` (sans the markdown `_` emphasis), so the two forms
+    # (and `doctor`'s `custody.archive`) report the same mismatch count; grouped with
+    # the divergence lines above; honest no-op on a clean/empty scope
+    body += _archive_integrity_html(db_path, items)
     # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
     # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
     # the two forms name the same sources; honest no-op when no source carries
@@ -759,6 +784,45 @@ def _conflicts_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
         f'<p class="custody-conflicts">Conflicts: {count} '
         "item(s) carry an unresolved import conflict.</p>"
     ]
+
+
+def _in_scope_archive_audit(db_path: Path, items: list[ScrollItem]) -> dict:
+    """The archive-integrity audit over the bundle's in-scope items (roadmap H319).
+
+    Folds the shared `archive_integrity_block` over the same in-scope
+    `archived_records` the `--with-archive` block ships — the in-scope counterpart of
+    `doctor`'s whole-library `custody.archive` audit. Both bundle forms read it, so
+    the Markdown `_Archive:_` line and its HTML twin cannot desync. An empty scope is
+    the honest empty audit (no records → 0 mismatched).
+    """
+    records = archived_records(db_path, [item.id for item in items]) if items else []
+    return archive_integrity_block(records)
+
+
+def _archive_integrity_lines(db_path: Path, items: list[ScrollItem]) -> list[str]:
+    """The Markdown `_Archive:_` line for any corrupt in-scope prior (roadmap H319).
+
+    Renders via the *same* `archive_integrity_headline` the `maintain` line uses, so
+    the readable briefing, the JSON audit, and the maintenance summary converge by
+    construction. Returns [] on honest absence — a clean or empty scope — like the
+    sibling divergence lines (the omit-when-clean briefing posture).
+    """
+    line = archive_integrity_headline(_in_scope_archive_audit(db_path, items))
+    return [line, ""] if line else []
+
+
+def _archive_integrity_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
+    """The HTML twin of the Markdown `_Archive:_` line (roadmap H319).
+
+    The *same* `archive_integrity_headline` over the *same* in-scope audit, sans the
+    markdown `_` emphasis, so the two readable forms (and `doctor`'s JSON) report the
+    same mismatch count. Returns [] on honest absence — like the Markdown no-op. The
+    line is controlled text but escaped for safety regardless, like `_conflicts_html`.
+    """
+    line = archive_integrity_headline(_in_scope_archive_audit(db_path, items))
+    if not line:
+        return []
+    return [f'<p class="custody-archive">{html.escape(line.strip("_"))}</p>']
 
 
 def _refresh_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
