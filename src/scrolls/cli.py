@@ -281,6 +281,17 @@ def build_parser() -> argparse.ArgumentParser:
         "ANDs with --fidelity",
     )
     context_parser.add_argument(
+        "--strength",
+        choices=("strong", "moderate", "weak"),
+        default=None,
+        help="Only scrolls whose query lands at or above this rank-strength band "
+        "— strong (title), moderate (title or summary), weak (any field); the "
+        "rank-axis companion of --fidelity/--drift, sieved before --limit, so the "
+        "bundle covers the top matches *at that strength* (e.g. --strength strong "
+        "to brief on only the excerpts whose query is in the title). The rendered "
+        "_Strength:_ headline describes the kept set",
+    )
+    context_parser.add_argument(
         "--budget",
         choices=CONTEXT_BUDGET_TIERS,
         default=DEFAULT_CONTEXT_BUDGET,
@@ -1440,6 +1451,7 @@ def main(argv: list[str] | None = None) -> int:
             args.concept,
             args.fidelity,
             args.drift,
+            args.strength,
             args.budget,
         )
     if args.command == "detect":
@@ -3730,6 +3742,7 @@ def _cmd_context(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> int:
     paths = get_paths()
@@ -3745,6 +3758,7 @@ def _cmd_context(
             concept=concept,
             fidelity=fidelity,
             drift=drift,
+            strength=strength,
             budget=budget,
         )
     except ValueError as exc:

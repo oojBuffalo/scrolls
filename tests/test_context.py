@@ -2149,3 +2149,119 @@ def test_context_strength_marker_precedes_the_work_note(scrolls_home, capsys):
 
     out = run_context(capsys, "attention transformer")
     assert "· strong · same work as `crossref:10.5555/3295222`" in out
+
+
+# --- H316: `context --strength` — the rank-axis filter on the context bundle ---
+
+
+def test_context_strength_filter_keeps_the_band_and_stronger(scrolls_home, capsys):
+    # roadmap H316: `--strength` is the rank-axis third custody-style scope, the
+    # same before-cap threshold band `search --strength` adds (H314). Threshold
+    # semantics (at or above), not exact-band equality: `strong` keeps title hits,
+    # `moderate` title-or-summary, `weak` every match. The seed lands one hit in
+    # each band for `ranking`, so the three scopes nest provably.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    strong = run_context(capsys, "ranking", "--strength", "strong")
+    assert "wikipedia:en:Strong" in strong
+    assert "wikipedia:en:Moderate" not in strong and "wikipedia:en:Weak" not in strong
+
+    moderate = run_context(capsys, "ranking", "--strength", "moderate")
+    assert "wikipedia:en:Strong" in moderate and "wikipedia:en:Moderate" in moderate
+    assert "wikipedia:en:Weak" not in moderate
+
+    weak = run_context(capsys, "ranking", "--strength", "weak")
+    for present in ("Strong", "Moderate", "Weak"):
+        assert f"wikipedia:en:{present}" in weak
+
+
+def test_context_strength_filter_rescopes_the_headline(scrolls_home, capsys):
+    # the kept slice re-folds H315's `_Strength:_` headline + per-match markers, so
+    # a `--strength strong` bundle reports a strong-only headline describing exactly
+    # what it contains — never the whole-library `strong 1, moderate 1, weak 1`.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking", "--strength", "strong")
+    assert _strength_line(out) == "_Strength: strong 1 (of 1)._"
+    assert _best_match_strengths(out) == ["strong"]
+
+    out = run_context(capsys, "ranking", "--strength", "moderate")
+    assert _strength_line(out) == "_Strength: strong 1, moderate 1 (of 2)._"
+    assert sorted(_best_match_strengths(out)) == ["moderate", "strong"]
+
+
+def test_context_strength_sieves_before_the_limit(scrolls_home, capsys):
+    # the before-cap sieve (the list-sieve shape, like --fidelity/--drift):
+    # `--strength moderate --limit 1` returns the top match *at moderate-or-above*,
+    # and the Coverage denominator counts only the band's matches (2 of the 3), so a
+    # capped rank-scoped bundle stays scope-honest about its own rank scope.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking", "--strength", "moderate", "--limit", "1")
+    assert "1. " in out
+    # the denominator is the moderate-or-above count (2), never the library-wide 3
+    assert "the top 1 of 2 matching scrolls" in out
+    # and the one kept match is a moderate-or-above one (the weak hit was sieved out)
+    assert _best_match_strengths(out)[0] in ("strong", "moderate")
+
+
+def test_context_strength_scope_named_in_the_title(scrolls_home, capsys):
+    # a rank-scoped bundle is self-documenting: the title names the strength band,
+    # beside the existing facet/custody echo (and reads after fidelity/drift).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking", "--strength", "strong")
+    assert out.startswith("# Scrolls Context Bundle: ranking (strength=strong)\n")
+    out = run_context(
+        capsys, "ranking", "--source", "wikipedia", "--strength", "moderate"
+    )
+    assert out.startswith(
+        "# Scrolls Context Bundle: ranking (source=wikipedia, strength=moderate)\n"
+    )
+
+
+def test_context_strength_ands_with_fidelity(scrolls_home, capsys):
+    # the rank axis ANDs with the per-item custody axes: two strong title hits, one
+    # held in full and one partial, so `--strength strong --fidelity full` keeps
+    # only the full one — the rank sieve and the holdings sieve both apply.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:FullStrong", "Ranking held in full", "a body about engines.",
+        content_hash="deadbeef", raw_text="<raw>a full ranking body.</raw>",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:PartialStrong", "Ranking held in part", "a body about engines.",
+    ))  # no hash/raw → partial fidelity
+    capsys.readouterr()
+
+    # strength alone keeps both strong title hits
+    both = run_context(capsys, "ranking", "--strength", "strong")
+    assert "wikipedia:en:FullStrong" in both and "wikipedia:en:PartialStrong" in both
+    # ANDed with --fidelity full, only the full-fidelity strong hit survives
+    out = run_context(capsys, "ranking", "--strength", "strong", "--fidelity", "full")
+    assert "wikipedia:en:FullStrong" in out
+    assert "wikipedia:en:PartialStrong" not in out
+
+
+def test_context_unknown_strength_raises(scrolls_home):
+    main(["init"])
+    with pytest.raises(ValueError):
+        build_context(get_paths().db_path, "ranking", strength="strongest")
+
+
+def test_context_cli_rejects_unknown_strength(scrolls_home):
+    # argparse `choices=` rejects a bad band with exit 2 before any DB access — the
+    # closed-vocabulary contract `search --strength` keeps (H314).
+    main(["init"])
+    with pytest.raises(SystemExit) as exc:
+        main(["context", "ranking", "--strength", "bogus"])
+    assert exc.value.code == 2

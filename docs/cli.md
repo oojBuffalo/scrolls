@@ -4558,7 +4558,7 @@ $ scrolls works arxiv:1706.03762
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D]`
+### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--strength W]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -4756,6 +4756,34 @@ clients through the same `get_context_bundle(query, fidelity=, drift=)` twin
 (`test_get_context_bundle_filters_by_fidelity_tier`,
 `test_get_context_bundle_filters_by_drift_posture` in `tests/test_mcp.py`).
 
+`--strength <band>` is the **rank-axis** third scope (roadmap H316,
+`tests/test_context.py`) — the same before-cap threshold band `scrolls search
+--strength` adds (H314), here lifted to the context bundle, the act-axis
+companion of the `· <strength>` match explanation above. It keeps only the
+matches whose query lands at or above one rank-strength band, and like
+`search`/`--fidelity` it is a **threshold** (at or above), not exact-band
+equality: `--strength strong` keeps only the title hits, `--strength moderate`
+keeps title-or-summary matches, and `--strength weak` keeps every match
+(`test_context_strength_filter_keeps_the_band_and_stronger`). It threads straight
+into `search_items`/`count_matches` beside `--fidelity`/`--drift`
+(`build_context` passes it through), so it ANDs with them and the facets
+(`test_context_strength_ands_with_fidelity`) and sieves the candidate set
+**before** the `--limit` cap — the bundle covers the top matches *at that
+strength*, and the Coverage denominator counts only that band's matches
+(`test_context_strength_sieves_before_the_limit`). The kept slice re-folds the
+`_Strength:_` headline and per-match markers (H315), so a `--strength strong`
+bundle reports a strong-only headline describing exactly what it contains, never
+the whole-library tally (`test_context_strength_filter_rescopes_the_headline`).
+The scope note names the band — `(strength=strong)` — beside the facet/custody
+echo (`test_context_strength_scope_named_in_the_title`); a closed vocabulary, so
+an unknown band is exit 2 (argparse `choices`) on the CLI and a `ValueError` on
+the `build_context`/MCP path (`test_context_cli_rejects_unknown_strength`,
+`test_context_unknown_strength_raises`). It reaches MCP clients through the same
+`get_context_bundle(query, strength=)` twin
+(`test_get_context_bundle_filters_by_match_strength`,
+`test_get_context_bundle_rejects_an_unknown_match_strength` in
+`tests/test_mcp.py`).
+
 ```console
 $ scrolls context "local search"
 # Scrolls Context Bundle: local search
@@ -4811,6 +4839,28 @@ _By source:_
 1. Full database (`web:full`) · strong
 2. Moved database (`web:moved`) · strong
 3. Arxiv database paper (`arxiv:1`) · strong
+[exit 0]
+```
+
+`--strength` scopes the same bundle to one rank-strength band, sieving before the
+cap so the Coverage denominator and the `_Strength:_` headline describe only the
+kept slice (here only the title hits — the lone strong-band match):
+
+```console
+$ scrolls context "ranking" --budget index --strength strong
+# Scrolls Context Bundle: ranking (strength=strong)
+
+_Coverage: all 1 matching scrolls._
+
+_Strength: strong 1 (of 1)._
+
+_Budget: index — the catalog only (best matches and source links). Re-run with `--budget connected` for the link graph or `--budget full` for excerpts; `scrolls show <id>` reads a body._
+
+_Fidelity: full 1 (of 1)._
+
+## Best Matches
+
+1. BM25 ranking guide (`web:guide`) · strong
 [exit 0]
 ```
 

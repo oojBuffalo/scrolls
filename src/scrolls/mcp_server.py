@@ -562,6 +562,7 @@ def get_context_bundle(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
@@ -602,6 +603,15 @@ def get_context_bundle(
     Coverage line folds those into a bundle-level rank-confidence summary, so the
     bundle says not just what matched but how strongly (both travel at every
     budget tier — they are ledger-free).
+
+    `strength` filters on that same rank axis (the twin of
+    `search_scrolls(strength=)`): it keeps only the matches whose query lands at
+    or above a band — `strong` (title hits), `moderate` (title or summary),
+    `weak` (any field) — sieved before the cap like `fidelity`/`drift`, so the
+    bundle covers the top matches *at that strength* (e.g. only the excerpts
+    whose query is in the title) and the rendered `_Strength:_` headline
+    describes exactly the kept set. An unknown band is an error, never a silent
+    empty bundle.
     """
     paths = get_paths()
     return build_context(
@@ -615,6 +625,7 @@ def get_context_bundle(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
         budget=budget,
     )
 

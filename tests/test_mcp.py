@@ -2549,6 +2549,62 @@ def test_get_context_bundle_rejects_unknown_custody_values(scrolls_home):
         mcp_server.get_context_bundle("database", drift="drift")
 
 
+def test_get_context_bundle_filters_by_match_strength(scrolls_home):
+    # roadmap H316 — the rank-axis filter reaches the agent context bundle over
+    # MCP, the twin of `scrolls context --strength` and the rank sibling of
+    # get_context_bundle(fidelity=/drift=). Threshold semantics (at or above), the
+    # same band `search_scrolls(strength=)` keeps: `strong` keeps title hits,
+    # `moderate` title-or-summary, `weak` everything. Sieved before the cap, named
+    # in the title, and the `_Strength:_` headline describes the kept set.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:title", source="web", url="https://ex.com/title",
+        saved_at="2026-06-12T00:00:00+00:00", title="Widget ranking guide",
+        extracted_text="a body about widgets.", summary="a summary about widgets.",
+        stage="rendered"))  # `ranking` in the title → strong
+    insert_item(db, ScrollItem(
+        id="web:summary", source="web", url="https://ex.com/summary",
+        saved_at="2026-06-12T00:00:01+00:00", title="Plain widget page",
+        extracted_text="a body about widgets.",
+        summary="this summary covers ranking functions.", stage="rendered"))  # → moderate
+    insert_item(db, ScrollItem(
+        id="web:body", source="web", url="https://ex.com/body",
+        saved_at="2026-06-12T00:00:02+00:00", title="Another widget page",
+        extracted_text="deep in the body ranking appears once.",
+        summary="an unrelated widget summary.", stage="rendered"))  # body-only → weak
+
+    strong = mcp_server.get_context_bundle("ranking", strength="strong")
+    assert strong.startswith("# Scrolls Context Bundle: ranking (strength=strong)")
+    assert "web:title" in strong
+    assert "web:summary" not in strong and "web:body" not in strong
+    headline = next(ln for ln in strong.splitlines() if ln.startswith("_Strength:"))
+    assert headline == "_Strength: strong 1 (of 1)._"
+
+    # threshold semantics: moderate keeps strong+moderate, weak keeps all three
+    moderate = mcp_server.get_context_bundle("ranking", strength="moderate")
+    assert "web:title" in moderate and "web:summary" in moderate
+    assert "web:body" not in moderate
+    weak = mcp_server.get_context_bundle("ranking", strength="weak")
+    for present in ("web:title", "web:summary", "web:body"):
+        assert present in weak
+
+
+def test_get_context_bundle_rejects_an_unknown_match_strength(scrolls_home):
+    # the same closed vocabulary as search_scrolls(strength=)/`scrolls context
+    # --strength`; never a silent empty bundle — an unknown band is an error.
+    import pytest
+
+    from scrolls.cli import main
+
+    main(["init"])
+    with pytest.raises(ValueError):
+        mcp_server.get_context_bundle("ranking", strength="strongest")
+
+
 def test_search_and_bundle_honor_tag_and_concept_facets(scrolls_home):
     # The tag/concept membership facets (ADR 0059) reach MCP clients through
     # the same search_items/build_context, so lock both surfaces here.

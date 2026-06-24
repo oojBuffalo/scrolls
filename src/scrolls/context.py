@@ -49,6 +49,14 @@ beside the Coverage line folds those markers into one rank-confidence summary
 facts, so they travel at every budget tier — even the leanest `index` catalog,
 where an agent most needs to tell a strong match from a weak one before
 spending budget on bodies.
+
+The same rank axis also *scopes* the bundle (roadmap H316): `--strength
+{strong|moderate|weak}` keeps only the matches whose query lands at or above a
+band (`strong` title hits, `moderate` title-or-summary, `weak` everything),
+threaded through `search_items`/`count_matches` beside `--fidelity`/`--drift`
+(the same before-cap sieve), so an agent can build context from "only the
+excerpts whose query is in the title" and the kept slice re-folds the
+`_Strength:_` headline and per-match markers above.
 """
 
 from __future__ import annotations
@@ -126,6 +134,7 @@ def build_context(
     concept: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
     budget: str = DEFAULT_BUDGET,
 ) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
@@ -158,6 +167,22 @@ def build_context(
     the rendered headline describes exactly what the bundle contains. An unknown
     tier/posture raises ValueError (`search_items`, a closed vocabulary; the CLI
     also rejects it via argparse `choices`).
+
+    `strength` (roadmap H316) is the *rank-axis* third custody-style scope — the
+    same before-cap threshold band `scrolls search --strength` adds (H314), here
+    lifted to the context bundle. It keeps only the matches whose query lands at
+    or above one rank-strength band: `strong` keeps title hits, `moderate`
+    title-or-summary hits, `weak` every match (the threshold semantics, not an
+    exact-band equality — a hit reads `match_strength == band` exactly when its
+    query lands in that band's column or a stronger one). So an agent can build
+    its working context from "only the excerpts whose query is in the title". It
+    threads straight into `search_items`/`count_matches` beside `fidelity`/`drift`
+    (the same before-cap sieve), so it ANDs with them and the facets, scopes the
+    candidate set *before* the `limit` cap, and the kept set re-folds the
+    `_Strength:_` headline and per-match markers (H315) — so a `--strength strong`
+    bundle's headline is a `strong`-only summary describing exactly what it
+    contains. An unknown band raises ValueError (closed vocabulary; the CLI also
+    rejects it via argparse `choices`).
 
     `budget` (MVP M3) bounds the bundle's *depth* through the nested
     `index`/`connected`/`full` tiers (`BUDGET_TIERS`): `index` is the catalog
@@ -196,6 +221,7 @@ def build_context(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     kept, folded = _collapse_by_work(hits)
     # Fetch every matched row once (kept + folded). `items` (the bundle's kept,
@@ -214,7 +240,9 @@ def build_context(
     scope_items = [item for hit in hits if (item := fetched[hit.id])]
 
     title = f"# Scrolls Context Bundle: {query}"
-    scope = _scope_note(source, category, stage, tag, concept, fidelity, drift)
+    scope = _scope_note(
+        source, category, stage, tag, concept, fidelity, drift, strength
+    )
     if scope:
         title += f" ({scope})"
     lines = [title, ""]
@@ -238,6 +266,7 @@ def build_context(
         concept=concept,
         fidelity=fidelity,
         drift=drift,
+        strength=strength,
     )
     lines += [_coverage_line(matched, len(hits)), ""]
     # The bundle-level rank-confidence headline (roadmap H315): one `_Strength:_`
@@ -511,6 +540,7 @@ def _scope_note(
     concept: str | None,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> str:
     """A `source=…, category=…, …` summary of the active facets, else ''.
 
@@ -520,7 +550,9 @@ def _scope_note(
     such overload — they report their value verbatim. `fidelity`/`drift`
     (roadmap H257, the per-item custody scopes) report their value verbatim
     too, so a custody-scoped bundle's title names which holdings tier / drift
-    posture it covers.
+    posture it covers. `strength` (roadmap H316, the rank-axis scope) reads
+    verbatim as well, so a rank-scoped bundle names which strength band it
+    covers.
     """
     parts = []
     if source is not None:
@@ -537,6 +569,8 @@ def _scope_note(
         parts.append(f"fidelity={fidelity}")
     if drift is not None:
         parts.append(f"drift={drift}")
+    if strength is not None:
+        parts.append(f"strength={strength}")
     return ", ".join(parts)
 
 
