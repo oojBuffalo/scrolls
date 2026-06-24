@@ -1261,6 +1261,186 @@ def test_kb_at_risk_work_line_is_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed               # annotation outside the fence kept
 
 
+# --- whole-library archive-integrity `_Archive:_` line on `index.md` (H321) ---
+# The recovery-store counterpart of the at-risk-works `index.md` line (H269) and the
+# whole-library `_Custody:_` headline (H96): one `_Archive:_` line when any archived
+# prior is corrupt — its advertised `prior_hash` no longer equals its snapshot's
+# `content_hash`, a custody-honesty bug invisible until restore. Folds the *same*
+# whole-library `archive_integrity_block(archived_records(db))` `doctor`'s
+# `custody.archive` reads, rendered by the *same* `archive_integrity_headline` the
+# `maintain`/bundle/context surfaces use (the shared `render_archive_integrity`), so
+# the line converges with the JSON audit by construction. Whole-library — *not*
+# in-scope: a compiled landing page is the library-wide view; only `index.md` carries
+# it (the recovery store is a single non-source-attributable store, like the at-risk
+# line — group pages omit it). Inside the page's `@generated` fence (ADR 0102).
+
+
+def _seed_corrupt_archived_prior(db, item_id="wikipedia:en:SQLite",
+                                 title="SQLite database", source="wikipedia"):
+    """Hold a rendered item, archive a prior via an adoption, then tamper the archived
+    row's `prior_hash` so it diverges from its snapshot's `content_hash` — the corrupt
+    recovery store the whole-library integrity alarm must name on `index.md`. The held
+    copy stays rendered (`dataclasses.replace` preserves `markdown_path`/`stage`), so
+    it appears in the compiled library too. Returns the item id."""
+    import dataclasses
+    import sqlite3
+
+    from scrolls.items import adopt_incoming
+
+    held = make_rendered(item_id, source, title,
+                         raw_text="<raw>Body.</raw>", content_hash="deadbeef")
+    insert_item(db, held)
+    incoming = dataclasses.replace(
+        held, raw_text="<raw>A later capture.</raw>", content_hash="moved")
+    adopt_incoming(db, incoming, archived_at="2026-06-22T00:00:00+00:00")
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+                     ("sha256:tampered", item_id))
+    conn.close()
+    return item_id
+
+
+def test_kb_index_carries_an_archive_integrity_line(scrolls_home, capsys):
+    """The landing `index.md` carries the whole-library `_Archive:_` integrity alarm —
+    one line naming how many archived priors fail integrity (roadmap H321)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_archived_prior(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in header
+    # beneath the whole-library `_Custody:_` headline, with the custody-loss pointers
+    assert header.index("_Custody:") < header.index("_Archive:")
+
+
+def test_kb_index_archive_line_converges_with_doctor(scrolls_home, capsys):
+    """The count is the *same* whole-library `archive_integrity_block` fold `doctor`'s
+    `custody.archive` reads, so the readable line and the JSON audit agree (H321)."""
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_archived_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    _seed_corrupt_archived_prior(db, "arxiv:postgres", "Postgres paper", source="arxiv")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    mismatched = run_doctor(get_paths())["custody"]["archive"]["mismatched"]
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert mismatched == 2
+    assert f"_Archive: {mismatched} prior(s) fail integrity" in index
+
+
+def test_kb_index_archive_line_converges_with_shared_renderer(scrolls_home, capsys):
+    """The rendered line is byte-identical to the shared `render_archive_integrity`
+    over the whole library, so the compiled surface cannot desync from the bundle /
+    context / maintain surfaces that fold through the same helper (H321)."""
+    from scrolls.maintain import render_archive_integrity
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_archived_prior(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    for line in render_archive_integrity(db, None):  # None → whole-library
+        if line:
+            assert line in index
+
+
+def test_kb_index_groups_archive_line_with_the_loss_pointers(scrolls_home, capsys):
+    """The archive line groups with the custody-loss pointers: beneath the headline,
+    after the work-level `_At-risk work:_` line, before the `_By source:_` map — the
+    `export bundle`/`context` briefing order (Attention → At-risk → Archive, roadmap
+    H321)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)   # at-risk work Z + safely-held Y (arxiv, crossref)
+    _seed_corrupt_archived_prior(db)  # one corrupt prior (wikipedia)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert (header.index("_Custody:") < header.index("_At-risk work:")
+            < header.index("_Archive:") < header.index("_By source:_"))
+
+
+def test_kb_index_omits_archive_line_when_store_is_clean(scrolls_home, capsys):
+    """A well-formed archived prior (prior_hash == snapshot.content_hash) shows no
+    `_Archive:` line — honest absence, the same no-op the briefings take (H321)."""
+    import dataclasses
+
+    from scrolls.items import adopt_incoming
+
+    main(["init"])
+    db = get_paths().db_path
+    held = make_rendered("wikipedia:en:SQLite", "wikipedia", "SQLite database",
+                         raw_text="<raw>Body.</raw>", content_hash="deadbeef")
+    insert_item(db, held)
+    adopt_incoming(db, dataclasses.replace(held, raw_text="<raw>later</raw>",
+                                           content_hash="moved"),
+                   archived_at="2026-06-22T00:00:00+00:00")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "_Custody:" in index           # the headline still renders
+    assert "_Archive:" not in index       # a clean store is silent
+
+
+def test_kb_group_pages_omit_the_archive_line(scrolls_home, capsys):
+    """The recovery-store alarm rides only the whole-library `index.md`; the scoped
+    group pages omit it (the store is a single non-source-attributable store, like the
+    at-risk line — a group page is not the library-wide view, roadmap H321)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_archived_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    insert_item(db, make_rendered("arxiv:1", "arxiv", "A paper", category="ml"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    assert "_Archive:" in (library / "index.md").read_text(encoding="utf-8")
+    for page in ("sources/wikipedia.md", "sources/arxiv.md", "categories/ml.md"):
+        assert "_Archive:" not in (library / page).read_text(encoding="utf-8"), page
+
+
+def test_kb_archive_line_is_refresh_safe(scrolls_home, capsys):
+    """The archive line lives inside the `@generated` fence and refreshes on recompile;
+    an annotation outside the fence survives, and repairing the corrupt prior clears
+    the line (roadmap H321 × ADR 0102)."""
+    import sqlite3
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_archived_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index_path = scrolls_home / "library" / "index.md"
+    page = index_path.read_text(encoding="utf-8")
+    assert "_Archive: 1 prior(s)" in generated_body(page)  # inside the fence
+    index_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # repair the corrupt prior — its advertised hash matches the snapshot again
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+                     ("deadbeef", "wikipedia:en:SQLite"))
+    conn.close()
+    run_kb(capsys)
+
+    refreshed = index_path.read_text(encoding="utf-8")
+    assert "_Archive:" not in refreshed   # the alarm cleared on recompile
+    assert "_My note._" in refreshed       # annotation outside the fence kept
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path

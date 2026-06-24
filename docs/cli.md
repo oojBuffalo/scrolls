@@ -631,6 +631,33 @@ per-item custody fact, not a work consolidation)
 `test_context_archive_line_gated_off_index`,
 `test_context_archive_line_mcp_parity`).
 
+That `_Archive:_` line also rides the **compiled landing `library/index.md`** (roadmap
+H321) — the recovery-store counterpart of the at-risk-works `index.md` line (H269) and
+the whole-library `_Custody:_` headline (H96). It sits directly beneath the headline,
+grouped with the per-source `_Attention:_` and work-level `_At-risk work:_` lines and
+above the `_Refresh:_`/`_By source:_` map — the same `export bundle`/`scrolls context`
+order (Attention → At-risk → Archive; the compiled pages carry no `_Conflicts:_` line) —
+through the *same* shared `maintain.render_archive_integrity` the briefings fold, so a
+human browsing the compiled library reads the same alarm an agent reads from `doctor`.
+Unlike the briefings (which scope to their own items) the compiled line is
+**whole-library** — `render_archive_integrity(db, None)` over the entire recovery store
+(`items.archived_records(db)`), exactly the set `doctor`'s `custody.archive` folds —
+because a compiled landing page is the library-wide view, not a query scope. Like the
+at-risk line it is **non-source-attributable** (the recovery store is a single
+whole-library store) and so rides **only `index.md`**: the scoped group pages omit it. It
+sits **inside** the page's `@generated` sentinel fence (ADR 0102) — regenerated content
+like the headline and `_By source:_`, so a recompile refreshes it (repairing or pruning
+the corrupt prior clears it) while a hand annotation outside the fence survives. It
+converges with `doctor`'s `custody.archive` over the whole library by construction, names
+**no command** (the at-risk/conflicts orphan-command discipline), and honest absence — no
+line — when the store is clean or empty (`test_kb_index_carries_an_archive_integrity_line`,
+`test_kb_index_archive_line_converges_with_doctor`,
+`test_kb_index_archive_line_converges_with_shared_renderer`,
+`test_kb_index_groups_archive_line_with_the_loss_pointers`,
+`test_kb_group_pages_omit_the_archive_line`,
+`test_kb_index_omits_archive_line_when_store_is_clean`,
+`test_kb_archive_line_is_refresh_safe`).
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the

@@ -302,6 +302,7 @@ def _custody_scope_block(
     summaries: dict[str, ConceptSummary],
     *,
     at_risk_lines: list[str] | None = None,
+    archive_lines: list[str] | None = None,
 ) -> list[str]:
     """The readable scope-custody block under a compiled page's headline (roadmap H184).
 
@@ -326,6 +327,17 @@ def _custody_scope_block(
     *scoped* group page would fragment works and could not converge with the
     library-wide audit. Defaults to `[]` (omitted on every group page).
 
+    `archive_lines` is the optional whole-library `_Archive:_` integrity pointer
+    (roadmap H321) — one line when any archived prior is corrupt (`prior_hash` no
+    longer equals its snapshot's `content_hash`). It splices directly after the
+    at-risk line, the `export bundle`/`context` order (Attention → At-risk →
+    [Conflicts] → Archive; the compiled pages carry no `_Conflicts:_` line). Like the
+    at-risk alarm it is whole-library and non-source-attributable — the recovery
+    store is a single store, so a scoped group page is not its view — so only the
+    whole-library `index.md` passes it (`render_archive_integrity(db, None)`, the same
+    fold `doctor`'s `custody.archive` reads). Defaults to `[]` (omitted on every
+    group page).
+
     The refresh debt is computed over this page's *own* members (the
     scope-consistent posture H178 took): a whole-library `index.md` over every
     rendered item, a group page over its members — so a single-source `sources/*`
@@ -340,12 +352,29 @@ def _custody_scope_block(
     return (
         render_custody_attention(by_source)
         + (at_risk_lines or [])
+        + (archive_lines or [])
         + render_custody_refresh(
             stale_classification_counts_by_source(items),
             stale_summary_counts_by_source(items, summaries),
         )
         + render_custody_by_source(by_source)
     )
+
+
+def _archive_integrity_lines(db_path: Path) -> list[str]:
+    """The whole-library `_Archive:_` integrity line for the compiled landing page
+    (roadmap H321), or `[]` on a clean/empty store.
+
+    Delegates to the shared `maintain.render_archive_integrity` with a `None` scope —
+    the *whole-library* recovery store (`archived_records(db)`), exactly the set
+    `doctor`'s `custody.archive` folds — so the compiled `index.md` line, the
+    `export bundle`/`context` briefing lines, the `maintain` summary, and the JSON
+    audit cannot desync (one fold, one renderer). Imported lazily because `maintain`
+    imports `compile_kb` from this module, so a module-level import would close a
+    cycle (the `kb_llm` lazy-import precedent above)."""
+    from scrolls.maintain import render_archive_integrity
+
+    return render_archive_integrity(db_path, None)
 
 
 def _write_index(
@@ -370,22 +399,27 @@ def _write_index(
     ]
     # the readable scope-custody block under the headline (roadmap H184): the
     # weakest-source `_Attention:_` pointer (H159), the work-level `_At-risk work:_`
-    # pointer (H269), the per-source `_Refresh:_` pointer (H178), then the
-    # `_By source:_` breakdown (H145) — the compiled landing-page counterpart of the
-    # `export bundle`/`context` briefings, over the same shared renderers so the
-    # lines read byte-identical across surfaces and converge with JSON `status`
-    # (H133) + `doctor`'s debt maps by construction. The work-level at-risk line
-    # (H269) is the consolidation alarm on the static compiled surface — the at-risk
-    # counterpart of the whole-library `_Custody:_` headline (H96), folded by the
-    # shared `render_at_risk_works` over the rendered library so it names the same
-    # work `doctor`'s `custody.works` does; only the whole-library `index.md` carries
-    # it (the alarm is non-source-attributable — group pages would fragment works).
-    # An empty/single-source clean library with no at-risk work is the honest no-op
-    # (the block is []). The block's trailing spacer is dropped: `## Sources` always
-    # follows when items exist and supplies the separator.
+    # pointer (H269), the whole-library `_Archive:_` integrity pointer (H321), the
+    # per-source `_Refresh:_` pointer (H178), then the `_By source:_` breakdown
+    # (H145) — the compiled landing-page counterpart of the `export bundle`/`context`
+    # briefings, over the same shared renderers so the lines read byte-identical
+    # across surfaces and converge with JSON `status` (H133) + `doctor`'s debt maps by
+    # construction. The work-level at-risk line (H269) is the consolidation alarm on
+    # the static compiled surface — the at-risk counterpart of the whole-library
+    # `_Custody:_` headline (H96), folded by the shared `render_at_risk_works` over
+    # the rendered library so it names the same work `doctor`'s `custody.works` does.
+    # The `_Archive:_` line (H321) is the recovery-store counterpart — folded by the
+    # shared `render_archive_integrity` over the *whole-library* store so it converges
+    # with `doctor`'s `custody.archive`. Both are non-source-attributable
+    # whole-library alarms, so only the whole-library `index.md` carries them (group
+    # pages would fragment works / are not the single recovery store's view). An
+    # empty/single-source clean library with no at-risk work and a clean store is the
+    # honest no-op (the block is []). The block's trailing spacer is dropped: `##
+    # Sources` always follows when items exist and supplies the separator.
     custody_block = _custody_scope_block(
         items, verdicts, summaries,
         at_risk_lines=render_at_risk_works(items, verdicts),
+        archive_lines=_archive_integrity_lines(paths.db_path),
     )
     if custody_block:
         lines += [""] + custody_block[:-1]

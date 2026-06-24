@@ -387,27 +387,39 @@ def archive_integrity_headline(
     return f"{base} ({clause})._"
 
 
-def render_archive_integrity(db_path: Path, item_ids: list[str]) -> list[str]:
-    """The readable ``_Archive:_`` line for any corrupt in-scope prior — the shared
-    fold the briefing surfaces read (roadmap H319/H320).
+def render_archive_integrity(
+    db_path: Path, item_ids: list[str] | None
+) -> list[str]:
+    """The readable ``_Archive:_`` line for any corrupt prior — the shared fold every
+    readable archive-integrity surface reads (roadmap H319/H320/H321).
 
     Folds the *single divergence-truth source* `archive_integrity_block` over the
-    in-scope ``archived_records`` and renders it via the *same*
+    scoped ``archived_records`` and renders it via the *same*
     `archive_integrity_headline` the scheduled `maintain` summary uses — so the
-    shareable `export bundle` (H319) and the agent `context` briefing (H320) emit a
-    byte-identical line that converges with `doctor`'s `custody.archive` JSON audit
-    for the same record set by construction (a reader skimming either briefing sees
-    the same recovery-store corruption the JSON read does).
+    shareable `export bundle` (H319), the agent `context` briefing (H320), and the
+    compiled landing `library/index.md` (H321) emit a byte-identical line that
+    converges with `doctor`'s `custody.archive` JSON audit for the same record set by
+    construction (a reader skimming any of them sees the same recovery-store
+    corruption the JSON read does).
 
-    ``item_ids`` is the briefing's in-scope item set (the bundle/context scope, the
-    ``_Conflicts:_`` precedent). An **empty** list is the honest empty audit (the
-    in-scope-of-nothing scope reads no store — never `archived_records`'s ``None``
-    whole-library default). Returns ``[line, ""]`` so the caller appends it directly,
-    or ``[]`` on honest absence — a clean or empty scope — like the sibling
-    divergence lines (the omit-when-clean briefing posture, §2.4).
+    ``item_ids`` chooses the audit scope:
+
+    - a **list of ids** — the briefing's in-scope item set (the bundle/context
+      scope, the ``_Conflicts:_`` precedent);
+    - ``None`` — the **whole-library** store (``archived_records``'s default), the
+      view a compiled landing page takes (H321: a single non-source-attributable
+      recovery store, like `doctor`'s archive audit and the at-risk-works
+      ``index.md`` line — *not* in-scope);
+    - an **empty list** — the honest empty audit (the in-scope-of-nothing scope
+      reads no store), distinguished from ``None`` so an empty *scope* never reads
+      the whole-library store.
+
+    Returns ``[line, ""]`` so the caller appends it directly, or ``[]`` on honest
+    absence — a clean, empty, or whole-clean store — like the sibling divergence
+    lines (the omit-when-clean briefing posture, §2.4).
     """
-    if not item_ids:
-        return []
+    if item_ids is not None and not item_ids:
+        return []  # an empty *scope* reads no store — never the whole-library default
     line = archive_integrity_headline(
         archive_integrity_block(archived_records(db_path, item_ids))
     )
