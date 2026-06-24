@@ -1642,6 +1642,143 @@ def test_context_conflicts_line_mcp_parity(scrolls_home):
     assert "_Conflicts: 1 item(s) carry an unresolved import conflict._" in bundle
 
 
+# --- readable archive-integrity `_Archive:_` line (roadmap H320) --------------
+# The H319 shareable-bundle surface lifted to the agent context briefing: one
+# `_Archive:_` line when an in-scope item's archived prior is corrupt — its
+# advertised `prior_hash` no longer equals its snapshot's `content_hash`, a
+# custody-honesty bug invisible until restore. The archive-axis sibling of the
+# `_Conflicts:_` line above, folding the *same* `archive_integrity_block` over the
+# in-scope `archived_records` and rendered by the *same* `archive_integrity_headline`
+# the `maintain` summary and the `export bundle` line use. Gated to `connected`+
+# like the headline (the leanest `index` tier reads no recovery store); honest
+# absence on a clean/empty scope.
+
+
+def _seed_corrupt_prior(db, item_id, title, *, archived_at="2026-06-22T00:00:00+00:00"):
+    """Hold a matchable item, archive a prior via an adoption, then tamper the
+    archived row's `prior_hash` so it diverges from its snapshot's `content_hash`
+    — the corrupt recovery store the integrity alarm must name. The held copy keeps
+    its title (so the context query still matches it)."""
+    import sqlite3
+
+    from scrolls.items import adopt_incoming
+
+    held = make_item(item_id, title, "Body.", content_hash="deadbeef")
+    insert_item(db, held)
+    incoming = dataclasses.replace(held, extracted_text="a later capture",
+                                   content_hash="moved")
+    adopt_incoming(db, incoming, archived_at=archived_at)
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+            ("sha256:tampered", item_id),
+        )
+    conn.close()
+
+
+def test_context_carries_an_archive_integrity_line(scrolls_home, capsys):
+    # roadmap H320: an in-scope item whose archived prior is corrupt surfaces one
+    # `_Archive:_` line — the H319 shareable-bundle surface on the context briefing.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in out
+    # grouped with the divergence lines, below the scope custody headline
+    assert out.index("_Archive:") > out.index("_Custody:")
+
+
+def test_context_archive_line_converges_with_doctor(scrolls_home, capsys):
+    # the count is the *same* `archive_integrity_block` fold `doctor`'s
+    # `custody.archive` reads — here the in-scope set is the whole library, so the
+    # readable line and the JSON audit report the same mismatch count
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    _seed_corrupt_prior(db, "wikipedia:en:Postgres", "Postgres database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")  # matches both held items
+    mismatched = run_doctor(get_paths())["custody"]["archive"]["mismatched"]
+    assert mismatched == 2
+    assert f"_Archive: {mismatched} prior(s) fail integrity" in out
+
+
+def test_context_archive_line_gated_off_index(scrolls_home, capsys):
+    # the `index` tier reads no recovery store, so it makes no archive-integrity
+    # claim (the H47 gate), exactly like the headline/`_Conflicts:_`/`_At-risk work:_`
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Archive:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_archive_line_present_from_connected_up(scrolls_home, capsys):
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "connected")
+    assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in out
+
+
+def test_context_archive_line_is_in_scope(scrolls_home, capsys):
+    # in-scope semantics (the `_Conflicts:_` precedent): a corrupt prior on an item
+    # *outside* the query scope is not named — the briefing reports custody honesty
+    # for the items it actually carries, not the whole library.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body."))
+    _seed_corrupt_prior(db, "wikipedia:en:Tarragon", "Tarragon herb")  # off-scope
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")  # matches SQLite only
+    assert "SQLite database" in out
+    assert "Tarragon" not in out
+    assert "_Archive:" not in out  # the off-scope corruption is not the briefing's
+
+
+def test_context_archive_line_omitted_when_clean(scrolls_home, capsys):
+    # honest absence: a clean (untampered) archived prior → no `_Archive:` line
+    main(["init"])
+    db = get_paths().db_path
+    held = make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                     content_hash="deadbeef")
+    insert_item(db, held)
+    from scrolls.items import adopt_incoming
+    adopt_incoming(db, dataclasses.replace(held, extracted_text="later",
+                                           content_hash="moved"),
+                   archived_at="2026-06-22T00:00:00+00:00")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_Archive:" not in out
+
+
+def test_context_archive_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the archive line rides
+    # MCP identically (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_corrupt_prior(db, "wikipedia:en:SQLite", "SQLite database")
+
+    bundle = get_context_bundle("database")
+    assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in bundle
+
+
 # --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
 #
 # The enrichment/summary-axis counterpart of `_Attention:_` on the model-facing

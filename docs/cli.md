@@ -589,10 +589,10 @@ matches the incoming hash) drops out via the resolution-aware predicate
 (`test_bundle_carries_a_conflicts_line`, `test_conflicts_line_converges_with_doctor`,
 `test_conflicts_line_is_resolution_aware`, `test_context_conflicts_line_mcp_parity`).
 
-Grouped with those divergence lines, the `export bundle` briefing carries an
-**`_Archive:_` line** (roadmap H319) — the readable completion of `doctor`'s
-`custody.archive` integrity audit (H293), the **recovery-store-axis counterpart** of
-the `_Conflicts:_` divergence line. Where `_Conflicts:_` names held items whose *peer
+Grouped with those divergence lines, the `export bundle` and `scrolls context`
+briefings carry an **`_Archive:_` line** (roadmap H319/H320) — the readable completion
+of `doctor`'s `custody.archive` integrity audit (H293), the **recovery-store-axis
+counterpart** of the `_Conflicts:_` divergence line. Where `_Conflicts:_` names held items whose *peer
 capture disagreed at merge time*, this names how many in-scope **archived priors** are
 corrupt — their advertised `prior_hash` (the fingerprint `archive list` / `archive
 restore --hash` key on) no longer equals their `snapshot` body's own `content_hash`, a
@@ -603,23 +603,33 @@ would silently adopt content with a *different* hash than advertised):
 snapshot).</p>`. It folds the *same* `items.archive_integrity_block` over the same
 in-scope `items.archived_records` `doctor` reads whole-library, rendered via the *same*
 `maintain.archive_integrity_headline` the scheduled-maintenance `_Archive:_` line uses
-(H298/H299), so the readable briefing line, the JSON audit, and the maintenance summary
-converge by construction. The scope is **in-scope** (the briefing's own items' archive,
-the `_Conflicts:_` / `--with-archive` semantics — a corrupt prior on an item outside the
-query is not the bundle's to flag), and the line renders **unconditionally** —
-*independent of `--with-archive`*: that flag governs whether the archive *data* travels,
-not whether custody honesty about it does (custody §2.4 — fidelity/provenance ride every
-result). Like `_Conflicts:_` it names **no command** (doctor never auto-rewrites the
-recovery store — the suggested-block orphan discipline; the honest fixes are re-import
-from a clean source or `archive prune` of the corrupt prior, both operator acts) and is
-**export-only** on the bundle (a derived read view, never inside the lossless
-`@generated` JSONL fence, so the round-trip is untouched). Honest absence — omitted
-entirely when no in-scope archived prior is corrupt (the omit-when-clean briefing
-posture). The `scrolls context` twin is the next slice (roadmap H320)
+(H298/H299). On both briefings the fold + render flow through one shared
+`maintain.render_archive_integrity(db_path, item_ids)` (H320) — the `export bundle`'s
+`_archive_integrity_lines` delegates to it, byte-identical — so the two readable
+surfaces, the maintenance summary, and the JSON audit cannot desync (the
+divergence-truth source extended from the *block* to the rendered *line*). The scope is
+**in-scope** (the briefing's own items' archive, the `_Conflicts:_` / `--with-archive`
+semantics — a corrupt prior on an item outside the query is not the briefing's to flag).
+On the `export bundle` the line renders **unconditionally** — *independent of
+`--with-archive`*: that flag governs whether the archive *data* travels, not whether
+custody honesty about it does (custody §2.4 — fidelity/provenance ride every result). On
+`scrolls context` it is gated to **`connected`+** like the headline / `_Conflicts:_` /
+`_At-risk work:_` lines (the leanest `index` tier reads no recovery store, so it makes no
+archive claim). Like `_Conflicts:_` it names **no command** (doctor never auto-rewrites
+the recovery store — the suggested-block orphan discipline; the honest fixes are
+re-import from a clean source or `archive prune` of the corrupt prior, both operator
+acts) and is **export-only** on the bundle (a derived read view, never inside the
+lossless `@generated` JSONL fence, so the round-trip is untouched). Honest absence —
+omitted entirely when no in-scope archived prior is corrupt (the omit-when-clean briefing
+posture). Folded over the per-*item* collapsed `items` (the `_Conflicts:_` choice — a
+per-item custody fact, not a work consolidation)
 (`test_bundle_carries_an_archive_integrity_line`,
 `test_archive_line_converges_with_doctor`, `test_archive_line_is_in_scope`,
 `test_archive_line_renders_without_with_archive`,
-`test_bundle_html_carries_an_archive_integrity_line`).
+`test_bundle_html_carries_an_archive_integrity_line`,
+`test_context_carries_an_archive_integrity_line`,
+`test_context_archive_line_gated_off_index`,
+`test_context_archive_line_mcp_parity`).
 
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis

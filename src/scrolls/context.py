@@ -88,6 +88,7 @@ from scrolls.items import (
 )
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import stale_summary_counts_by_source
+from scrolls.maintain import render_archive_integrity
 from scrolls.search import (
     SearchHit,
     count_matches,
@@ -346,6 +347,25 @@ def build_context(
         # discipline); honest no-op when no held item in scope carries an unresolved
         # conflict ([] lines).
         lines += render_custody_conflicts(items, latest_conflict_events(db_path))
+        # the readable archive-integrity pointer (roadmap H320): one `_Archive:_`
+        # line when an in-scope item's archived prior is corrupt — its advertised
+        # `prior_hash` no longer equals its snapshot's `content_hash`, a
+        # custody-honesty bug invisible until restore (`archive restore --hash` would
+        # adopt content with a different hash than advertised). The H319 shareable-
+        # `export bundle` surface lifted to the agent context briefing — the
+        # archive-axis sibling of the `_Conflicts:_` divergence line above. Folds the
+        # *same* `archive_integrity_block` over the in-scope `archived_records` and
+        # renders via the *same* `archive_integrity_headline` `maintain`'s summary and
+        # the bundle line use (the shared `render_archive_integrity`), so the context
+        # line, the bundle line, the maintenance summary, and `doctor`'s
+        # `custody.archive` JSON audit converge by construction. Gated to `connected`+
+        # with the headline (the leanest `index` tier reads no recovery store, so it
+        # makes no archive claim); folded over the per-*item* `items` (the collapsed
+        # kept set the headline/`_Conflicts:_` use — archive integrity is a per-item
+        # custody fact, not a work-consolidation one); names no command (no
+        # whole-library archive-repair act exists — the `suggested`-block orphan
+        # discipline); honest no-op on a clean/empty scope ([] lines).
+        lines += render_archive_integrity(db_path, [item.id for item in items])
         # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
         # line naming the source(s) whose classifications/summaries are stale and
         # the exact `classify --stale`/`kb --stale --source <S>` refresh — the

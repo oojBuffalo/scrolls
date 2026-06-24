@@ -118,7 +118,7 @@ from scrolls.items import (
     list_items,
 )
 from scrolls.items_export import dump_items_export
-from scrolls.maintain import archive_integrity_headline
+from scrolls.maintain import archive_integrity_headline, render_archive_integrity
 from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
 from scrolls.kb_llm import (
     members_hash,
@@ -802,13 +802,14 @@ def _in_scope_archive_audit(db_path: Path, items: list[ScrollItem]) -> dict:
 def _archive_integrity_lines(db_path: Path, items: list[ScrollItem]) -> list[str]:
     """The Markdown `_Archive:_` line for any corrupt in-scope prior (roadmap H319).
 
-    Renders via the *same* `archive_integrity_headline` the `maintain` line uses, so
-    the readable briefing, the JSON audit, and the maintenance summary converge by
-    construction. Returns [] on honest absence — a clean or empty scope — like the
-    sibling divergence lines (the omit-when-clean briefing posture).
+    Delegates to the shared `maintain.render_archive_integrity` — the *same* fold
+    (`archive_integrity_block`) + render (`archive_integrity_headline`) the agent
+    `context` briefing (H320) and the scheduled `maintain` summary use — so the two
+    readable briefing surfaces and the JSON audit converge by construction. Returns
+    [] on honest absence — a clean or empty scope — like the sibling divergence lines
+    (the omit-when-clean briefing posture).
     """
-    line = archive_integrity_headline(_in_scope_archive_audit(db_path, items))
-    return [line, ""] if line else []
+    return render_archive_integrity(db_path, [item.id for item in items])
 
 
 def _archive_integrity_html(db_path: Path, items: list[ScrollItem]) -> list[str]:

@@ -54,7 +54,12 @@ from scrolls.custody import (
     weakest_source,
 )
 from scrolls.doctor import run_doctor
-from scrolls.items import get_fidelity, list_items
+from scrolls.items import (
+    archive_integrity_block,
+    archived_records,
+    get_fidelity,
+    list_items,
+)
 from scrolls.kb import compile_kb
 from scrolls.paths import LibraryPaths
 
@@ -380,6 +385,33 @@ def archive_integrity_headline(
     else:
         clause = f"no change {span}"
     return f"{base} ({clause})._"
+
+
+def render_archive_integrity(db_path: Path, item_ids: list[str]) -> list[str]:
+    """The readable ``_Archive:_`` line for any corrupt in-scope prior — the shared
+    fold the briefing surfaces read (roadmap H319/H320).
+
+    Folds the *single divergence-truth source* `archive_integrity_block` over the
+    in-scope ``archived_records`` and renders it via the *same*
+    `archive_integrity_headline` the scheduled `maintain` summary uses — so the
+    shareable `export bundle` (H319) and the agent `context` briefing (H320) emit a
+    byte-identical line that converges with `doctor`'s `custody.archive` JSON audit
+    for the same record set by construction (a reader skimming either briefing sees
+    the same recovery-store corruption the JSON read does).
+
+    ``item_ids`` is the briefing's in-scope item set (the bundle/context scope, the
+    ``_Conflicts:_`` precedent). An **empty** list is the honest empty audit (the
+    in-scope-of-nothing scope reads no store — never `archived_records`'s ``None``
+    whole-library default). Returns ``[line, ""]`` so the caller appends it directly,
+    or ``[]`` on honest absence — a clean or empty scope — like the sibling
+    divergence lines (the omit-when-clean briefing posture, §2.4).
+    """
+    if not item_ids:
+        return []
+    line = archive_integrity_headline(
+        archive_integrity_block(archived_records(db_path, item_ids))
+    )
+    return [line, ""] if line else []
 
 
 def _finding_present(report: dict[str, Any], category: str) -> bool:
