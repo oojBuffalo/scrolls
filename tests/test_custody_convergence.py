@@ -6486,7 +6486,7 @@ _DRIFT_KEYS = ("checked", "unverified", "unchanged", "drifted", "rotted", "error
 
 
 def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
-              at_risk=0, conflicts=0, archive_mismatched=0):
+              at_risk=0, conflicts=0, archive_mismatched=0, dup_groups=0, dup_items=0):
     """A custody snapshot in the `custody_snapshot` shape the trend/delta read.
 
     Only the axes the trend and delta compare are populated meaningfully; `tiers`
@@ -6495,7 +6495,8 @@ def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
     is the consolidation-loss scalar the trend telescopes alongside drift/coverage/
     staleness (roadmap H267); `conflicts` is the peer-divergence scalar it telescopes
     too (roadmap H279/H283); `archive_mismatched` is the archive-integrity scalar it
-    telescopes too (roadmap H293/H298/H299).
+    telescopes too (roadmap H293/H298/H299); `dup_groups` is the content-duplicate
+    scalar it telescopes too (roadmap H325/H327/H330).
     """
     return {
         "score": score,
@@ -6507,6 +6508,8 @@ def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
         "at_risk": at_risk,
         "conflicts": conflicts,
         "archive_mismatched": archive_mismatched,
+        "content_duplicate_groups": dup_groups,
+        "content_duplicate_items": dup_items,
     }
 
 
@@ -6516,9 +6519,9 @@ def _telescoped(snapshots):
     The step-by-step history a worker reads: `compute_delta(snapshots[i-1],
     snapshots[i])` for every adjacent pair, summed per axis. `compute_trend` reads
     only the endpoints; this sums every recorded step, so the two must agree (the
-    telescoping identity). Returns the six count-axis sums (drift, coverage, stale,
-    at-risk, conflicts, archive) plus the deltas themselves (so a caller can telescope
-    the scalar score when no endpoint is null).
+    telescoping identity). Returns the seven count-axis sums (drift, coverage, stale,
+    at-risk, conflicts, archive, duplicates) plus the deltas themselves (so a caller
+    can telescope the scalar score when no endpoint is null).
     """
     deltas = [compute_delta(snapshots[i - 1], snapshots[i]) for i in range(1, len(snapshots))]
     drift = sum(
@@ -6535,7 +6538,8 @@ def _telescoped(snapshots):
     at_risk = sum(d["at_risk"]["change"] for d in deltas)
     conflicts = sum(d["conflicts"]["change"] for d in deltas)
     archive = sum(d["archive_mismatched"]["change"] for d in deltas)
-    return drift, coverage, stale, at_risk, conflicts, archive, deltas
+    duplicates = sum(d["content_duplicate_groups"]["change"] for d in deltas)
+    return drift, coverage, stale, at_risk, conflicts, archive, duplicates, deltas
 
 
 def _trend_window(snapshots):
@@ -6549,14 +6553,14 @@ def _trend_window(snapshots):
 
 # A four-run window that moves *non-monotonically* on every axis — drift rises
 # then falls, score falls then rises, enrichment rises then falls, at-risk works
-# rise/fall/rise, conflicts rise/rise/fall, archive mismatches rise/rise/fall — so the
-# telescoping is a genuine sum of signed intermediate steps, not an endpoint
-# coincidence a monotone window satisfies.
+# rise/fall/rise, conflicts rise/rise/fall, archive mismatches rise/rise/fall,
+# content-duplicate groups rise/rise/fall — so the telescoping is a genuine sum of
+# signed intermediate steps, not an endpoint coincidence a monotone window satisfies.
 _TREND_SNAPSHOTS = [
-    _snapshot(score=100, drifted=0, rotted=0, verified=1, total=4, enrichment=0, summaries=0, at_risk=0, conflicts=0, archive_mismatched=0),
-    _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0, at_risk=2, conflicts=1, archive_mismatched=1),
-    _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1, at_risk=1, conflicts=3, archive_mismatched=2),
-    _snapshot(score=85, drifted=0, rotted=1, verified=4, total=5, enrichment=1, summaries=1, at_risk=3, conflicts=2, archive_mismatched=1),
+    _snapshot(score=100, drifted=0, rotted=0, verified=1, total=4, enrichment=0, summaries=0, at_risk=0, conflicts=0, archive_mismatched=0, dup_groups=0),
+    _snapshot(score=90, drifted=1, rotted=0, verified=2, total=4, enrichment=1, summaries=0, at_risk=2, conflicts=1, archive_mismatched=1, dup_groups=1),
+    _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1, at_risk=1, conflicts=3, archive_mismatched=2, dup_groups=2),
+    _snapshot(score=85, drifted=0, rotted=1, verified=4, total=5, enrichment=1, summaries=1, at_risk=3, conflicts=2, archive_mismatched=1, dup_groups=1),
 ]
 
 
@@ -6565,7 +6569,7 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     # the per-run `compute_delta` changes, on every axis — so the trajectory and
     # the step-by-step history are the same numbers.
     trend = compute_trend(_trend_window(_TREND_SNAPSHOTS))
-    drift, coverage, stale, at_risk, conflicts, archive, deltas = _telescoped(
+    drift, coverage, stale, at_risk, conflicts, archive, duplicates, deltas = _telescoped(
         _TREND_SNAPSHOTS
     )
 
@@ -6575,13 +6579,14 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     assert trend["score"]["change"] == last_score - first_score
     assert trend["score"]["change"] == sum(d["score"]["change"] for d in deltas)
 
-    # the six count axes telescope
+    # the seven count axes telescope
     assert trend["drift_change"] == drift
     assert trend["coverage_change"] == coverage
     assert trend["stale_change"] == stale
     assert trend["at_risk_change"] == at_risk
     assert trend["conflicts_change"] == conflicts
     assert trend["archive_mismatched_change"] == archive
+    assert trend["content_duplicates_change"] == duplicates
 
     # non-vacuous: the window genuinely moves on every axis (else the identity is
     # trivially 0 == 0), and the intermediate steps are signed (a real telescope)
@@ -6592,10 +6597,12 @@ def test_trend_change_equals_the_telescoped_per_run_deltas():
     assert trend["at_risk_change"] == 3
     assert trend["conflicts_change"] == 2
     assert trend["archive_mismatched_change"] == 1  # 0→1→2→1, net +1
+    assert trend["content_duplicates_change"] == 1  # 0→1→2→1, net +1
     assert [d["drift"]["drifted"]["change"] for d in deltas] == [1, 0, -1]  # up then down
     assert [d["at_risk"]["change"] for d in deltas] == [2, -1, 2]  # up, down, up
     assert [d["conflicts"]["change"] for d in deltas] == [1, 2, -1]  # up, up, down
     assert [d["archive_mismatched"]["change"] for d in deltas] == [1, 1, -1]  # up, up, down
+    assert [d["content_duplicate_groups"]["change"] for d in deltas] == [1, 1, -1]  # up, up, down
 
 
 def test_perturbing_one_endpoint_moves_trend_and_telescope_together():
@@ -6609,7 +6616,7 @@ def test_perturbing_one_endpoint_moves_trend_and_telescope_together():
         score=85, drifted=0, rotted=2, verified=4, total=5, enrichment=1, summaries=1,
         at_risk=3)]
     perturbed_trend = compute_trend(_trend_window(perturbed))
-    p_drift, _, _, _, _, _, _ = _telescoped(perturbed)
+    p_drift, _, _, _, _, _, _, _ = _telescoped(perturbed)
 
     # the perturbation moved the value (so the test has teeth) …
     assert perturbed_trend["drift_change"] == base_trend["drift_change"] + 1
@@ -6663,6 +6670,8 @@ def test_recorded_history_deltas_telescope_to_the_trend(scrolls_home, capsys):
     assert trend["conflicts_change"] == sum(s["conflicts"]["change"] for s in steps)
     assert trend["archive_mismatched_change"] == sum(
         s["archive_mismatched"]["change"] for s in steps)
+    assert trend["content_duplicates_change"] == sum(
+        s["content_duplicate_groups"]["change"] for s in steps)
     assert trend["score"]["change"] == sum(s["score"]["change"] for s in steps)
 
 
@@ -6678,7 +6687,9 @@ def test_trend_telescopes_on_count_axes_with_a_null_score_endpoint():
         _snapshot(score=80, drifted=1, rotted=1, verified=3, total=5, enrichment=2, summaries=1),
     ]
     trend = compute_trend(_trend_window(snapshots))
-    drift, coverage, stale, at_risk, conflicts, archive, deltas = _telescoped(snapshots)
+    drift, coverage, stale, at_risk, conflicts, archive, duplicates, deltas = _telescoped(
+        snapshots
+    )
 
     # the score change is the honest null (a None endpoint has no scalar movement)
     assert trend["score"]["change"] is None
@@ -6694,6 +6705,7 @@ def test_trend_telescopes_on_count_axes_with_a_null_score_endpoint():
     assert trend["at_risk_change"] == at_risk == 0  # at-risk steady, telescopes to 0
     assert trend["conflicts_change"] == conflicts == 0  # conflicts steady, telescopes to 0
     assert trend["archive_mismatched_change"] == archive == 0  # archive steady, telescopes to 0
+    assert trend["content_duplicates_change"] == duplicates == 0  # dups steady, telescopes to 0
 
 
 def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
@@ -6712,8 +6724,9 @@ def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
         assert trend["at_risk_change"] is None
         assert trend["conflicts_change"] is None
         assert trend["archive_mismatched_change"] is None
+        assert trend["content_duplicates_change"] is None
         # no adjacent pairs → no per-run deltas to sum (the empty telescope)
-        _, _, _, _, _, _, deltas = _telescoped(snapshots)
+        _, _, _, _, _, _, _, deltas = _telescoped(snapshots)
         assert deltas == []
 
 

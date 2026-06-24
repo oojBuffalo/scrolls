@@ -38,6 +38,7 @@ from scrolls.doctor import run_doctor
 from scrolls.items import (
     ScrollItem,
     adopt_incoming,
+    delete_item,
     get_fidelity,
     get_item,
     insert_item,
@@ -536,6 +537,77 @@ def test_duplicates_headline_tolerates_an_absent_block():
     assert duplicates_headline({}) is None
 
 
+# --- duplicates_headline cross-run trend clause (roadmap H330) -------------
+#
+# The H299 archive-trend analogue on the content-identity axis: the readable line now
+# embeds the signed cross-run movement (`▲`/`▼`), so successive whole-library maintain
+# passes show *new* redundancy / *pruned* copies, not just the current count. The one
+# documented divergence from the archive precedent: the omit-when-clean stays
+# UNCONDITIONAL — content duplicates are report-only, never a defect, so a fall to zero
+# is silently omitted (no fall-to-zero "repaired backup" line like H299).
+
+
+def test_duplicates_headline_renders_a_rise_with_an_up_arrow():
+    # a fresh byte-identical pair landed since last run — ▲ more redundancy, the
+    # change tracks the *group* count (the H330 axis)
+    assert duplicates_headline(_dup_block(3, 7), 1) == (
+        "_Duplicates: 3 group(s) of byte-identical content (7 item(s)) (▲1 since last run)._"
+    )
+
+
+def test_duplicates_headline_renders_a_fall_with_a_down_arrow_while_groups_remain():
+    # an operator pruned a copy: the count fell but groups remain > 0, so the ▼ shows
+    # (the ▲/▼ clause is rendered only while the count is still non-zero)
+    assert duplicates_headline(_dup_block(1, 2), -1) == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s)) (▼1 since last run)._"
+    )
+
+
+def test_duplicates_headline_reads_no_movement_when_redundancy_persists():
+    # a steady non-zero redundancy reads the explicit "no change" (a baseline exists)
+    assert duplicates_headline(_dup_block(2, 5), 0) == (
+        "_Duplicates: 2 group(s) of byte-identical content (5 item(s)) "
+        "(no change since last run)._"
+    )
+
+
+def test_duplicates_headline_fall_to_zero_is_omitted_unconditionally():
+    # the H330 divergence from the archive precedent: a count that fell *to* zero is an
+    # operator pruning a copy, NOT a defect being repaired — so it is silently omitted,
+    # never a fabricated `_Duplicates: 0 … (▼N)._` "repaired backup" line (H299's one
+    # exception does not carry over: duplicates are report-only, never a defect)
+    assert duplicates_headline(_dup_block(0, 0), -2) is None
+
+
+def test_duplicates_headline_steady_clean_with_a_baseline_is_omitted():
+    # clean and stayed clean (0 groups, no movement) → still omitted, never a fabricated
+    # `_Duplicates: 0 (no change)…_` (the omit-when-clean norm preserved across the trend)
+    assert duplicates_headline(_dup_block(0, 0), 0) is None
+
+
+def test_duplicates_headline_on_no_baseline_is_the_point_in_time_line():
+    # a first run / scoped non-persisting pass has no baseline → the bare H327 line
+    # (no movement clause) when there is redundancy, and still omitted when clean
+    assert duplicates_headline(_dup_block(2, 5), None) == (
+        "_Duplicates: 2 group(s) of byte-identical content (5 item(s))._"
+    )
+    assert duplicates_headline(_dup_block(0, 0), None) is None
+
+
+def test_duplicates_headline_skip_omits_even_with_movement():
+    # a skipped audit (a `--source` pass, status != "ok") makes NO claim, so even a
+    # non-null change cannot manufacture a line — the skip dominates the movement
+    assert duplicates_headline(_dup_block(0, 0, status="skipped"), -2) is None
+    assert duplicates_headline(_dup_block(3, 7, status="skipped"), 1) is None
+
+
+def test_duplicates_headline_span_is_parametrized_for_the_trend_twin():
+    # the trend twin names the window span ("over N runs") instead of "since last run"
+    assert duplicates_headline(_dup_block(4, 9), 2, span="over 4 runs") == (
+        "_Duplicates: 4 group(s) of byte-identical content (9 item(s)) (▲2 over 4 runs)._"
+    )
+
+
 def test_delta_on_first_run_has_null_befores_and_changes():
     current = custody_snapshot(
         _doctor_report(100, {"full": 3, "partial": 0, "reference": 0}, {"unverified": 3})
@@ -733,6 +805,40 @@ def test_delta_tolerates_a_baseline_lacking_archive_mismatched():
     assert delta["archive_mismatched"] == {"before": 0, "after": 1, "change": 1}
 
 
+def test_delta_reports_content_duplicate_groups_change_against_a_baseline():
+    """H330: the content-duplicate group count is a scalar the delta subtracts, so a
+    worker reads whether byte-identical redundancy grew/shrank since last run — the
+    content-identity-over-time leg H327 deferred (it shipped the snapshot scalars)."""
+    previous = {
+        "recorded_at": "2026-06-20T09:00:00+00:00",
+        "score": 100, "tiers": {"full": 2}, "drift": {"checked": 0},
+        "content_duplicate_groups": 1,
+    }
+    current = custody_snapshot(_doctor_report(100, {"full": 4}, {}, dup_groups=3, dup_items=7))
+    delta = compute_delta(previous, current)
+    # two more byte-identical groups since last run (a fresh mirror/cross-post landed)
+    assert delta["content_duplicate_groups"] == {"before": 1, "after": 3, "change": 2}
+
+
+def test_delta_content_duplicate_groups_on_first_run_is_null():
+    # no baseline → the duplicate before/change is null, never a fabricated zero
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {}, dup_groups=2, dup_items=4))
+    delta = compute_delta(None, current)
+    assert delta["content_duplicate_groups"] == {"before": None, "after": 2, "change": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_content_duplicate_groups():
+    """A pre-H327 baseline (no `content_duplicate_groups` axis) reads as zero for that
+    axis, never null — the run happened, the redundancy count was simply not yet tracked
+    (ADR 0082), exactly as `archive_mismatched`/`conflicts`/`at_risk` degrade."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `content_duplicate_groups` key
+    current = custody_snapshot(_doctor_report(100, {"full": 2}, {"checked": 2},
+                                              dup_groups=1, dup_items=2))
+    delta = compute_delta(previous, current)
+    assert delta["content_duplicate_groups"] == {"before": 0, "after": 1, "change": 1}
+
+
 def test_snapshot_round_trips_and_missing_reads_as_none(tmp_path):
     path = tmp_path / ".maintenance" / "last-run.json"
     assert load_snapshot(path) is None  # no file yet → first run
@@ -848,6 +954,8 @@ def _run(
     at_risk=0,
     conflicts=0,
     archive_mismatched=0,
+    dup_groups=0,
+    dup_items=0,
 ):
     return {
         "recorded_at": recorded_at,
@@ -860,6 +968,8 @@ def _run(
             "at_risk": at_risk,
             "conflicts": conflicts,
             "archive_mismatched": archive_mismatched,
+            "content_duplicate_groups": dup_groups,
+            "content_duplicate_items": dup_items,
         },
         "delta": {},
     }
@@ -876,6 +986,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["at_risk_change"] is None  # nor a consolidation-loss direction
         assert trend["conflicts_change"] is None  # nor a peer-divergence direction
         assert trend["archive_mismatched_change"] is None  # nor an archive-integrity direction
+        assert trend["content_duplicates_change"] is None  # nor a content-redundancy direction
         assert trend["runs"] == len(window)
 
 
@@ -1242,6 +1353,100 @@ def test_trend_archive_line_is_bare_or_omitted_under_two_runs():
     assert clean["archive_integrity_headline"] is None
     empty = compute_trend([])
     assert empty["archive_integrity_headline"] is None
+
+
+# --- the content-identity-over-time trend axis (roadmap H330) --------------
+
+
+def test_trend_content_duplicates_reads_zero_for_a_pre_h327_endpoint():
+    """A window endpoint recorded before the snapshot tracked the content-duplicate
+    scalars (a pre-H327 schema) reads 0 for the missing axis, so the movement is still
+    computed, never a crash (the missing-axis-zero posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, dup_groups=2, dup_items=4)])
+    assert trend["content_duplicates_change"] == 2
+
+
+def test_trend_carries_the_readable_duplicates_line_over_the_window():
+    """H330: the trend summary distils the content-redundancy trajectory into one
+    readable line — the last run's group count + member total + the net movement across
+    the window — so a human reads the redundancy trend without parsing
+    `content_duplicates_change`. The span is the window ("over N runs"), the trend twin
+    of the report's "since last run". A steady score with a rising duplicate count is
+    still `holding` — a duplicate is a redundancy fact, never a defect, so it never
+    shifts the integrity-first posture (the H299/H283 reported-not-posture discipline)."""
+    trend = compute_trend(
+        [_run("t1", 100, dup_groups=1, dup_items=2), _run("t3", 100, dup_groups=3, dup_items=7)]
+    )
+    assert trend["content_duplicates_change"] == 2
+    assert trend["posture"] == "holding"
+    # last count 3 groups / 7 members, net +2 groups across the 2-run window
+    assert trend["duplicates_headline"] == (
+        "_Duplicates: 3 group(s) of byte-identical content (7 item(s)) (▲2 over 2 runs)._"
+    )
+
+
+def test_trend_duplicates_line_renders_a_fall_while_groups_remain():
+    """A negative net movement reads ▼ while groups remain > 0 — an operator pruned a
+    copy across the window (the line tracks `content_duplicates_change`'s sign)."""
+    trend = compute_trend(
+        [_run("t1", 100, dup_groups=3, dup_items=7), _run("t2", 100, dup_groups=2, dup_items=5),
+         _run("t3", 100, dup_groups=1, dup_items=2)]
+    )
+    assert trend["content_duplicates_change"] == -2
+    assert trend["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s)) (▼2 over 3 runs)._"
+    )
+
+
+def test_trend_duplicates_line_is_omitted_on_a_fall_to_zero():
+    """The H330 divergence from the archive precedent: a count that fell *to* zero
+    across the window is silently omitted — an operator pruned the last copy, NOT a
+    defect repaired, so there is no fall-to-zero "repaired backup" line (unlike H299)."""
+    trend = compute_trend(
+        [_run("t1", 100, dup_groups=2, dup_items=4), _run("t2", 100, dup_groups=0, dup_items=0)]
+    )
+    assert trend["content_duplicates_change"] == -2
+    assert trend["duplicates_headline"] is None
+
+
+def test_trend_duplicates_line_reads_no_change_when_redundancy_persists():
+    """A steady non-zero duplicate count over the window reads the explicit "no change"
+    clause (a baseline exists), not the bare line."""
+    trend = compute_trend(
+        [_run("t1", 100, dup_groups=2, dup_items=5), _run("t2", 100, dup_groups=2, dup_items=5)]
+    )
+    assert trend["content_duplicates_change"] == 0
+    assert trend["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (5 item(s)) "
+        "(no change over 2 runs)._"
+    )
+
+
+def test_trend_duplicates_line_is_omitted_when_steady_clean():
+    """A library with no duplicates that stayed clean across the window keeps the
+    omit-when-clean posture — the key is present with `None`, never a fabricated
+    `_Duplicates: 0 …_`."""
+    trend = compute_trend(
+        [_run("t1", 100, dup_groups=0, dup_items=0), _run("t2", 100, dup_groups=0, dup_items=0)]
+    )
+    assert trend["content_duplicates_change"] == 0
+    assert trend["duplicates_headline"] is None
+
+
+def test_trend_duplicates_line_is_bare_or_omitted_under_two_runs():
+    """A <2-run window has no trajectory: a run with redundancy carries the bare H327
+    line (no change clause, the null `content_duplicates_change`), a clean one is omitted
+    (the omit-when-clean norm), and an empty window is omitted (the honest 0)."""
+    one = compute_trend([_run("t1", 100, dup_groups=2, dup_items=5)])
+    assert one["content_duplicates_change"] is None
+    assert one["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (5 item(s))._"
+    )
+    clean = compute_trend([_run("t1", 100, dup_groups=0, dup_items=0)])
+    assert clean["duplicates_headline"] is None
+    empty = compute_trend([])
+    assert empty["duplicates_headline"] is None
 
 
 # --- the repair suggestions (pure mapping, roadmap H40) -------------------
@@ -3556,6 +3761,154 @@ def test_maintain_trend_carries_the_archive_integrity_line(home, capsys):
     assert trend["archive_mismatched_change"] == 1  # 1 → 2 across the window
     assert trend["archive_integrity_headline"] == (
         "_Archive: 2 prior(s) fail integrity (prior_hash ≠ snapshot) (▲1 over 2 runs)._"
+    )
+
+
+# --- the content-duplicate cross-run trend on the maintain report (H330) -------
+#
+# H327 surfaced the point-in-time count; H330 embeds the signed cross-run movement
+# (the H299 archive-trend analogue), so successive whole-library passes show *new*
+# redundancy (▲) / *pruned* copies (▼) — but with one documented divergence from the
+# archive line: the omit-when-clean stays UNCONDITIONAL (a fall to zero is silently
+# omitted, never a "repaired backup" line — duplicates are report-only, never a defect).
+
+
+def _second_duplicate_pair(hash_value="sha256:dup2"):
+    """A second byte-identical pair (distinct urls/hash from `_held_duplicates`) — a
+    fresh mirrored body landing between passes, the H330 ▲ rise."""
+    return [
+        _rendered(
+            "web", None, "https://example.com/mirror-c", title="Mirror C",
+            extracted_text="other body", category="paper", domain="ml",
+            concepts=("Y",), tags=("t",), content_hash=hash_value,
+        ),
+        _rendered(
+            "web", None, "https://example.com/mirror-d", title="Mirror D",
+            extracted_text="other body", category="paper", domain="ml",
+            concepts=("Y",), tags=("t",), content_hash=hash_value,
+        ),
+    ]
+
+
+def _prune_item(paths, item_id):
+    """Prune a held copy — remove the DB row *and* its rendered scroll file. Deleting
+    only the row would leave the file behind as a doctor orphan finding (a non-zero
+    `issues` count that fails the maintain exit), so a faithful prune removes both."""
+    item = get_item(paths.db_path, item_id)
+    assert item is not None
+    if item.markdown_path:
+        (paths.root / item.markdown_path).unlink(missing_ok=True)
+    assert delete_item(paths.db_path, item_id) is True
+
+
+def test_maintain_report_embeds_the_duplicates_trend_clause(home, monkeypatch, capsys):
+    """H330: two whole-library passes difference the content-duplicate group count — the
+    second pass's `_Duplicates:_` line carries the signed movement since the first
+    (▲ new redundancy), and a third pass that prunes a copy reads the ▼ fall while a
+    group remains. The count still converges with `doctor` (the H327 tie) — only the
+    clause is added."""
+    paths = get_paths()
+    _build(_held_duplicates())  # one byte-identical pair → 1 group, 2 items
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    # pass 1: no baseline → the bare point-in-time line (H327), nothing to difference yet
+    assert main(["maintain"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    assert first["delta"]["first_run"] is True
+    assert first["delta"]["content_duplicate_groups"]["change"] is None
+
+    # a second byte-identical pair lands between passes (another mirrored body)
+    second_pair = _second_duplicate_pair()
+    for item in second_pair:
+        insert_item(paths.db_path, write_scroll(paths, item))
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    # pass 2: the baseline (1 group) is differenced → the ▲ rise clause, the scalar 2
+    assert main(["maintain"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (4 item(s)) (▲1 since last run)._"
+    )
+    assert second["custody"]["content_duplicate_groups"] == 2
+    assert second["delta"]["content_duplicate_groups"] == {
+        "before": 1, "after": 2, "change": 1
+    }
+    # the count still converges — only the clause is new (the H327 tie holds)
+    assert run_doctor(home)["custody"]["content_duplicates"]["total_groups"] == 2
+
+    # an operator prunes one copy of the second pair → that group dissolves (back to 1)
+    _prune_item(paths, second_pair[1].id)
+    capsys.readouterr()
+
+    # pass 3: the baseline (2 groups) is differenced → the ▼ fall clause, a group remains
+    assert main(["maintain"]) == 0
+    third = json.loads(capsys.readouterr().out)
+    assert third["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s)) (▼1 since last run)._"
+    )
+    assert third["custody"]["content_duplicate_groups"] == 1
+    assert third["delta"]["content_duplicate_groups"] == {
+        "before": 2, "after": 1, "change": -1
+    }
+
+
+def test_maintain_report_omits_the_duplicates_line_on_a_fall_to_zero(
+    home, monkeypatch, capsys
+):
+    """The H330 divergence from the archive precedent: when the last copy is pruned and
+    the count falls *to* zero, the line is silently omitted — never a fabricated
+    `_Duplicates: 0 … (▼N)._` "repaired backup" line (H299's one exception does not
+    carry over: duplicates are report-only, never a defect). The scalar still records 0
+    and the change still differences (-1), only the readable line is omitted."""
+    paths = get_paths()
+    pair = _held_duplicates()
+    _build(pair)  # one byte-identical pair → 1 group
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+
+    assert main(["maintain"]) == 0  # pass 1: records the baseline (1 group)
+    capsys.readouterr()
+
+    _prune_item(paths, pair[1].id)  # prune the last duplicate copy
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the line is omitted even though the count fell (unconditional omit-when-clean)
+    assert report["duplicates_headline"] is None
+    assert report["custody"]["content_duplicate_groups"] == 0
+    # the change is still differenced and recorded — only the readable line is omitted
+    assert report["delta"]["content_duplicate_groups"] == {
+        "before": 1, "after": 0, "change": -1
+    }
+
+
+def test_maintain_trend_carries_the_duplicates_line(home, monkeypatch, capsys):
+    """The `--history --trend` envelope distils the content-duplicate trajectory into one
+    readable line over the window, the trend twin of the report's per-run clause — so a
+    worker reading the trend sees the redundancy trajectory, not just one diff."""
+    paths = get_paths()
+    _build(_held_duplicates())  # one byte-identical pair → 1 group
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0  # run 1: 1 group
+    capsys.readouterr()
+
+    for item in _second_duplicate_pair():
+        insert_item(paths.db_path, write_scroll(paths, item))
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+    assert main(["maintain"]) == 0  # run 2: 2 groups
+    capsys.readouterr()
+
+    assert main(["maintain", "--history", "--trend"]) == 0
+    trend = json.loads(capsys.readouterr().out)["trend"]
+    assert trend["content_duplicates_change"] == 1  # 1 → 2 groups across the window
+    assert trend["duplicates_headline"] == (
+        "_Duplicates: 2 group(s) of byte-identical content (4 item(s)) (▲1 over 2 runs)._"
     )
 
 

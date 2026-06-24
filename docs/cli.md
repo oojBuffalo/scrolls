@@ -1982,22 +1982,33 @@ their member total (`doctor`'s `custody.content_duplicates.total_groups`/`.total
 H325 — the same bytes saved from two URLs, a mirror, a cross-post, or one work captured
 by two source adapters). H325 put the fold on the JSON read surfaces only; this is the
 readable line for the scheduled pass an operator skims, the `archive_integrity_headline`
-sibling on the content-identity axis. **Point-in-time, no trend clause** — unlike the
-loss/divergence/corruption lines above, content duplicates are **report-only, never a
-defect** (holding two faithful copies is a redundancy fact an operator may want, and
-there is no `--fix` merge that "repairs" them — raw is sacred), so there is nothing to
-difference over time and no fall-to-zero "repaired" exception (a count that fell is an
-operator pruning a copy, not a fix worth surfacing); the cross-run movement leg is a
-separable follow-up the snapshot scalars already feed. **Omitted entirely** (the field
-is `null`, never a fabricated `_Duplicates: 0 …_`) when there is nothing to flag — a
-library with no byte-identical holdings (`total_groups == 0`) *or* a skipped audit: a
-content group spans sources, so like the archive line it is **whole-library only**, and
-a `--source S` pass leaves the block `status: "skipped"` (the line dropped regardless),
-while a `--fidelity` pass (whose audit stays whole-library) still computes it. The count
+sibling on the content-identity axis. It carries the signed cross-run movement (roadmap
+H330): `_Duplicates: N group(s) of byte-identical content (M item(s)) (▲K since last
+run)._`, where `▲K` is **new** redundancy (a fresh byte-identical pair landed), `▼K`
+**pruned** copies (an operator deleted a duplicate), and a `0` change reads `(no change
+since last run)`. The *count* is the live audit's `custody.content_duplicates`; the
+*change* is the delta's `content_duplicate_groups.change` (the **group** count), so a
+first run / scoped non-persisting pass drops the clause (the bare H327 line).
+**Omitted entirely** (the field is `null`, never a fabricated `_Duplicates: 0 …_`) when
+there is nothing to flag — a library with no byte-identical holdings (`total_groups ==
+0`) *or* a skipped audit: a content group spans sources, so like the archive line it is
+**whole-library only**, and a `--source S` pass leaves the block `status: "skipped"` (the
+line dropped regardless), while a `--fidelity` pass (whose audit stays whole-library)
+still computes it. **The one documented divergence from the archive trend line: the
+omit-when-clean stays *unconditional*.** The `_Archive:_` line keeps a fall-to-zero
+"repaired backup" exception (H299) because a fixed backup is a direction worth surfacing;
+content duplicates have none — they are **report-only, never a defect** (holding two
+faithful copies is a redundancy fact an operator may want, and there is no `--fix` merge
+that "repairs" them — raw is sacred), so a count that fell *to* zero is an operator
+pruning a copy, not a fix, and the `▲`/`▼` clause shows only while `total_groups > 0`
+(both the steady-clean and the fallen-clean states stay silently omitted). The count
 converges with the `custody.content_duplicate_groups`/`content_duplicate_items` snapshot
 scalars (what `scrolls status` reads) and `doctor`'s `custody.content_duplicates` by
-construction — the readable line is rendered from the same live audit block
+construction — the readable line is rendered from the same live audit block, and the
+movement telescopes with the recorded per-run deltas
 (`test_maintain_report_carries_the_duplicates_headline`,
+`test_maintain_report_embeds_the_duplicates_trend_clause`,
+`test_maintain_report_omits_the_duplicates_line_on_a_fall_to_zero`,
 `test_maintain_omits_the_duplicates_headline_on_a_library_with_no_duplicates`,
 `test_maintain_source_pass_omits_the_duplicates_headline`).
 
@@ -2035,9 +2046,9 @@ ruleset is still held, so rising coverage is not "improving" integrity, a librar
 overdue for a re-check is not "regressing", and growing stale debt does not move
 the posture. `posture` stays integrity-only. A window of fewer than two runs is
 not a trajectory, so it carries null deltas (`score`, `drift_change`,
-`coverage_change`, `stale_change`, `at_risk_change`, `conflicts_change`, and
-`archive_mismatched_change` all null) and `posture: insufficient-history` (honest
-absence). `--trend` only shapes a
+`coverage_change`, `stale_change`, `at_risk_change`, `conflicts_change`,
+`archive_mismatched_change`, and `content_duplicates_change` all null) and
+`posture: insufficient-history` (honest absence). `--trend` only shapes a
 `--history` read; passed alone it is a usage error (exit 2), never a
 silently-ignored flag that runs a full pass.
 
@@ -2076,6 +2087,22 @@ is clean), but a **fall to zero** across the window (a repaired backup) still re
 `▼` line (`test_trend_carries_the_readable_archive_line_over_the_window`,
 `test_trend_archive_line_shows_a_repaired_backup_falling_to_zero`,
 `test_trend_archive_line_is_omitted_when_steady_clean`).
+
+The trend also carries the matching **`duplicates_headline`** — the trend twin of the
+report's readable content-duplicate line (roadmap H330): `_Duplicates: N group(s) of
+byte-identical content (M item(s)) (▲K over R runs)._`, the window's last
+content-duplicate group count + member total plus the net `content_duplicates_change`
+movement across its `R` runs, so a human reads the redundancy trajectory ("1 → 2
+duplicate groups over the last 3 runs") without parsing `content_duplicates_change`. Same
+`▲`/`▼`/`no change` convention and `over R runs` span as the archive trend line. Like the
+archive line it keeps the omit-when-clean posture (the field is `null` for a steady-clean
+window, the bare `_Duplicates: N …_` for a `<2`-run window with redundancy, `None` if
+that one run is clean) — **but with the same unconditional divergence as the report line:
+there is no fall-to-zero exception**, so a window whose count fell *to* zero is silently
+omitted (an operator pruned the last copy, not a defect repaired), unlike the archive
+trend's repaired-backup `▼` line (`test_trend_carries_the_readable_duplicates_line_over_the_window`,
+`test_trend_duplicates_line_is_omitted_on_a_fall_to_zero`,
+`test_trend_duplicates_line_is_omitted_when_steady_clean`).
 
 This is **report-only and idempotent** (custody-vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or

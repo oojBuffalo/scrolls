@@ -419,8 +419,13 @@ def archive_integrity_headline(
     return f"{base} ({clause})._"
 
 
-def duplicates_headline(content_duplicates: dict[str, Any]) -> str | None:
-    """The readable content-duplicate ``_Duplicates:_`` line (roadmap H327).
+def duplicates_headline(
+    content_duplicates: dict[str, Any],
+    change: int | None = None,
+    *,
+    span: str = "since last run",
+) -> str | None:
+    """The readable content-duplicate ``_Duplicates:_`` line (roadmap H327/H330).
 
     The readable surfacing of `doctor`'s `custody.content_duplicates` redundancy
     report (H325) for the scheduled `maintain` pass an operator skims: held items
@@ -454,26 +459,50 @@ def duplicates_headline(content_duplicates: dict[str, Any]) -> str | None:
     redundancy worth a glance is the exception worth a line, no duplicates is the
     silent norm.
 
-    **No trend clause, no fall-to-zero exception** (unlike
-    `archive_integrity_headline`'s H299 ``▲``/``▼`` and its repaired-backup line):
-    content duplicates are **report-only, never a defect** — holding two faithful
-    copies is a redundancy fact an operator may *want*, and there is no `--fix` merge
-    that "repairs" them (raw is sacred; the no-fabricated-act discipline, H325). A
-    count that fell to zero is just an operator pruning a copy, not a fix worth
-    surfacing, so both the steady-clean and fallen-clean states stay silently
-    omitted. The point-in-time line is the H298 analogue; the cross-run movement leg
-    is a separable follow-up the snapshot scalars (H327) already feed.
+    **The cross-run movement clause (H330).** `change` is the signed first→last
+    movement in the *group* count — the delta's ``content_duplicate_groups.change``
+    for the report, the trend's ``content_duplicates_change`` for the window: ``▲``
+    **new** redundancy (a fresh byte-identical pair landed), ``▼`` **pruned** copies
+    (an operator deleted a duplicate), and a `0` change the explicit ``no change``.
+    `span` names what it is measured against — ``since last run`` for the report's
+    delta, ``over N runs`` for the trend's window. A ``change`` of ``None`` — a first
+    run, a scoped non-persisting pass, or a <2-run trend — drops the clause, the bare
+    H327 point-in-time line.
+
+    **The one documented divergence from the archive trend precedent (H330): the
+    omit-when-clean stays *unconditional*.** `archive_integrity_headline` keeps a
+    fall-to-zero "repaired backup" line (H299) because a fixed backup is a direction
+    worth surfacing; content duplicates have no such exception. They are
+    **report-only, never a defect** — holding two faithful copies is a redundancy
+    fact an operator may *want*, and there is no `--fix` merge that "repairs" them
+    (raw is sacred; the no-fabricated-act discipline, H325). A count that fell *to*
+    zero is just an operator pruning a copy, not a fix, so the ``▲``/``▼`` clause is
+    shown only while ``total_groups > 0``; both the steady-clean and the fallen-clean
+    states stay silently omitted regardless of ``change``.
     """
     if content_duplicates.get("status") != "ok":
         return None
     total_groups = content_duplicates.get("total_groups", 0)
+    # Unconditional omit-when-clean (H330): unlike `archive_integrity_headline`'s
+    # fall-to-zero exception, a zero group count is ALWAYS omitted — a fall to zero is
+    # an operator pruning a copy, not a defect being repaired, so there is no clean
+    # state worth a line (the one documented divergence from the archive precedent).
     if total_groups <= 0:
         return None
     total_items = content_duplicates.get("total_items", 0)
-    return (
+    base = (
         f"_Duplicates: {total_groups} group(s) of byte-identical content "
-        f"({total_items} item(s))._"
+        f"({total_items} item(s))"
     )
+    if change is None:
+        return f"{base}._"
+    if change > 0:
+        clause = f"▲{change} {span}"
+    elif change < 0:
+        clause = f"▼{abs(change)} {span}"
+    else:
+        clause = f"no change {span}"
+    return f"{base} ({clause})._"
 
 
 def render_archive_integrity(
@@ -858,6 +887,14 @@ def compute_delta(
         # (ADR 0082). Reported, never a posture trigger (the archive is a recovery
         # convenience, not the root of trust — H293; the held copy is untouched).
         "archive_mismatched": scalar("archive_mismatched"),
+        # the content-duplicate group count (H325/H327/H330): a scalar like
+        # `archive_mismatched`, so the delta subtracts it — the content-identity-over-
+        # time leg that snapshot (H327) deferred, now differencing the scalars it fed.
+        # A baseline lacking it (a pre-H327 snapshot) reads zero, never null — the run
+        # happened, the redundancy count was simply not yet tracked (ADR 0082).
+        # Reported, never a posture trigger: a duplicate is a redundancy fact an
+        # operator may want, never a defect (there is no `--fix` merge, raw is sacred).
+        "content_duplicate_groups": scalar("content_duplicate_groups"),
     }
 
 
@@ -949,8 +986,15 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
       of held items whose latest import conflict still disagrees with the held copy,
       H275 — a rising figure means more merged peer captures diverged and await a
       ``reconcile`` decision; the conflict-over-time trajectory H279 deferred).
+    - ``archive_mismatched_change`` — "is the *recovery store* gaining corrupt
+      priors?" (Δ the archive-integrity mismatch count, H299 — a rising figure means
+      a bad import / hand-edited bundle landed a laundered prior).
+    - ``content_duplicates_change`` — "is *byte-identical redundancy* accumulating?"
+      (Δ the count of content-duplicate groups, H330 — a rising figure means a fresh
+      duplicate pair landed, a falling one an operator pruned a copy; report-only,
+      never a defect — there is no ``--fix`` merge, raw is sacred).
 
-    All four are **deliberately kept out of `posture`** (the H115 precedent, on the
+    All of these are **deliberately kept out of `posture`** (the H115 precedent, on the
     staleness axis too): coverage measures *how much has been checked*, staleness
     *how much enrichment is re-derivable*, the at-risk-works count is a
     *consolidation re-view* of the very `fidelity`/`drift` facts ``score`` and
@@ -962,19 +1006,19 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     loss. A held category produced under a superseded ruleset is still held — rising
     staleness means a refresh is due, not that custody regressed — so rising coverage
     is not "improving" integrity, a steady-but-overdue library is not "regressing",
-    and neither growing stale debt nor a moving at-risk/conflict count shifts the
-    posture. Keeping `posture` integrity-only leaves the H46 rule unchanged; coverage,
-    staleness, consolidation loss, and peer divergence are reported, never posture
-    triggers.
+    and neither growing stale debt nor a moving at-risk/conflict/archive/duplicate
+    count shifts the posture. Keeping `posture` integrity-only leaves the H46 rule
+    unchanged; coverage, staleness, consolidation loss, peer divergence, archive
+    corruption, and content-duplicate redundancy are reported, never posture triggers.
 
     Honest absence (the H21/H29 posture): a window of fewer than two runs is not
     a trajectory — a single point has no direction — so it carries null deltas
-    (including ``coverage_change``/``stale_change``/``at_risk_change``/``conflicts_change``)
-    and `posture` ``insufficient-history``. A `score` that is ``None`` on either end
-    (an uninitialized-library run) yields a null score `change`, never a fabricated
-    zero; the drift, coverage, staleness, at-risk, and conflict movement are still
-    computed (absent counts read 0, so a pre-H115/pre-staleness/pre-H267/pre-H279
-    endpoint reads 0).
+    (including ``coverage_change``/``stale_change``/``at_risk_change``/``conflicts_change``/
+    ``content_duplicates_change``) and `posture` ``insufficient-history``. A `score`
+    that is ``None`` on either end (an uninitialized-library run) yields a null score
+    `change`, never a fabricated zero; the drift, coverage, staleness, at-risk,
+    conflict, archive, and duplicate movement are still computed (absent counts read 0,
+    so a pre-H115/pre-staleness/pre-H267/pre-H279/pre-H327 endpoint reads 0).
     """
     n = len(runs)
     # the current at-risk-works/conflict counts — the window's last snapshot (the
@@ -985,6 +1029,12 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     # a whole-library unscoped pass (scoped passes don't persist), so its
     # `archive_mismatched` is always a real whole-library count, status "ok".
     last_archive = runs[-1].get("snapshot", {}).get("archive_mismatched", 0) if runs else 0
+    # the current content-duplicate group count + member total (H330): the window's last
+    # snapshot, like `archive_mismatched`. A logged snapshot is always a whole-library
+    # unscoped pass (scoped passes don't persist), so the scalars are real, status "ok".
+    last_snap_for_dup = runs[-1].get("snapshot", {}) if runs else {}
+    last_dup_groups = last_snap_for_dup.get("content_duplicate_groups", 0)
+    last_dup_items = last_snap_for_dup.get("content_duplicate_items", 0)
     if n < 2:
         return {
             "runs": n,
@@ -996,6 +1046,7 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "at_risk_change": None,
             "conflicts_change": None,
             "archive_mismatched_change": None,
+            "content_duplicates_change": None,
             # a single point has no trajectory → the bare readable lines (no clause),
             # the same honest-absence the null `at_risk_change`/`conflicts_change`
             # carry (H268/H283). The archive line keeps its omit-when-clean posture —
@@ -1005,6 +1056,18 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "conflicts_headline": conflicts_headline(last_conflicts, None),
             "archive_integrity_headline": archive_integrity_headline(
                 {"status": "ok", "mismatched": last_archive}, None
+            ),
+            # the bare content-duplicate line (H330): a single point has no trajectory →
+            # no clause, the omit-when-clean posture preserved (None when no group). The
+            # block is synthesized from the snapshot scalars (the always-"ok" a logged
+            # whole-library run implies), like the archive line's `{status, mismatched}`.
+            "duplicates_headline": duplicates_headline(
+                {
+                    "status": "ok",
+                    "total_groups": last_dup_groups,
+                    "total_items": last_dup_items,
+                },
+                None,
             ),
             "posture": "insufficient-history",
         }
@@ -1065,6 +1128,16 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         first_snap, "archive_mismatched"
     )
 
+    # the content-duplicate movement (H325/H327/H330): the net first→last change in the
+    # count of byte-identical holding groups. A scalar like `archive_mismatched_change`,
+    # degrade-safe 0 for a pre-H327 endpoint; reported, never a posture trigger — a
+    # duplicate is a redundancy fact, never a defect (no `--fix` merge, raw is sacred),
+    # so it moves neither the integrity score nor the drift axis (the H299/H283 reported-
+    # not-posture discipline, on the content-identity axis).
+    content_duplicates_change = _stale(last_snap, "content_duplicate_groups") - _stale(
+        first_snap, "content_duplicate_groups"
+    )
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -1110,6 +1183,22 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "archive_integrity_headline": archive_integrity_headline(
             {"status": "ok", "mismatched": last_archive},
             archive_mismatched_change,
+            span=f"over {n} runs",
+        ),
+        "content_duplicates_change": content_duplicates_change,
+        # the readable content-duplicate trend line (roadmap H330): the last run's group
+        # count + the net movement across the window, the trend twin of the report's
+        # `_Duplicates:_` line (H327). The window span replaces the report's "since last
+        # run". Synthesizes the always-"ok" block a logged whole-library run implies; the
+        # omit-when-clean stays *unconditional* — a fall to zero is silently omitted (no
+        # repaired-backup exception, the one documented divergence from the archive line).
+        "duplicates_headline": duplicates_headline(
+            {
+                "status": "ok",
+                "total_groups": last_dup_groups,
+                "total_items": last_dup_items,
+            },
+            content_duplicates_change,
             span=f"over {n} runs",
         ),
         "posture": posture,
@@ -1337,21 +1426,23 @@ def assemble_report(
             report["custody"].get("archive", {}),
             None if delta is None else delta["archive_mismatched"]["change"],
         ),
-        # the readable content-duplicate line (roadmap H327): the count of
+        # the readable content-duplicate line (roadmap H327/H330): the count of
         # byte-identical holding groups + their member total (`doctor`'s
-        # `custody.content_duplicates`, H325) — surfaced for the scheduled pass an
-        # operator skims, which was previously blind to this redundancy axis. Folds
-        # the *same* live audit block `doctor` reports (not the distilled snapshot
-        # scalars, which `status` reads), so it converges with `doctor`'s
-        # `custody.content_duplicates` and the `status` scalars by construction.
-        # Omit-when-clean and **point-in-time** (no ▲/▼ trend clause): unlike the
-        # loss/divergence lines, content duplicates are report-only, never a defect
-        # — no duplicates is the silent norm, a redundancy cluster the exception
-        # worth a line, and there is no `--fix` repair to track over time (H325). A
-        # `--source` pass leaves the block `status: "skipped"` → `None` (a content
-        # group spans sources), and an honest empty/clean library renders no line.
+        # `custody.content_duplicates`, H325), plus its signed movement since the last
+        # run (H330) — surfaced for the scheduled pass an operator skims, which was
+        # previously blind to this redundancy axis. The *count* is rendered from the
+        # *same* live audit block `doctor` reports (not the distilled snapshot scalars,
+        # which `status` reads), so it converges with `doctor`'s
+        # `custody.content_duplicates` and the `status` scalars by construction; the
+        # *change* is the delta's `content_duplicate_groups.change`. A scoped
+        # non-persisting pass records no baseline (`delta` is None) → the bare H327 line;
+        # a `--source` pass also leaves the block `status: "skipped"` → `None` regardless
+        # (a content group spans sources). **Omit-when-clean stays unconditional**: unlike
+        # the archive line (H299), there is no fall-to-zero "repaired backup" line —
+        # content duplicates are report-only, never a defect (no `--fix` merge, H325).
         "duplicates_headline": duplicates_headline(
-            report["custody"].get("content_duplicates", {})
+            report["custody"].get("content_duplicates", {}),
+            None if delta is None else delta["content_duplicate_groups"]["change"],
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),
