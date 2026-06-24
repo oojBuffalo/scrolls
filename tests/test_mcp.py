@@ -3642,6 +3642,31 @@ def test_get_library_health_carries_the_at_risk_works_alarm(scrolls_home):
     assert works == run_doctor(get_paths())["custody"]["works"]
 
 
+def test_get_library_health_carries_the_content_duplicates_report(scrolls_home):
+    # the H325 content-identity redundancy report rides the MCP doctor twin for free
+    # (it is part of the custody block `get_library_health` spreads), so an agent over
+    # MCP reads "which held items are byte-identical under different ids" — convergent
+    # with the CLI `doctor` by construction, no MCP-side re-derivation.
+    from scrolls.doctor import run_doctor
+    from scrolls.items import ScrollItem, insert_item, make_item_id
+
+    main(["init"])
+    db = get_paths().db_path
+    for url in ("https://example.com/a", "https://example.com/b"):
+        insert_item(db, ScrollItem(
+            id=make_item_id("web", None, url), source="web", source_id=None, url=url,
+            saved_at="2026-06-14T00:00:00+00:00", stage="fetched",
+            extracted_text="same body", content_hash="sha256:dup"))
+
+    dup = mcp_server.get_library_health()["content_duplicates"]
+    assert dup["status"] == "ok"
+    assert dup["total_groups"] == 1
+    assert dup["total_items"] == 2
+    assert dup["groups"][0]["content_hash"] == "sha256:dup"
+    # exactly `doctor`'s custody.content_duplicates block — one fold, two surfaces
+    assert dup == run_doctor(get_paths())["custody"]["content_duplicates"]
+
+
 def test_get_library_health_matches_cli_status_field_for_field(scrolls_home, capsys):
     # MCP↔CLI parity: the tool's by_source/attention/score/tiers/headline equal a
     # `scrolls status` over the same seed — one custody picture, two surfaces.

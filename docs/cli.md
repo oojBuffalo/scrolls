@@ -1143,6 +1143,31 @@ clean/held-filter/source-scope siblings in `tests/test_cli.py`); the MCP
 [`get_library_health`](#mcp-tools) twin carries it for free, converging field-for-field
 with this block.
 
+The custody block also carries a `content_duplicates` sub-block (roadmap H325) —
+the **content-identity redundancy report**, the byte-identity sibling of the
+URL-spelling `duplicates` list and of canonical DOI `works`. A custody library can
+hold **byte-identical content under different ids** — the same bytes saved from two
+URLs, a mirror, a cross-post, or one work captured by two source adapters — a
+genuinely new custody *shape* (custody-vision §2.7), neither a spelling accident
+(`duplicates`, ADR 0023) nor a scholarly cluster (`works`). It holds
+`{status, groups, total_groups, total_items}`: the held items are grouped by their
+non-null `content_hash` and every group of **≥2 distinct ids** is flagged as
+`{content_hash, ids}` (groups ordered by hash, ids sorted within — a stable diff
+line), with `total_items` the member count across all groups. A NULL/empty hash
+fingerprints nothing (a reference-only item holds no captured content), so it is
+skipped — two reference items are not byte-identical holdings. **Report-only and
+never auto-merged**: unlike the URL-spelling `duplicates` (which `--fix` merges into
+the canonical id), holding two faithful copies is a redundancy fact an operator may
+want — content-identity across ids is custody-distinct provenance (raw is sacred,
+custody §2.4) — so it never feeds `issues`/`fixed`/the exit code and names no repair
+command (the dedup half of "evidence clustering", surfaced not silently collapsed).
+A pure fold over `content_hash` (no schema change, no ledger read); the MCP
+[`get_library_health`](#mcp-tools) twin carries it for free, converging field-for-field
+with this block
+(`test_content_duplicates_flags_a_two_id_group_sharing_a_content_hash`,
+`test_content_duplicates_never_feeds_issues_or_the_exit_code`,
+`test_content_duplicates_groups_across_sources` in `tests/test_doctor.py`).
+
 `--source S` scopes the **whole** audit to one source's held items (roadmap H162)
 — the audit-side counterpart of the per-source act commands
 [`verify --source`](#scrolls-verify-id) (H125) and
@@ -1158,16 +1183,22 @@ singleton `{S: …}`. The convergence this guarantees, pinned in
 (`test_doctor_source_scope_converges_with_the_whole_library_by_source`): a
 `--source S` audit's `tiers`/`drift`/`coverage` equals the whole-library audit's
 `by_source[S]` slice and its `enrichment.stale` equals `enrichment.by_source[S]`
-(same held subset, same tally). Three checks are **not** source-attributable and so
+(same held subset, same tally). Five checks are **not** source-attributable and so
 are skipped under `--source`: `orphan_scrolls` (an unowned `.md` file belongs to
 no source — and scoping the item set must not flag *other* sources' owned scrolls
-as orphans), `fts` (a single library-wide index), and the `custody.works`
+as orphans), `fts` (a single library-wide index), the `custody.works`
 at-risk-works alarm (a work spans sources, so a scoped item set fragments works —
 a 2-representation work split arxiv+crossref drops below the floor and vanishes,
-making "no work is at risk" a falsehood the scope produced). All three report their
-empty/`skipped` defaults (the works block keeps `status: "skipped"`, never a
-fabricated "0 at risk") and are left to a whole-library `scrolls doctor`
-(`test_doctor_source_skips_the_at_risk_works_alarm` in `tests/test_doctor.py`). The
+making "no work is at risk" a falsehood the scope produced), the `custody.archive`
+integrity check (a single whole-library recovery store, not a per-source view), and
+the `custody.content_duplicates` redundancy report (a content group likewise spans
+sources — a web save + an arxiv mirror of the same bytes — so scoping fragments
+groups below the 2-id floor, making "0 groups" the same scope-produced falsehood).
+All five report their empty/`skipped` defaults (the works/archive/content blocks
+keep `status: "skipped"`, never a fabricated "0 at risk"/"0 groups") and are left to
+a whole-library `scrolls doctor`
+(`test_doctor_source_skips_the_at_risk_works_alarm`,
+`test_content_duplicates_skipped_under_a_source_scope` in `tests/test_doctor.py`). The
 exit-code rule is unchanged — structural `issues > fixed` fails — now over only
 that source's attributable findings; an unknown source holds nothing, so it is the
 honest empty audit (`score: 100`, empty `by_source`, exit 0), never an error

@@ -43,6 +43,7 @@ from scrolls.items import (
     ScrollItem,
     archive_integrity_block,
     archived_records,
+    content_duplicate_groups,
     get_fidelity,
     list_items,
     make_item_id,
@@ -96,7 +97,7 @@ def run_doctor(
     `enrichment.stale` equals `enrichment.by_source[S]` — pinned in
     `tests/test_custody_convergence.py`.
 
-    Four checks are **not** source-attributable, so a scoped audit skips them:
+    Five checks are **not** source-attributable, so a scoped audit skips them:
     `orphan_scrolls` (an unowned scroll file belongs to no source, and scoping
     the item set would falsely flag *other* sources' legitimately-owned scrolls
     as orphans), `fts` (a single library-wide index, not a per-source view), the
@@ -104,11 +105,16 @@ def run_doctor(
     consolidation (a preprint + its published record), so scoping the item set
     fragments works (a 2-representation work split arxiv+crossref drops below the
     floor and vanishes), making "no work is at risk" a falsehood the scope produced
-    — and the `custody.archive` integrity check (roadmap H293), which folds over the
+    — the `custody.archive` integrity check (roadmap H293), which folds over the
     single whole-library prior-content recovery store (not a per-source view, like
-    `fts`). All four are whole-library views left to an unscoped `scrolls doctor`;
-    under a source scope they report empty/`skipped` (the works/archive blocks keep
-    `status: "skipped"`, never a fabricated "0 at risk"/"0 mismatched"). The
+    `fts`), and the `custody.content_duplicates` redundancy report (roadmap H325) —
+    a content group (byte-identical holdings under different ids) likewise spans
+    sources (a web save + an arxiv mirror of the same bytes), so scoping fragments
+    groups below the 2-id floor, making "0 groups" the same scope-produced falsehood.
+    All five are whole-library views left to an unscoped `scrolls doctor`;
+    under a source scope they report empty/`skipped` (the works/archive/content
+    blocks keep `status: "skipped"`, never a fabricated "0 at risk"/"0 mismatched"/
+    "0 groups"). The
     exit-code rule is unchanged —
     structural `issues > fixed` fails — now over only <S>'s attributable findings (an
     unknown source holds nothing, so it is the honest empty audit: `score: 100`,
@@ -213,6 +219,29 @@ def run_doctor(
                 "mismatched": 0,
                 "events": [],
             },
+            "content_duplicates": {
+                # The content-identity redundancy report (roadmap H325): held items
+                # sharing a non-null `content_hash` across *different* ids — the same
+                # bytes saved from two URLs, a mirror, a cross-post, or one work
+                # captured by two source adapters. A genuinely new custody *shape*
+                # (custody-vision §2.7), distinct from the URL-spelling duplicates
+                # `report["duplicates"]` carries (ADR 0023, the auto-mergeable list)
+                # and from canonical DOI works (`custody.works`). **Report-only** —
+                # `groups`/`total_groups`/`total_items`, never `issues`/`fixed`/the
+                # exit code and never a `--fix` merge: holding two faithful copies is
+                # a redundancy fact an operator may want, not a defect, and
+                # content-identity across ids is custody-distinct provenance (raw is
+                # sacred, the no-fabricated-act/orphan-command discipline). `status`
+                # is `"skipped"` under a `--source` scope: a content group spans
+                # sources, so a scoped item set would fragment it below the 2-id
+                # floor (the cross-source `custody.works`/`archive` precedent), so a
+                # scoped audit leaves the honest default rather than reading a
+                # scope-induced "0 groups" over a partial item set.
+                "status": "skipped",
+                "groups": [],
+                "total_groups": 0,
+                "total_items": 0,
+            },
         },
     }
     if not paths.db_path.exists():
@@ -232,6 +261,7 @@ def run_doctor(
         _check_fts(paths, report, fix)
         _check_at_risk_works(paths, report, items)
         _check_archive_integrity(paths, report)
+        _check_content_duplicates(report, items)
     _check_custody_integrity(paths, report, items)
     _check_custody_drift(paths, report, items)
     _check_custody_conflicts(paths, report, items)
@@ -679,6 +709,38 @@ def _check_archive_integrity(paths: LibraryPaths, report: dict) -> None:
     report["custody"]["archive"] = archive_integrity_block(
         archived_records(paths.db_path)
     )
+
+
+def _check_content_duplicates(report: dict, items: list[ScrollItem]) -> None:
+    """Content-identity redundancy — held items sharing a `content_hash` (roadmap H325).
+
+    The byte-identity sibling of `_check_duplicates` (the URL-spelling auto-mergeable
+    list, ADR 0023) and of canonical DOI works (`custody.works`, shared scholarly
+    identity): a custody library can hold **byte-identical content under different
+    ids** — saved from two URLs, a mirror, a cross-post, or one work captured by two
+    source adapters — a genuinely new custody *shape* (custody-vision §2.7), neither
+    a spelling accident nor a scholarly cluster. The dedup half of "evidence
+    clustering" (CLAUDE.md priority).
+
+    Lives entirely under `report["custody"]["content_duplicates"]`, a custody *view*
+    like the drift/works/archive blocks — **report-only**, never the repairable
+    `issues`/`fixed` or the exit code, and **never a `--fix` merge**: holding two
+    faithful copies is a redundancy fact an operator may want, not a defect, and
+    content-identity across ids is custody-distinct provenance (raw is sacred,
+    custody §2.4, the no-fabricated-act/orphan-command discipline). The single
+    divergence-truth source is the shared `content_duplicate_groups` fold — the same
+    one H327's readable `_Duplicates:_` headline reads — so the JSON audit and that
+    line cannot disagree.
+
+    Called **only on the unscoped audit** (the `source is None` branch beside
+    `_check_at_risk_works`/`_check_archive_integrity`): a content group spans sources
+    (a web save and an arxiv mirror of the same bytes), so a `--source`-scoped item
+    set fragments groups — the cross-source member drops below the 2-id floor and the
+    group vanishes — making "0 groups" a falsehood the scope produced (the
+    cross-source `custody.works` precedent). Under a scope the block stays at its
+    honest `status: "skipped"` default.
+    """
+    report["custody"]["content_duplicates"] = content_duplicate_groups(items)
 
 
 def _check_enrichment_provenance(report: dict, items: list[ScrollItem]) -> None:

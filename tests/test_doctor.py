@@ -1059,6 +1059,11 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             # check is computed (status ok) and finds nothing to verify (H293)
             "status": "ok", "checked": 0, "mismatched": 0, "events": [],
         },
+        "content_duplicates": {
+            # one item → no content_hash is shared across ids, so the redundancy
+            # report is computed (status ok) and flags no group (H325)
+            "status": "ok", "groups": [], "total_groups": 0, "total_items": 0,
+        },
     }
 
 
@@ -2298,3 +2303,139 @@ def test_pruning_the_corrupt_prior_itself_clears_the_archive_alarm(paths):
     # the count never fabricates a mismatch over a store that no longer holds one.
     after = run_doctor(paths)["custody"]["archive"]
     assert after == {"status": "ok", "checked": 1, "mismatched": 0, "events": []}
+
+
+# --- content-identity redundancy: items sharing a content_hash across ids (roadmap H325) ---
+
+
+def _content_pair(paths, hash_value="sha256:dup"):
+    """Two distinct held web items carrying the *same* content_hash (byte-identical
+    content saved from two URLs — a mirror or cross-post). Returns their two ids."""
+    a = _web_item(
+        "https://example.com/a", fetched=True, extracted_text="same body",
+        content_hash=hash_value,
+    )
+    b = _web_item(
+        "https://example.com/b", fetched=True, extracted_text="same body",
+        content_hash=hash_value,
+    )
+    insert_item(paths.db_path, a)
+    insert_item(paths.db_path, b)
+    return sorted([a.id, b.id])
+
+
+def test_content_duplicates_flags_a_two_id_group_sharing_a_content_hash(paths):
+    # two distinct ids holding byte-identical content (same content_hash) are a
+    # content-identity group — a new custody shape, distinct from URL-spelling dupes.
+    ids = _content_pair(paths)
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert dup == {
+        "status": "ok",
+        "groups": [{"content_hash": "sha256:dup", "ids": ids}],
+        "total_groups": 1,
+        "total_items": 2,
+    }
+
+
+def test_content_duplicates_does_not_flag_a_singleton_hash(paths):
+    # one item per content_hash is the normal case — never a redundancy group.
+    _rendered(paths, _web_item(
+        "https://example.com/solo", fetched=True, content_hash="sha256:solo"))
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert dup == {
+        "status": "ok", "groups": [], "total_groups": 0, "total_items": 0,
+    }
+
+
+def test_content_duplicates_skips_null_content_hash_items(paths):
+    # reference-only items hold no captured content (content_hash NULL): two of them
+    # are not byte-identical holdings — a NULL hash fingerprints nothing to dedup on.
+    insert_item(paths.db_path, _web_item("https://example.com/ref-a"))  # no hash
+    insert_item(paths.db_path, _web_item("https://example.com/ref-b"))  # no hash
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert dup == {
+        "status": "ok", "groups": [], "total_groups": 0, "total_items": 0,
+    }
+
+
+def test_content_duplicates_groups_across_sources(paths):
+    # the same content can be held under two *different* sources (a web save and an
+    # arxiv mirror of the same bytes) — a content group spans sources, so the whole
+    # cross-source set is one group, total_items counts every member.
+    web = _web_item(
+        "https://example.com/mirror", fetched=True, content_hash="sha256:cross")
+    arxiv = _arxiv_item("mir", content_hash="sha256:cross")
+    insert_item(paths.db_path, web)
+    insert_item(paths.db_path, arxiv)
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1
+    assert dup["groups"][0]["content_hash"] == "sha256:cross"
+    assert dup["groups"][0]["ids"] == sorted([web.id, arxiv.id])
+    assert dup["total_items"] == 2
+
+
+def test_content_duplicates_never_feeds_issues_or_the_exit_code(paths, capsys):
+    # a redundancy report, NOT a defect: holding two faithful copies is custody an
+    # operator may want — never the repairable issues/fixed counts or the exit code,
+    # and never auto-merged (raw is sacred; content-identity is custody-distinct).
+    _content_pair(paths)
+    exit_code = main(["doctor"])
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["issues"] == 0
+    assert report["fixed"] == 0
+    assert report["custody"]["content_duplicates"]["total_groups"] == 1
+    # the URL-spelling duplicates list (ADR 0023, the auto-mergeable one) is a
+    # *separate* surface and stays empty — these ids differ, not URL spellings.
+    assert report["duplicates"] == []
+
+
+def test_content_duplicates_skipped_under_a_source_scope(paths):
+    # a content group spans sources, so a --source-scoped item set fragments groups
+    # (the cross-source mirror drops below the 2-id floor and vanishes): the report
+    # is whole-library only, like the at-risk-works/archive checks. Scoped → skipped.
+    web = _web_item(
+        "https://example.com/mirror", fetched=True, content_hash="sha256:cross")
+    arxiv = _arxiv_item("mir", content_hash="sha256:cross")
+    insert_item(paths.db_path, web)
+    insert_item(paths.db_path, arxiv)
+    scoped = run_doctor(paths, source="web")["custody"]["content_duplicates"]
+    assert scoped == {
+        "status": "skipped", "groups": [], "total_groups": 0, "total_items": 0,
+    }
+    # sanity: the unscoped audit *does* see the cross-source content group
+    assert run_doctor(paths)["custody"]["content_duplicates"]["total_groups"] == 1
+
+
+def test_content_duplicates_on_an_empty_library_is_ok_with_no_groups(paths):
+    # an initialized but empty library computes the fold (status ok): no groups.
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert dup == {
+        "status": "ok", "groups": [], "total_groups": 0, "total_items": 0,
+    }
+
+
+def test_content_duplicates_on_an_uninitialized_library_is_skipped(scrolls_home):
+    # no database → the early return leaves the honest skipped default, never a
+    # fabricated "0 groups" the audit never computed (the works/archive precedent).
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup == {
+        "status": "skipped", "groups": [], "total_groups": 0, "total_items": 0,
+    }
+
+
+def test_content_duplicates_groups_are_ordered_by_content_hash(paths):
+    # two independent content groups → deterministic order by content_hash, ids
+    # sorted within each (a stable diff line, the archive-events ordering precedent).
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/z1", fetched=True, content_hash="sha256:zzz"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/z2", fetched=True, content_hash="sha256:zzz"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/a1", fetched=True, content_hash="sha256:aaa"))
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/a2", fetched=True, content_hash="sha256:aaa"))
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    assert [g["content_hash"] for g in dup["groups"]] == ["sha256:aaa", "sha256:zzz"]
+    assert dup["total_groups"] == 2
+    assert dup["total_items"] == 4

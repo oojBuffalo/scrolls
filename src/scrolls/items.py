@@ -1185,6 +1185,57 @@ def archive_integrity_block(records: list[ArchiveRecord]) -> dict[str, Any]:
     }
 
 
+def content_duplicate_groups(items: list[ScrollItem]) -> dict[str, Any]:
+    """Content-identity redundancy fold — held items sharing a `content_hash` (roadmap H325).
+
+    A custody library can hold **byte-identical content under different ids** — the
+    same bytes saved from two URLs, a mirror, a cross-post, or one work captured by
+    two source adapters. That is a genuinely new custody *shape* (custody-vision
+    §2.7), distinct from the two identities `doctor` already knows: URL-spelling
+    duplicates (`_check_duplicates`/`report["duplicates"]`, ADR 0023 — same
+    `(source, normalize_url(url))`, **auto-mergeable**) and canonical DOI works
+    (`custody.works` — shared scholarly identity across representations). Content
+    identity is neither: two ids carry the *same bytes* yet are custody-distinct
+    provenance, so this is **report-only** — a redundancy fact an operator may want
+    (two faithful copies), never a defect, never an `issues`/exit-code signal, and
+    **never an auto-merge** (raw is sacred; the no-fabricated-act discipline).
+
+    Groups the items by their non-null ``content_hash`` and flags every group of
+    **≥2 distinct ids**. A NULL/empty hash fingerprints nothing — a reference-only
+    item holds no captured content — so it is skipped (two reference items are not
+    byte-identical holdings), the `archive_integrity_block` NULL-safe precedent.
+
+    Returns the ``{status, groups, total_groups, total_items}`` shape `doctor`'s
+    `custody.content_duplicates` block carries (``status`` always ``"ok"`` — the
+    caller decides when to *run* the fold; `doctor` keeps the block ``"skipped"``
+    under a `--source` scope by not calling this, since a content group spans
+    sources and a scoped item set would fragment it below the floor). ``groups`` is
+    ``[{content_hash, ids}]`` ordered by ``content_hash`` with ``ids`` sorted within
+    each — a stable diff line (the archive-events ordering precedent). ``total_items``
+    counts every member across all flagged groups (the *M* in H327's readable
+    `_Duplicates: N group(s) … (M item(s))` headline), the single divergence-truth
+    source that readable surface folds.
+    """
+    by_hash: dict[str, list[str]] = {}
+    for item in items:
+        if not item.content_hash:  # no captured content — nothing to fingerprint
+            continue
+        ids = by_hash.setdefault(item.content_hash, [])
+        if item.id not in ids:  # distinct ids only (ids are PK-unique; defensive)
+            ids.append(item.id)
+    groups = [
+        {"content_hash": content_hash, "ids": sorted(ids)}
+        for content_hash, ids in sorted(by_hash.items())
+        if len(ids) >= 2
+    ]
+    return {
+        "status": "ok",
+        "groups": groups,
+        "total_groups": len(groups),
+        "total_items": sum(len(group["ids"]) for group in groups),
+    }
+
+
 def archive_export_dict(record: ArchiveRecord) -> dict[str, Any]:
     """One archive row as a JSON-serializable export object (roadmap H280).
 
