@@ -1223,7 +1223,18 @@ choice (ADRs 0004, 0005).
   the rendered siblings cannot drift from the per-item read, H332) and rendered
   inside the same `@generated` fence, so a recompile refreshes it (a newly-held
   copy appears, a pruned one drops) — the same refresh-safe, report-only discipline
-  as the custody marker. The bold
+  as the custody marker. The **landing `index.md`** carries the whole-library
+  counterpart — a single **`_Duplicates:_` line** (roadmap H334) counting how many
+  byte-identical groups the library holds (`N group(s) of byte-identical content
+  (M item(s))`), folded through the *same* shared
+  `maintain.render_content_duplicates` (a `None` scope → the whole-library holdings,
+  exactly the set `doctor`'s `custody.content_duplicates` reads) the `export
+  bundle`/`context` briefings and the `maintain` headline use, so the count converges
+  with the JSON audit by construction; it is whole-library and
+  non-source-attributable (a content group spans sources), so only `index.md` carries
+  it — grouped beneath the whole-library custody headline with the `_At-risk work:_`
+  (H269) and `_Archive:_` (H321) alarms, inside the `@generated` fence, group pages
+  omitting it — and it omits when the library holds nothing byte-identical. The bold
   work heading and the `index`/`graph`/`works` rollup rows carry no marker (they
   are not per-item rows); this is the human-readable surface the per-item
   custody picture previously skipped. **Under each group page's count line a

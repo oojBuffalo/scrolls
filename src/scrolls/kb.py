@@ -313,6 +313,7 @@ def _custody_scope_block(
     *,
     at_risk_lines: list[str] | None = None,
     archive_lines: list[str] | None = None,
+    duplicate_lines: list[str] | None = None,
 ) -> list[str]:
     """The readable scope-custody block under a compiled page's headline (roadmap H184).
 
@@ -348,6 +349,17 @@ def _custody_scope_block(
     fold `doctor`'s `custody.archive` reads). Defaults to `[]` (omitted on every
     group page).
 
+    `duplicate_lines` is the optional whole-library `_Duplicates:_` content-identity
+    pointer (roadmap H334) — one line when ≥2 held items carry byte-identical content
+    under different ids (the same bytes saved from two URLs, a mirror, a cross-post, or
+    one work captured by two adapters, custody-vision §2.7). It splices directly after
+    the archive line, continuing the `export bundle`/`context` order (Attention →
+    At-risk → [Conflicts] → Archive → Duplicates). Whole-library and
+    non-source-attributable — a content group spans sources, so a scoped group page
+    fragments it below the 2-id floor — so only the whole-library `index.md` passes it
+    (`render_content_duplicates(None, db)`, the same fold `doctor`'s
+    `custody.content_duplicates` reads). Defaults to `[]` (omitted on every group page).
+
     The refresh debt is computed over this page's *own* members (the
     scope-consistent posture H178 took): a whole-library `index.md` over every
     rendered item, a group page over its members — so a single-source `sources/*`
@@ -363,6 +375,7 @@ def _custody_scope_block(
         render_custody_attention(by_source)
         + (at_risk_lines or [])
         + (archive_lines or [])
+        + (duplicate_lines or [])
         + render_custody_refresh(
             stale_classification_counts_by_source(items),
             stale_summary_counts_by_source(items, summaries),
@@ -385,6 +398,25 @@ def _archive_integrity_lines(db_path: Path) -> list[str]:
     from scrolls.maintain import render_archive_integrity
 
     return render_archive_integrity(db_path, None)
+
+
+def _content_duplicate_lines(db_path: Path) -> list[str]:
+    """The whole-library `_Duplicates:_` content-identity line for the compiled landing
+    page (roadmap H334), or `[]` on a clean/unique/empty library.
+
+    Delegates to the shared `maintain.render_content_duplicates` with a `None` scope —
+    the *whole-library* holdings (`list_items(db)`), exactly the set `doctor`'s
+    `custody.content_duplicates` folds — so the compiled `index.md` line, the
+    `export bundle`/`context` briefing lines, the `maintain` headline, and the JSON audit
+    cannot desync (one fold, one renderer). Whole-library because a content group spans
+    sources (the same bytes under two ids in different sources), so the alarm is
+    non-source-attributable, like the `_Archive:_`/`_At-risk work:_` index lines — *not*
+    in-scope. Imported lazily because `maintain` imports `compile_kb` from this module, so
+    a module-level import would close a cycle (the `_archive_integrity_lines` precedent
+    above)."""
+    from scrolls.maintain import render_content_duplicates
+
+    return render_content_duplicates(None, db_path)
 
 
 def _write_index(
@@ -410,26 +442,32 @@ def _write_index(
     # the readable scope-custody block under the headline (roadmap H184): the
     # weakest-source `_Attention:_` pointer (H159), the work-level `_At-risk work:_`
     # pointer (H269), the whole-library `_Archive:_` integrity pointer (H321), the
-    # per-source `_Refresh:_` pointer (H178), then the `_By source:_` breakdown
-    # (H145) — the compiled landing-page counterpart of the `export bundle`/`context`
-    # briefings, over the same shared renderers so the lines read byte-identical
-    # across surfaces and converge with JSON `status` (H133) + `doctor`'s debt maps by
-    # construction. The work-level at-risk line (H269) is the consolidation alarm on
-    # the static compiled surface — the at-risk counterpart of the whole-library
-    # `_Custody:_` headline (H96), folded by the shared `render_at_risk_works` over
-    # the rendered library so it names the same work `doctor`'s `custody.works` does.
-    # The `_Archive:_` line (H321) is the recovery-store counterpart — folded by the
+    # whole-library `_Duplicates:_` content-identity pointer (H334), the per-source
+    # `_Refresh:_` pointer (H178), then the `_By source:_` breakdown (H145) — the
+    # compiled landing-page counterpart of the `export bundle`/`context` briefings,
+    # over the same shared renderers so the lines read byte-identical across surfaces
+    # and converge with JSON `status` (H133) + `doctor`'s debt maps by construction.
+    # The work-level at-risk line (H269) is the consolidation alarm on the static
+    # compiled surface — the at-risk counterpart of the whole-library `_Custody:_`
+    # headline (H96), folded by the shared `render_at_risk_works` over the rendered
+    # library so it names the same work `doctor`'s `custody.works` does. The
+    # `_Archive:_` line (H321) is the recovery-store counterpart — folded by the
     # shared `render_archive_integrity` over the *whole-library* store so it converges
-    # with `doctor`'s `custody.archive`. Both are non-source-attributable
+    # with `doctor`'s `custody.archive`. The `_Duplicates:_` line (H334) is the
+    # content-identity counterpart — folded by the shared `render_content_duplicates`
+    # over the *whole-library* holdings so it converges with `doctor`'s
+    # `custody.content_duplicates`. All three are non-source-attributable
     # whole-library alarms, so only the whole-library `index.md` carries them (group
-    # pages would fragment works / are not the single recovery store's view). An
-    # empty/single-source clean library with no at-risk work and a clean store is the
-    # honest no-op (the block is []). The block's trailing spacer is dropped: `##
-    # Sources` always follows when items exist and supplies the separator.
+    # pages would fragment works/content groups / are not the single recovery store's
+    # view). An empty/single-source clean library with no at-risk work, a clean store,
+    # and no byte-identical holdings is the honest no-op (the block is []). The block's
+    # trailing spacer is dropped: `## Sources` always follows when items exist and
+    # supplies the separator.
     custody_block = _custody_scope_block(
         items, verdicts, summaries,
         at_risk_lines=render_at_risk_works(items, verdicts),
         archive_lines=_archive_integrity_lines(paths.db_path),
+        duplicate_lines=_content_duplicate_lines(paths.db_path),
     )
     if custody_block:
         lines += [""] + custody_block[:-1]

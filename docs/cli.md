@@ -700,6 +700,39 @@ posture; `duplicates_headline` itself omits the line whenever `total_groups == 0
 `test_context_duplicates_line_gated_off_index`,
 `test_context_duplicates_line_mcp_parity`).
 
+That `_Duplicates:_` line also rides the **compiled landing `library/index.md`** (roadmap
+H334) — the content-identity counterpart of the at-risk-works `index.md` line (H269) and
+the recovery-store `_Archive:_` line (H321), the static-surface complement to H333's
+*per-item* "also held as" marker. It sits directly beneath the `_Custody:_` headline,
+grouped with the work-level `_At-risk work:_` and recovery-store `_Archive:_` lines and
+above the `_Refresh:_`/`_By source:_` map — the same `export bundle`/`scrolls context`
+order (Attention → At-risk → Archive → Duplicates; the compiled pages carry no
+`_Conflicts:_` line) — through the *same* shared `maintain.render_content_duplicates` the
+briefings fold, so a human browsing the compiled library reads the same redundancy an
+agent reads from `doctor`. Unlike the briefings (which scope to their own items) the
+compiled line is **whole-library** — `render_content_duplicates(None, db)` over the entire
+holdings (`items.list_items(db)`, exactly the set `doctor`'s `custody.content_duplicates`
+folds; the renderer's `None` scope loads the whole library, while a `[]` scope stays the
+honest in-scope-of-nothing empty audit) — because a compiled landing page is the
+library-wide view, not a query scope. Like the archive line it is
+**non-source-attributable** (a content group spans sources, so a scoped group page
+fragments it below the 2-id floor) and so rides **only `index.md`**: the scoped group pages
+omit it. It sits **inside** the page's `@generated` sentinel fence (ADR 0102) — regenerated
+content like the headline and `_By source:_`, so a recompile refreshes it (pruning or
+re-capturing a byte-identical copy clears it) while a hand annotation outside the fence
+survives. It converges with `doctor`'s `custody.content_duplicates` over the whole library
+by construction, names **no command** (raw is sacred; two faithful copies are a redundancy
+fact, never a `--fix` merge, the no-fabricated-act discipline), and honest absence — no
+line — when the library holds nothing byte-identical
+(`test_kb_index_carries_a_content_duplicate_line`,
+`test_kb_index_content_duplicate_line_converges_with_doctor`,
+`test_kb_index_content_duplicate_line_converges_with_shared_renderer`,
+`test_kb_index_groups_content_duplicate_line_with_the_loss_pointers`,
+`test_kb_index_omits_content_duplicate_line_when_library_is_unique`,
+`test_kb_index_content_duplicate_line_is_whole_library`,
+`test_kb_group_pages_omit_the_content_duplicate_line`,
+`test_kb_index_content_duplicate_line_is_refresh_safe`).
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the

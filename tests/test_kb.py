@@ -1624,6 +1624,195 @@ def test_kb_archive_line_is_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed       # annotation outside the fence kept
 
 
+# --- whole-library content-identity `_Duplicates:_` line on `index.md` (H334) ---
+# The content-identity counterpart of the `_Archive:_` index.md line (H321) and the
+# at-risk-works index.md line (H269), the static-surface complement to H333's *per-item*
+# "also held as" line: one whole-library `_Duplicates:_` line when ≥2 held items carry
+# byte-identical content under different ids. Folds the *same* whole-library
+# `content_duplicate_groups(list_items(db))` `doctor`'s `custody.content_duplicates`
+# reads, through the *same* shared `render_content_duplicates` (None → whole-library) the
+# bundle/context briefings + the `maintain` headline use — so the line converges with the
+# JSON audit by construction. Whole-library and non-source-attributable (a content group
+# spans sources); only `index.md` carries it, group pages omit it. Inside the page's
+# `@generated` fence (ADR 0102). Report-only — names no command (raw is sacred, H325).
+
+
+def _seed_byte_identical_pair(db, hash_="dup", category="news"):
+    """Hold two rendered items carrying byte-identical content under different ids — the
+    content-duplicate group (1 group, 2 items) the whole-library alarm must name on
+    `index.md`. Cross-source so the group spans sources (a content group is
+    non-source-attributable). Returns the shared content_hash."""
+    insert_item(db, make_rendered(
+        "web:a", "web", "A mirror", category=category,
+        raw_text="body", content_hash=hash_))
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "B mirror", category=category,
+        raw_text="body", content_hash=hash_))
+    return hash_
+
+
+def test_kb_index_carries_a_content_duplicate_line(scrolls_home, capsys):
+    """The landing `index.md` carries the whole-library `_Duplicates:_` content-identity
+    alarm — one line naming how many byte-identical groups the library holds (H334)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert ("_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+            in header)
+    # beneath the whole-library `_Custody:_` headline, with the custody-loss pointers
+    assert header.index("_Custody:") < header.index("_Duplicates:")
+
+
+def test_kb_index_content_duplicate_line_converges_with_doctor(scrolls_home, capsys):
+    """The counts are the *same* whole-library `content_duplicate_groups` fold `doctor`'s
+    `custody.content_duplicates` reads, so the readable line and the JSON audit agree —
+    a third byte-identical id makes it 1 group / 3 items on both surfaces (H334)."""
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)
+    insert_item(db, make_rendered(
+        "wiki:c", "wikipedia", "C mirror", category="news",
+        raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    block = run_doctor(get_paths())["custody"]["content_duplicates"]
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert block["total_groups"] == 1 and block["total_items"] == 3
+    assert (f"_Duplicates: {block['total_groups']} group(s) of byte-identical content "
+            f"({block['total_items']} item(s))._") in index
+
+
+def test_kb_index_content_duplicate_line_converges_with_shared_renderer(
+        scrolls_home, capsys):
+    """The rendered line is byte-identical to the shared `render_content_duplicates`
+    over the whole library, so the compiled surface cannot desync from the bundle /
+    context / maintain surfaces that fold through the same helper (H334)."""
+    from scrolls.maintain import render_content_duplicates
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    for line in render_content_duplicates(None, db):  # None → whole-library
+        if line:
+            assert line in index
+
+
+def test_kb_index_groups_content_duplicate_line_with_the_loss_pointers(
+        scrolls_home, capsys):
+    """The duplicate line groups with the custody-loss pointers: beneath the headline,
+    after the work-level `_At-risk work:_` and recovery-store `_Archive:_` lines, before
+    the `_By source:_` map — the `export bundle`/`context` briefing order (Attention →
+    At-risk → [Conflicts] → Archive → Duplicates, roadmap H334)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_at_risk_work_rendered(db)        # at-risk work Z + safely-held Y
+    _seed_corrupt_archived_prior(db)       # one corrupt prior (wikipedia)
+    _seed_byte_identical_pair(db, "uniq")  # one byte-identical pair (web/blog)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    header = (scrolls_home / "library" / "index.md").read_text(
+        encoding="utf-8").split("## Sources")[0]
+    assert (header.index("_Custody:") < header.index("_At-risk work:")
+            < header.index("_Archive:") < header.index("_Duplicates:")
+            < header.index("_By source:_"))
+
+
+def test_kb_index_omits_content_duplicate_line_when_library_is_unique(
+        scrolls_home, capsys):
+    """A library with no byte-identical holdings — a unique item and a reference-only
+    NULL-hash item — shows no `_Duplicates:` line (honest absence, the omit-when-clean
+    posture the briefings take, H327/H334)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:solo", "web", "Only copy", category="news",
+        raw_text="body", content_hash="solo"))
+    insert_item(db, make_rendered(
+        "web:pointer", "web", "A pointer", category="news"))  # NULL content_hash
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    assert "_Custody:" in index        # the headline still renders
+    assert "_Duplicates:" not in index  # nothing byte-identical → silent
+
+
+def test_kb_index_content_duplicate_line_is_whole_library(scrolls_home, capsys):
+    """A byte-identical pair split across two sources is one whole-library group the
+    landing line counts in full (1 group / 2 items) even though neither single-source
+    group page sees both members — the whole-library, non-source-attributable scope
+    (H334), exactly the set `doctor` folds (which has no `--source` content view)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)  # web:a + blog:b, same bytes, two sources
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    # the whole-library line counts the cross-source group in full
+    assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in index
+
+
+def test_kb_group_pages_omit_the_content_duplicate_line(scrolls_home, capsys):
+    """The content-identity alarm rides only the whole-library `index.md`; the scoped
+    group pages omit it (a content group spans sources, so a scoped page fragments it
+    below the 2-id floor, like the at-risk/archive lines, roadmap H334)."""
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    assert "_Duplicates:" in (library / "index.md").read_text(encoding="utf-8")
+    for page in ("sources/web.md", "sources/blog.md", "categories/news.md"):
+        assert "_Duplicates:" not in (library / page).read_text(encoding="utf-8"), page
+
+
+def test_kb_index_content_duplicate_line_is_refresh_safe(scrolls_home, capsys):
+    """The duplicate line lives inside the `@generated` fence and refreshes on recompile;
+    an annotation outside the fence survives, and pruning the byte-identical copy clears
+    the line (roadmap H334 × ADR 0102)."""
+    import sqlite3
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_byte_identical_pair(db)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index_path = scrolls_home / "library" / "index.md"
+    page = index_path.read_text(encoding="utf-8")
+    assert "_Duplicates: 1 group(s)" in generated_body(page)  # inside the fence
+    index_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # one copy is re-captured with different bytes — the group dissolves (the H332
+    # sabotage move: a content hash diverges, no longer byte-identical)
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE items SET content_hash = ? WHERE id = ?",
+                     ("moved", "blog:b"))
+    conn.close()
+    run_kb(capsys)
+
+    refreshed = index_path.read_text(encoding="utf-8")
+    assert "_Duplicates:" not in refreshed   # the alarm cleared on recompile
+    assert "_My note._" in refreshed          # annotation outside the fence kept
+
+
 def test_kb_recompile_removes_stale_pages_but_keeps_user_files(scrolls_home, capsys):
     main(["init"])
     db = get_paths().db_path
