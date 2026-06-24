@@ -517,7 +517,13 @@ def get_works(
     `drift` posture (verified/unverified/drifted/rotted/error — whether the
     source moved, roadmap H64), so a caller sees which forms the library holds in
     full and which have drifted — the same two-axis picture `list_scrolls`/
-    `get_related_scrolls`/`get_link_graph` carry.
+    `get_related_scrolls`/`get_link_graph` carry. Each work also carries a work-level
+    `custody` block (the consolidation verdict `{best_fidelity, safest_drift,
+    safely_held}`, roadmap H261) and a `content_duplicate` boolean (roadmap H329):
+    `true` iff two of the work's representations hold byte-identical content (the same
+    `content_hash`) — a preprint mirrored into its DOI capture — the consolidation-
+    surface sibling of `get_library_health`'s `custody.content_duplicates` report,
+    report-only and never a merge (raw is sacred).
     Works with fewer than `min_representations` items are omitted (default 2,
     so only works actually worth consolidating are returned); `stats.items`
     is the library total.

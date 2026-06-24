@@ -4671,6 +4671,24 @@ A pure fold over the same `fidelity`/`drift` the representations carry — no ex
 ledger read, agreeing with the entries it rides beside by construction
 (`test_cli_works_carries_the_aggregate_custody_block`).
 
+Beside that `custody` block each work carries a `content_duplicate` boolean
+(roadmap H329) — `true` iff **two of the work's representations hold byte-identical
+content** (the same non-null `content_hash`): a preprint mirrored into its DOI
+capture, a published record duplicating the arXiv body. The consolidation-surface
+sibling of the whole-library `doctor.custody.content_duplicates` report (H325): where
+that report counts byte-identical groups *anywhere* in the library, this asks the
+question *within a work* — "does this work hold the same bytes under two forms?" — a
+redundancy an operator consolidating the work may want to know. **Report-only, never
+a merge** (content-identity across a work's forms is custody-distinct provenance; raw
+is sacred, the H325 no-fabricated-act discipline), a pure fold over the per-rep
+`content_hash` (no schema change). The H325 NULL-skip holds: a reference-only
+representation captures no content, so it fingerprints nothing and never forms a
+byte-identical pair (two reference reps hold no bytes — `false`). Rides the MCP
+`get_works` twin for free (both route through `works.to_payload`), so the flag reads
+identically on CLI and MCP
+(`test_work_content_duplicate_flags_a_byte_identical_rep_pair`,
+`test_get_works_flags_a_byte_identical_rep_pair_at_parity_with_cli`).
+
 `--min N` sets the minimum
 representations per work (default 2 — a single-representation work is just
 a paper); `--min 1` lists every DOI-bearing item. `stats.items` is the
@@ -4773,11 +4791,11 @@ item id even when a URL was passed) rather than the floor it ignores.
 
 ```console
 $ scrolls works
-{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"scope": {"min_representations": 2}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "content_duplicate": false, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 
 $ scrolls works arxiv:1706.03762
-{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
+{"scope": {"ref": "arxiv:1706.03762"}, "works": [{"doi": "10.5555/3295222", "url": "https://doi.org/10.5555/3295222", "canonical": "crossref:10.5555/3295222", "custody": {"best_fidelity": "full", "safest_drift": "unverified", "safely_held": true}, "content_duplicate": false, "representations": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}, {"id": "crossref:10.5555/3295222", "source": "crossref", "title": "Attention Is All You Need", "url": "https://doi.org/10.5555/3295222", "stage": "fetched", "fidelity": "partial", "drift": "unverified", "last_checked": null}]}], "stats": {"items": 2, "works": 1, "custody": {"tiers": {"full": 1, "partial": 1, "reference": 0}, "drift": {"verified": 0, "unverified": 2, "drifted": 0, "rotted": 0, "error": 0}}}}
 [exit 0]
 ```
 

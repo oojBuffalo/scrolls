@@ -586,6 +586,105 @@ def test_work_custody_matches_the_shared_helper():
     )
 
 
+# --- work-level content-identity (roadmap H329) ------------------------
+# Each work also carries a `content_duplicate` boolean beside its H261 `custody`
+# block: True iff ≥2 of its representations hold byte-identical content (the same
+# non-null `content_hash`) — a preprint mirrored into a DOI capture, the same body
+# under two forms. The consolidation-surface analogue of the whole-library
+# `doctor.custody.content_duplicates` report (H325): report-only, never a merge
+# (raw is sacred, the H325 no-merge discipline). A pure fold over the reps'
+# `content_hash`, with the H325 NULL-skip (a reference-only rep holds no captured
+# content, so it fingerprints nothing and never forms a content-duplicate pair).
+
+
+def _rep(item_id, doi, content_hash):
+    """A representation of `doi` holding `content_hash` bytes (None → reference)."""
+    return make_item(
+        item_id, url=f"https://example.org/{item_id}",
+        links=(f"https://doi.org/{doi}",),
+        raw_text="body" if content_hash else None,
+        content_hash=content_hash, stage="rendered",
+    )
+
+
+def _work_content_duplicate(items):
+    """The `content_duplicate` flag of the single work the items form."""
+    (work,) = works_over(items)
+    payload = to_payload([work], len(items), scope={"min_representations": 2})
+    return payload["works"][0]["content_duplicate"]
+
+
+def test_work_content_duplicate_flags_a_byte_identical_rep_pair():
+    # two representations of one work holding the SAME bytes (a preprint mirrored
+    # into its DOI capture) → content_duplicate True, the redundancy an operator
+    # consolidating the work may want to know
+    items = [
+        _rep("arxiv:a", "10.1000/x", "sha256:same"),
+        _rep("crossref:10.1000/x", "10.1000/x", "sha256:same"),
+    ]
+    assert _work_content_duplicate(items) is True
+
+
+def test_work_content_duplicate_false_for_distinct_content():
+    # two reps of one work holding DIFFERENT bytes (the normal case: a preprint and
+    # its published record differ) → False, not a byte-identical pair
+    items = [
+        _rep("arxiv:a", "10.1000/x", "sha256:a"),
+        _rep("crossref:10.1000/x", "10.1000/x", "sha256:b"),
+    ]
+    assert _work_content_duplicate(items) is False
+
+
+def test_work_content_duplicate_false_when_only_one_rep_holds_content():
+    # a full rep (content held) + a reference rep (no captured content, NULL hash)
+    # is not a byte-identical pair — the H325 NULL-skip: the reference rep
+    # fingerprints nothing
+    items = [
+        _rep("arxiv:a", "10.1000/x", "sha256:a"),
+        _rep("crossref:10.1000/x", "10.1000/x", None),
+    ]
+    assert _work_content_duplicate(items) is False
+
+
+def test_work_content_duplicate_false_for_two_reference_reps():
+    # two reference-only reps (both NULL content_hash) are NOT byte-identical
+    # holdings — they hold no bytes; the H325 rule that a NULL hash fingerprints
+    # nothing, so two reference reps never form a content-duplicate pair
+    items = [
+        _rep("arxiv:a", "10.1000/x", None),
+        _rep("crossref:10.1000/x", "10.1000/x", None),
+    ]
+    assert _work_content_duplicate(items) is False
+
+
+def test_work_content_duplicate_flags_a_pair_among_three_reps():
+    # three reps, two sharing bytes and one distinct → still flagged: the byte-
+    # identical pair is the redundancy, regardless of the distinct sibling
+    items = [
+        _rep("arxiv:a", "10.1000/x", "sha256:same"),
+        _rep("biorxiv:10.1101/y", "10.1000/x", "sha256:same"),
+        _rep("crossref:10.1000/x", "10.1000/x", "sha256:other"),
+    ]
+    assert _work_content_duplicate(items) is True
+
+
+def test_work_content_duplicate_helper_is_a_pure_fold_over_reps():
+    # the payload flag is exactly `work_content_duplicate(reps)` — a pure fold over
+    # the representations' `content_hash` (no schema change), the consolidation-scope
+    # analogue of the whole-library `items.content_duplicate_groups` fold (H325)
+    from scrolls.works import work_content_duplicate
+
+    items = [
+        _rep("arxiv:a", "10.1000/x", "sha256:same"),
+        _rep("crossref:10.1000/x", "10.1000/x", "sha256:same"),
+    ]
+    (work,) = works_over(items)
+    assert work_content_duplicate(work.representations) is True
+    assert _work_content_duplicate(items) == work_content_duplicate(
+        work.representations
+    )
+
+
 # --- H263: the at-risk-works consolidation alarm -----------------------
 # `at_risk_signal` is the consolidation-level analogue of the per-source
 # weakest-source `attention` flag: a work is *at risk* when NO representation is

@@ -110,6 +110,14 @@ class Representation:
     sees the full per-item custody picture per form: *how much* is held (fidelity),
     *whether the source moved* (drift, roadmap H64), and *as of when* (last_checked,
     roadmap H87).
+
+    `content_hash` — the item's captured-content fingerprint (the column
+    `items.content_duplicate_groups` keys on, H325) — also rides the dataclass, the
+    same item-intrinsic-content posture `fidelity` takes: it lets the work-level
+    `work_content_duplicate` fold (roadmap H329) ask "do two of this work's forms
+    hold the *same bytes*?" without a second item read. `None` for a reference-only
+    representation (nothing captured), so it never reaches a JSON surface — it feeds
+    the boolean fold alone, the H56 split (an intrinsic fact carried, not re-read).
     """
 
     id: str
@@ -118,6 +126,7 @@ class Representation:
     url: str
     stage: str
     fidelity: str
+    content_hash: str | None
 
 
 @dataclass(frozen=True)
@@ -449,6 +458,39 @@ def work_custody(
     }
 
 
+def work_content_duplicate(representations: tuple[Representation, ...]) -> bool:
+    """Does this work hold the *same bytes* under two representations? (roadmap H329).
+
+    The consolidation-surface analogue of the whole-library
+    `items.content_duplicate_groups` report (H325): where that fold flags
+    byte-identical holdings anywhere in the library, this asks the question *within a
+    work* — is one of this work's forms a byte-identical copy of another (a preprint
+    mirrored into its DOI capture, a published record duplicating the arxiv body)? A
+    redundancy an operator consolidating the work may want to know, the content
+    sibling of the H261 `custody` block's aggregate posture, **no schema change** (a
+    pure fold over the per-rep `content_hash` already carried on the dataclass).
+
+    Returns ``True`` iff **≥2 representations share a non-null `content_hash`**. The
+    H325 NULL-skip holds: a reference-only representation captures no content, so its
+    ``None`` hash fingerprints nothing and never forms a byte-identical pair (two
+    reference reps are not "the same bytes" — they hold no bytes). Report-only — never
+    an act, never a merge (content-identity across forms is custody-distinct
+    provenance; raw is sacred, the H325 no-fabricated-act discipline).
+
+    A `Work` always has ≥1 representation, and a single representation never
+    duplicates itself (it is one row, the first-seen-per-id `works_over` dedup), so a
+    one-rep work is honestly ``False``.
+    """
+    seen: set[str] = set()
+    for rep in representations:
+        if not rep.content_hash:  # reference-only: no captured content to fingerprint
+            continue
+        if rep.content_hash in seen:  # a second rep holds these exact bytes
+            return True
+        seen.add(rep.content_hash)
+    return False
+
+
 def render_work_custody_marker(custody: dict[str, Any]) -> str:
     """One-line work-level custody marker for the compiled `works.md` rollup (H270).
 
@@ -761,6 +803,12 @@ def to_payload(
                 # safely held?", a pure fold over the same `fidelity`/`drift` the
                 # representations carry — no schema change, no extra ledger read.
                 "custody": work_custody(work.representations, verdicts),
+                # the work-level content-identity flag (roadmap H329): True iff two
+                # of this work's forms hold byte-identical content (the same
+                # `content_hash`) — the consolidation-surface sibling of the whole-
+                # library `doctor.custody.content_duplicates` report (H325),
+                # report-only and a pure fold over the per-rep `content_hash`.
+                "content_duplicate": work_content_duplicate(work.representations),
                 "representations": [
                     {
                         "id": rep.id,
@@ -845,4 +893,5 @@ def _representation(item: ScrollItem) -> Representation:
         url=item.url,
         stage=item.stage,
         fidelity=get_fidelity(item),
+        content_hash=item.content_hash,
     )

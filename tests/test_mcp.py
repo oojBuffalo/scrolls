@@ -1811,6 +1811,56 @@ def test_get_works_carries_the_aggregate_custody_block(scrolls_home):
     )
 
 
+def test_get_works_flags_a_byte_identical_rep_pair_at_parity_with_cli(
+    scrolls_home, capsys
+):
+    # H329: the per-work `content_duplicate` flag rides the MCP twin too — both route
+    # through `works.to_payload` — so the consolidation-surface redundancy reads
+    # identically on CLI and MCP. Two reps of one work holding the SAME bytes flag
+    # true; a work whose reps differ flags false.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # work X: a preprint mirrored byte-identically into its DOI capture (same hash)
+    insert_item(db, ScrollItem(
+        id="arxiv:x", source="arxiv", source_id="x",
+        url="https://arxiv.org/abs/x", saved_at="2026-06-12T00:00:00+00:00",
+        title="X", links=("https://doi.org/10.1000/x",), stage="rendered",
+        raw_text="the shared body", content_hash="sha256:same",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.1000/x", source="crossref", source_id="10.1000/x",
+        url="https://doi.org/10.1000/x", saved_at="2026-06-12T00:00:00+00:00",
+        title="X", stage="rendered",
+        raw_text="the shared body", content_hash="sha256:same",
+    ))
+    # work Y: two reps holding distinct bytes (the normal preprint-vs-record case)
+    insert_item(db, ScrollItem(
+        id="arxiv:y", source="arxiv", source_id="y",
+        url="https://arxiv.org/abs/y", saved_at="2026-06-12T00:00:00+00:00",
+        title="Y", links=("https://doi.org/10.1000/y",), stage="rendered",
+        raw_text="the preprint body", content_hash="sha256:ya",
+    ))
+    insert_item(db, ScrollItem(
+        id="crossref:10.1000/y", source="crossref", source_id="10.1000/y",
+        url="https://doi.org/10.1000/y", saved_at="2026-06-12T00:00:00+00:00",
+        title="Y", stage="rendered",
+        raw_text="the published body", content_hash="sha256:yb",
+    ))
+
+    works = {w["doi"]: w for w in mcp_server.get_works()["works"]}
+    assert works["10.1000/x"]["content_duplicate"] is True
+    assert works["10.1000/y"]["content_duplicate"] is False
+    # CLI parity: the same flag, same source, both through `works.to_payload`
+    capsys.readouterr()  # drop the `init` chatter before the JSON capture
+    assert main(["works"]) == 0
+    cli_works = {w["doi"]: w for w in json.loads(capsys.readouterr().out)["works"]}
+    assert cli_works["10.1000/x"]["content_duplicate"] is True
+    assert cli_works["10.1000/y"]["content_duplicate"] is False
+
+
 def _seed_at_risk_works(db):
     """Two at-risk works for the H266 stats summary: X (full+drifted) + Z (all ref).
 
