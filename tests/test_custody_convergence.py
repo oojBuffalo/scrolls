@@ -6827,3 +6827,255 @@ def test_context_drift_filter_partitions_the_facets_drift_aggregate(scrolls_home
             "_Custody:",
         )
         assert rendered_drift_counts(headline) == {posture: expected}
+
+
+# --- the content-identity cross-surface convergence invariant (roadmap H332) --
+#
+# The content-identity / near-duplicate theme (H325–H331) spread ONE fold —
+# `items.content_duplicate_groups`, "which held ids carry byte-identical content?"
+# (the same bytes saved from two URLs, a mirror, a cross-post, or one work captured
+# by two adapters — a genuinely new custody *shape*, custody-vision §2.7) — across
+# many surfaces: `doctor`'s `custody.content_duplicates` JSON audit (H325) and its
+# MCP twin `get_library_health` (H325), the `status` `content_duplicate_groups`/
+# `content_duplicate_items` scalars (H327), the readable `maintain` `_Duplicates:_`
+# headline (H327/H330), the per-item `show`/`get_scroll` `content_duplicate_ids`
+# siblings (H328), the work-level `works`/`get_works` `content_duplicate` flag
+# (H329), and the `export bundle` + `context` `_Duplicates:_` briefing lines (H331).
+# Each leg *claims* convergence-by-construction — one fold, rendered or sliced many
+# ways — and that claim is pinned per-leg in scattered tests. This section pins it
+# ONCE, the content-identity analogue of `test_every_custody_surface_converges_on_
+# one_picture` above: over one seeded fixture every surface reports the *same*
+# byte-identical-holding picture, so no surface can silently drift from the others —
+# a future edit that hard-codes any one count, or folds a different primitive on any
+# one surface, fails here in one obvious place (sabotage-checked below).
+#
+# The two surfaces whose scope is *honestly narrower* than the whole-library fold
+# are pinned to their documented scope, never to a false whole-library equality (the
+# works-twin scope discipline this module already applies to `stats.custody.by_source`):
+#   - the per-item read NAMES siblings, so the union of each item's {self + siblings}
+#     reconstructs exactly the whole-library groups (the per-item-vs-aggregate split);
+#   - the work-level flag is the WITHIN-WORK subset — a work is flagged iff its reps
+#     contain a whole-library group, so a cross-source group (no shared DOI) is never
+#     flagged on the works surface yet is still counted everywhere else.
+
+
+def _groups_from_per_item(per_item_ids):
+    """Reconstruct the content-duplicate groups from each item's `content_duplicate_ids`.
+
+    Each member of a byte-identical group names the *other* members (H328), so an
+    item plus its siblings is the whole group — the union over the library yields
+    exactly the `content_duplicate_groups` groups (as frozensets). A unique or
+    NULL-hash item names no siblings and contributes nothing (the H325 skip).
+    """
+    return {
+        frozenset({item_id, *siblings})
+        for item_id, siblings in per_item_ids.items()
+        if siblings
+    }
+
+
+def _seed_content_identity(db):
+    """A library with a known byte-identical structure across every axis H332 pins.
+
+    Two content-duplicate groups, exercising both the *within-work* and the
+    *cross-source* shapes, plus a unique item and a NULL-hash reference item (the
+    H325 skip) so every surface is non-vacuous on both sides:
+
+    - group A (``sha256:dupA``) — a preprint mirrored byte-identically into its DOI
+      capture: ``arxiv:w`` (DOI via its `doi.org` link) and ``crossref:10.1000/x``
+      (DOI via its `source_id`) — the **within-work** group (work ``10.1000/x``),
+      the one the `works` flag fires on;
+    - group B (``sha256:dupB``) — the same bytes saved under two unrelated `web` ids
+      (``web:m1``/``web:m2``) — a **cross-source** group that forms no work, so it is
+      counted everywhere but never flagged on the works surface;
+    - ``web:uniq`` — a distinct hash, in no group;
+    - ``web:ref`` — a reference pointer holding no content (NULL hash), skipped.
+
+    Every content-bearing title and body carries "topic" so a `topic` query matches
+    the whole hash-bearing library on the briefing surfaces (the bundle/context fold
+    is query-scoped). Returns the expected ``(groups, total_groups, total_items)``
+    the whole-library fold yields, for every surface to be tied against.
+    """
+    insert_item(db, _item(
+        "arxiv:w", "Topic preprint", source="arxiv", source_id="w",
+        url="https://arxiv.org/abs/w", links=("https://doi.org/10.1000/x",),
+        extracted_text="topic shared body", raw_text="<raw>topic shared</raw>",
+        content_hash="sha256:dupA", stage="rendered",
+    ))
+    insert_item(db, _item(
+        "crossref:10.1000/x", "Topic record", source="crossref",
+        source_id="10.1000/x", url="https://doi.org/10.1000/x",
+        extracted_text="topic shared body", raw_text="<raw>topic shared</raw>",
+        content_hash="sha256:dupA", stage="rendered",
+    ))
+    insert_item(db, _item(
+        "web:m1", "Topic mirror alpha",
+        extracted_text="topic mirror body", raw_text="<raw>topic mirror</raw>",
+        content_hash="sha256:dupB",
+    ))
+    insert_item(db, _item(
+        "web:m2", "Topic mirror beta",
+        extracted_text="topic mirror body", raw_text="<raw>topic mirror</raw>",
+        content_hash="sha256:dupB",
+    ))
+    insert_item(db, _item(
+        "web:uniq", "Topic unique",
+        extracted_text="topic unique body", raw_text="<raw>topic unique</raw>",
+        content_hash="sha256:uniq",
+    ))
+    insert_item(db, _item(
+        "web:ref", "Topic reference pointer", stage="detected",  # no content → NULL hash
+    ))
+    return (
+        {
+            frozenset({"arxiv:w", "crossref:10.1000/x"}),
+            frozenset({"web:m1", "web:m2"}),
+        },
+        2,  # total_groups
+        4,  # total_items
+    )
+
+
+def test_every_content_identity_surface_converges_on_one_picture(scrolls_home, capsys):
+    # roadmap H332: the content-identity count reads IDENTICALLY across every surface
+    # the theme (H325–H331) spread the `content_duplicate_groups` fold onto — `doctor`,
+    # MCP `get_library_health`, the `status` scalars, the `maintain` headline, the
+    # per-item `show`/`get_scroll` siblings, the work-level `works`/`get_works` flag,
+    # and the `export bundle`/`context` briefing lines — over one seeded fixture (the
+    # content-identity analogue of `test_every_custody_surface_converges_on_one_picture`).
+    from scrolls import mcp_server
+    from scrolls.bundle import build_bundle
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    expected_groups, total_groups, total_items = _seed_content_identity(db)
+    capsys.readouterr()
+
+    # --- the divergence-truth source: `doctor`'s whole-library audit ------------
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup["status"] == "ok"
+    assert dup["total_groups"] == total_groups == 2
+    assert dup["total_items"] == total_items == 4
+    assert {frozenset(g["ids"]) for g in dup["groups"]} == expected_groups
+    # non-vacuous: both shapes present (within-work + cross-source), and a unique +
+    # a NULL-hash reference item are held but in no group (6 items, 4 in groups)
+    assert len(list_items(db)) == 6
+
+    # --- 1. MCP `get_library_health` carries `doctor`'s block verbatim ----------
+    assert mcp_server.get_library_health()["content_duplicates"] == dup
+
+    # --- 2. the `status` scalars (the JSON-status counterpart, H327) ------------
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["custody"]["content_duplicate_groups"] == total_groups
+    assert status["custody"]["content_duplicate_items"] == total_items
+
+    # --- 3. the readable `maintain` `_Duplicates:_` headline (first run → bare) --
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    headline = (
+        f"_Duplicates: {total_groups} group(s) of byte-identical content "
+        f"({total_items} item(s))._"
+    )
+    assert report["duplicates_headline"] == headline
+    # first run → the bare point-in-time line, no ▲/▼ trend clause: the delta exists
+    # but its `change` is the honest null (no prior snapshot to difference against)
+    assert report["delta"]["content_duplicate_groups"]["change"] is None
+
+    # --- 4. per-item `show`/`get_scroll` siblings reconstruct the groups --------
+    cli_siblings, mcp_siblings = {}, {}
+    for item in list_items(db):
+        assert main(["show", item.id]) == 0
+        cli_siblings[item.id] = json.loads(capsys.readouterr().out)["content_duplicate_ids"]
+        mcp_siblings[item.id] = mcp_server.get_scroll(item.id)["content_duplicate_ids"]
+    assert cli_siblings == mcp_siblings  # CLI ≡ MCP, per item
+    # the union of each item's {self + siblings} reconstructs exactly the groups
+    assert _groups_from_per_item(cli_siblings) == expected_groups
+    # the unique item and the NULL-hash reference item name no siblings
+    assert cli_siblings["web:uniq"] == [] and cli_siblings["web:ref"] == []
+
+    # --- 5. the work-level flag is the WITHIN-WORK subset of the groups ----------
+    assert main(["works"]) == 0
+    works = json.loads(capsys.readouterr().out)["works"]
+    mcp_works = mcp_server.get_works()["works"]
+    flagged = {
+        frozenset(rep["id"] for rep in w["representations"])
+        for w in works if w["content_duplicate"]
+    }
+    # exactly the within-work group (the DOI 10.1000/x reps), never the cross-source one
+    assert flagged == {frozenset({"arxiv:w", "crossref:10.1000/x"})}
+    assert flagged < expected_groups  # an honest strict subset (the works-twin scope)
+    # CLI ≡ MCP on the flag, work for work
+    assert {w["doi"]: w["content_duplicate"] for w in works} == {
+        w["doi"]: w["content_duplicate"] for w in mcp_works
+    }
+
+    # --- 6. the briefing `_Duplicates:_` lines (bundle + context) ---------------
+    # the whole hash-bearing library is in scope (every body carries "topic"), so the
+    # uncollapsed fold reads the same 2 groups / 4 items — even though the within-work
+    # pair collapses to one Best Match (the H331 uncollapsed-scope guard). The same
+    # string the `maintain` headline renders, from the same `duplicates_headline`.
+    assert headline in build_bundle(db, "topic")
+    assert headline in build_context(db, "topic")
+
+
+def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_home, capsys):
+    # sabotage check (roadmap H332): dissolving the within-work byte-identical pair
+    # (re-hash one rep) moves EVERY surface together — `doctor`/`status`/`maintain`/
+    # the per-item siblings/the work flag/the briefing lines all fall from 2 groups
+    # (4 items) to 1 group (2 items), and the work's flag flips True → False — so the
+    # convergence above tracks the data, not a constant the assertions could share.
+    import dataclasses
+
+    from scrolls import mcp_server
+    from scrolls.bundle import build_bundle
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_identity(db)
+
+    # re-hash the crossref rep so work 10.1000/x's two forms no longer share bytes —
+    # group A (the within-work pair) dissolves; group B (the cross-source pair) stays.
+    # The work itself still forms (DOI clustering is independent of content), so the
+    # works surface keeps reporting it — now with `content_duplicate: False`.
+    crossref = next(it for it in list_items(db) if it.id == "crossref:10.1000/x")
+    assert update_item(db, dataclasses.replace(crossref, content_hash="sha256:distinct"))
+    capsys.readouterr()
+
+    # the truth source falls to one cross-source group of two
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1 and dup["total_items"] == 2
+    assert {frozenset(g["ids"]) for g in dup["groups"]} == {frozenset({"web:m1", "web:m2"})}
+
+    # every read surface falls in lockstep with the truth source
+    assert mcp_server.get_library_health()["content_duplicates"] == dup
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["custody"]["content_duplicate_groups"] == 1
+    assert status["custody"]["content_duplicate_items"] == 2
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    headline = "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    assert json.loads(capsys.readouterr().out)["duplicates_headline"] == headline
+
+    # the per-item siblings drop the dissolved pair (arxiv:w/crossref now name none)
+    siblings = {}
+    for item in list_items(db):
+        assert main(["show", item.id]) == 0
+        siblings[item.id] = json.loads(capsys.readouterr().out)["content_duplicate_ids"]
+    assert siblings["arxiv:w"] == [] and siblings["crossref:10.1000/x"] == []
+    assert _groups_from_per_item(siblings) == {frozenset({"web:m1", "web:m2"})}
+
+    # the work-level flag flips True → False (its forms no longer share bytes), while
+    # the work is still reported — the honest within-work scope tracking the data
+    assert main(["works"]) == 0
+    cli_works = {w["doi"]: w for w in json.loads(capsys.readouterr().out)["works"]}
+    mcp_works = {w["doi"]: w for w in mcp_server.get_works()["works"]}
+    assert cli_works["10.1000/x"]["content_duplicate"] is False
+    assert mcp_works["10.1000/x"]["content_duplicate"] is False
+
+    # the briefing lines fall too — same string on bundle and context
+    assert headline in build_bundle(db, "topic")
+    assert headline in build_context(db, "topic")
