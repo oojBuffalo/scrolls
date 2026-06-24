@@ -3760,7 +3760,9 @@ def _bundle_last_checked(text):
     ``never re-checked against its source`` for one with no verdict. So the time
     axis is *present* in the Markdown surface too — parse the ``as of`` date (or
     `None` for never-checked) to compare it against the JSON surfaces'
-    `last_checked` (roadmap H88).
+    `last_checked` (roadmap H88). Since H317 the drift line may carry a trailing
+    ``· rank `<strength>` `` per-match rank marker after the timestamp, so the
+    pattern tolerates (and ignores) it — the timestamp is the captured token.
     """
     stamps = {}
     current = None
@@ -3769,7 +3771,7 @@ def _bundle_last_checked(text):
         if heading:
             current = heading.group(1)
             continue
-        custody = re.match(r"^- custody `\w+`.* as of (\S+)\s*$", line)
+        custody = re.match(r"^- custody `\w+`.* as of (\S+)(?: · rank `\w+`)?\s*$", line)
         never = re.match(r"^- custody `unverified` — never re-checked", line)
         if current is not None and (custody or never):
             stamps[current] = custody.group(1) if custody else None

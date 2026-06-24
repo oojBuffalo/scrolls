@@ -3589,3 +3589,129 @@ def test_bundle_html_custody_scope(scrolls_home):
     assert html_bundle.count('<section class="scroll">') == 1
     assert "wikipedia:en:Full" in html_bundle
     assert "wikipedia:en:Partial" not in html_bundle
+
+
+# --- the explainable-ranking surface on the shareable bundle (H317) ----------
+#
+# `scrolls export bundle <query>` is built from the *same* ranked `search_items`
+# as `search`/`context`, but `_gather_scope` discarded each hit's `match_strength`
+# — so the portable briefing carried the `_Custody:_` headline and per-excerpt
+# drift tags but no rank explanation (a recipient saw *what* matched, not *how
+# strongly*). H317 threads the per-id `match_strength` out of `_gather_scope` and
+# folds it into both the Markdown and HTML forms: a bundle-level `_Strength:_`
+# headline (the shared `search.render_strength_headline` over `tally_strength`,
+# H315) beside the custody headline, and a per-scroll `· rank <strength>` marker
+# beside the drift tag. Unlike `context`, the bundle carries no cap and does not
+# collapse same-work duplicates, so the tally is over the raw matched set; the two
+# forms render byte-convergent counts by construction (the shared primitive).
+
+
+def _seed_strength_scope(db):
+    """Three scrolls all matching "widget" at three distinct rank strengths.
+
+    Title hit → `strong`, summary (first-sentence) hit → `moderate`, body-only
+    (later-sentence) hit → `weak`, grounded in the BM25 column weights
+    (title 5× > summary 2× > extracted_text 1×). `make_item`'s `summary` is the
+    first sentence of `extracted_text`, so a term placed *after* the first
+    sentence lands in `extracted_text` only → `weak`.
+    """
+    insert_item(db, make_item(
+        "wikipedia:en:Strong", "The Widget Compendium",
+        "An assortment of small machines. Many gears turn inside them.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Moderate", "Small Machines",
+        "A widget is a small machine. People build them for fun.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Weak", "Small Machines Two",
+        "A small machine made of gears. Some people call it a widget here.",
+    ))
+
+
+def test_bundle_carries_strength_headline_and_per_scroll_markers(scrolls_home):
+    # the Markdown bundle gains a bundle-level `_Strength:_` headline summarising
+    # how strongly the matches ranked, and a `· rank <strength>` marker on each
+    # scroll's drift line — the H315 explainable-ranking surface lifted to the
+    # portable briefing
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    bundle = build_bundle(db, "widget")
+    # the bundle-level rank-confidence headline (every band present, sums to N)
+    assert "_Strength: strong 1, moderate 1, weak 1 (of 3)._" in bundle
+    # the headline sits beside the scope custody headline, above the entries
+    assert bundle.index("_Strength:") < bundle.index("## 1.")
+    # each scroll's drift line carries its own per-match rank marker
+    assert "· rank `strong`" in bundle
+    assert "· rank `moderate`" in bundle
+    assert "· rank `weak`" in bundle
+
+
+def test_bundle_html_carries_strength_headline_and_markers(scrolls_home):
+    # the HTML twin: the same headline (as a paragraph) and the same per-scroll
+    # `· rank <strength>` markers — H317's two-form parity (the H271 precedent)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    html_bundle = build_bundle_html(db, "widget")
+    assert '<p class="rank-strength">' in html_bundle
+    assert "Strength: strong 1, moderate 1, weak 1 (of 3)." in html_bundle
+    # the per-scroll markers ride the drift fact, escaped <code> spans
+    assert "· rank <code>strong</code>" in html_bundle
+    assert "· rank <code>moderate</code>" in html_bundle
+    assert "· rank <code>weak</code>" in html_bundle
+
+
+def test_bundle_forms_converge_on_strength_counts(scrolls_home):
+    # the Markdown and HTML forms render byte-convergent strength counts — both
+    # fold the same `render_strength_headline(tally_strength(...))` over the same
+    # raw matched set, so the inner count string cannot disagree (H39/H271 twin)
+    main(["init"])
+    db = get_paths().db_path
+    _seed_strength_scope(db)
+
+    md = build_bundle(db, "widget")
+    html_bundle = build_bundle_html(db, "widget")
+    # the Markdown headline with its `_` emphasis stripped is the HTML content
+    md_headline = "Strength: strong 1, moderate 1, weak 1 (of 3)."
+    assert f"_{md_headline}_" in md
+    assert md_headline in html_bundle
+
+
+def test_bundle_strength_single_band(scrolls_home):
+    # honest single-band scope: a lone title hit reads `_Strength: strong 1
+    # (of 1)._` — only the present band, no zero-filled noise
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Strong", "The Widget Compendium",
+        "An assortment of small machines.",
+    ))
+
+    bundle = build_bundle(db, "widget")
+    assert "_Strength: strong 1 (of 1)._" in bundle
+    assert "moderate" not in bundle.split("## 1.")[0]  # no zero bands in the headline
+    html_bundle = build_bundle_html(db, "widget")
+    assert "Strength: strong 1 (of 1)." in html_bundle
+
+
+def test_bundle_strength_absent_on_empty_scope(scrolls_home):
+    # honest absence: an empty scope reports no rank confidence (there is nothing
+    # to rank) — the headline and markers are simply omitted, both forms
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Strong", "The Widget Compendium",
+        "An assortment of small machines.",
+    ))
+
+    bundle = build_bundle(db, "nonexistentquery")
+    assert "No matching scrolls." in bundle
+    assert "_Strength:" not in bundle
+    assert "· rank `" not in bundle
+    html_bundle = build_bundle_html(db, "nonexistentquery")
+    assert "<p>No matching scrolls.</p>" in html_bundle
+    assert 'class="rank-strength"' not in html_bundle

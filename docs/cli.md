@@ -3026,11 +3026,30 @@ tier/posture is rejected by argparse `choices` (exit 2) on the CLI, and by
 `test_bundle_unknown_custody_value_raises_valueerror`). The scope applies to the
 HTML form too (both share the gather step, `test_bundle_html_custody_scope`).
 
+Beside the scope custody headline the briefing carries a one-line **rank-confidence
+headline** (roadmap H317) — `_Strength: strong <a>, moderate <b>, weak <c> (of N)._` —
+the explainable-ranking surface (the `search`/`context` `match_strength`, custody-vision
+§3.5) lifted to the portable bundle: how many of the matches are **title hits** (`strong`,
+BM25-weight 5×), **summary hits** (`moderate`, 2×), or **body-only** (`weak`, 1×), so a
+recipient reads not just *what* matched but *how strongly* it ranked. Each in-scope scroll
+then carries its own per-match marker — `· rank \`<strength>\`` on its drift line — and the
+two fold the same value (the bundle-level headline is the histogram of the per-scroll
+markers). Unlike `scrolls context` the bundle has **no cap and no same-work collapse**
+(every match is its own entry), so the tally is over the *raw matched set* and sums to the
+entry count. It is a ledger-free FTS-rank fact (a *derived read view*, outside the
+`@generated` JSONL fence — the round-trip untouched), present on both the Markdown and the
+HTML form, which render **byte-convergent** counts from the one shared
+`render_strength_headline(tally_strength(...))` (`test_bundle_carries_strength_headline_and_per_scroll_markers`,
+`test_bundle_html_carries_strength_headline_and_markers`,
+`test_bundle_forms_converge_on_strength_counts`); an empty scope has nothing to rank, so
+the headline and markers are simply omitted (`test_bundle_strength_absent_on_empty_scope`).
+
 `--format` (default `markdown`) chooses the output form (roadmap H39). `markdown`
 is the **canonical, lossless, re-importable** bundle described above — the form
 `scrolls import bundle` round-trips against. `html` renders the *same* scope and
 the *same* per-scroll custody picture (fidelity tier, drift posture,
-classification provenance, the scope custody headline, the per-source breakdown,
+classification provenance, the scope custody headline, the rank-confidence
+`_Strength:_` headline, the per-source breakdown,
 and a `--concept` bundle's summary) as a **self-contained, browser-readable
 briefing** — one
 offline HTML file with inline CSS, no scripts, and nothing fetched from the

@@ -124,7 +124,12 @@ from scrolls.kb_llm import (
     summary_provenance,
 )
 from scrolls.render import slugify
-from scrolls.search import count_matches, search_items
+from scrolls.search import (
+    count_matches,
+    render_strength_headline,
+    search_items,
+    tally_strength,
+)
 from scrolls.works import at_risk_signal, render_at_risk_works, works_over
 
 _EXCERPT_CHARS = 600
@@ -160,6 +165,7 @@ h2 { font-size: 1.15rem; margin-top: 2rem; padding-top: 1rem;
 code { background: rgba(127,127,127,.15); padding: .1em .3em; border-radius: 3px;
        font-size: .9em; }
 .custody-headline { font-weight: 600; }
+.rank-strength { font-weight: 600; }
 .custody-attention { font-weight: 600; color: #b3261e; }
 .custody-at-risk { font-weight: 600; color: #b3261e; }
 .custody-conflicts { font-weight: 600; color: #b3261e; }
@@ -189,17 +195,25 @@ def _gather_scope(
     concept: str | None,
     fidelity: str | None = None,
     drift: str | None = None,
-) -> tuple[list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent]]:
+) -> tuple[
+    list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent], dict[str, str]
+]:
     """Resolve the bundle scope once, for both the Markdown and HTML renderers.
 
     Returns the in-scope items (every match, no cap — `count_matches` is the
     limit, the M2 completeness contract), the latest custody verdict per item
     (`latest_events`, one read for the whole scope, the drift-posture source),
-    and the in-scope verify ledger (`events_for_items`, the portable custody
-    events, roadmap H67). `count_matches` also validates the query, raising
-    ValueError on a blank one. The ledger reads are skipped when there is
-    nothing to brief (no items, incl. a missing library) so an empty/pre-init
-    bundle stays valid in either format.
+    the in-scope verify ledger (`events_for_items`, the portable custody
+    events, roadmap H67), and the per-id **rank strength** map
+    (`{id: match_strength}`, roadmap H317) — each ranked hit's
+    `strong`/`moderate`/`weak` band (the field-weight explanation behind the
+    BM25 `score`, H312), which both forms fold into a `_Strength:_` headline and
+    a per-scroll marker so the portable briefing explains *how strongly* each
+    match ranked, not just *what* matched. The strength rides the hit (already
+    on every `search_items` result), so threading it out costs no extra read.
+    `count_matches` also validates the query, raising ValueError on a blank one.
+    The ledger reads are skipped when there is nothing to brief (no items, incl. a
+    missing library) so an empty/pre-init bundle stays valid in either format.
 
     `fidelity`/`drift` (roadmap H258) are the two per-item *custody* scopes — the
     custody-filter family on the portable shareable bundle. They thread straight
@@ -241,7 +255,11 @@ def _gather_scope(
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
     verdicts = latest_events(db_path) if items else {}
     events = events_for_items(db_path, [item.id for item in items]) if items else []
-    return items, verdicts, events
+    # the per-id rank-strength explanation (roadmap H317), keyed by id so it
+    # survives the `get_item`-None filter above — every kept item is a query
+    # match, so its id is present.
+    strengths = {hit.id: hit.match_strength for hit in hits}
+    return items, verdicts, events, strengths
 
 
 def _refresh_debt_by_source(
@@ -266,6 +284,23 @@ def _refresh_debt_by_source(
     enrichment = stale_classification_counts_by_source(items)
     summary = stale_summary_counts_by_source(items, load_concept_summaries(db_path))
     return enrichment, summary
+
+
+def _strength_headline(items: list[ScrollItem], strengths: dict[str, str]) -> str:
+    """The bundle-level `_Strength:_` rank-confidence headline (roadmap H317).
+
+    The shared fold both bundle forms render so they cannot disagree: tally each
+    in-scope item's own `match_strength` (`strengths`, the `_gather_scope` map)
+    into the `{strong, moderate, weak}` histogram and distil it through the shared
+    `search.render_strength_headline` — the same primitive the `scrolls context`
+    bundle's `_Strength:_` headline uses (H315). The tally is over the *raw matched
+    set* (the export bundle has no cap and no same-work collapse, unlike `context`),
+    so the count sums to the entry count. A `weak` default keeps the fold total
+    over the structurally-impossible missing-id case (every kept item is a match).
+    """
+    return render_strength_headline(
+        tally_strength(strengths.get(item.id, "weak") for item in items)
+    )
 
 
 def build_bundle(
@@ -323,7 +358,7 @@ def build_bundle(
     # one ledger read for the whole scope: the latest custody verdict per item,
     # so each briefing entry can name its drift posture (H42) from the same
     # `latest_events` doctor aggregates — no per-item query, no disagreement.
-    items, verdicts, events = _gather_scope(
+    items, verdicts, events, strengths = _gather_scope(
         db_path, query, source, category, stage, tag, concept, fidelity, drift
     )
 
@@ -338,6 +373,19 @@ def build_bundle(
     # totals equal the per-scroll entries by construction (same get_fidelity +
     # drift_posture), the H42 convergence at scope level.
     lines += [custody_headline(items, verdicts), ""]
+    # the bundle-level rank-confidence headline (roadmap H317): one `_Strength:_`
+    # line summarising how strongly the matches ranked — strong (title hits),
+    # moderate (summary), weak (body-only) — beside the custody headline, the
+    # explainable-ranking surface (H315) lifted to the portable briefing. Unlike
+    # the `context` bundle, the export bundle carries no cap and does **not**
+    # collapse same-work duplicates (every match is its own entry), so the tally
+    # is over the *raw matched set* (`strengths` per kept item) — and the shared
+    # `render_strength_headline(tally_strength(...))` the HTML form folds over the
+    # same map renders byte-convergent counts by construction (the H39/H271 twin).
+    # Ledger-free (a pure FTS-rank fact like fidelity); honest no-op on an empty
+    # scope (nothing matched → no rank confidence to report).
+    if items:
+        lines += [_strength_headline(items, strengths), ""]
     # the readable weakest-source pointer (roadmap H159): one `_Attention:_` line
     # naming the single source with the most actionable loss and the exact recheck
     # command, so a reader skims "this one source needs attention" before scanning
@@ -404,7 +452,9 @@ def build_bundle(
             "",
         ]
         for rank, item in enumerate(items, start=1):
-            lines += _briefing_entry(rank, item, verdicts.get(item.id))
+            lines += _briefing_entry(
+                rank, item, verdicts.get(item.id), strengths.get(item.id)
+            )
 
     # the lossless custody block + the sibling custody-events block — the same
     # sentinel-fenced JSONL the HTML form embeds, so the two formats carry
@@ -491,7 +541,7 @@ def build_bundle_html(
     briefing says so, to make no false round-trip claim. Raises ValueError on a
     blank query, like `build_bundle`.
     """
-    items, verdicts, events = _gather_scope(
+    items, verdicts, events, strengths = _gather_scope(
         db_path, query, source, category, stage, tag, concept, fidelity, drift
     )
 
@@ -505,6 +555,14 @@ def build_bundle_html(
     # to the Markdown briefing's and to `status`/`context`/`doctor` (H45/H47)
     headline = custody_headline(items, verdicts).strip("_")
     body.append(f'<p class="custody-headline">{html.escape(headline)}</p>')
+    # the bundle-level rank-confidence headline (roadmap H317), the HTML twin of
+    # the Markdown `_Strength:_` line — the *same* `_strength_headline` fold (sans
+    # the markdown `_` emphasis), so the two forms render byte-convergent strength
+    # counts by construction (the H39/H271 two-form-parity precedent). Honest no-op
+    # on an empty scope (nothing matched → no rank confidence to report).
+    if items:
+        strength_line = _strength_headline(items, strengths).strip("_")
+        body.append(f'<p class="rank-strength">{html.escape(strength_line)}</p>')
     # the readable weakest-source pointer (roadmap H159), the HTML twin of the
     # Markdown `_Attention:_` line — distilled by the *same* `weakest_source` over
     # the same per-source map, so the two forms (and the JSON `attention` flag)
@@ -552,7 +610,9 @@ def build_bundle_html(
             f"<p>{len(items)} scroll(s), the whole scope — self-contained.</p>"
         )
         for rank, item in enumerate(items, start=1):
-            body += _briefing_entry_html(rank, item, verdicts.get(item.id))
+            body += _briefing_entry_html(
+                rank, item, verdicts.get(item.id), strengths.get(item.id)
+            )
 
     # the same sentinel-fenced custody blocks the Markdown form carries, embedded
     # (escaped) so the lossless data travels in the HTML too — but it is not a
@@ -732,7 +792,10 @@ def _by_source_html(
 
 
 def _briefing_entry_html(
-    rank: int, item: ScrollItem, verdict: CustodyEvent | None
+    rank: int,
+    item: ScrollItem,
+    verdict: CustodyEvent | None,
+    strength: str | None = None,
 ) -> list[str]:
     """The HTML twin of `_briefing_entry`: identity, custody facts, excerpt."""
     out = [
@@ -751,7 +814,7 @@ def _briefing_entry_html(
     )
     if item.content_hash:
         out.append(f"<li>content-hash <code>{html.escape(item.content_hash)}</code></li>")
-    out.append(f"<li>{_drift_html(verdict)}</li>")
+    out.append(f"<li>{_drift_html(verdict, strength)}</li>")
     classification = _classification_html(item)
     if classification:
         out.append(f"<li>{classification}</li>")
@@ -763,20 +826,28 @@ def _briefing_entry_html(
     return out
 
 
-def _drift_html(verdict: CustodyEvent | None) -> str:
+def _drift_html(verdict: CustodyEvent | None, strength: str | None = None) -> str:
     """The per-scroll drift posture as HTML — the twin of `_drift_line` (H42).
 
     Reads the same `custody.drift_posture` + `_POSTURE_GLOSS` the Markdown line
     does, so the HTML posture word and `doctor`'s `custody.drift` cannot disagree;
-    ``unverified`` is stated explicitly, never silently "clean".
+    ``unverified`` is stated explicitly, never silently "clean". `strength`
+    (roadmap H317) appends the same ``· rank <code><strength></code>`` per-match
+    rank marker the Markdown `_drift_line` does, escaped, so the two forms name the
+    same band; `None` omits it.
     """
     posture = drift_posture(verdict)
     if verdict is None:
-        return "custody <code>unverified</code> — never re-checked against its source"
-    return (
-        f"custody <code>{html.escape(posture)}</code> "
-        f"({html.escape(_POSTURE_GLOSS[posture])}) as of {html.escape(verdict.checked_at)}"
-    )
+        body = "custody <code>unverified</code> — never re-checked against its source"
+    else:
+        body = (
+            f"custody <code>{html.escape(posture)}</code> "
+            f"({html.escape(_POSTURE_GLOSS[posture])}) "
+            f"as of {html.escape(verdict.checked_at)}"
+        )
+    if strength is not None:
+        body += f" · rank <code>{html.escape(strength)}</code>"
+    return body
 
 
 def _classification_html(item: ScrollItem) -> str | None:
@@ -958,7 +1029,10 @@ def parse_bundle_archive(text: str) -> list[ArchiveRecord]:
 
 
 def _briefing_entry(
-    rank: int, item: ScrollItem, verdict: CustodyEvent | None
+    rank: int,
+    item: ScrollItem,
+    verdict: CustodyEvent | None,
+    strength: str | None = None,
 ) -> list[str]:
     """The readable per-scroll briefing block: identity, custody facts, excerpt."""
     out = [f"## {rank}. {item.title or item.id} (`{item.id}`)", ""]
@@ -968,7 +1042,7 @@ def _briefing_entry(
     out.append(f"- {item.canonical_url or item.url}")
     if item.content_hash:
         out.append(f"- content-hash `{item.content_hash}`")
-    out.append(_drift_line(verdict))
+    out.append(_drift_line(verdict, strength))
     classification = _classification_line(item)
     if classification:
         out.append(classification)
@@ -989,7 +1063,7 @@ _POSTURE_GLOSS = {
 }
 
 
-def _drift_line(verdict: CustodyEvent | None) -> str:
+def _drift_line(verdict: CustodyEvent | None, strength: str | None = None) -> str:
     """The per-scroll custody drift posture, from the verify ledger (roadmap H42).
 
     The posture an agent reading a shared briefing most needs to weigh: was this
@@ -1001,14 +1075,27 @@ def _drift_line(verdict: CustodyEvent | None) -> str:
     unchanged" (the drift block's honesty, on the per-scroll axis). A drifted or
     rotted scroll is still carried losslessly in the custody block below: raw is
     sacred, drift is a *recorded posture*, never a reason to drop the scroll.
+
+    `strength` (roadmap H317) appends the per-match rank marker — ``· rank
+    `<strength>` `` — naming *why* this scroll ranked (title hit `strong`, summary
+    `moderate`, body-only `weak`, the H312 `match_strength`), the per-scroll
+    counterpart of the bundle-level `_Strength:_` headline, in the `· ` marker
+    idiom the browse list-row carries its custody markers (H89). Labeled `rank`
+    (unlike `context`'s bare `· <strength>` on its match list) because the bundle's
+    per-scroll facts are all labeled, so a bare band word beside a timestamp would
+    be ambiguous. `None` (a caller with no rank context) omits it.
     """
     posture = drift_posture(verdict)
     if verdict is None:
-        return "- custody `unverified` — never re-checked against its source"
-    return (
-        f"- custody `{posture}` ({_POSTURE_GLOSS[posture]}) "
-        f"as of {verdict.checked_at}"
-    )
+        line = "- custody `unverified` — never re-checked against its source"
+    else:
+        line = (
+            f"- custody `{posture}` ({_POSTURE_GLOSS[posture]}) "
+            f"as of {verdict.checked_at}"
+        )
+    if strength is not None:
+        line += f" · rank `{strength}`"
+    return line
 
 
 def _classification_line(item: ScrollItem) -> str | None:
