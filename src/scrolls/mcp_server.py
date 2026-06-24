@@ -123,6 +123,7 @@ def search_scrolls(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> list[dict[str, Any]]:
     """Full-text search over the library; hits are best-first with snippets.
 
@@ -175,6 +176,15 @@ def search_scrolls(
     `weak` (any field) — ANDed into the ranked match before the cap, so it returns
     the top hits at that strength (e.g. only the matches whose query is in the
     *title*). The rank-axis companion of `fidelity`/`drift`.
+
+    `content_duplicate` (a flag) keeps only the matches the library holds a
+    byte-identical copy of under another id — the content-duplicate set (the same
+    bytes saved twice; the content-identity custody shape), the browse-axis companion
+    of each hit's `content_duplicate_ids` and `list_scrolls(content_duplicate=)`. Like
+    `fidelity`/`drift`/`strength` it is ANDed into the ranked match before the cap, so
+    it returns the top duplicated matches. The sibling may live in another source (a
+    content group spans the query scope), so it keeps a hit whose bytes are also held
+    *anywhere*. Report-only — it names redundancy, never merges it.
     """
     paths = get_paths()
     hits = search_items(
@@ -189,6 +199,7 @@ def search_scrolls(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     return [hit_payload(hit) for hit in hits]
 
@@ -204,6 +215,7 @@ def list_scrolls(
     stale_before: str | None = None,
     stale_classification: bool = False,
     stale_summary: bool = False,
+    content_duplicate: bool = False,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """Browse library items by facet — the enumeration counterpart to search_scrolls.
@@ -233,8 +245,16 @@ def list_scrolls(
     live members would no longer reproduce — the stale-summary set, the read-side
     companion of `scrolls kb --stale` (the members a refresh's clusters span); an
     item in several stale concepts appears once, and ANDed with `source` it
-    returns that source's members of the clusters it participates in. Items come
-    oldest-saved first, capped at `limit`
+    returns that source's members of the clusters it participates in.
+    `content_duplicate` (a flag) selects only the items the library holds a
+    byte-identical copy of under another id — the content-duplicate set (the same
+    bytes saved twice; the content-identity custody shape), the browse-axis companion
+    of `get_scroll`'s `content_duplicate_ids` and `search_scrolls(content_duplicate=)`;
+    the rows returned are exactly the held members of `get_library_health`'s
+    `custody.content_duplicates` groups. The sibling may live in another source (a
+    content group spans sources), so ANDed with `source` it returns that source's
+    items with a byte-identical sibling *anywhere* held; report-only, never a merge.
+    Items come oldest-saved first, capped at `limit`
     (default 50) to stay context-friendly — raise it to see more. Each entry is a
     summary (id, source, url, title, category, stage, saved_at, the custody
     axes — the `fidelity` tier (full/partial/reference, ADR 0097), the `drift`
@@ -263,6 +283,7 @@ def list_scrolls(
         stale_before=boundary,
         stale_classification=stale_classification,
         stale_summary=stale_summary,
+        content_duplicate=content_duplicate,
     )[:limit]
     # Membership is a whole-library property (ADR 0101): cluster over every
     # item so a filtered/limited listing still reports an item's siblings, then

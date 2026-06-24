@@ -954,6 +954,20 @@ def build_parser() -> argparse.ArgumentParser:
         "the stale clusters",
     )
     list_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only items the library holds a byte-identical copy of under another "
+        "id — the content-duplicate set (the same bytes saved twice, a mirror or "
+        "cross-post; the content-identity custody shape). The browse-axis companion "
+        "of `scrolls show`'s content_duplicate_ids; the rows returned are exactly "
+        "the held members of `scrolls doctor`'s custody.content_duplicates groups. "
+        "A boolean flag (yes/no per item), not a value filter; report-only, never a "
+        "merge. The sibling may live in another source, so ANDed with --source it "
+        "returns that source's items with a byte-identical sibling anywhere. ANDs "
+        "with --fidelity/--drift",
+    )
+    list_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -1330,6 +1344,19 @@ def build_parser() -> argparse.ArgumentParser:
         "before --limit, so it returns the top hits at that strength",
     )
     search_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only hits the library holds a byte-identical copy of under another "
+        "id — the content-duplicate set (the content-identity custody shape); the "
+        "browse-axis companion of `scrolls list --content-duplicate` and `show`'s "
+        "content_duplicate_ids. A boolean flag, report-only (never a merge), ANDed "
+        "into the ranked match before --limit. The sibling may live in another "
+        "source (a content group spans the query scope), so it returns the top "
+        "matches with a byte-identical sibling anywhere held. ANDs with "
+        "--fidelity/--drift/--strength",
+    )
+    search_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1603,6 +1630,7 @@ def main(argv: list[str] | None = None) -> int:
             args.stale_before,
             args.stale_classification,
             args.stale_summary,
+            args.content_duplicate,
             args.limit,
             args.stats,
         )
@@ -1678,6 +1706,7 @@ def main(argv: list[str] | None = None) -> int:
             args.fidelity,
             args.drift,
             args.strength,
+            args.content_duplicate,
         )
     if args.command == "set":
         return _cmd_set(args.id, args.assignments)
@@ -3608,6 +3637,7 @@ def _cmd_list(
     stale_before: str | None = None,
     stale_classification: bool = False,
     stale_summary: bool = False,
+    content_duplicate: bool = False,
     limit: int | None = None,
     stats: bool = False,
 ) -> int:
@@ -3625,6 +3655,7 @@ def _cmd_list(
         # echoed only when honored, so the scope names exactly the filters applied
         "stale_classification": True if stale_classification else None,
         "stale_summary": True if stale_summary else None,
+        "content_duplicate": True if content_duplicate else None,
         "limit": limit,
     }
     # A `--stale-before` boundary normalizes through the one `checked_at`
@@ -3668,6 +3699,7 @@ def _cmd_list(
         stale_before=boundary,
         stale_classification=stale_classification,
         stale_summary=stale_summary,
+        content_duplicate=content_duplicate,
     )
     matched = len(matched_items)
     items = matched_items[:limit] if limit is not None else matched_items
@@ -3976,6 +4008,7 @@ def _cmd_search(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     paths = get_paths()
     try:
@@ -3991,6 +4024,7 @@ def _cmd_search(
             fidelity=fidelity,
             drift=drift,
             strength=strength,
+            content_duplicate=content_duplicate,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -4014,6 +4048,7 @@ def _cmd_search(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     # `stats.custody` (roadmap H98): the custody tally over the *matched* scope, not
     # just the returned page — each hit already carries its `fidelity`/`drift` (the
@@ -4023,7 +4058,7 @@ def _cmd_search(
     matched_hits = hits if matched <= len(hits) else search_items(
         paths.db_path, query, limit=matched, source=source, category=category,
         stage=stage, tag=tag, concept=concept, fidelity=fidelity, drift=drift,
-        strength=strength,
+        strength=strength, content_duplicate=content_duplicate,
     )
     custody = tally_custody((hit.fidelity, hit.drift) for hit in matched_hits)
     # `stats.custody.by_source` (roadmap H155): the query-matched scope split per
@@ -4052,6 +4087,9 @@ def _cmd_search(
         "fidelity": fidelity,
         "drift": drift,
         "strength": strength,
+        # the content-identity flag rides the `None`-is-pruned boolean convention
+        # (H338): echoed only when honored, so the scope names exactly the filters
+        "content_duplicate": True if content_duplicate else None,
         "limit": limit,
     }
     print(json.dumps(scope_envelope(

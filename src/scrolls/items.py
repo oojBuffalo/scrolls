@@ -604,6 +604,7 @@ def list_items(
     stale_before: str | None = None,
     stale_classification: bool = False,
     stale_summary: bool = False,
+    content_duplicate: bool = False,
 ) -> list[ScrollItem]:
     """All items, oldest saved first; filters combine with AND.
 
@@ -675,6 +676,21 @@ def list_items(
     eligible over its full membership, so narrowing it to S keeps S's members),
     equal to the S-members `kb --stale --source S` would refresh. Nothing
     eligible or nothing stale is the honest empty selection, never an error.
+
+    `content_duplicate` is the fifth post-SQL filter that is not a stored column
+    (roadmap H338): when true it keeps only the held items carrying ≥1 byte-identical
+    sibling — the same bytes held under another id (`content_duplicate_groups`, the
+    content-identity custody shape H325) — the browse-axis companion of the per-item
+    `content_duplicate_ids` read (H328). Like `stale_summary` it is **not** item-local:
+    a content group spans the whole library (the H328 cross-source rule), so the
+    sibling index is folded over the **whole library** (`content_duplicate_index` over
+    a fresh `list_items` read) and then intersected with the already-filtered rows by
+    id. The intersection ANDs it with every other facet — `--source S` returns S's
+    items that have a byte-identical sibling *anywhere* held (the sibling may live in
+    another source) — while the rows keep this listing's `saved_at, id` ordering. A
+    unique or NULL/empty-`content_hash` item is dropped (the H325 NULL-safe rule).
+    **Report-only**, never a merge (raw is sacred; the H325 no-fabricated-act
+    discipline) — the kept set names what an operator may dedup, the tool never does.
     """
     clauses, params = item_filters(source, category, stage, tag, concept)
     query = "SELECT * FROM items"
@@ -746,6 +762,17 @@ def list_items(
             )
         }
         items = [item for item in items if item.id in stale_ids]
+    if content_duplicate:
+        # The content-identity axis (roadmap H338): keep only the held items that
+        # have a byte-identical sibling. Like `stale_summary` it is not item-local —
+        # a content group spans the whole library (the H328 cross-source rule) — so
+        # the sibling index is folded over a fresh whole-library read and intersected
+        # with the already-filtered rows by id (it ANDs with every facet above). An id
+        # present in the index has ≥1 sibling; a unique or NULL-hash item is absent
+        # (the H325 NULL-safe rule). Report-only — the kept set names redundancy an
+        # operator may dedup, never a merge the tool performs (raw is sacred).
+        dup_index = content_duplicate_index(list_items(db_path))
+        items = [item for item in items if item.id in dup_index]
     return items
 
 

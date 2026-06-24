@@ -2145,6 +2145,152 @@ def test_show_unique_item_names_no_content_duplicates(scrolls_home, capsys):
     assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == []
 
 
+# --- H338: list/search --content-duplicate — the content-identity browse filter --
+
+
+def _seed_content_duplicate_mix(db):
+    """Two byte-identical content groups + a unique held + a reference-only item.
+
+    Group 1 (full fidelity) is cross-source — `web:a` and `arxiv:1` share
+    `content_hash=dup1` (a mirror captured by two adapters); group 2 (partial
+    fidelity) is single-source — `web:p`/`web:q` share `content_hash=dup2`,
+    holding only a summary + the fingerprint (no body → partial). `web:solo` is a
+    held singleton and `web:ref` a NULL-hash reference. So `--content-duplicate`
+    keeps exactly the four group members, `--source web` narrows to the web ones
+    (the cross-source sibling still earns `web:a` its keep), and `--fidelity full`
+    narrows to group 1 — and the kept set equals `doctor`'s content-duplicate
+    group members.
+    """
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://e.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="alpha copy",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup1", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T01:00:00+00:00", title="alpha mirror",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup1", stage="rendered"))
+    # partial: summary + hash only (no raw/extracted body), so get_fidelity → partial
+    insert_item(db, ScrollItem(
+        id="web:p", source="web", url="https://e.com/p",
+        saved_at="2026-06-12T02:00:00+00:00", title="alpha p",
+        summary="alpha digest", content_hash="sha256:dup2", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:q", source="web", url="https://e.com/q",
+        saved_at="2026-06-12T03:00:00+00:00", title="alpha q",
+        summary="alpha digest", content_hash="sha256:dup2", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:solo", source="web", url="https://e.com/solo",
+        saved_at="2026-06-12T04:00:00+00:00", title="alpha solo",
+        extracted_text="x", raw_text="<r>x</r>",
+        content_hash="sha256:solo", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://e.com/ref",
+        saved_at="2026-06-12T05:00:00+00:00", title="alpha ref"))
+
+
+def test_list_content_duplicate_keeps_only_siblings(scrolls_home, capsys):
+    # H338: `list --content-duplicate` keeps only the held items carrying a
+    # byte-identical sibling (the two content groups), dropping the unique held
+    # item and the NULL-hash reference — and the kept ids equal exactly the union
+    # of `doctor`'s content-duplicate group members (the drill-from-the-report tie).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["list", "--content-duplicate"])
+    kept = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:a", "arxiv:1", "web:p", "web:q"}  # unique + ref dropped
+
+    # converges with doctor: the kept set is exactly the group members
+    main(["doctor"])
+    groups = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]["groups"]
+    members = {item_id for group in groups for item_id in group["ids"]}
+    assert kept == members
+
+
+def test_list_content_duplicate_composes_with_source_and_fidelity(scrolls_home, capsys):
+    # H338: the filter ANDs with --source and --fidelity (the H251/H253 fold
+    # composition), and the sibling scope is whole-library (a content group spans
+    # sources, the H328 rule), so --source web still keeps web:a whose only sibling
+    # (arxiv:1) lives in another source.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    # whole-library sibling scope: web:a is kept though its sibling is arxiv (now
+    # out of scope); arxiv:1 itself is dropped by --source web
+    main(["list", "--content-duplicate", "--source", "web"])
+    kept = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:a", "web:p", "web:q"}
+
+    # --fidelity full narrows to group 1 (the partial group 2 drops)
+    main(["list", "--content-duplicate", "--fidelity", "full"])
+    kept = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:a", "arxiv:1"}
+
+    # --fidelity partial narrows to group 2
+    main(["list", "--content-duplicate", "--fidelity", "partial"])
+    kept = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:p", "web:q"}
+
+
+def test_list_content_duplicate_stats_echoes_scope(scrolls_home, capsys):
+    # H338: the `--stats` envelope echoes `content_duplicate: true` (the
+    # `None`-is-pruned boolean convention) and `matched` counts only the kept set.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["list", "--content-duplicate", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["content_duplicate"] is True
+    assert payload["stats"]["matched"] == 4
+    # a plain listing prunes the key (honored-only echo)
+    main(["list", "--stats"])
+    assert "content_duplicate" not in json.loads(capsys.readouterr().out)["scope"]
+
+
+def test_search_content_duplicate_keeps_only_siblings(scrolls_home, capsys):
+    # H338: `search --content-duplicate` keeps only the matches the library holds a
+    # byte-identical copy of, dropping the unique held match and the NULL-hash
+    # reference — the browse filter on the ranked surface, ANDed before the cap.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--content-duplicate"])
+    kept = {hit["id"] for hit in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:a", "arxiv:1", "web:p", "web:q"}  # solo + ref dropped
+
+    # composes with --fidelity (ANDed into the ranked match before the cap)
+    main(["search", "alpha", "--content-duplicate", "--fidelity", "full"])
+    kept = {hit["id"] for hit in json.loads(capsys.readouterr().out)}
+    assert kept == {"web:a", "arxiv:1"}
+
+
+def test_search_content_duplicate_stats_denominator(scrolls_home, capsys):
+    # H338: `count_matches` honors the flag, so the G2 truncation denominator
+    # counts only the duplicated matches (never marked truncated by unique hits it
+    # never showed), and the scope echoes the honored flag.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["search", "alpha", "--content-duplicate", "--limit", "2", "--stats"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["content_duplicate"] is True
+    assert payload["stats"]["matched"] == 4  # the four duplicated matches, not 6
+    assert payload["stats"]["returned"] == 2
+    assert payload["stats"]["truncated"] is True
+
+
 def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
     from scrolls.classify import RULESET_FINGERPRINT
 

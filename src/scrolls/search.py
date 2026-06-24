@@ -186,6 +186,28 @@ _STRENGTH_CLAUSE = (
     "items_fts.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)"
 )
 
+# The content-identity filter (roadmap H338) as a WHERE clause: keep only the
+# matches the library holds a byte-identical copy of under another id — the
+# content-duplicate custody shape (`content_duplicate_groups`, H325; the per-item
+# `content_duplicate_ids` read, H328). Unlike `list_items` — which has no cap, so it
+# sieves the loaded rows in Python against the `content_duplicate_index` fold —
+# `search` applies a ranked LIMIT, so the predicate must scope the *ranked*
+# selection (the top-k duplicated matches) before the cap, exactly as
+# `--fidelity`/`--drift`/`--strength` do. It therefore rides a SQL clause: a held
+# item (non-NULL/empty `content_hash`, the H325 NULL-safe rule) whose `content_hash`
+# is shared by ≥2 rows **across the whole `items` table** (a content group spans the
+# query scope — the H328 cross-source rule — so the correlated sub-count is
+# unscoped, never narrowed by the outer facets). Because `id` is the PK, a row count
+# is a distinct-id count, so `>= 2` is exactly `content_duplicate_groups`'s
+# ≥2-distinct-id flag; the convergence guard (H332/H338) pins the SQL clause and the
+# Python fold on one count. A boolean flag (no bound parameter): present → the clause
+# ANDs in, absent → nothing. ANDed before the LIMIT, never a post-cap sieve.
+_CONTENT_DUPLICATE_CLAUSE = (
+    "items.content_hash IS NOT NULL AND items.content_hash != '' "
+    "AND (SELECT COUNT(*) FROM items dup "
+    "WHERE dup.content_hash = items.content_hash) >= 2"
+)
+
 
 def _strength_match(strength: str, tokens: list[str]) -> str:
     """The column-restricted FTS match string behind `--strength` (H314).
@@ -212,6 +234,7 @@ def _search_filters(
     drift: str | None,
     strength: str | None = None,
     tokens: list[str] | None = None,
+    content_duplicate: bool = False,
 ) -> tuple[list[str], list[str]]:
     """The shared facet clauses for the ranked query and its count.
 
@@ -255,6 +278,11 @@ def _search_filters(
             )
         clauses.append(_STRENGTH_CLAUSE)
         params.append(_strength_match(strength, tokens or []))
+    if content_duplicate:
+        # A boolean flag (H338): the clause carries no bound parameter — it ANDs in
+        # the whole-library content-identity predicate and is absent otherwise, the
+        # `--at-risk` yes/no-property shape (H262), not a multi-valued tier/posture.
+        clauses.append(_CONTENT_DUPLICATE_CLAUSE)
     return clauses, params
 
 
@@ -308,6 +336,7 @@ def search_items(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> list[SearchHit]:
     """BM25-ranked hits for a free-text query; raises ValueError if it has no tokens.
 
@@ -346,13 +375,24 @@ def search_items(
     top hits at that strength), not a post-cap sieve. An unknown band is a
     `ValueError` (closed vocabulary).
 
+    `content_duplicate` is the content-identity axis (H338): a boolean flag that keeps
+    only the matches the library holds a byte-identical copy of under another id (the
+    content-duplicate custody shape, H325/H328) — the browse-axis companion of the
+    per-hit `content_duplicate_ids` read. Like `fidelity`/`drift`/`strength` it rides
+    a SQL clause ANDed before the LIMIT (a whole-library `content_hash` sub-count), so
+    it scopes the ranked selection (the top duplicated matches), not a post-cap sieve.
+    The sibling scope is whole-library (a content group spans the query scope, the
+    H328 cross-source rule), and a unique or NULL-hash match is dropped (the H325
+    NULL-safe rule). Report-only — it names redundancy, never a merge.
+
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
     """
     tokens = _escape_tokens(query)
     match = " ".join(tokens)
     clauses, params = _search_filters(
-        source, category, stage, tag, concept, fidelity, drift, strength, tokens
+        source, category, stage, tag, concept, fidelity, drift, strength, tokens,
+        content_duplicate,
     )
     if not db_path.exists():
         return []
@@ -410,6 +450,7 @@ def count_matches(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     """Total items matching `query` in scope, ignoring the result cap.
 
@@ -425,12 +466,15 @@ def count_matches(
     `--drift verified --stats` result is never marked truncated by hits at
     postures it never showed. `strength` (the rank-axis filter, H314) is honored
     too, so a `--strength strong --stats` result is never marked truncated by
-    weaker-landing hits it never showed.
+    weaker-landing hits it never showed. `content_duplicate` (the content-identity
+    flag, H338) is honored too, so a `--content-duplicate --stats` result is never
+    marked truncated by unique matches it never showed.
     """
     tokens = _escape_tokens(query)
     match = " ".join(tokens)
     clauses, params = _search_filters(
-        source, category, stage, tag, concept, fidelity, drift, strength, tokens
+        source, category, stage, tag, concept, fidelity, drift, strength, tokens,
+        content_duplicate,
     )
     if not db_path.exists():
         return 0

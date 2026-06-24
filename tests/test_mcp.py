@@ -902,6 +902,112 @@ def test_list_scrolls_stale_summary_is_empty_when_nothing_stale(scrolls_home):
     assert mcp_server.list_scrolls(stale_summary=True) == []
 
 
+# --- H338: content-duplicate browse filter — MCP parity with the CLI ---------
+
+
+def _seed_content_duplicate_mix(db):
+    """Two byte-identical content groups + a unique held + a NULL-hash reference.
+
+    Group 1 is cross-source (`web:a`/`arxiv:1`, full); group 2 single-source
+    (`web:p`/`web:q`, partial — summary + hash, no body); `web:solo` is held
+    unique; `web:ref` reference-only. The same mix the CLI H338 tests use, so the
+    MCP twins can be checked at parity. All carry the `alpha` token so the ranked
+    surface matches them.
+    """
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://e.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="alpha copy",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup1", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T01:00:00+00:00", title="alpha mirror",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup1", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:p", source="web", url="https://e.com/p",
+        saved_at="2026-06-12T02:00:00+00:00", title="alpha p",
+        summary="alpha digest", content_hash="sha256:dup2", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:q", source="web", url="https://e.com/q",
+        saved_at="2026-06-12T03:00:00+00:00", title="alpha q",
+        summary="alpha digest", content_hash="sha256:dup2", stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="web:solo", source="web", url="https://e.com/solo",
+        saved_at="2026-06-12T04:00:00+00:00", title="alpha solo",
+        extracted_text="x", raw_text="<r>x</r>",
+        content_hash="sha256:solo", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:ref", source="web", url="https://e.com/ref",
+        saved_at="2026-06-12T05:00:00+00:00", title="alpha ref"))
+
+
+def test_list_scrolls_filters_by_content_duplicate(scrolls_home):
+    # H338: the MCP twin of `scrolls list --content-duplicate` — keeps only the
+    # held items carrying a byte-identical sibling, dropping the unique held item
+    # and the NULL-hash reference; whole-library sibling scope (web:a kept under
+    # source=web though its sibling is arxiv); composes with source/fidelity.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+
+    assert {r["id"] for r in mcp_server.list_scrolls(content_duplicate=True)} == {
+        "web:a", "arxiv:1", "web:p", "web:q"
+    }
+    # whole-library sibling scope: web:a's only sibling (arxiv:1) is out of scope
+    assert {
+        r["id"] for r in mcp_server.list_scrolls(content_duplicate=True, source="web")
+    } == {"web:a", "web:p", "web:q"}
+    # ANDs with fidelity
+    assert {
+        r["id"] for r in mcp_server.list_scrolls(content_duplicate=True, fidelity="full")
+    } == {"web:a", "arxiv:1"}
+
+
+def test_search_scrolls_filters_by_content_duplicate(scrolls_home):
+    # H338: the MCP twin of `scrolls search --content-duplicate` — keeps only the
+    # matches the library holds a byte-identical copy of, ANDed before the cap.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+
+    assert {
+        r["id"] for r in mcp_server.search_scrolls("alpha", content_duplicate=True)
+    } == {"web:a", "arxiv:1", "web:p", "web:q"}
+    assert {
+        r["id"]
+        for r in mcp_server.search_scrolls(
+            "alpha", content_duplicate=True, fidelity="full"
+        )
+    } == {"web:a", "arxiv:1"}
+
+
+def test_content_duplicate_filter_is_cli_mcp_byte_parity(scrolls_home, capsys):
+    # H338: the MCP twins read byte-identical to the CLI surfaces on the
+    # content-identity axis (the MCP-is-a-thin-wrapper invariant) — list and search.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    # the MCP payloads carry tuples (works/matched_fields) the CLI renders as JSON
+    # lists, so normalize both through one json round-trip — the standard parity tie
+    def as_json(value):
+        return json.loads(json.dumps(value))
+
+    main(["list", "--content-duplicate"])
+    cli_list = json.loads(capsys.readouterr().out)
+    assert as_json(
+        mcp_server.list_scrolls(content_duplicate=True, limit=len(cli_list) + 1)
+    ) == cli_list
+
+    main(["search", "alpha", "--content-duplicate"])
+    cli_search = json.loads(capsys.readouterr().out)
+    assert as_json(mcp_server.search_scrolls("alpha", content_duplicate=True)) == cli_search
+
+
 def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
     # custody state travels with browse results (ADR 0097): an agent sees which
     # items it holds in full without a follow-up get_scroll

@@ -7079,3 +7079,60 @@ def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_ho
     # the briefing lines fall too — same string on bundle and context
     assert headline in build_bundle(db, "topic")
     assert headline in build_context(db, "topic")
+
+
+def test_content_duplicate_browse_filter_converges_with_doctor_groups(scrolls_home, capsys):
+    # roadmap H338: the `--content-duplicate` browse filter (the content-identity
+    # analogue of `--fidelity`/`--drift`) reads off the *same* `content_duplicate_groups`
+    # fold every other surface does — so the ids it keeps equal exactly the union of
+    # `doctor`'s content-duplicate group members held within the browsed scope. The
+    # browse-axis surface joining the H332 convergence picture: `list`/`search` and
+    # their MCP twins drill to precisely the held members the whole-library report
+    # counts, never a parallel re-derivation that could disagree.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    expected_groups, _total_groups, _total_items = _seed_content_identity(db)
+    capsys.readouterr()
+
+    # the divergence-truth source: the union of `doctor`'s group members (whole library)
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert members == {m for group in expected_groups for m in group}  # the 4 held members
+
+    # 1. `list --content-duplicate` (whole-library browse) keeps exactly those members
+    assert main(["list", "--content-duplicate"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == members
+
+    # 2. `search topic --content-duplicate` keeps the same set (every member carries
+    #    "topic"), the ranked surface drilling to the same group members
+    assert main(["search", "topic", "--content-duplicate", "--limit", "50"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == members
+
+    # 3. the MCP twins read byte-parity with the CLI on the kept-id set
+    assert {r["id"] for r in mcp_server.list_scrolls(content_duplicate=True)} == members
+    assert {
+        r["id"] for r in mcp_server.search_scrolls("topic", content_duplicate=True)
+    } == members
+
+    # 4. scoped browse: the kept ids are the group members held *within the scope* (the
+    #    whole-library sibling scope — a cross-source group's web members are kept, the
+    #    arxiv/crossref ones fall out of the source filter, never the predicate)
+    assert main(["list", "--content-duplicate", "--source", "web"]) == 0
+    web_kept = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert web_kept == {m for m in members if m.startswith("web:")} == {"web:m1", "web:m2"}
+
+    # sabotage: hard-coding the predicate to a constant set would fail the tie — the
+    # kept set tracks the data (re-hash one cross-source rep → its group dissolves and
+    # both its members drop from every browse surface in lockstep)
+    import dataclasses
+
+    m1 = next(it for it in list_items(db) if it.id == "web:m1")
+    assert update_item(db, dataclasses.replace(m1, content_hash="sha256:nowunique"))
+    capsys.readouterr()
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert "web:m1" not in members and "web:m2" not in members
+    assert main(["list", "--content-duplicate"]) == 0
+    assert {r["id"] for r in json.loads(capsys.readouterr().out)} == members
