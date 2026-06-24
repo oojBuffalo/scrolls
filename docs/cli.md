@@ -4586,6 +4586,29 @@ duplicate folded into its best-ranked sibling (ADR 0101) is still *covered*
 truncated. The line appears only when there are matches — the empty bundle
 keeps its G1-locked `No matching scrolls.` form untouched.
 
+Each match also **explains why it ranked** (roadmap H315, custody-vision §3.5,
+`test_context_best_match_lines_carry_a_strength_marker`): its Best-Matches line
+ends in a compact `· <strength>` marker naming the strongest indexed field its
+query landed in — `strong` (title), `moderate` (summary), `weak` (body-only) —
+the legible companion to the opaque BM25 order each hit already carries
+(`match_strength`, H312), in the same `· ` marker idiom the browse list-row
+carries its `· <fidelity> · <drift>` custody markers (H89). Beside the Coverage
+line a one-line **`_Strength: strong <a>, moderate <b>, weak <c> (of N)._`
+headline** folds those markers into a bundle-level rank-confidence summary (the
+H313 `tally_strength` histogram, the shared `render_strength_headline`), so an
+agent skimming the bundle reads not just *what* matched but *how strongly*. The
+headline tallies the **kept** matches — the bundle collapses same-work
+duplicates (ADR 0101), so a folded sibling's strength is counted once, not twice
+(`test_context_strength_counts_a_collapsed_work_once`) — so it converges with
+the per-line markers by construction
+(`test_context_strength_headline_folds_the_per_match_markers`). Both are
+ledger-free FTS facts, so unlike the `_Custody:_` headline they travel at *every*
+budget tier, including the leanest `index` catalog
+(`test_context_strength_renders_at_every_budget_tier`), where an agent most needs
+to tell a strong match from a weak one before spending budget on bodies. The MCP
+`get_context_bundle` twin carries both for free
+(`test_get_context_bundle_carries_the_strength_explanation`).
+
 `--budget` bounds the bundle's *depth* — a budgeted boot sequence, identity/
 index first, deep bodies on demand (MVP M3, the obsidian L0–L3 adaptation,
 `tests/test_context.py`). The three tiers are strictly nested: `index` is the
@@ -4739,11 +4762,13 @@ $ scrolls context "local search"
 
 _Coverage: all 1 matching scrolls._
 
+_Strength: strong 1 (of 1)._
+
 _Custody: 1 scroll(s) · fidelity full 1 · drift unverified 1._
 
 ## Best Matches
 
-1. @karpathy: SQLite FTS5 is criminally underrated for local search. (`x:1111`) — technique
+1. @karpathy: SQLite FTS5 is criminally underrated for local search. (`x:1111`) — technique · strong
 
 ## Excerpts
 
@@ -4770,6 +4795,8 @@ $ scrolls context "database" --budget connected
 
 _Coverage: all 3 matching scrolls._
 
+_Strength: strong 3 (of 3)._
+
 _Budget: connected — best matches, the link graph, and source links, no excerpts. Re-run with `--budget full` for excerpts; `scrolls show <id>` reads a body._
 
 _Custody: 3 scroll(s) · fidelity full 3 · drift verified 1, unverified 1, drifted 1._
@@ -4781,9 +4808,9 @@ _By source:_
 
 ## Best Matches
 
-1. Full database (`web:full`)
-2. Moved database (`web:moved`)
-3. Arxiv database paper (`arxiv:1`)
+1. Full database (`web:full`) · strong
+2. Moved database (`web:moved`) · strong
+3. Arxiv database paper (`arxiv:1`) · strong
 [exit 0]
 ```
 

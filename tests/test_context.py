@@ -2020,3 +2020,132 @@ def test_context_does_not_collapse_unrelated_matches(scrolls_home, capsys):
     assert "SQLite database (`wikipedia:en:SQLite`)" in out
     assert "Postgres database (`wikipedia:en:Postgres`)" in out
     assert "same work as" not in out
+
+
+# --- the rank explanation on the bundle (roadmap H315) ----------------------
+
+
+def _strength_line(out):
+    return next(line for line in out.splitlines() if line.startswith("_Strength:"))
+
+
+def _best_match_strengths(out):
+    """The `· <band>` strength marker on each numbered Best-Matches line.
+
+    The strength is the first ` · ` segment after the `N. title (`id`)[ — cat]`
+    prefix (the work note, when present, follows it), so a fold over the lines
+    that mirrors what the `_Strength:_` headline tallies.
+    """
+    bands = []
+    in_best = False
+    for line in out.splitlines():
+        if line.startswith("## Best Matches"):
+            in_best = True
+            continue
+        if in_best and line.startswith("## "):
+            break
+        if in_best and re.match(r"^\d+\. ", line):
+            bands.append(line.split(" · ")[1])
+    return bands
+
+
+def _seed_strength_mix(db):
+    """One title hit (strong), one summary-only (moderate), one body-only (weak)
+    for the query `ranking` — each landing in exactly one strongest field."""
+    insert_item(db, make_item(
+        "wikipedia:en:Strong", "BM25 ranking guide", "a body about engines.",
+        summary="a summary about engines.",
+    ))  # `ranking` in the title → strong
+    insert_item(db, make_item(
+        "wikipedia:en:Moderate", "Plain engine title", "a body about engines.",
+        summary="this summary discusses ranking functions.",
+    ))  # `ranking` only in the summary → moderate
+    insert_item(db, make_item(
+        "wikipedia:en:Weak", "Another engine title", "deep in the body ranking appears.",
+        summary="an unrelated engine summary.",
+    ))  # `ranking` only in the body → weak
+
+
+def test_context_best_match_lines_carry_a_strength_marker(scrolls_home, capsys):
+    # roadmap H315: each match explains *why it ranked* — a `· <strength>` marker
+    # naming the strongest field its query landed in (title → strong, summary →
+    # moderate, body-only → weak). Non-vacuous: the three bands are distinct, so a
+    # return-one-fixed-band stub would fail.
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking")
+    assert "(`wikipedia:en:Strong`) · strong" in out
+    assert "(`wikipedia:en:Moderate`) · moderate" in out
+    assert "(`wikipedia:en:Weak`) · weak" in out
+
+
+def test_context_carries_a_strength_headline(scrolls_home, capsys):
+    # the bundle-level rank-confidence summary beside the Coverage line: the
+    # `tally_strength` fold over the kept matches (H313's histogram on the bundle).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking")
+    assert _strength_line(out) == "_Strength: strong 1, moderate 1, weak 1 (of 3)._"
+
+
+def test_context_strength_headline_folds_the_per_match_markers(scrolls_home, capsys):
+    # the headline and the per-line markers can never disagree: the headline is the
+    # tally of exactly the markers below it (the same `match_strength`, one fold).
+    main(["init"])
+    _seed_strength_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "ranking")
+    from collections import Counter
+
+    marker_counts = Counter(_best_match_strengths(out))
+    line = _strength_line(out)
+    for band, count in marker_counts.items():
+        assert f"{band} {count}" in line
+    assert f"(of {sum(marker_counts.values())})" in line
+
+
+def test_context_strength_counts_a_collapsed_work_once(scrolls_home, capsys):
+    # both representations of one work are strong title hits, but the bundle keeps
+    # the work once (ADR 0101) — the headline counts it once (the kept set), not a
+    # `strong 2` double-count, converging with the single Best-Matches marker.
+    main(["init"])
+    _insert_attention_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "attention transformer")
+    assert _strength_line(out) == "_Strength: strong 1 (of 1)._"
+    assert _best_match_strengths(out) == ["strong"]
+
+
+def test_context_strength_renders_at_every_budget_tier(scrolls_home, capsys):
+    # the rank explanation is a ledger-free FTS fact (like fidelity), so the marker
+    # and headline travel at every tier — including the leanest `index` catalog,
+    # where an agent most needs to tell a strong match from a weak one before
+    # spending budget on bodies.
+    main(["init"])
+    insert_item(get_paths().db_path, make_item(
+        "wikipedia:en:BM25", "BM25 ranking", "BM25 is a ranking function.",
+    ))
+    capsys.readouterr()
+
+    for budget in ("index", "connected", "full"):
+        out = run_context(capsys, "ranking", "--budget", budget)
+        assert "_Strength: strong 1 (of 1)._" in out
+        assert "(`wikipedia:en:BM25`) · strong" in out
+
+
+def test_context_strength_marker_precedes_the_work_note(scrolls_home, capsys):
+    # marker placement: `· <strength>` sits between the category and the work note,
+    # so a collapsed line reads `… — paper · strong · same work as …` (the strength
+    # is a property of the match, the note a property of the fold).
+    main(["init"])
+    _insert_attention_pair(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "attention transformer")
+    assert "· strong · same work as `crossref:10.5555/3295222`" in out

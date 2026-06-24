@@ -2428,6 +2428,33 @@ def test_get_context_bundle_is_markdown(scrolls_home, fake_wikipedia_api):
     assert "Coverage: all 1 matching scrolls" in bundle
 
 
+def test_get_context_bundle_carries_the_strength_explanation(scrolls_home):
+    # roadmap H315 — the explainable-ranking surface lifted to the context bundle
+    # over MCP: the same per-match `· <strength>` markers and `_Strength:_` headline
+    # the CLI `scrolls context` renders, since the twin returns build_context's output.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:title", source="web", url="https://ex.com/title",
+        saved_at="2026-06-12T00:00:00+00:00", title="Widget ranking guide",
+        extracted_text="a body about widgets.", summary="a summary about widgets.",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:body", source="web", url="https://ex.com/body",
+        saved_at="2026-06-12T00:00:01+00:00", title="Plain widget page",
+        extracted_text="deep in the body ranking appears once.",
+        summary="an unrelated widget summary.", stage="rendered"))
+
+    bundle = mcp_server.get_context_bundle("ranking")
+    # one title hit (strong) + one body-only hit (weak); the headline folds both
+    assert "_Strength: strong 1, weak 1 (of 2)._" in bundle
+    assert "(`web:title`) · strong" in bundle
+    assert "(`web:body`) · weak" in bundle
+
+
 def test_get_context_bundle_honors_facets(scrolls_home, fake_wikipedia_api):
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")  # category: reference
 

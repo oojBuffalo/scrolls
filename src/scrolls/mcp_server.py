@@ -595,6 +595,13 @@ def get_context_bundle(
     below `full` discloses what it omitted in a `Budget:` note, so a catalog
     bundle is never read as the whole story — an agent can boot cheap, then pull
     bodies on demand with `get_scroll`/`scrolls show` or a `full` re-run.
+
+    Each match explains why it ranked: its Best-Matches line ends in a
+    `· <strength>` marker — `strong` (the query lands in the title), `moderate`
+    (the summary), `weak` (body-only) — and a `_Strength:_` headline beside the
+    Coverage line folds those into a bundle-level rank-confidence summary, so the
+    bundle says not just what matched but how strongly (both travel at every
+    budget tier — they are ledger-free).
     """
     paths = get_paths()
     return build_context(

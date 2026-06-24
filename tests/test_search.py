@@ -966,6 +966,24 @@ def test_tally_strength_partitions_into_the_three_bands():
     assert tally_strength([]) == {"strong": 0, "moderate": 0, "weak": 0}
 
 
+def test_render_strength_headline_distils_the_tally_to_one_line():
+    # roadmap H315: the readable `_Strength:_` rank-confidence headline for the
+    # context bundle — non-zero bands in STRENGTH_BANDS order, summing to N (the
+    # `render_fidelity_holdings` precedent on the rank axis).
+    from scrolls.search import render_strength_headline, tally_strength
+
+    line = render_strength_headline(tally_strength(["strong", "weak", "strong"]))
+    assert line == "_Strength: strong 2, weak 1 (of 3)._"
+    # zero bands are dropped, the order is strongest-first
+    assert render_strength_headline({"strong": 0, "moderate": 1, "weak": 0}) == (
+        "_Strength: moderate 1 (of 1)._"
+    )
+    # the defensive empty form (the bundle returns early on no matches)
+    assert render_strength_headline({"strong": 0, "moderate": 0, "weak": 0}) == (
+        "_Strength: 0 scroll(s)._"
+    )
+
+
 def test_search_strength_strong_keeps_only_title_hits(db_path):
     # --strength strong keeps the matches whose query lands in the title.
     _seed_strength_mix(db_path)

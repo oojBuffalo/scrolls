@@ -38,6 +38,17 @@ best-ranked representation, names the folded sibling(s) and the work's
 canonical form, and excerpts the work once. A high-signal bundle should not
 spend two of its few slots on one work; the `works` membership search hits
 now carry makes the collapse a lookup, not a re-derivation.
+
+Each match also explains *why it ranked* (roadmap H315, custody-vision §3.5):
+a compact `· <strength>` marker on its Best-Matches line names the strongest
+indexed field its query landed in — `strong` (title), `moderate` (summary),
+`weak` (body-only), the legible companion to the opaque BM25 order each hit
+already carries (`match_strength`, H312). A bundle-level `_Strength:_` headline
+beside the Coverage line folds those markers into one rank-confidence summary
+(the H313 `tally_strength` histogram on the bundle). Both are ledger-free FTS
+facts, so they travel at every budget tier — even the leanest `index` catalog,
+where an agent most needs to tell a strong match from a weak one before
+spending budget on bodies.
 """
 
 from __future__ import annotations
@@ -69,7 +80,13 @@ from scrolls.items import (
 )
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import stale_summary_counts_by_source
-from scrolls.search import SearchHit, count_matches, search_items
+from scrolls.search import (
+    SearchHit,
+    count_matches,
+    render_strength_headline,
+    search_items,
+    tally_strength,
+)
 from scrolls.works import render_at_risk_works
 
 _EXCERPT_CHARS = 700
@@ -223,6 +240,22 @@ def build_context(
         drift=drift,
     )
     lines += [_coverage_line(matched, len(hits)), ""]
+    # The bundle-level rank-confidence headline (roadmap H315): one `_Strength:_`
+    # line summarising how strongly the kept matches ranked — strong (title hits),
+    # moderate (summary), weak (body-only) — beside the Coverage line, the readable
+    # bundle-level fold of the per-match `· <strength>` markers below (the H313
+    # `tally_strength` histogram, the explainable-ranking surface lifted to the
+    # context bundle, custody-vision §3.5). Folded over the kept `pairs` (the bundle's
+    # ranked representations, the same set the Best-Matches markers and `_Custody:_`
+    # headline describe), *not* the raw `matched` denominator: the bundle collapses
+    # same-work duplicates (ADR 0101), so a folded sibling's strength would double-count
+    # the one work — the kept-set tally counts each work once, converging with the
+    # markers it summarises by construction. Ledger-free (a pure FTS-rank fact like
+    # fidelity), so it renders at every budget tier, including the leanest `index`.
+    lines += [
+        render_strength_headline(tally_strength(hit.match_strength for hit, _ in pairs)),
+        "",
+    ]
     budget_note = _budget_line(budget)
     if budget_note:
         lines += [budget_note, ""]
@@ -326,6 +359,17 @@ def build_context(
         line = f"{rank}. {item.title or item.id} (`{item.id}`)"
         if item.category:
             line += f" — {item.category}"
+        # the per-match rank explanation (roadmap H315): a compact `· <strength>`
+        # marker naming *why* this match ranked — title hit (`strong`), summary
+        # (`moderate`), or body-only (`weak`) — the legible companion to the opaque
+        # BM25 order, in the same `· ` marker idiom the browse list-row carries its
+        # `· <fidelity> · <drift>` custody markers (H89). It rides each hit's own
+        # `match_strength` (H312, already on every `search_items` hit), so the per-line
+        # marker and the `_Strength:_` headline above fold the same value. On the
+        # ranked list (shown at every budget tier), so the explanation travels even on
+        # a lean `index`/`connected` boot, where an agent most needs to tell a strong
+        # match from a weak one before spending budget on bodies.
+        line += f" · {hit.match_strength}"
         note = _work_note(hit, folded.get(hit.id, []))
         if note:
             line += f" · {note}"

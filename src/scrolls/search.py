@@ -576,3 +576,29 @@ def tally_strength(strengths: Iterable[str]) -> dict[str, int]:
     for strength in strengths:
         counts[strength] += 1
     return counts
+
+
+def render_strength_headline(tally: dict[str, int]) -> str:
+    """Render the readable `_Strength:_` rank-confidence headline for a context bundle.
+
+    ``_Strength: strong <a>, moderate <b>, weak <c> (of N)._`` — the rank-axis
+    counterpart of `custody.render_fidelity_holdings`'s `_Fidelity:_` line (roadmap
+    H315), for the `scrolls context` bundle. It distils a `tally_strength` histogram
+    into one line so an agent skimming the bundle reads not just *what* matched but
+    *how strongly it ranked* — how many of the matches are title hits (`strong`,
+    BM25-weight 5×), summary hits (`moderate`, 2×), or body-only (`weak`, 1×) — the
+    bundle-level confidence summary the per-line `· <strength>` markers fold up to.
+    The bands render in `STRENGTH_BANDS` order (strongest first), the non-zero ones
+    only (the `_fidelity_tokens` precedent), and the count sums to `N` so the headline
+    and the markers it summarises can never disagree. A readable line, not the JSON
+    `stats.strength` envelope `search --stats` carries (H313): the context bundle *is*
+    Markdown, so its tallies render as headlines (the `custody_headline` precedent),
+    not a JSON projection. An empty tally is the defensive ``_Strength: 0 scroll(s)._``;
+    the bundle returns early on no matches, so it is never reached there.
+    """
+    tokens = ", ".join(
+        f"{band} {tally[band]}" for band in STRENGTH_BANDS if tally.get(band)
+    )
+    if not tokens:
+        return "_Strength: 0 scroll(s)._"
+    return f"_Strength: {tokens} (of {sum(tally.values())})._"
