@@ -26,6 +26,7 @@ from scrolls.items import (
     insert_item,
     list_items,
     make_item_id,
+    prune_archive,
     ScrollItem,
 )
 from scrolls.paths import get_paths
@@ -2148,3 +2149,152 @@ def test_repairing_the_increment_clears_the_alarm_on_the_rebuilt_peer(
     )
     archive_b = run_doctor(paths_b)["custody"]["archive"]
     assert archive_b == {"status": "ok", "checked": 2, "mismatched": 0, "events": []}
+
+
+# --- the archive-integrity alarm is un-launderable by a local repair pass (roadmap H310) ---
+#
+# H295/H296/H309 prove the alarm un-launderable across the three recovery
+# *transports* (the whole-library JSONL backup, the portable bundle, the `--since`
+# increment). The untested sibling is the local *act* surface — `doctor --fix`,
+# which repairs FTS/orphans/duplicates/missing-scrolls. A corrupt archived prior
+# (`prior_hash ≠ snapshot.content_hash`) is something `--fix` cannot honestly
+# repair: it would have to *invent* the lost body or rewrite the advertised
+# fingerprint, and either is a silent overwrite of a recovery row (custody §2.4 —
+# corruption is a *recorded* event, never an overwrite). So `--fix` must leave the
+# recovery store alone and let the alarm keep firing. Correct-by-construction:
+# `_check_archive_integrity` is report-only (no `fix` arg) and the `--fix` writers
+# never touch `item_archive` (ADR 0106: the archive is a recovery convenience, not
+# the root of trust). The guard below is load-bearing — a corrupt-plus-clean seed
+# (so a vacuous all-clean read could not pass falsely) plus a byte-for-byte check
+# of the corrupt `item_archive` row across the fix pass.
+
+
+def _raw_archive_rows(db_path, item_id):
+    """Every `item_archive` row for `item_id`, column-for-column (the persisted
+    bytes the alarm reads), so a test can assert a write path left the recovery
+    store untouched. Ordered by archive id for a stable compare."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute(
+            "SELECT id, item_id, archived_at, prior_hash, superseded_by, snapshot "
+            "FROM item_archive WHERE item_id = ? ORDER BY id",
+            (item_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def test_doctor_fix_does_not_launder_the_archive_integrity_alarm(paths):
+    # `doctor --fix` over a corrupt-plus-clean store leaves the alarm firing
+    # *identically* (same checked/mismatched/events as the report-only read) and the
+    # corrupt `item_archive` row byte-unchanged — the repair pass never touches the
+    # recovery store it cannot honestly fix (custody §2.4).
+    corrupt = _seed_corrupt_plus_clean_archive(paths)
+
+    # the report-only read: the alarm names exactly the corrupt row (the load-bearing
+    # sanity — a vacuous all-clean store would pass the fix==report tie falsely).
+    report_only = run_doctor(paths)["custody"]["archive"]
+    assert report_only == {
+        "status": "ok",
+        "checked": 2,
+        "mismatched": 1,
+        "events": [
+            {
+                "item_id": corrupt,
+                "prior_hash": "sha256:tampered",
+                "snapshot_hash": "sha256:held",
+            }
+        ],
+    }
+
+    before = _raw_archive_rows(paths.db_path, corrupt)
+    fixed = run_doctor(paths, fix=True)["custody"]["archive"]
+    after = _raw_archive_rows(paths.db_path, corrupt)
+
+    # the alarm fired identically across the fix pass, and the fix left the corrupt
+    # archive row byte-for-byte as it found it — `--fix` repaired what it can offline
+    # without ever rewriting a recovery row.
+    assert fixed == report_only
+    assert after == before
+
+
+# --- the archive-integrity alarm composes honestly with `archive prune` (roadmap H311) ---
+#
+# `archive prune --apply` (H282) is the only retention-*removal* path on the
+# recovery store; nothing pinned its interaction with the H293 integrity check. The
+# alarm folds over `archived_records`, which `prune --apply` shrinks — so the count
+# must track the *remaining* store: pruning *other* priors leaves the corrupt one's
+# alarm firing identically (the prune hides nothing), and pruning the corrupt prior
+# *itself* clears it (the operator deleted the row — the one honest way it goes
+# away, never a launder; custody §2.4). The two directions below are each other's
+# mutation guard — they invert which prior the `--before` window drops. Each prior
+# is stamped with a distinct `archived_at` so a single `--before` boundary selects
+# exactly one (the H308 split-by-`archived_at` precedent).
+
+_PRUNE_EARLY = "2026-06-20T00:00:00+00:00"
+_PRUNE_BOUNDARY = "2026-06-21T00:00:00+00:00"
+_PRUNE_LATE = "2026-06-22T00:00:00+00:00"
+
+
+def test_pruning_other_priors_leaves_the_archive_alarm_firing_identically(paths):
+    # The corrupt prior is archived *after* the boundary, a clean prior *before* it,
+    # so an `archive prune --before` drops only the clean prior. The alarm then names
+    # the corrupt row byte-for-byte as before, count tracking the shrunk store.
+    _seed_archived_prior(
+        paths, "https://example.com/clean", held_hash="sha256:clean",
+        archived_at=_PRUNE_EARLY,
+    )
+    corrupt = _seed_archived_prior(
+        paths, "https://example.com/corrupt", held_hash="sha256:held",
+        archived_at=_PRUNE_LATE,
+    )
+    _tamper_archive(paths.db_path, corrupt, prior_hash="sha256:tampered")
+
+    before = run_doctor(paths)["custody"]["archive"]
+    corrupt_event = {
+        "item_id": corrupt,
+        "prior_hash": "sha256:tampered",
+        "snapshot_hash": "sha256:held",
+    }
+    assert before == {
+        "status": "ok", "checked": 2, "mismatched": 1, "events": [corrupt_event],
+    }
+
+    # prune drops only the clean prior (archived before the boundary); the corrupt
+    # one (archived after it) survives.
+    dropped = prune_archive(paths.db_path, before=_PRUNE_BOUNDARY)
+    assert [e.prior_hash for e in dropped] == ["sha256:clean"]
+
+    # the alarm still names exactly the corrupt row (event byte-identical); the count
+    # tracks the remaining store (checked falls 2→1, the clean row is gone), so the
+    # prune neither hid nor fabricated a mismatch.
+    after = run_doctor(paths)["custody"]["archive"]
+    assert after == {
+        "status": "ok", "checked": 1, "mismatched": 1, "events": [corrupt_event],
+    }
+
+
+def test_pruning_the_corrupt_prior_itself_clears_the_archive_alarm(paths):
+    # The inversion: the corrupt prior is archived *before* the boundary, a clean
+    # prior *after* it, so the same `--before` window drops the corrupt one — and
+    # deleting the offending row is the one honest way the alarm clears.
+    _seed_archived_prior(
+        paths, "https://example.com/clean", held_hash="sha256:clean",
+        archived_at=_PRUNE_LATE,
+    )
+    corrupt = _seed_archived_prior(
+        paths, "https://example.com/corrupt", held_hash="sha256:held",
+        archived_at=_PRUNE_EARLY,
+    )
+    _tamper_archive(paths.db_path, corrupt, prior_hash="sha256:tampered")
+    assert run_doctor(paths)["custody"]["archive"]["mismatched"] == 1  # dirty first
+
+    # prune drops the corrupt prior (archived before the boundary); the clean one
+    # (archived after it) survives.
+    dropped = prune_archive(paths.db_path, before=_PRUNE_BOUNDARY)
+    assert [e.prior_hash for e in dropped] == ["sha256:tampered"]
+
+    # the alarm clears — the offending row is gone, only the clean prior remains, and
+    # the count never fabricates a mismatch over a store that no longer holds one.
+    after = run_doctor(paths)["custody"]["archive"]
+    assert after == {"status": "ok", "checked": 1, "mismatched": 0, "events": []}
