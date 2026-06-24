@@ -784,6 +784,112 @@ def test_tally_relation_strength_unit(db):
     assert tally_relation_strength([]) == {"strong": 0, "moderate": 0, "weak": 0}
 
 
+# --- H324: --strength — the act-axis filter on the relation surface -----------
+#
+# Threshold semantics (at or above), the H314 `search --strength` / H254
+# `related --fidelity` sibling on the rank axis: `--strength strong` keeps only
+# identity/citation bonds, `moderate` adds topical overlap, `weak` keeps all.
+
+
+def test_related_strength_strong_keeps_only_identity_bonds(db):
+    _related_strength_mix(db)  # strong (work), moderate (tag), weak (domain)
+    strong = find_related(db, "web:anchor", strength="strong")
+    assert [h.id for h in strong] == ["pubmed:strong"]
+    assert all(h.relation_strength == "strong" for h in strong)
+
+
+def test_related_strength_moderate_keeps_band_and_stronger(db):
+    # threshold: --strength moderate keeps strong + moderate, drops weak.
+    _related_strength_mix(db)
+    moderate = find_related(db, "web:anchor", strength="moderate")
+    assert {h.relation_strength for h in moderate} == {"strong", "moderate"}
+    assert "web:weak" not in {h.id for h in moderate}
+
+
+def test_related_strength_weak_keeps_everything(db):
+    _related_strength_mix(db)
+    assert len(find_related(db, "web:anchor", strength="weak")) == 3
+
+
+def test_related_strength_row_shows_equals_what_the_filter_selects(db):
+    # a hit is kept by exactly the band it shows (the H254 row-shows-≡-filter tie):
+    # --strength <band> keeps precisely the rows whose relation_strength is at or
+    # above <band>.
+    _related_strength_mix(db)
+    order = ["strong", "moderate", "weak"]
+    for i, band in enumerate(order):
+        kept = {h.relation_strength for h in find_related(db, "web:anchor", strength=band)}
+        assert kept <= set(order[: i + 1])  # only the band and stronger
+
+
+def test_related_strength_ands_with_fidelity(db):
+    # --strength ANDs with --fidelity (the H254/H314 AND semantics): the mix's
+    # neighbours are all reference-tier, so strong∧reference keeps the same-work
+    # sibling and strong∧full keeps nothing.
+    _related_strength_mix(db)
+    assert [h.id for h in find_related(
+        db, "web:anchor", strength="strong", fidelity="reference")] == ["pubmed:strong"]
+    assert find_related(db, "web:anchor", strength="strong", fidelity="full") == []
+
+
+def test_related_strength_unknown_band_raises_valueerror(db):
+    from scrolls.related import filter_related, scored_related
+
+    _related_strength_mix(db)
+    with pytest.raises(ValueError):
+        filter_related(scored_related(db, "web:anchor"), strength="huge")
+
+
+def test_count_related_honors_the_strength_filter(db):
+    # the --stats denominator counts the kept set, never the whole scored set.
+    _related_strength_mix(db)
+    assert count_related(db, "web:anchor") == 3
+    assert count_related(db, "web:anchor", strength="strong") == 1
+
+
+def test_cli_related_strength_drills_from_the_tally(db, capsys):
+    # H324 drill-from-tally tie: --strength <band> matched == sum of the bands at
+    # or above <band> in the unfiltered strength tally (threshold, strongest-first
+    # prefix), and the filtered tally re-folds over exactly the kept slice.
+    _related_strength_mix(db)
+    capsys.readouterr()
+
+    main(["related", "web:anchor", "--stats"])
+    tally = json.loads(capsys.readouterr().out)["stats"]["strength"]
+    assert tally == {"strong": 1, "moderate": 1, "weak": 1}
+
+    assert main(["related", "web:anchor", "--strength", "moderate", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"]["strength"] == "moderate"
+    assert payload["stats"]["matched"] == tally["strong"] + tally["moderate"] == 2
+    assert payload["stats"]["strength"] == {"strong": 1, "moderate": 1, "weak": 0}
+
+
+def test_cli_related_strength_unfiltered_scope_omits_the_key(db, capsys):
+    # the None-is-pruned convention: --strength rides the scope echo only when honored.
+    _related_strength_mix(db)
+    capsys.readouterr()
+    main(["related", "web:anchor", "--stats"])
+    assert "strength" not in json.loads(capsys.readouterr().out)["scope"]
+
+
+def test_cli_related_strength_rejects_unknown_band_with_exit_2(db):
+    _related_strength_mix(db)
+    with pytest.raises(SystemExit) as exc:
+        main(["related", "web:anchor", "--strength", "huge"])
+    assert exc.value.code == 2
+
+
+def test_mcp_get_related_scrolls_strength_filter(db):
+    from scrolls.mcp_server import get_related_scrolls
+
+    _related_strength_mix(db)
+    strong = get_related_scrolls("web:anchor", strength="strong")
+    assert [h["id"] for h in strong] == ["pubmed:strong"]
+    with pytest.raises(ValueError):
+        get_related_scrolls("web:anchor", strength="nope")
+
+
 # --- H155: stats.custody.by_source — the per-source split on `related --stats` ---
 
 

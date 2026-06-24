@@ -4376,7 +4376,7 @@ The last `--stats` call is the honest empty: nothing matched, but the
 result still names the scope it checked (`query`, `source=arxiv`), so it
 can never be misread as "the library holds nothing about sqlite."
 
-### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--limit N] [--stats]`
+### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--strength BAND] [--limit N] [--stats]`
 
 Deterministic, explainable connections (IDEAS.md §10,
 `tests/test_related.py`): link edges in either direction (resolved
@@ -4419,11 +4419,28 @@ The vocabulary is closed (`full`/`partial`/`reference`;
 `related --stats`'s neighbourhood tally
 (`test_related_custody_filter_rows_drill_from_the_neighbourhood_tally`).
 
+`--strength BAND` keeps only neighbours related at that strength band **or
+stronger** (roadmap H324) — the relationship-surface twin of `search --strength`
+on the rank axis. Threshold (at or above): `--strength strong` keeps only the
+identity-/citation-grade bonds (same-work and link edges), `--strength moderate`
+adds shared concepts/tags, `--strength weak` keeps every neighbour. It folds the
+*same* per-hit `relation_strength` (H322) a hit shows, so a neighbour is kept by
+exactly the band it reports; the sieve runs **before** `--limit` (the `--fidelity`
+sieve shape), so the cap returns the top neighbours *at that strength*, and it
+**ANDs** with `--fidelity`/`--drift` (e.g. `--strength strong --fidelity full` =
+the strongly-related neighbours you can re-derive offline). Closed vocabulary
+(`strong`/`moderate`/`weak`); a typo is a usage error (exit 2). With `--stats` the
+`matched` count drills from the unfiltered `strength` tally — `--strength <band>`
+totals the bands at or above `<band>` (threshold, strongest-first prefix)
+(`test_cli_related_strength_drills_from_the_tally`,
+`test_related_strength_ands_with_fidelity`).
+
 `--stats` wraps the array in the same scope-honest `{scope, stats,
 results}` envelope `search`/`list` use (the completeness contract G2):
-`scope` names the anchor `item`, the `limit`, and any `--fidelity`/`--drift`
-filter honored (pruned when absent), and `stats` reports `returned`, `matched`
-(every item that relates *within the custody filter*, counted past the cap —
+`scope` names the anchor `item`, the `limit`, and any
+`--fidelity`/`--drift`/`--strength` filter honored (pruned when absent), and
+`stats` reports `returned`, `matched`
+(every item that relates *within the active filters*, counted past the cap —
 `src/scrolls/related.py` `count_related`), `truncated`, and a `custody`
 tally (roadmap H99) — the same `{tiers, drift}` fidelity-tier/drift-posture
 maps `search`/`list --stats` carry, here folded over the anchor's *related
@@ -5189,7 +5206,7 @@ The tools wrap the same engines as the CLI commands
 | `list_facets(field=None, source=None, category=None, stage=None, tag=None, concept=None, limit=20)` | `scrolls facets` | the filterable vocabulary with counts, optionally scoped (ADR 0080) |
 | `get_scroll(item_id)` | `scrolls show` | full item record + the per-item custody axes (`fidelity` + `drift` (H61) + `last_checked` (H84)) and `classification` view; `item_id` is an id or the item's URL (ADR 0028) |
 | `get_scroll_history(item_id, limit=None, since=None, status=None)` | `scrolls history <id> [--limit N] [--since ISO] [--status V]` | the item's custody-ledger timeline (each `{checked_at, status, prior_hash, observed_hash, detail}`, newest first); three filter axes applied verdict → window → cap: `status` (unchanged/drifted/rotted/error) the verdict, `since` the time window, `limit` the count; `[]` when never verified or nothing matches, error on an unknown id, malformed `since`, or unknown `status`; `item_id` is an id or URL (ADR 0028; `test_get_scroll_history_status_filters_like_the_cli`) |
-| `get_related_scrolls(item_id, limit=10, fidelity=, drift=)` | `scrolls related` | hits with `reasons`, a `relation_strength` band (`strong`/`moderate`/`weak`, H322 — the `match_strength` twin), and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis, sieving before the cap (H254); `item_id` is an id or URL (ADR 0028) |
+| `get_related_scrolls(item_id, limit=10, fidelity=, drift=, strength=)` | `scrolls related` | hits with `reasons`, a `relation_strength` band (`strong`/`moderate`/`weak`, H322 — the `match_strength` twin), and the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `fidelity`/`drift` scope the neighbourhood to one custody value per axis (H254) and `strength` to one rank band or stronger (H324, threshold), sieving before the cap; `item_id` is an id or URL (ADR 0028) |
 | `get_link_graph(include_isolated=False)` | `scrolls graph` | `{nodes, edges, stats}` link graph (ADR 0044); each node carries the per-item custody axes (`fidelity` + `drift` (H56) + `last_checked` (H86)); `stats.custody` carries the per-source `by_source` split (H150) and the weakest-source `attention` flag (H164) |
 | `get_works(min_representations=2, item=, fidelity=, drift=, at_risk=)` | `scrolls works` | `{works, stats}` — same-work clusters by DOI (ADR 0069); each representation carries the per-item custody axes (`fidelity` + `drift` (H64) + `last_checked` (H87)); each work carries an aggregate `custody` block `{best_fidelity, safest_drift, safely_held}` consolidating its reps (H261); `fidelity`/`drift` keep whole works that *contain* a representation at that custody value, ANDing on the same rep (the contains-semantics consolidation filter, H262); `at_risk=True` keeps only the works no representation safely holds — the negation of *∃(full ∧ unmoved)*, the at-risk-works alarm (H263) as a browse predicate, ANDing with `fidelity`/`drift` (H265); `stats.custody` tallies the reported reps (H100) and carries an `at_risk` summary `{total, at_risk, most_at_risk}` over the reported works — the works-surface twin of `get_library_health`'s at-risk alarm, convergent by construction (H266) |
 | `get_concept_page(concept)` | reading `library/concepts/<slug>.md` | Markdown page |

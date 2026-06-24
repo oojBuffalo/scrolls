@@ -1244,6 +1244,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--drift drifted to see which neighbours have moved). ANDs with --fidelity",
     )
     related_parser.add_argument(
+        "--strength",
+        choices=("strong", "moderate", "weak"),
+        default=None,
+        help="Only neighbours related at this strength band or stronger "
+        "(roadmap H324) — the relationship-surface twin of `search --strength`: "
+        "`strong` keeps only same-work/link (identity/citation) bonds, `moderate` "
+        "adds shared concepts/tags, `weak` keeps every neighbour. Threshold (at or "
+        "above); the sieve runs before --limit, so you get the top neighbours *at "
+        "that strength*. ANDs with --fidelity/--drift",
+    )
+    related_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1649,7 +1660,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_paths()
     if args.command == "related":
         return _cmd_related(
-            args.id, args.limit, args.stats, args.fidelity, args.drift
+            args.id, args.limit, args.stats, args.fidelity, args.drift, args.strength
         )
     if args.command == "rm":
         return _cmd_rm(args.refs)
@@ -3789,19 +3800,23 @@ def _cmd_related(
     stats: bool = False,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> int:
     paths = get_paths()
     try:
         resolved = resolve_item_id(item_id)
-        # The full custody-filtered scored set (roadmap H254): `filter_related`
-        # narrows to one value per axis *before* the cap, so the bare view's
+        # The full custody-/rank-filtered scored set (roadmap H254/H324):
+        # `filter_related` narrows per axis *before* the cap, so the bare view's
         # `[:limit]` returns the top neighbours at that value and the --stats
-        # denominator counts the kept set. An unknown id and an unknown custody
+        # denominator counts the kept set. An unknown id and an unknown custody/rank
         # value both raise ValueError, so the could-not-check path is identical
         # (G1) — though argparse's `choices=` already rejects a bad CLI value
         # with exit 2 before we get here.
         hits = filter_related(
-            scored_related(paths.db_path, resolved), fidelity=fidelity, drift=drift
+            scored_related(paths.db_path, resolved),
+            fidelity=fidelity,
+            drift=drift,
+            strength=strength,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -3811,10 +3826,16 @@ def _cmd_related(
         return 0
     matched = len(hits)
     rows = _related_rows(hits[:limit])
-    # The custody filters ride the scope echo so a reader holding only the
+    # The custody/rank filters ride the scope echo so a reader holding only the
     # envelope recovers which neighbourhood it covered (G2); `None` is pruned
     # by `scope_envelope`, so an unfiltered call keeps the lean scope shape.
-    scope = {"item": resolved, "fidelity": fidelity, "drift": drift, "limit": limit}
+    scope = {
+        "item": resolved,
+        "fidelity": fidelity,
+        "drift": drift,
+        "strength": strength,
+        "limit": limit,
+    }
     # `stats.custody` (roadmap H99): the custody tally over the matched related
     # *neighbourhood* — the full scored `hits` (pre-cap), each already carrying its
     # own `fidelity`/`drift` (H56), so fold those through the same `tally_custody`

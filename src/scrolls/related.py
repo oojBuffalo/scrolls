@@ -163,23 +163,27 @@ def find_related(
     *,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> list[RelatedHit]:
     """The best `limit` items related to `item_id`, best matches first.
 
     The capped public view (the MCP `get_related_scrolls` and bare `scrolls
     related` both read it). Raises ValueError when the item does not exist.
 
-    `fidelity`/`drift` narrow the neighbourhood to one custody value per axis
-    *before* the cap (roadmap H254, the `list`-sieve shape), so the cap returns
-    the top-`limit` neighbours **at that value**, not the matching ones among the
-    top-`limit`. Both fold the same per-hit primitive the field is read off
-    (`get_fidelity`/`drift_posture`), so a neighbour is selected by exactly the
-    custody value it shows; the two axes AND. An unknown tier/posture raises
-    ValueError (closed vocab), the same could-not-check contract `list_items`
-    enforces.
+    `fidelity`/`drift`/`strength` narrow the neighbourhood per axis *before* the
+    cap (roadmap H254/H324, the `list`-sieve shape), so the cap returns the
+    top-`limit` neighbours **at that value**, not the matching ones among the
+    top-`limit`. Each folds the same per-hit field it is read off
+    (`get_fidelity`/`drift_posture`/`relation_strength`), so a neighbour is selected
+    by exactly the value it shows; `strength` is a threshold (at or above the band).
+    The axes AND. An unknown tier/posture/band raises ValueError (closed vocab), the
+    same could-not-check contract `list_items` enforces.
     """
     return filter_related(
-        scored_related(db_path, item_id), fidelity=fidelity, drift=drift
+        scored_related(db_path, item_id),
+        fidelity=fidelity,
+        drift=drift,
+        strength=strength,
     )[:limit]
 
 
@@ -189,6 +193,7 @@ def count_related(
     *,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> int:
     """How many items relate to `item_id` at all, ignoring the cap.
 
@@ -198,12 +203,17 @@ def count_related(
     related items" from "the top N of more". Raises ValueError on an unknown
     id, exactly like `find_related`, so the could-not-check path is identical.
 
-    `fidelity`/`drift` narrow the count to the same custody-filtered neighbourhood
-    `find_related` returns (roadmap H254), so the `--stats` denominator counts the
-    kept set — never the whole scored set when a filter is in play.
+    `fidelity`/`drift`/`strength` narrow the count to the same filtered neighbourhood
+    `find_related` returns (roadmap H254/H324), so the `--stats` denominator counts
+    the kept set — never the whole scored set when a filter is in play.
     """
     return len(
-        filter_related(scored_related(db_path, item_id), fidelity=fidelity, drift=drift)
+        filter_related(
+            scored_related(db_path, item_id),
+            fidelity=fidelity,
+            drift=drift,
+            strength=strength,
+        )
     )
 
 
@@ -212,17 +222,22 @@ def filter_related(
     *,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> list[RelatedHit]:
-    """Narrow scored related hits to one custody value per axis (the H254 sieve).
+    """Narrow scored related hits per custody/rank axis (the H254/H324 sieve).
 
-    The relationship-surface twin of `list --fidelity`/`--drift`'s sieve over the
-    browse rows: it folds the *same* per-hit `fidelity`/`drift` the node shape is
-    read off (`get_fidelity`/`drift_posture`, roadmap H56), so a neighbour is kept
-    by exactly the custody value it shows. The two axes AND. Closed vocabulary
-    (`FIDELITY_TIERS`/`DRIFT_POSTURES`) → ValueError, so a typo is a loud
-    could-not-check, never a silent empty neighbourhood (the `list_items` contract).
-    Order is preserved, so a caller slicing `[:limit]` after this still gets the
-    top-`k` neighbours *at that value*.
+    The relationship-surface twin of `list --fidelity`/`--drift` and `search
+    --strength`: it folds the *same* per-hit `fidelity`/`drift`/`relation_strength`
+    the node shape is read off (`get_fidelity`/`drift_posture`, roadmap H56; the
+    H322 band), so a neighbour is kept by exactly the value it shows. The axes AND.
+    `strength` is a **threshold** (at or above the band): `strong` keeps only
+    identity/citation bonds, `moderate` adds topical overlap, `weak` keeps all —
+    the columns at or above `strength` being the strongest-first prefix of
+    `RELATION_STRENGTH_BANDS` (the H314 `search --strength` semantics on the relation
+    axis). Closed vocabulary (`FIDELITY_TIERS`/`DRIFT_POSTURES`/`RELATION_STRENGTH_BANDS`)
+    → ValueError, so a typo is a loud could-not-check, never a silent empty
+    neighbourhood (the `list_items` contract). Order is preserved, so a caller slicing
+    `[:limit]` after this still gets the top-`k` neighbours *at that value*.
     """
     if fidelity is not None:
         if fidelity not in FIDELITY_TIERS:
@@ -238,6 +253,18 @@ def filter_related(
                 f"choose one of {', '.join(DRIFT_POSTURES)}"
             )
         hits = [hit for hit in hits if hit.drift == drift]
+    if strength is not None:
+        if strength not in RELATION_STRENGTH_BANDS:
+            raise ValueError(
+                f"unknown relation strength {strength!r}; "
+                f"choose one of {', '.join(RELATION_STRENGTH_BANDS)}"
+            )
+        # Threshold (at or above): the bands at or above `strength` are the
+        # strongest-first prefix of `RELATION_STRENGTH_BANDS`, so a hit is kept iff
+        # its own `relation_strength` lands in that prefix — the H314 column-prefix
+        # idea on the in-Python relation sieve.
+        kept = set(RELATION_STRENGTH_BANDS[: RELATION_STRENGTH_BANDS.index(strength) + 1])
+        hits = [hit for hit in hits if hit.relation_strength in kept]
     return hits
 
 

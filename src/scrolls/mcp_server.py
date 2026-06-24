@@ -407,6 +407,7 @@ def get_related_scrolls(
     limit: int = DEFAULT_RELATED_LIMIT,
     fidelity: str | None = None,
     drift: str | None = None,
+    strength: str | None = None,
 ) -> list[dict[str, Any]]:
     """Items connected to one item — same-work, link edges, shared concepts/tags — with reasons.
 
@@ -422,16 +423,19 @@ def get_related_scrolls(
     same category/domain is weak corroboration (`weak`). Its `fidelity` says at
     what custody tier the library holds the neighbour (full/partial/reference,
     ADR 0097), the same tier `list_scrolls` and `search_scrolls` report.
-    `fidelity` narrows the neighbourhood to neighbours held at one custody tier
-    and `drift` to neighbours at one verify-ledger posture
-    (`verified`/`unverified`/`drifted`/`rotted`/`error`) — the relationship-surface
-    twin of `list_scrolls`/`search_scrolls`'s `fidelity`/`drift` filters; the
+    `fidelity` narrows the neighbourhood to neighbours held at one custody tier,
+    `drift` to neighbours at one verify-ledger posture
+    (`verified`/`unverified`/`drifted`/`rotted`/`error`), and `strength` to
+    neighbours related at one rank band or stronger
+    (`strong`/`moderate`/`weak`) — the relationship-surface twin of
+    `list_scrolls`/`search_scrolls`'s `fidelity`/`drift`/`strength` filters; the
     sieve runs *before* the cap, so you get the top neighbours *at that value*
-    (e.g. only the full-fidelity neighbours you can re-derive offline, or only the
-    ones that have drifted), and the two axes AND. An unknown tier/posture is an
-    error, never a silent empty neighbourhood. `item_id` is the item's id or the
-    URL that saved it (ADR 0028), resolved like `get_scroll`'s. An unknown item is
-    an error.
+    (e.g. only the full-fidelity neighbours you can re-derive offline, only the
+    ones that have drifted, or only the `strong` same-work/link bonds), and the
+    axes AND. `strength` is a threshold (at or above the band). An unknown
+    tier/posture/band is an error, never a silent empty neighbourhood. `item_id`
+    is the item's id or the URL that saved it (ADR 0028), resolved like
+    `get_scroll`'s. An unknown item is an error.
     """
     paths = get_paths()
     resolved = resolve_item_id(item_id)
@@ -440,7 +444,12 @@ def get_related_scrolls(
     hits = [
         dataclasses.asdict(hit)
         for hit in find_related(
-            paths.db_path, resolved, limit=limit, fidelity=fidelity, drift=drift
+            paths.db_path,
+            resolved,
+            limit=limit,
+            fidelity=fidelity,
+            drift=drift,
+            strength=strength,
         )
     ]
     for hit in hits:
