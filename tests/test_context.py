@@ -1779,6 +1779,154 @@ def test_context_archive_line_mcp_parity(scrolls_home):
     assert "_Archive: 1 prior(s) fail integrity (prior_hash ≠ snapshot)._" in bundle
 
 
+# --- readable content-duplicate `_Duplicates:_` line (roadmap H331) -----------
+# The H319/H331 shareable-`export bundle` surface lifted to the agent context
+# briefing: one `_Duplicates:_` line when ≥2 in-scope items hold byte-identical
+# content under different ids (the same `content_hash` — a genuinely new custody
+# shape, custody-vision §2.7). The content-identity sibling of the `_Archive:_` line
+# above, folding the *same* `content_duplicate_groups` via the *same*
+# `duplicates_headline` (`render_content_duplicates`) the bundle line and `maintain`'s
+# summary use. Gated to `connected`+ like the headline. Folded over the **uncollapsed**
+# `scope_items` (like `_At-risk work:_`, not the per-item `_Conflicts:_`/`_Archive:_`
+# lines): content identity is relational across distinct ids, so a work-collapse must
+# not hide two byte-identical representations of one work. Report-only; omit-when-clean.
+
+
+def test_context_carries_a_content_duplicates_line(scrolls_home, capsys):
+    # roadmap H331: ≥2 in-scope items holding byte-identical content surface one
+    # `_Duplicates:_` line — the H319/H331 shareable-bundle surface on the context
+    # briefing, the readable completion of `doctor`'s `custody.content_duplicates`.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database",
+                              "A database body.", content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:Mirror", "SQLite database mirror",
+                              "A mirror body.", content_hash="deadbeef"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in out
+    # grouped with the divergence lines, below the scope custody headline
+    assert out.index("_Duplicates:") > out.index("_Custody:")
+
+
+def test_context_duplicates_line_converges_with_doctor(scrolls_home, capsys):
+    # the count is the *same* `content_duplicate_groups` fold `doctor`'s
+    # `custody.content_duplicates` reads — here the in-scope set is the whole library,
+    # so the readable line and the JSON audit report the same group/item count
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "A body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "B body.",
+                              content_hash="deadbeef"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")  # matches both held items
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1 and dup["total_items"] == 2
+    assert (
+        f"_Duplicates: {dup['total_groups']} group(s) of byte-identical content "
+        f"({dup['total_items']} item(s))._" in out
+    )
+
+
+def test_context_duplicates_line_sees_within_work_copies(scrolls_home, capsys):
+    # the decisive scope choice (roadmap H331): the line folds the *uncollapsed*
+    # `scope_items`, not the work-collapsed `items` — two byte-identical
+    # representations of ONE work (the H329 preprint-mirrored-into-DOI case) collapse
+    # to a single canonical id in the readable Best Matches (ADR 0101), which would
+    # hide the group; folding the uncollapsed set keeps both ids, so the redundancy is
+    # named (it patterns with `_At-risk work:_`, not the per-item lines).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "arxiv:dup", "Delta database preprint", "A full database body.",
+        source="arxiv", url="https://arxiv.org/abs/dup",
+        links=("https://doi.org/10.7000/dup",),
+        content_hash="deadbeef", raw_text="<raw>A full database body.</raw>"))
+    insert_item(db, make_item(
+        "crossref:10.7000/dup", "Delta database record", "A full database body.",
+        source="crossref", url="https://doi.org/10.7000/dup",
+        links=("https://doi.org/10.7000/dup",),
+        content_hash="deadbeef", raw_text="<raw>A full database body.</raw>"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    # the two reps collapse to one canonical Best Match (the work-collapse, ADR 0101)…
+    assert out.count("### ") == 1
+    # …but the uncollapsed scope still sees both byte-identical holdings
+    assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in out
+
+
+def test_context_duplicates_line_gated_off_index(scrolls_home, capsys):
+    # the `index` tier makes no custody claim (the H47 gate), exactly like the
+    # headline/`_Conflicts:_`/`_At-risk work:_`/`_Archive:_`
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "A body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "B body.",
+                              content_hash="deadbeef"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Duplicates:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_duplicates_line_is_in_scope(scrolls_home, capsys):
+    # in-scope semantics (the `_Conflicts:_` precedent): a content group split by the
+    # scope reads only its in-scope members — a byte-identical pair where one copy is
+    # off-query has only one in-scope member, so it is not a duplicate within the
+    # briefing.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "A body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:Tarragon", "Tarragon herb", "A body.",
+                              content_hash="deadbeef"))  # same bytes, off-scope
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")  # matches SQLite only
+    assert "SQLite database" in out
+    assert "Tarragon" not in out
+    assert "_Duplicates:" not in out  # only one in-scope member of the group
+
+
+def test_context_duplicates_line_omitted_when_unique(scrolls_home, capsys):
+    # honest absence: every in-scope item holds distinct content → no `_Duplicates:` line
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "A body.",
+                              content_hash="aaaa"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "B body.",
+                              content_hash="bbbb"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Custody:" in out
+    assert "_Duplicates:" not in out
+
+
+def test_context_duplicates_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the duplicates line rides
+    # MCP identically (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "A body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "B body.",
+                              content_hash="deadbeef"))
+
+    bundle = get_context_bundle("database")
+    assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in bundle
+
+
 # --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
 #
 # The enrichment/summary-axis counterpart of `_Attention:_` on the model-facing

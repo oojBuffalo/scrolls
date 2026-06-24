@@ -55,8 +55,10 @@ from scrolls.custody import (
 )
 from scrolls.doctor import run_doctor
 from scrolls.items import (
+    ScrollItem,
     archive_integrity_block,
     archived_records,
+    content_duplicate_groups,
     get_fidelity,
     list_items,
 )
@@ -541,6 +543,43 @@ def render_archive_integrity(
     line = archive_integrity_headline(
         archive_integrity_block(archived_records(db_path, item_ids))
     )
+    return [line, ""] if line else []
+
+
+def render_content_duplicates(items: list[ScrollItem]) -> list[str]:
+    """The readable ``_Duplicates:_`` line for byte-identical in-scope holdings — the
+    shared content-identity briefing renderer (roadmap H331).
+
+    Folds the *single divergence-truth source* `content_duplicate_groups` (H325) over
+    the briefing's in-scope item set and renders it via the *same* `duplicates_headline`
+    the scheduled `maintain` summary uses — **point-in-time, no trend clause** (`change`
+    defaults to ``None``: a briefing carries no cross-run delta, the
+    `render_archive_integrity` posture) — so the shareable `export bundle` (H319's
+    `_Archive:_`-briefing analogue on the content-identity axis) and the agent `context`
+    briefing emit a byte-identical line that converges with `doctor`'s
+    `custody.content_duplicates` JSON audit and the `maintain` headline for the same item
+    set by construction. The `render_archive_integrity`/`render_at_risk_works` sibling on
+    the content-identity axis (one fold, one renderer).
+
+    **In-scope** (the briefing's own items, the ``_Conflicts:_``/``_Archive:_``
+    precedent), so a content group split across the scope boundary reads only its
+    in-scope members — a redundancy fact about the holdings the briefing actually
+    carries, not the whole library (a documented scope divergence, like `doctor`'s
+    whole-library-only `--source` skip). The caller passes the **uncollapsed** matched
+    set (bundle's gathered `items`, `context`'s `scope_items`): content identity is a
+    *relational* fact across distinct ids — two byte-identical representations of one
+    work (a preprint mirrored into its DOI capture, the H329 case) are a content
+    duplicate, but a work-collapse folds them into one canonical id and hides the group,
+    so this patterns with `render_at_risk_works` (uncollapsed), not with the per-item
+    `_Conflicts:_`/`_Archive:_` lines (collapsed).
+
+    Returns ``[line, ""]`` so the caller appends it directly, or ``[]`` on honest
+    absence — a scope with no byte-identical holdings — like the sibling divergence lines
+    (the omit-when-clean briefing posture, §2.4). `duplicates_headline` itself omits the
+    line whenever ``total_groups == 0`` (H327/H330), so an empty/clean/unique scope is the
+    silent norm with no fabricated ``_Duplicates: 0 …_``.
+    """
+    line = duplicates_headline(content_duplicate_groups(items))
     return [line, ""] if line else []
 
 

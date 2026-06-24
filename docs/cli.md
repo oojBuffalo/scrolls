@@ -658,6 +658,48 @@ line — when the store is clean or empty (`test_kb_index_carries_an_archive_int
 `test_kb_index_omits_archive_line_when_store_is_clean`,
 `test_kb_archive_line_is_refresh_safe`).
 
+Grouped with those divergence lines, the `export bundle` and `scrolls context`
+briefings also carry a **`_Duplicates:_` line** (roadmap H331) — the readable
+completion of `doctor`'s `custody.content_duplicates` report (H325), the
+**content-identity-axis sibling** of the `_Archive:_` line. Where `_Archive:_` flags a
+corrupt recovery store, this flags **byte-identical holdings** — when ≥2 in-scope items
+hold the same non-null `content_hash` under *different* ids (the same bytes saved from
+two URLs, a mirror, a cross-post, or one work captured by two source adapters — a
+genuinely new custody *shape*, custody-vision §2.7, distinct from URL-spelling
+duplicates and from canonical DOI works): `_Duplicates: N group(s) of byte-identical
+content (M item(s))._`, with the HTML twin `<p class="custody-duplicates">Duplicates: N
+group(s) of byte-identical content (M item(s)).</p>`. It folds the *same*
+`items.content_duplicate_groups` (H325) over the briefing's in-scope items and renders
+via the *same* `maintain.duplicates_headline` the scheduled-maintenance `_Duplicates:_`
+line uses (H327) — **point-in-time, no cross-run trend clause** (a briefing carries no
+delta, the `_Archive:_` posture) — through one shared
+`maintain.render_content_duplicates(items)`, so the bundle line, the context line, the
+`maintain` headline, and the JSON audit cannot desync. H327 surfaced the count on the
+scheduled `maintain` pass; H331 lifts it to the shareable briefing an operator shares
+(and a recipient reads). The scope is **in-scope** (the `_Conflicts:_` precedent — a
+content group split by the scope reads only its in-scope members), and folded over the
+**uncollapsed** matched set (the bundle's gathered `items`, `scrolls context`'s
+`scope_items` — *not* the work-collapsed `items` the per-item `_Conflicts:_`/`_Archive:_`
+lines use): content identity is *relational* across distinct ids, so a work-collapse
+must not hide two byte-identical representations of one work (the H329
+preprint-mirrored-into-DOI case) — it patterns with the work-level `_At-risk work:_`
+line, not the per-item ones. On `scrolls context` it is gated to **`connected`+** like
+the headline. It is **report-only** — names **no command** (raw is sacred; two faithful
+copies are a redundancy fact an operator may *want*, never a `--fix` merge, the
+no-fabricated-act discipline) — and **export-only** on the bundle (a derived read view,
+outside the lossless `@generated` fence, so the round-trip is untouched). Honest
+absence — omitted entirely on a clean/unique/empty scope (the omit-when-clean briefing
+posture; `duplicates_headline` itself omits the line whenever `total_groups == 0`)
+(`test_bundle_carries_a_content_duplicates_line`,
+`test_bundle_duplicates_line_converges_with_doctor`,
+`test_bundle_duplicates_line_is_in_scope`,
+`test_bundle_html_carries_a_content_duplicates_line`,
+`test_bundle_html_duplicates_count_matches_markdown`,
+`test_context_carries_a_content_duplicates_line`,
+`test_context_duplicates_line_sees_within_work_copies`,
+`test_context_duplicates_line_gated_off_index`,
+`test_context_duplicates_line_mcp_parity`).
+
 Beside that drift `_Attention:_` line, the readable briefings also carry a
 **per-source `_Refresh:_` line** (roadmap H178) — the enrichment/summary-axis
 counterpart. Where `_Attention:_` names the source carrying the most drift and the

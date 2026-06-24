@@ -88,7 +88,7 @@ from scrolls.items import (
 )
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import stale_summary_counts_by_source
-from scrolls.maintain import render_archive_integrity
+from scrolls.maintain import render_archive_integrity, render_content_duplicates
 from scrolls.search import (
     SearchHit,
     count_matches,
@@ -366,6 +366,26 @@ def build_context(
         # whole-library archive-repair act exists — the `suggested`-block orphan
         # discipline); honest no-op on a clean/empty scope ([] lines).
         lines += render_archive_integrity(db_path, [item.id for item in items])
+        # the readable content-duplicate pointer (roadmap H331): one `_Duplicates:_`
+        # line when ≥2 in-scope items hold byte-identical content under different ids
+        # (the same bytes saved from two URLs, a mirror, a cross-post, or one work
+        # captured by two adapters — a genuinely new custody *shape*, custody-vision
+        # §2.7). The H319/H331 shareable-`export bundle` surface lifted to the agent
+        # context briefing — the content-identity sibling of the `_Archive:_` divergence
+        # line above. Folds the *same* `content_duplicate_groups` and renders via the
+        # *same* `duplicates_headline` (`render_content_duplicates`) the bundle line and
+        # `maintain`'s summary use, so the context line, the bundle line, the maintenance
+        # summary, and `doctor`'s `custody.content_duplicates` JSON audit converge by
+        # construction. Gated to `connected`+ with the headline (the leanest `index`
+        # tier makes no custody claim). Folded over the **uncollapsed** `scope_items`
+        # (not the collapsed `items` the per-item `_Conflicts:_`/`_Archive:_` lines use):
+        # content identity is *relational* across distinct ids, and a work-collapse folds
+        # two byte-identical representations of one work (the H329 preprint-mirrored-into-
+        # DOI case) into one canonical id — hiding the group — so this patterns with the
+        # work-level `render_at_risk_works(scope_items)` above, not with the per-item
+        # lines. Report-only — names no command (raw is sacred, H325); honest no-op on a
+        # clean/unique/empty scope ([] lines).
+        lines += render_content_duplicates(scope_items)
         # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
         # line naming the source(s) whose classifications/summaries are stale and
         # the exact `classify --stale`/`kb --stale --source <S>` refresh — the

@@ -1092,6 +1092,152 @@ def test_bundle_html_archive_line_omitted_on_a_clean_library(scrolls_home):
     )
 
 
+# --- readable content-duplicate `_Duplicates:_` line (roadmap H331) -----------
+# The content-identity sibling of the `_Archive:_` line above, on both bundle
+# forms: when ≥2 in-scope items hold byte-identical content under different ids
+# (the same `content_hash` — the same bytes saved from two URLs, a mirror, a
+# cross-post, or one work captured by two adapters, a genuinely new custody shape,
+# custody-vision §2.7), one `_Duplicates:_` line surfaces. H327 put it on the
+# scheduled `maintain` pass; this lifts it to the shareable briefing an operator
+# shares (and a recipient reads), folding the *same* `content_duplicate_groups` via
+# the *same* `duplicates_headline`. **In-scope** (a content group split by the scope
+# reads only its in-scope members, the `_Conflicts:_` precedent) and report-only —
+# names no command (raw is sacred, H325). Omit-when-clean.
+
+
+def test_bundle_carries_a_content_duplicates_line(scrolls_home):
+    # roadmap H331: ≥2 in-scope items holding byte-identical content surface one
+    # `_Duplicates:_` line — the readable completion of `doctor`'s
+    # `custody.content_duplicates` on the shareable briefing.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:SQLiteMirror", "SQLite database mirror",
+                              "Body.", content_hash="deadbeef"))
+    bundle = build_bundle(db, "database")
+    assert (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in bundle
+    )
+    # grouped with the divergence lines, below the scope custody headline
+    assert bundle.index("_Duplicates:") > bundle.index("_Custody:")
+
+
+def test_bundle_duplicates_line_converges_with_doctor(scrolls_home):
+    # the count is the *same* `content_duplicate_groups` fold `doctor`'s
+    # `custody.content_duplicates` reads — here the in-scope set is the whole library,
+    # so the readable line and the JSON audit report the same group/item count
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "Body.",
+                              content_hash="deadbeef"))
+    bundle = build_bundle(db, "database")  # matches both held items
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1 and dup["total_items"] == 2
+    assert (
+        f"_Duplicates: {dup['total_groups']} group(s) of byte-identical content "
+        f"({dup['total_items']} item(s))._" in bundle
+    )
+
+
+def test_bundle_duplicates_line_is_in_scope(scrolls_home):
+    # in-scope semantics (the `_Conflicts:_` precedent): a content group split by the
+    # scope reads only its in-scope members — a byte-identical pair where one copy is
+    # off-query has only one in-scope member, so it is not a duplicate *within* the
+    # bundle (the briefing reports redundancy for the holdings it carries).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:Tarragon", "Tarragon herb", "Body.",
+                              content_hash="deadbeef"))  # same bytes, off-scope
+    bundle = build_bundle(db, "database")  # matches SQLite only
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+    assert "_Duplicates:" not in bundle  # only one in-scope member of the group
+
+
+def test_bundle_duplicates_line_omitted_when_unique(scrolls_home):
+    # honest absence: every in-scope item holds distinct content → no `_Duplicates:` line
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                              content_hash="aaaa"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "Body.",
+                              content_hash="bbbb"))
+    bundle = build_bundle(db, "database")
+    assert "_Custody:" in bundle
+    assert "_Duplicates:" not in bundle
+    # an empty scope is a no-op too
+    assert "_Duplicates:" not in build_bundle(db, "nothingmatcheshere")
+
+
+def test_bundle_duplicates_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H264/H277/H319 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "Body.",
+                              content_hash="deadbeef"))
+    bundle = build_bundle(db, "database")
+    assert "_Duplicates:" in bundle
+    assert sorted(i.id for i in parse_bundle(bundle)) == [
+        "wikipedia:en:A", "wikipedia:en:B"
+    ]
+
+
+def test_bundle_html_carries_a_content_duplicates_line(scrolls_home):
+    # roadmap H331: the HTML briefing carries the same content-duplicate pointer as
+    # the Markdown `_Duplicates:_` line, from the *same* `content_duplicate_groups`
+    # fold — so the two readable forms (and `doctor`'s JSON) cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                              content_hash="deadbeef"))
+    insert_item(db, make_item("wikipedia:en:B", "Beta database", "Body.",
+                              content_hash="deadbeef"))
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-duplicates">Duplicates: 1 group(s) of byte-identical '
+        "content (2 item(s)).</p>" in doc
+    )
+
+
+def test_bundle_html_duplicates_count_matches_markdown(scrolls_home):
+    # the HTML twin folds the *same* `content_duplicate_groups` as the Markdown line,
+    # so the two forms report the same group/item count by construction (three
+    # byte-identical → one group of three)
+    main(["init"])
+    db = get_paths().db_path
+    for tag in ("A", "B", "C"):
+        insert_item(db, make_item(f"wikipedia:en:{tag}", f"{tag} database", "Body.",
+                                  content_hash="deadbeef"))
+    md = build_bundle(db, "database")
+    doc = build_bundle_html(db, "database")
+    assert "_Duplicates: 1 group(s) of byte-identical content (3 item(s))._" in md
+    assert (
+        '<p class="custody-duplicates">Duplicates: 1 group(s) of byte-identical '
+        "content (3 item(s)).</p>" in doc
+    )
+
+
+def test_bundle_html_duplicates_line_omitted_when_unique(scrolls_home):
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:A", "Alpha database", "Body.",
+                              content_hash="aaaa"))
+    doc = build_bundle_html(db, "database")
+    assert "Custody:" in doc  # the headline still renders
+    assert '<p class="custody-duplicates">' not in doc
+    # empty scope is a no-op too
+    assert '<p class="custody-duplicates">' not in build_bundle_html(
+        db, "nothingmatcheshere"
+    )
+
+
 def test_bundle_html_carries_a_weakest_source_attention_line(scrolls_home):
     # roadmap H159: the HTML briefing carries the same pointer, from the same
     # `weakest_source`, so the two readable forms cannot desync

@@ -111,6 +111,7 @@ from scrolls.items import (
     archived_records,
     classification_phrase,
     classification_provenance,
+    content_duplicate_groups,
     dump_archive_export,
     get_fidelity,
     get_item,
@@ -118,7 +119,12 @@ from scrolls.items import (
     list_items,
 )
 from scrolls.items_export import dump_items_export
-from scrolls.maintain import archive_integrity_headline, render_archive_integrity
+from scrolls.maintain import (
+    archive_integrity_headline,
+    duplicates_headline,
+    render_archive_integrity,
+    render_content_duplicates,
+)
 from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
 from scrolls.kb_llm import (
     members_hash,
@@ -464,6 +470,22 @@ def build_bundle(
     # `maintain` line uses, so the readable line, the JSON audit, and the maintenance
     # summary converge by construction; honest no-op on a clean/empty scope ([] lines).
     lines += _archive_integrity_lines(db_path, items)
+    # the readable content-duplicate pointer (roadmap H331): one `_Duplicates:_` line
+    # when ≥2 in-scope items hold byte-identical content under different ids (the same
+    # bytes saved from two URLs, a mirror, a cross-post, or one work captured by two
+    # adapters — a genuinely new custody *shape*, custody-vision §2.7). The
+    # content-identity sibling of the `_Archive:_` divergence line above, the readable
+    # completion of `doctor`'s `custody.content_duplicates` (H325) on the shareable
+    # briefing — H327 surfaced it on the scheduled `maintain` pass; this lifts it to the
+    # bundle an operator shares (and a recipient reads). Folds the *same*
+    # `content_duplicate_groups` over the bundle's **uncollapsed** in-scope items
+    # (`render_content_duplicates`, rendered by the *same* `duplicates_headline` the
+    # `maintain` line uses), so the readable line, the JSON audit, and the maintenance
+    # summary converge by construction. In-scope (a content group split by the scope
+    # reads only its in-scope members, the `_Conflicts:_` precedent) and report-only —
+    # names no command (raw is sacred; two faithful copies are a redundancy fact, never a
+    # `--fix` merge, H325). Honest no-op on a clean/unique/empty scope ([] lines).
+    lines += render_content_duplicates(items)
     # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
     # naming the source(s) whose classifications/summaries are stale and the exact
     # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-
@@ -639,6 +661,13 @@ def build_bundle_html(
     # (and `doctor`'s `custody.archive`) report the same mismatch count; grouped with
     # the divergence lines above; honest no-op on a clean/empty scope
     body += _archive_integrity_html(db_path, items)
+    # the readable content-duplicate pointer (roadmap H331), the HTML twin of the
+    # Markdown `_Duplicates:_` line — folds the *same* `content_duplicate_groups` over
+    # the same uncollapsed in-scope items and renders via the same `duplicates_headline`
+    # (sans the markdown `_` emphasis), so the two forms (and `doctor`'s
+    # `custody.content_duplicates`) report the same byte-identical-holding count; grouped
+    # with the divergence lines above; report-only, honest no-op on a clean/unique scope
+    body += _content_duplicates_html(items)
     # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
     # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
     # the two forms name the same sources; honest no-op when no source carries
@@ -824,6 +853,24 @@ def _archive_integrity_html(db_path: Path, items: list[ScrollItem]) -> list[str]
     if not line:
         return []
     return [f'<p class="custody-archive">{html.escape(line.strip("_"))}</p>']
+
+
+def _content_duplicates_html(items: list[ScrollItem]) -> list[str]:
+    """The HTML twin of the Markdown `_Duplicates:_` line (roadmap H331).
+
+    The *same* `duplicates_headline` over the *same* `content_duplicate_groups` fold the
+    Markdown `render_content_duplicates` reads (point-in-time, no trend clause), sans the
+    markdown `_` emphasis, so the two readable forms (and `doctor`'s JSON
+    `custody.content_duplicates`) report the same byte-identical-holding count by
+    construction. Returns [] on honest absence — exactly when `duplicates_headline`
+    omits the line (no in-scope content group, `total_groups == 0`) — like the Markdown
+    no-op. The line is controlled text (a fixed count form) but escaped for safety
+    regardless, like `_archive_integrity_html`. Names no command (report-only, H325).
+    """
+    line = duplicates_headline(content_duplicate_groups(items))
+    if not line:
+        return []
+    return [f'<p class="custody-duplicates">{html.escape(line.strip("_"))}</p>']
 
 
 def _refresh_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
