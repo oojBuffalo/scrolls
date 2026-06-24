@@ -1209,7 +1209,21 @@ choice (ADRs 0004, 0005).
   `latest_events` read per compile (the bundle/context pattern), rendered
   *inside* the `@generated` fence so a recompile refreshes it (after a re-verify
   moves the posture *or* its timestamp) without disturbing annotations, and
-  report-only — never a stored or mutated field (custody-vision §2.4). The bold
+  report-only — never a stored or mutated field (custody-vision §2.4). When the
+  library holds **byte-identical content under another id** the row also trails a
+  **content-identity marker** — `· also held as `<id>`, `<id>`` (roadmap H333) —
+  naming the *other* held ids sharing this scroll's `content_hash`, the Markdown
+  surface of the per-item `show`/`get_scroll` `content_duplicate_ids` read (H328).
+  It names siblings, never a count (the per-item read vs. the whole-library
+  `doctor.custody.content_duplicates` report, H325), is omitted when the item is
+  unique, and is whole-library scoped — a content group spans sources, so a
+  cross-source sibling is named even on a single-source page (the H328
+  cross-source-sibling rule). Folded once per compile from the shared
+  `items.content_duplicate_index` (the batch form of `content_duplicate_ids`, so
+  the rendered siblings cannot drift from the per-item read, H332) and rendered
+  inside the same `@generated` fence, so a recompile refreshes it (a newly-held
+  copy appears, a pruned one drops) — the same refresh-safe, report-only discipline
+  as the custody marker. The bold
   work heading and the `index`/`graph`/`works` rollup rows carry no marker (they
   are not per-item rows); this is the human-readable surface the per-item
   custody picture previously skipped. **Under each group page's count line a

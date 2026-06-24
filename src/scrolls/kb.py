@@ -41,7 +41,12 @@ from scrolls.custody import (
 )
 from scrolls.generated import fence, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
-from scrolls.items import ScrollItem, get_fidelity, list_items
+from scrolls.items import (
+    ScrollItem,
+    content_duplicate_index,
+    get_fidelity,
+    list_items,
+)
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
 from scrolls.works import (
@@ -199,6 +204,11 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     # custody marker (the bundle/context pattern, roadmap H89) — the per-row
     # posture and doctor's drift aggregate read the same `latest_events`
     verdicts = latest_events(paths.db_path)
+    # one content-identity grouping fold for the whole compile (roadmap H333),
+    # shared by every list-page row's "also held as" marker — the batch form of
+    # the per-item `content_duplicate_ids`, so a recompile renders every row's
+    # byte-identical siblings from a single pass (not the per-row O(n²) fold)
+    dup_index = content_duplicate_index(items)
 
     by_source: dict[str, list[ScrollItem]] = {}
     by_category: dict[str, list[ScrollItem]] = {}
@@ -231,7 +241,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"sources/{slugify(source) or 'untitled'}.md",
             f"Source: {source}", members, note=lambda i: i.category, verdicts=verdicts,
-            summaries=summaries,
+            summaries=summaries, dup_index=dup_index,
         )
         pages += 1
     for category, members in by_category.items():
@@ -242,7 +252,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         _write_page(
             paths, written, f"categories/{slugify(category) or 'untitled'}.md",
             f"Category: {category}", members, note=lambda i: i.source, verdicts=verdicts,
-            summaries=summaries,
+            summaries=summaries, dup_index=dup_index,
             consolidate_works=items_by_id,
         )
         pages += 1
@@ -254,7 +264,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, written, f"concepts/{slug}.md",
             f"Concept: {entry['display']}", entry["items"], note=lambda i: i.source,
             verdicts=verdicts,
-            summaries=summaries,
+            summaries=summaries, dup_index=dup_index,
             lead=stored.summary if stored else None,
             trailer=_related_lines(
                 "Related Concepts", related.get(slug, []), lambda key: key
@@ -266,7 +276,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
             paths, written, f"tags/{tag_filenames[key]}.md",
             f"Tag: {entry['display']}", entry["items"], note=lambda i: i.source,
             verdicts=verdicts,
-            summaries=summaries,
+            summaries=summaries, dup_index=dup_index,
             trailer=_related_lines(
                 "Related Tags", related_tag_map.get(key, []),
                 lambda other: tag_filenames[other],
@@ -465,6 +475,7 @@ def _write_index(
 def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: str,
                 members: list[ScrollItem], note, verdicts: dict[str, CustodyEvent],
                 summaries: dict[str, ConceptSummary],
+                dup_index: dict[str, list[str]] | None = None,
                 lead: str | None = None, trailer: list[str] | None = None,
                 consolidate_works: dict[str, ScrollItem] | None = None) -> None:
     page_dir = f"library/{relpath.rsplit('/', 1)[0]}"
@@ -490,12 +501,15 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
     # block's trailing spacer separates it from the first item bullet (the
     # consolidated or singleton body follows).
     lines += _custody_scope_block(members, verdicts, summaries)
+    dup_index = dup_index or {}
     if consolidate_works is not None:  # category pages collapse works (ADR 0071)
-        lines += _consolidated_body(members, page_dir, note, consolidate_works, verdicts)
+        lines += _consolidated_body(
+            members, page_dir, note, consolidate_works, verdicts, dup_index)
     else:
         ordered = sorted(members, key=_entry_sort_key)
         lines += [
-            _item_line(item, page_dir, note(item), _custody_marker(item, verdicts))
+            _item_line(item, page_dir, note(item),
+                       _row_markers(item, verdicts, dup_index))
             for item in ordered
         ]
     if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
@@ -527,6 +541,7 @@ def _entry_sort_key(item) -> tuple[str, str]:
 def _consolidated_body(
     members: list[ScrollItem], page_dir: str, note,
     items_by_id: dict[str, ScrollItem], verdicts: dict[str, CustodyEvent],
+    dup_index: dict[str, list[str]] | None = None,
 ) -> list[str]:
     """A category page's body with same-work representations collapsed (ADR 0071).
 
@@ -540,6 +555,7 @@ def _consolidated_body(
     case-folded title order; a work sorts by its *canonical* representation's
     title (`Work.canonical`, ADR 0095), so the published record's title heads it.
     """
+    dup_index = dup_index or {}
     works = works_over(members)
     consolidated_ids = {rep.id for work in works for rep in work.representations}
     entries: list[tuple[tuple[str, str], list[str]]] = []
@@ -553,7 +569,7 @@ def _consolidated_body(
         ]
         # representations already sorted by id (works_over), nested beneath
         block += [
-            f"  {_item_line(item, page_dir, note(item), _custody_marker(item, verdicts))}"
+            f"  {_item_line(item, page_dir, note(item), _row_markers(item, verdicts, dup_index))}"
             for item in reps
         ]
         entries.append((_entry_sort_key(canonical), block))
@@ -562,7 +578,8 @@ def _consolidated_body(
             continue
         entries.append((
             _entry_sort_key(item),
-            [_item_line(item, page_dir, note(item), _custody_marker(item, verdicts))],
+            [_item_line(item, page_dir, note(item),
+                        _row_markers(item, verdicts, dup_index))],
         ))
     entries.sort(key=lambda entry: entry[0])
     return [line for _, block in entries for line in block]
@@ -783,6 +800,47 @@ def _custody_marker(item: ScrollItem, verdicts: dict[str, CustodyEvent]) -> str:
     checked = last_checked(verdict)
     when = f"checked {checked}" if checked else "never checked"
     return f" · {get_fidelity(item)} · {drift_posture(verdict)} · {when}"
+
+
+def _content_duplicate_marker(item: ScrollItem, dup_index: dict[str, list[str]]) -> str:
+    """A compact `· also held as `<id>`, `<id>`` per-row content-identity marker (H333).
+
+    The Markdown surface of H328's JSON `content_duplicate_ids`: when the library
+    holds **byte-identical content under another id** (the same non-null
+    `content_hash` — a mirror, a cross-post, one work captured twice), this names
+    the *other* held ids on the rendered row, so a human browsing the compiled
+    `library/` list pages sees a scroll's redundancy without scanning `doctor`'s
+    whole-library `custody.content_duplicates` report. The per-item read names
+    **siblings, never a count** (the per-item-vs-whole-library split, H328); a
+    unique or NULL-hash item carries **no** clause (the honest omit, the empty
+    `content_duplicate_ids`).
+
+    Reads the shared `content_duplicate_index` `dup_index` folded once for the whole
+    compile (so the marker is the batch form of `content_duplicate_ids` and cannot
+    drift from the per-item `show`/`get_scroll` read, H332). The sibling ids are
+    backticked (they carry `:` separators) and whole-library scoped — a content
+    group spans sources, so a cross-source sibling **is** named (the H328
+    cross-source-sibling rule), even on a single-source page. Trails the custody
+    marker on the same row; rendered inside the page's `@generated` fence (ADR
+    0102), so a recompile refreshes it (a newly-held copy appears, a pruned one
+    drops) without touching a hand annotation outside the block (the H89/H93
+    refresh-safe discipline on the content-identity axis).
+    """
+    siblings = dup_index.get(item.id)
+    if not siblings:
+        return ""
+    return " · also held as " + ", ".join(f"`{sid}`" for sid in siblings)
+
+
+def _row_markers(item: ScrollItem, verdicts: dict[str, CustodyEvent],
+                 dup_index: dict[str, list[str]]) -> str:
+    """The full trailing per-row marker string: custody picture then content-identity.
+
+    Concatenates the H89/H93 `· fidelity · drift · when` custody marker with the
+    H333 `· also held as …` content-duplicate clause (empty when the item holds no
+    byte-identical sibling), so the two derived per-item custody axes ride one row.
+    """
+    return _custody_marker(item, verdicts) + _content_duplicate_marker(item, dup_index)
 
 
 def _count(n: int) -> str:

@@ -1267,6 +1267,27 @@ def content_duplicate_ids(item: ScrollItem, items: list[ScrollItem]) -> list[str
     return []
 
 
+def content_duplicate_index(items: list[ScrollItem]) -> dict[str, list[str]]:
+    """The whole-library batch form of `content_duplicate_ids` — id → siblings (roadmap H333).
+
+    `content_duplicate_ids(item, items)` is the single-item read; building the
+    sibling list one item at a time re-runs the grouping fold each call (O(n²)). A
+    compiled `library/` recompile renders *every* row, so it folds the H325 groups
+    **once** here and maps each member id to its sorted siblings (the group minus
+    self). Only members of a flagged ≥2-id group appear; a unique or NULL/empty
+    `content_hash` item is **absent** — a caller reads a missing id as "no
+    siblings" (the honest empty), the same `[]` the per-item fold returns. The
+    indexed sibling list per id equals `content_duplicate_ids` by construction
+    (both read the same groups), so the rendered "also held as" marker can never
+    drift from the per-item `show`/`get_scroll` read (the H332 convergence guard).
+    """
+    index: dict[str, list[str]] = {}
+    for group in content_duplicate_groups(items)["groups"]:
+        for member in group["ids"]:
+            index[member] = [peer for peer in group["ids"] if peer != member]
+    return index
+
+
 def archive_export_dict(record: ArchiveRecord) -> dict[str, Any]:
     """One archive row as a JSON-serializable export object (roadmap H280).
 

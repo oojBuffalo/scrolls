@@ -493,6 +493,189 @@ def test_kb_index_and_graph_pages_omit_the_custody_marker(scrolls_home, capsys):
     assert "· full · drifted" not in recent  # index Recent teaser stays a bare row
 
 
+# --- per-item content-identity "also held as" marker on the list pages (H333) ---
+#
+# The Markdown surface of H328's JSON `content_duplicate_ids`: a compiled `library/`
+# list-page row for an item the library holds byte-identical copies of trails an
+# `· also held as <id>, <id>` clause naming its siblings — the rendered companion of
+# the per-item `show`/`get_scroll` read, beside the H89/H93 `· fidelity · drift`
+# custody marker. Names siblings, never a count (the per-item-vs-whole-library-report
+# split, H328); omitted when the item is unique; refresh-safe inside the page's
+# `@generated` fence (ADR 0102), like the custody marker.
+
+
+def test_kb_list_pages_name_a_byte_identical_sibling(scrolls_home, capsys):
+    """A row for an item with a byte-identical copy names the sibling id."""
+    main(["init"])
+    db = get_paths().db_path
+    # two ids holding the same bytes (one content_hash) under different sources —
+    # a content group spans sources, so each page names the cross-source sibling
+    insert_item(db, make_rendered(
+        "web:a", "web", "A mirror", category="news",
+        raw_text="body", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "B mirror", category="news",
+        raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    # the clause trails the custody marker, naming the *other* held id (backticked)
+    assert ("- [A mirror](../../scrolls/web/a-mirror.md) — web"
+            " · full · unverified · never checked · also held as `blog:b`") in page
+    assert ("- [B mirror](../../scrolls/blog/b-mirror.md) — blog"
+            " · full · unverified · never checked · also held as `web:a`") in page
+
+
+def test_kb_list_pages_omit_the_marker_for_a_unique_item(scrolls_home, capsys):
+    """A unique (and a reference-only NULL-hash) item's row omits the clause."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:solo", "web", "Only copy", category="news",
+        raw_text="body", content_hash="solo"))
+    insert_item(db, make_rendered(
+        "web:pointer", "web", "A pointer", category="news"))  # NULL content_hash
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    assert "Only copy" in page and "A pointer" in page
+    assert "also held as" not in page  # neither row holds a byte-identical sibling
+
+
+def test_kb_marker_names_every_sibling_sorted(scrolls_home, capsys):
+    """A three-id content group: each row names *both* the others, sorted."""
+    main(["init"])
+    db = get_paths().db_path
+    for ident in ("web:a", "web:b", "web:c"):
+        insert_item(db, make_rendered(
+            ident, "web", ident.replace(":", "-"), category="news",
+            raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    assert "· also held as `web:b`, `web:c`" in page  # the web:a row
+    assert "· also held as `web:a`, `web:c`" in page  # the web:b row
+    assert "· also held as `web:a`, `web:b`" in page  # the web:c row
+
+
+def test_kb_concept_and_tag_pages_carry_the_marker(scrolls_home, capsys):
+    """The clause rides the concept/tag list pages too (the custody-marker surfaces)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "FTS one", concepts=("BM25",), tags=("search",),
+        raw_text="body", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "web:b", "web", "FTS two", concepts=("BM25",), tags=("search",),
+        raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    library = scrolls_home / "library"
+    concept_page = (library / "concepts" / "bm25.md").read_text(encoding="utf-8")
+    assert "· also held as `web:b`" in concept_page  # the FTS one row
+    tag_page = (library / "tags" / "search.md").read_text(encoding="utf-8")
+    assert "· also held as `web:b`" in tag_page
+
+
+def test_kb_consolidated_representations_carry_the_marker(scrolls_home, capsys):
+    """A consolidated work whose two reps are byte-identical: each nested bullet
+    names its sibling (the H329 preprint-mirrored-into-DOI case on the page)."""
+    main(["init"])
+    db = get_paths().db_path
+    doi_url = "https://doi.org/10.1234/abc"
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper (preprint)", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "crossref:1", "crossref", "A Paper", category="ml",
+        links=(doi_url,), raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "categories" / "ml.md").read_text(encoding="utf-8")
+    assert "· also held as `crossref:1`" in page  # the arxiv rep
+    assert "· also held as `arxiv:1`" in page  # the crossref rep
+
+
+def test_kb_marker_converges_with_the_per_item_read(scrolls_home, capsys):
+    """Each rendered row's named siblings equal `content_duplicate_ids` for that
+    item — the rendered surface cannot drift from the per-item JSON read (H332)."""
+    from scrolls.items import content_duplicate_ids, list_items
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "Item A", category="news", raw_text="b", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "Item B", category="news", raw_text="b", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "web:u", "web", "Unique", category="news", raw_text="b", content_hash="solo"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    items = list_items(db)
+    page = (scrolls_home / "library" / "categories" / "news.md").read_text(
+        encoding="utf-8")
+    for item in items:
+        siblings = content_duplicate_ids(item, items)
+        if siblings:
+            expected = "· also held as " + ", ".join(f"`{sid}`" for sid in siblings)
+            assert expected in page
+        else:
+            assert f"]({item.markdown_path}" not in page or "also held as" not in page.split(
+                item.title)[1].split("\n")[0]
+
+
+def test_kb_content_duplicate_marker_is_refresh_safe(scrolls_home, capsys):
+    """A newly-held byte-identical copy refreshes the clause on recompile; an
+    annotation outside the fence survives (the H89/H93 refresh-safe discipline)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "A post", category="news", raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page_path = scrolls_home / "library" / "categories" / "news.md"
+    page = page_path.read_text(encoding="utf-8")
+    assert "also held as" not in page  # unique so far — no sibling
+    # a human annotation appended outside the fence
+    page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # a byte-identical copy arrives under a new id, then the library recompiles
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "B post", category="news", raw_text="body", content_hash="dup"))
+    run_kb(capsys)
+    refreshed = page_path.read_text(encoding="utf-8")
+    # the clause appears in the fenced region (it is part of the body)
+    assert "· also held as `blog:b`" in generated_body(refreshed)
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
+def test_kb_index_recent_omits_the_content_duplicate_marker(scrolls_home, capsys):
+    """The index Recent teaser stays a bare row, like the custody marker (H89)."""
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:a", "web", "A post", category="news", raw_text="body", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "B post", category="news", raw_text="body", content_hash="dup"))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    index = (scrolls_home / "library" / "index.md").read_text(encoding="utf-8")
+    recent = generated_body(index).split("## Recent\n")[1]
+    assert "- [A post]" in recent
+    assert "also held as" not in recent  # the teaser carries no per-row markers
+
+
 # --- scope custody headline on the compiled group list pages (roadmap H95) ---
 
 

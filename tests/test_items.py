@@ -14,6 +14,7 @@ from scrolls.items import (
     archived_records,
     archived_snapshots,
     content_duplicate_ids,
+    content_duplicate_index,
     delete_item,
     diff_snapshot,
     get_item,
@@ -829,3 +830,48 @@ def test_content_duplicate_ids_names_every_sibling_sorted():
     b = make_item(id="web:b", source="web", content_hash="sha256:dup")
     c = make_item(id="web:c", source="web", content_hash="sha256:dup")
     assert content_duplicate_ids(b, [c, a, b]) == ["web:a", "web:c"]
+
+
+# `content_duplicate_index` is the whole-library batch form of `content_duplicate_ids`
+# (roadmap H333): one grouping fold maps every held id to its sorted siblings, so a
+# compiled `library/` recompile (which renders every row) need not call the per-item
+# fold O(n²) times. Each indexed id's siblings equal `content_duplicate_ids` by
+# construction; unique and NULL-hash items are absent (a missing id reads as "no
+# siblings", the honest empty).
+
+
+def test_content_duplicate_index_maps_each_member_to_its_siblings():
+    a = make_item(id="web:a", source="web", content_hash="sha256:dup")
+    b = make_item(id="web:b", source="web", content_hash="sha256:dup")
+    c = make_item(id="web:c", source="web", content_hash="sha256:dup")
+    index = content_duplicate_index([c, a, b])
+    assert index == {
+        "web:a": ["web:b", "web:c"],
+        "web:b": ["web:a", "web:c"],
+        "web:c": ["web:a", "web:b"],
+    }
+
+
+def test_content_duplicate_index_omits_unique_and_null_hash_items():
+    # only members of a flagged ≥2-id group appear: a singleton hash and a
+    # reference-only (NULL-hash) item are absent (the H325 skip), so a caller
+    # reading a missing id gets the honest "no siblings".
+    dup_a = make_item(id="web:a", source="web", content_hash="sha256:dup")
+    dup_b = make_item(id="web:b", source="web", content_hash="sha256:dup")
+    solo = make_item(id="web:solo", source="web", content_hash="sha256:solo")
+    ref = make_item(id="web:ref", source="web", content_hash=None)
+    index = content_duplicate_index([dup_a, dup_b, solo, ref])
+    assert set(index) == {"web:a", "web:b"}
+
+
+def test_content_duplicate_index_agrees_with_per_item_fold():
+    # the batch form returns the identical sibling list per id the single-item
+    # read does — the divergence-free guarantee that lets the compile fold once.
+    items = [
+        make_item(id="web:a", source="web", content_hash="sha256:dup"),
+        make_item(id="web:b", source="web", content_hash="sha256:dup"),
+        make_item(id="web:solo", source="web", content_hash="sha256:solo"),
+    ]
+    index = content_duplicate_index(items)
+    for item in items:
+        assert index.get(item.id, []) == content_duplicate_ids(item, items)
