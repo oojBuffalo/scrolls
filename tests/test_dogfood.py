@@ -1660,6 +1660,165 @@ def test_a_prune_does_not_propagate_through_an_incremental_backup(
     assert ORIG_HASH not in _archive_priors(c.db_path)  # the prune travelled
 
 
+# --- the content-identity dogfood leg (H340) ------------------------------
+#
+# The custody surfaces for *byte-identical holdings under different ids* shipped
+# one leg at a time (H325 doctor, H327 maintain, H328 `show`, H333 the compiled
+# `· also held as` marker); the untested whole is the operator *loop* the theme
+# exists to serve: hold the same bytes twice → every surface names the redundancy
+# → the operator prunes one copy → the count clears in lockstep. The sharp custody
+# point: the act is a real `rm` the operator *chooses* — the tool never auto-merges
+# a content duplicate (H325/H337: raw is sacred, two faithful copies are a
+# redundancy fact, never a defect to collapse) — so the redundancy is proven
+# *operator-resolvable without custody loss*, the self-healing-dogfood analogue
+# (H204/H206/H210) on the content-identity axis.
+
+# Two captures of the *same bytes* under two ids/sources/urls — a content-identity
+# duplicate (H325), distinct from a URL-spelling one (same normalized url, ADR 0023).
+_MIRROR_BODY = "One survey's bytes, mirrored under two ids."
+_MIRROR_HASH = "sha256:byte-identical-mirror"
+
+
+def _held_topic_with_a_mirror() -> tuple[list[ScrollItem], ScrollItem, ScrollItem]:
+    """The held topic plus a byte-identical pair: same `content_hash`/body, two ids.
+
+    The pair lands on its own category page (``survey``) so the compiled-page
+    assertions read a row set isolated from the three unique topic scrolls — the
+    surfaces must single out *only* the redundant pair, never the unique holdings.
+    """
+    mirror_a = _rendered(
+        "web", None, "https://example.com/transformer-survey-mirror-a",
+        title="Transformer Survey (mirror A)",
+        raw_text=_MIRROR_BODY, extracted_text=_MIRROR_BODY,
+        content_hash=_MIRROR_HASH, category="survey", domain="machine learning",
+        concepts=("Transformer",), tags=("mirror",),
+    )
+    mirror_b = _rendered(
+        "blog", None, "https://example.com/transformer-survey-mirror-b",
+        title="Transformer Survey (mirror B)",
+        raw_text=_MIRROR_BODY, extracted_text=_MIRROR_BODY,
+        content_hash=_MIRROR_HASH, category="survey", domain="machine learning",
+        concepts=("Transformer",), tags=("mirror",),
+    )
+    return _held_topic() + [mirror_a, mirror_b], mirror_a, mirror_b
+
+
+def test_spot_a_content_duplicate_then_prune_clears_it_across_every_surface(
+    home, capsys
+):
+    """*spot the redundancy → prune → it clears* (H340): the content-identity loop
+    end to end across the read/render/maintain surfaces.
+
+    Hold the same bytes under two ids and **every** surface names the *same* pair —
+    `doctor`'s whole-library `custody.content_duplicates` (one group of two, H325),
+    the per-item `show` `content_duplicate_ids` (each names the other, H328), the
+    compiled `library/` `· also held as` marker (H333), and the `maintain`
+    `_Duplicates:_` headline (H327). Then the operator runs a real `rm` on one copy
+    (the chosen act — never an auto-merge; raw is sacred, H325/H337) and recompiles,
+    and **all four fall to clean in one step** (zero groups, empty siblings, the
+    omitted marker, the omitted line — H330's unconditional omit-when-clean: a count
+    that fell *to* zero is a pruned copy, not a defect repaired). The three unique
+    topic scrolls are flagged by *none* of these throughout, so the loop is a genuine
+    narrowing, not a one-pair library.
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()  # drain the kb report
+
+    survey_page = src.root / "library" / "categories" / "survey.md"
+
+    def doctor_dups() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+
+    def show_siblings(item_id: str) -> list[str]:
+        assert main(["show", item_id]) == 0
+        return json.loads(capsys.readouterr().out)["content_duplicate_ids"]
+
+    def maintain_line() -> str | None:
+        assert main(["maintain", "--no-recheck"]) == 0
+        return json.loads(capsys.readouterr().out)["duplicates_headline"]
+
+    # --- spot: hold two copies, every surface names the *same* pair ----------
+    report = doctor_dups()
+    assert report["total_groups"] == 1 and report["total_items"] == 2
+    assert report["groups"] == [
+        {"content_hash": _MIRROR_HASH, "ids": sorted([mirror_a.id, mirror_b.id])}
+    ]
+    # the per-item read names the cross-source sibling each way (a content group
+    # spans sources — the whole-library scope, H328)
+    assert show_siblings(mirror_a.id) == [mirror_b.id]
+    assert show_siblings(mirror_b.id) == [mirror_a.id]
+    # the compiled page row trails the `· also held as <sibling>` marker (H333)
+    page = survey_page.read_text(encoding="utf-8")
+    assert f"also held as `{mirror_b.id}`" in page  # the mirror A row names B
+    assert f"also held as `{mirror_a.id}`" in page  # the mirror B row names A
+    # the scheduled-pass headline names the one group of two (H327)
+    assert maintain_line() == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    # non-vacuous: a unique topic scroll is flagged by none of these
+    assert show_siblings(items[0].id) == []
+
+    # --- prune: a real `rm` the operator chooses, then recompile the views ---
+    assert main(["rm", mirror_a.id]) == 0
+    rm_out = json.loads(capsys.readouterr().out)
+    assert rm_out["removed"] == 1 and rm_out["failed"] == 0
+    assert main(["kb"]) == 0  # the compiled pages refresh on the next `kb`
+    capsys.readouterr()
+
+    # --- clears: every surface falls to clean in lockstep --------------------
+    cleared = doctor_dups()
+    assert cleared["total_groups"] == 0 and cleared["total_items"] == 0
+    assert cleared["groups"] == []
+    # the surviving copy is now unique — no sibling to name
+    assert show_siblings(mirror_b.id) == []
+    # the recompiled page keeps the survivor's row but drops the marker
+    page = survey_page.read_text(encoding="utf-8")
+    assert "Transformer Survey (mirror B)" in page  # the survivor stayed held
+    assert "also held as" not in page
+    # the headline is omitted entirely (H330: a fall *to* zero is a pruned copy,
+    # not a defect repaired — no `▼1 / repaired` clause, the unconditional omit)
+    assert maintain_line() is None
+
+
+def test_skipping_the_prune_leaves_the_content_duplicate_flagged_everywhere(
+    home, capsys
+):
+    """*the prune is what clears it* (H340, the mutation guard): recompiling and
+    re-reading **without** the `rm` leaves every surface still flagging the pair —
+    so the clean reads above are driven by the operator's chosen `rm`, not by the
+    recompile or the re-read. A `kb` recompile is deterministic and report-only; it
+    never collapses a content duplicate (H325 — only an explicit `rm` removes a
+    held copy), so the redundancy persists until the operator acts.
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()
+
+    # recompile + re-audit with no `rm` — the only change from the loop above
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["doctor"]) == 0
+    report = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert report["total_groups"] == 1 and report["total_items"] == 2
+
+    assert main(["show", mirror_a.id]) == 0
+    assert json.loads(capsys.readouterr().out)["content_duplicate_ids"] == [mirror_b.id]
+
+    page = (src.root / "library" / "categories" / "survey.md").read_text(
+        encoding="utf-8")
+    assert f"also held as `{mirror_b.id}`" in page
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    assert json.loads(capsys.readouterr().out)["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
