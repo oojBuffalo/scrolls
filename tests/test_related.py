@@ -425,6 +425,98 @@ def test_relation_strength_surfaces_on_mcp(db):
     assert hit["relation_strength"] == "strong"
 
 
+# --- H326: the content-identity edge on the relationship surface -------------
+# Two items can hold byte-identical content under different ids — the same bytes
+# saved from two URLs, a mirror, a cross-post, or one work captured by two source
+# adapters (the H325 content-identity custody shape). `related` scores that as the
+# strongest possible bond — byte-identity outranks even shared scholarly identity —
+# so an identical copy ranks first and reads `strong`, with a `reasons` entry
+# naming the shared `content_hash`.
+
+
+def test_identical_content_pair_ranks_first_and_reads_strong(db):
+    insert_item(db, make_item("web:a", content_hash="sha256:abc"))
+    insert_item(db, make_item("mirror:a", content_hash="sha256:abc"))  # same bytes
+    insert_item(db, make_item("web:other", content_hash="sha256:zzz"))  # different bytes
+
+    hits = find_related(db, "web:a")
+    assert [hit.id for hit in hits] == ["mirror:a"]
+    top = hits[0]
+    assert top.relation_strength == "strong"
+    assert any(reason == "identical content: sha256:abc" for reason in top.reasons)
+
+
+def test_identical_content_outranks_a_same_work_only_sibling(db):
+    # byte-identity (7 points) is stronger than shared scholarly identity (6): the
+    # identical copy ranks above a same-work-only sibling.
+    insert_item(db, make_item(
+        "arxiv:1",
+        content_hash="sha256:bytes",
+        links=("https://doi.org/10.1234/abc",),
+    ))
+    insert_item(db, make_item("mirror:1", content_hash="sha256:bytes"))  # identical bytes
+    insert_item(db, make_item(
+        "pubmed:1", links=("https://doi.org/10.1234/abc",)))  # same work, no captured bytes
+
+    hits = find_related(db, "arxiv:1")
+    assert [hit.id for hit in hits] == ["mirror:1", "pubmed:1"]
+    assert hits[0].score > hits[1].score  # content edge (7) > work edge (6)
+
+
+def test_content_edge_composes_with_a_shared_tag(db):
+    # A byte-identical pair that also shares a tag carries both reasons; the band
+    # stays `strong` (the strongest contributing class wins).
+    insert_item(db, make_item("web:a", content_hash="sha256:abc", tags=("ml",)))
+    insert_item(db, make_item("mirror:a", content_hash="sha256:abc", tags=("ml",)))
+
+    (hit,) = find_related(db, "web:a")
+    assert any(reason == "identical content: sha256:abc" for reason in hit.reasons)
+    assert any("shared tags" in reason for reason in hit.reasons)
+    assert hit.relation_strength == "strong"
+    assert hit.score == 7 + 2  # content edge + one shared tag
+
+
+def test_content_edge_is_complementary_to_a_same_work_edge(db):
+    # Two items both byte-identical AND sharing a DOI fire BOTH reasons (the same
+    # bytes, *and* the same work) — complementary facts, not double counting.
+    insert_item(db, make_item(
+        "arxiv:1",
+        content_hash="sha256:abc",
+        links=("https://doi.org/10.1234/abc",),
+    ))
+    insert_item(db, make_item(
+        "mirror:1",
+        content_hash="sha256:abc",
+        links=("https://doi.org/10.1234/abc",),
+    ))
+
+    (hit,) = find_related(db, "arxiv:1")
+    assert any(reason == "identical content: sha256:abc" for reason in hit.reasons)
+    assert any(reason.startswith("same work") for reason in hit.reasons)
+    assert hit.score == 7 + 6  # content + work, both fire
+
+
+def test_non_duplicate_pair_has_no_content_reason(db):
+    # Different content hashes earn no content edge — only the topical bond fires.
+    insert_item(db, make_item("web:a", content_hash="sha256:abc", concepts=("agents",)))
+    insert_item(db, make_item("web:b", content_hash="sha256:different", concepts=("agents",)))
+
+    (hit,) = find_related(db, "web:a")
+    assert not any("identical content" in reason for reason in hit.reasons)
+    assert hit.relation_strength == "moderate"  # only the shared concept
+
+
+def test_null_content_hash_earns_no_content_edge(db):
+    # A reference-only item holds no captured content (NULL hash); two such items
+    # are not byte-identical holdings, so no content edge fires (the H325 NULL skip).
+    insert_item(db, make_item("web:a", content_hash=None, concepts=("agents",)))
+    insert_item(db, make_item("web:b", content_hash=None, concepts=("agents",)))
+
+    (hit,) = find_related(db, "web:a")
+    assert not any("identical content" in reason for reason in hit.reasons)
+    assert hit.relation_strength == "moderate"
+
+
 def test_cli_related_hit_exposes_drift(db, capsys):
     insert_item(db, make_item("x:1111", title="@a: thread", concepts=("ml",)))
     insert_item(db, make_item("arxiv:2605.27848", title="A Paper", concepts=("ml",)))

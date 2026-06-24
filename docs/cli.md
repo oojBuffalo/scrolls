@@ -4410,18 +4410,27 @@ can never be misread as "the library holds nothing about sqlite."
 ### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--strength BAND] [--limit N] [--stats]`
 
 Deterministic, explainable connections (IDEAS.md §10,
-`tests/test_related.py`): link edges in either direction (resolved
-through source detection, so a tweet linking to `arxiv.org/abs/X` finds
-item `arxiv:X`), shared concepts, shared tags, same category/domain as
-weak corroboration. `score` is an integer (higher = more connected) and
+`tests/test_related.py`): **identical content** (two items hold byte-identical
+content under different ids — the same bytes saved from two URLs, a mirror, a
+cross-post, or one work captured by two source adapters, matched on a shared
+non-null `content_hash`; the H325 content-identity custody shape on the
+relationship surface, roadmap H326), same work (a shared DOI), link edges in
+either direction (resolved through source detection, so a tweet linking to
+`arxiv.org/abs/X` finds item `arxiv:X`), shared concepts, shared tags, same
+category/domain as weak corroboration. A byte-identical edge is the *strongest*
+possible bond — stronger than even a same-work edge (`identical content`
+outranks `same work`, since byte-identity beats shared scholarly identity) — and
+is **complementary** to it: two items can be both byte-identical *and* share a
+DOI, and both `reasons` then fire (the same bytes, *and* the same work), not
+double counting. `score` is an integer (higher = more connected) and
 every hit carries its `reasons` plus a one-word `relation_strength` band
 (`strong`/`moderate`/`weak`, roadmap H322) — the relationship-surface analogue of
 `search`'s `match_strength`, the legible companion the opaque integer `score`
-lacks: it is the band of the *strongest contributing signal class* (a same-work or
-link edge → `strong`, shared concepts/tags → `moderate`, same category/domain →
-`weak`), grounded in the relation point weights so it names the *kind* of the
-strongest bond, not the multiplied magnitude (three shared tags, score 6, is still
-a `moderate` topical bond, not an identity one). Beside it travels the neighbour's
+lacks: it is the band of the *strongest contributing signal class* (an
+identical-content, same-work, or link edge → `strong`, shared concepts/tags →
+`moderate`, same category/domain → `weak`), grounded in the relation point weights
+so it names the *kind* of the strongest bond, not the multiplied magnitude (three
+shared tags, score 6, is still a `moderate` topical bond, not an identity one). Beside it travels the neighbour's
 `fidelity` tier
 (`full`/`partial`/`reference`, ADR 0097/0100), its custody `drift` posture
 (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H56, read from the

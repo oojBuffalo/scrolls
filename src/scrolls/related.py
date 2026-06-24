@@ -3,6 +3,14 @@
 `scrolls related <id>` answers "what else in my library belongs next to
 this?" without an LLM, scoring explainable signals:
 
+- identical content (7 points): the two items hold byte-identical content
+  under different ids — the same bytes saved from two URLs, a mirror, a
+  cross-post, or one work captured by two source adapters — matched on a
+  shared non-null ``content_hash`` (the H325 content-identity custody shape
+  on the relationship surface, roadmap H326). This is the *strongest*
+  possible bond: byte-identity outranks even shared scholarly identity, so
+  an identical copy ranks first and reads ``strong``. A NULL/empty hash
+  fingerprints nothing, so a reference-only item earns no content edge.
 - same work (6 points per shared DOI): the two items are the same
   scholarly work — a preprint and its published article, an indexing
   record — bound by a shared DOI (the `works` lens, ADR 0069). This
@@ -23,7 +31,9 @@ this?" without an LLM, scoring explainable signals:
 
 A genuine same-work pair whose binding hub *is* present scores both the
 same-work edge and the link edge — complementary facts (these are the
-same work, *and* one points at the other), not double counting.
+same work, *and* one points at the other), not double counting. The same
+holds for a byte-identical pair that also shares a DOI: the content edge
+and the same-work edge both fire (the same bytes, *and* the same work).
 
 Every hit carries human/agent-readable `reasons`, so downstream callers
 (and the MCP `get_related_scrolls`) can show *why* — same spirit as search
@@ -68,6 +78,7 @@ from scrolls.works import DOI_RESOLVER, item_dois
 
 DEFAULT_LIMIT = 10
 
+_CONTENT_POINTS = 7
 _WORK_POINTS = 6
 _LINK_POINTS = 5
 _CONCEPT_POINTS = 3
@@ -79,15 +90,16 @@ _GROUP_POINTS = 1
 # is the band of the *strongest contributing class* — the relationship-surface
 # analogue of search's `match_strength` = band of the highest-weighted matched
 # field (roadmap H322/H312). Grounded in the point weights above, not an invented
-# relevance: a same-work (shared DOI) or link edge is an identity-/citation-grade
-# bond (→ `strong`), shared concepts/tags are curated topical overlap
-# (→ `moderate`), and same category/domain is the weak corroboration that is
-# "never enough on its own" (→ `weak`). The band names the *kind* of the strongest
-# bond, never the multiplied magnitude — three shared tags (6 points, the weight of
-# one same-work edge) is still a topical bond, not an identity one, exactly as
-# `match_strength` bands on the field, not the BM25 score.
-_RELATION_KINDS = ("work", "link", "concept", "tag", "group")
+# relevance: a byte-identical-content (H326), same-work (shared DOI), or link edge
+# is an identity-/citation-grade bond (→ `strong`), shared concepts/tags are
+# curated topical overlap (→ `moderate`), and same category/domain is the weak
+# corroboration that is "never enough on its own" (→ `weak`). The band names the
+# *kind* of the strongest bond, never the multiplied magnitude — three shared tags
+# (6 points, the weight of one same-work edge) is still a topical bond, not an
+# identity one, exactly as `match_strength` bands on the field, not the BM25 score.
+_RELATION_KINDS = ("content", "work", "link", "concept", "tag", "group")
 _STRENGTH_BY_KIND = {
+    "content": "strong",
     "work": "strong",
     "link": "strong",
     "concept": "moderate",
@@ -284,6 +296,11 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
     item_concepts = {slugify(c): c for c in item.concepts if slugify(c)}
     item_tags = {t.lower(): t for t in item.tags}
     item_work_dois = item_dois(item)
+    # The content-identity fingerprint (roadmap H326): a non-null `content_hash`
+    # the byte-identity edge matches `other`'s against. A NULL/empty hash
+    # fingerprints nothing — a reference-only item holds no captured content — so
+    # no content edge can fire (the `content_duplicate_groups` NULL-skip, ADR 0023).
+    item_content_hash = item.content_hash or None
     # One ledger read for the whole scoring pass: each hit's `drift` posture is
     # `drift_posture` over its latest verdict and its `last_checked` the same
     # verdict's timestamp — the same primitives the graph node shape and the bundle
@@ -303,6 +320,22 @@ def scored_related(db_path: Path, item_id: str) -> list[RelatedHit]:
         # back out of the reason strings, so the band can never drift from the
         # signal that earned the score.
         kinds: list[str] = []
+
+        # The content-identity edge (roadmap H326): the two items hold
+        # byte-identical content under different ids — the same bytes saved from
+        # two URLs, a mirror, a cross-post, or one work captured by two adapters
+        # (the H325 custody shape on the relationship surface). Byte-identity is
+        # the *strongest* possible bond — stronger than the shared scholarly
+        # identity of a same-work edge (`_CONTENT_POINTS > _WORK_POINTS`) — so an
+        # identical copy ranks first and reads `strong`. It is **complementary** to
+        # the same-work edge below, not double counting: two items can be both
+        # byte-identical *and* share a DOI, and both reasons then fire (the
+        # same-work-plus-link precedent — these are the same bytes, *and* the same
+        # work).
+        if item_content_hash and other.content_hash == item_content_hash:
+            score += _CONTENT_POINTS
+            kinds.append("content")
+            reasons.append(f"identical content: {item_content_hash}")
 
         shared_dois = sorted(item_work_dois & item_dois(other))
         if shared_dois:
