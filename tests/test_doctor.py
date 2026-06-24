@@ -2439,3 +2439,58 @@ def test_content_duplicates_groups_are_ordered_by_content_hash(paths):
     assert [g["content_hash"] for g in dup["groups"]] == ["sha256:aaa", "sha256:zzz"]
     assert dup["total_groups"] == 2
     assert dup["total_items"] == 4
+
+
+def test_fix_never_merges_a_content_identity_duplicate(paths):
+    # roadmap H337: `doctor --fix` auto-merges URL-spelling duplicates (ADR 0023 —
+    # the *one* identity doctor may collapse) but must NEVER touch a content-identity
+    # duplicate (byte-identical content under different ids, H325): two faithful
+    # copies are custody-distinct provenance, a redundancy fact an operator may want,
+    # never a defect to merge (raw is sacred). The claim lives in the
+    # `content_duplicate_groups` docstring but was never pinned executably — a future
+    # `--fix` extension could silently start collapsing content groups. This is that
+    # executable guard, seeding *both* identities so the `--fix` is non-trivially
+    # active on one while leaving the other entirely alone.
+    junk = "https://example.com/post?utm_source=newsletter"
+    clean = "https://example.com/post"
+    # the URL-spelling pair (same normalized url, distinct content → auto-mergeable)
+    _rendered(paths, _web_item(junk, fetched=True, saved_at="2026-06-10T08:00:00+00:00"))
+    insert_item(paths.db_path, _web_item(clean, saved_at="2026-06-12T08:00:00+00:00"))
+    # the content-identity pair (different urls, same content_hash → report-only)
+    content_ids = _content_pair(paths)
+
+    # before the fix: the URL pair is a *found* (pending) merge, the content pair a
+    # *report-only* content-identity group — two genuinely different surfaces.
+    before = run_doctor(paths)
+    [pending] = before["duplicates"]
+    assert pending["status"] == "found"
+    before_content = before["custody"]["content_duplicates"]
+    assert before_content["total_groups"] == 1
+    assert before_content["groups"][0]["ids"] == content_ids
+
+    # run the repair
+    report = run_doctor(paths, fix=True)
+
+    # the URL-spelling pair merged into the canonical id (the ADR 0023 behavior)
+    [merged] = report["duplicates"]
+    assert merged["status"] == "merged"
+    assert merged["merged_id"] == make_item_id("web", None, clean)
+
+    # the content pair is UNTOUCHED — both ids still held (the merge collapsed only
+    # the URL pair, leaving 3 items: the URL survivor + the two content copies)
+    held = {item.id for item in list_items(paths.db_path)}
+    assert set(content_ids) <= held
+    assert make_item_id("web", None, clean) in held
+    assert len(held) == 3
+
+    # still flagged, and the group set is byte-identical before and after the --fix
+    # (the mutation guard: a `--fix` that silently merged it would shrink the group)
+    after_content = report["custody"]["content_duplicates"]
+    assert after_content["groups"] == before_content["groups"]
+    assert after_content["total_groups"] == 1
+    assert after_content["total_items"] == 2
+
+    # the merge counted exactly the URL pair — the content pair never fed the
+    # repairable issues/fixed tallies or the exit code (H325 report-only discipline)
+    assert report["issues"] == 1
+    assert report["fixed"] == 1
