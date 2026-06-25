@@ -2907,7 +2907,7 @@ $ scrolls export bookmarks
 [exit 0]
 ```
 
-### `scrolls export items [--source S] [--category C] [--tag T] [--fidelity T] [--drift P]`
+### `scrolls export items [--source S] [--category C] [--tag T] [--fidelity T] [--drift P] [--content-duplicate]`
 
 Export the library's items as a lossless JSON Lines stream (ADR 0082) —
 the inverse of `scrolls import items`, and the way a whole library is
@@ -2954,6 +2954,24 @@ never a silent empty backup
 (`test_export_items_rejects_an_unknown_fidelity_tier`); the `_cmd_export_items`
 programmatic path surfaces the `list_items` `ValueError` as exit 1
 (`test_cmd_export_items_unknown_tier_on_the_programmatic_path_is_exit_1`).
+
+**Content-identity scope (`--content-duplicate`).** A boolean flag that backs up
+only the held items the library holds a **byte-identical copy of under another
+id** — the content-duplicate set (the content-identity custody shape; the same
+bytes saved twice, a mirror or cross-post). It folds the same whole-library
+sibling sieve `scrolls list --content-duplicate` uses (the `content_duplicate_index`
+fold), so the backup is the byte-identical subset enumerating exactly the held
+members of `scrolls doctor`'s `custody.content_duplicates` groups — "ship only
+the redundant copies so a recipient can dedup". The sibling scope is
+whole-library, so `--source S --content-duplicate` backs up S's items that have a
+byte-identical sibling *anywhere* held (the sibling may live in another source),
+and the flag ANDs with `--fidelity`/`--drift`
+(`test_export_items_content_duplicate_composes_with_source`). It is **report-only**
+— it names what an operator may dedup, never merges. The lossless round-trip
+carries the redundancy: `import items` of a content-duplicate backup re-holds the
+pair and the rebuilt library's `doctor.custody.content_duplicates` re-flags the
+same groups (`test_export_items_content_duplicate_round_trips_and_reflags`;
+`content_hash` travels, the H336 guarantee).
 
 The round-trip is the contract: an export re-imports to the same items,
 every field intact — into a fresh library it is a faithful restore, into
@@ -3151,7 +3169,7 @@ $ scrolls export archive --since 2026-06-22 > priors-since-last-sweep.jsonl   # 
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--strength {strong|moderate|weak}] [--format markdown|html] [--with-archive]`
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--strength {strong|moderate|weak}] [--content-duplicate] [--format markdown|html] [--with-archive]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown file
 an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -3308,6 +3326,29 @@ by argparse `choices` (exit 2) on the CLI and by `search_items` (`ValueError`) o
 programmatic path (`test_export_bundle_cli_rejects_unknown_strength`,
 `test_bundle_strength_unknown_raises_valueerror`); the scope applies to the HTML form too
 (both share the gather step, `test_bundle_html_strength_scope`).
+
+`--content-duplicate` is the **content-identity scope** (roadmap H341) — a boolean
+flag, the export companion of the `_Duplicates:_` briefing line (H331). It keeps
+only the matches the library holds a **byte-identical copy of under another id**
+(the content-duplicate custody shape), so an operator ships "only the redundant
+copies about X for a recipient to dedup". It threads straight to
+`search_items`/`count_matches` through the shared gather step as the same
+whole-library `content_hash` sub-count clause `search --content-duplicate` applies
+(H338), so the briefing, the lossless custody block, and the custody-events block
+all carry exactly the byte-identical-held slice — and the re-folded `_Duplicates:_`
+line describes the kept set (`test_bundle_content_duplicate_keeps_only_siblings`).
+The sibling scope is **whole-library** (a content group spans the query/source
+scope), so `--source S --content-duplicate` ships S's matches that have a
+byte-identical sibling *anywhere* held; it **ANDs** with the facets, the custody
+axes, and `--strength`, is echoed in the title scope note as a bare
+`content-duplicate` marker (`test_bundle_content_duplicate_named_in_the_title`),
+and is **report-only** — never a merge (raw is sacred). The lossless round-trip
+carries the redundancy: `import bundle` of a content-duplicate-scoped bundle
+re-holds exactly the redundant pair and the rebuilt library's
+`doctor.custody.content_duplicates` re-flags the same group
+(`test_export_bundle_cli_content_duplicate_round_trips_and_reflags`; `content_hash`
+travels, the H336 guarantee). The scope applies to the HTML form too (both share
+the gather step, `test_bundle_html_content_duplicate_keeps_only_siblings`).
 
 `--format` (default `markdown`) chooses the output form (roadmap H39). `markdown`
 is the **canonical, lossless, re-importable** bundle described above — the form

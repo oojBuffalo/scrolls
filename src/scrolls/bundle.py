@@ -205,6 +205,7 @@ def _gather_scope(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> tuple[
     list[ScrollItem], dict[str, CustodyEvent], list[CustodyEvent], dict[str, str]
 ]:
@@ -248,6 +249,18 @@ def _gather_scope(
     portable briefing. The narrowed set's `strengths` map re-folds H317's
     `_Strength:_` headline over exactly the kept slice. ANDs with the facets and the
     custody axes; an unknown band raises ValueError (the same closed vocabulary).
+
+    `content_duplicate` (roadmap H341) is the content-identity axis — the export
+    companion of the `_Duplicates:_` briefing line (H331). It threads to the same
+    `search_items`/`count_matches` whole-library `content_hash` sub-count clause
+    `search --content-duplicate` (H338) built, keeping only the matches the library
+    holds a byte-identical copy of under another id, so an operator ships "only the
+    redundant copies about X for a recipient to dedup". The sibling scope is
+    whole-library (a content group spans the query/source scope, the H328
+    cross-source rule — the sub-count is unscoped), so a match is kept whenever its
+    byte-identical sibling is held *anywhere*. A boolean flag (yes/no per item),
+    report-only — never a merge (raw is sacred, H325). ANDs with the facets, the
+    custody axes, and `strength`.
     """
     matched = count_matches(
         db_path,
@@ -260,6 +273,7 @@ def _gather_scope(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     hits = search_items(
         db_path,
@@ -273,6 +287,7 @@ def _gather_scope(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     items = [item for item in (get_item(db_path, hit.id) for hit in hits) if item]
     verdicts = latest_events(db_path) if items else {}
@@ -337,6 +352,7 @@ def build_bundle(
     drift: str | None = None,
     strength: str | None = None,
     with_archive: bool = False,
+    content_duplicate: bool = False,
 ) -> str:
     """Render the self-contained custody bundle for a query (briefing + block).
 
@@ -373,6 +389,19 @@ def build_bundle(
     ValueError (the same closed vocabulary; the CLI also rejects via argparse
     `choices`).
 
+    `content_duplicate` (roadmap H341) is the content-identity axis — the export
+    companion of the `_Duplicates:_` briefing line (H331). It narrows the bundle to
+    the matches the library holds a byte-identical copy of under another id (the
+    `search --content-duplicate` whole-library `content_hash` sub-count clause,
+    H338), so an operator ships "only the redundant copies about X for a recipient
+    to dedup". The sibling scope is whole-library (a content group spans the scope,
+    the H328 cross-source rule), it ANDs with the facets/custody/strength axes, is
+    echoed in the title scope note, and is **report-only** — never a merge (raw is
+    sacred, H325). The narrowed set's `_Duplicates:_` line (H331) re-folds over
+    exactly the kept slice. The lossless round-trip holds: `import bundle` of a
+    content-duplicate-scoped bundle re-holds exactly the kept rows, and the rebuilt
+    library re-flags the same groups (the H336 `content_hash`-travels guarantee).
+
     `with_archive` (roadmap H280) appends a *third* sentinel-fenced region — the
     in-scope items' prior-content archive (`item_archive`, ADR 0106): the
     recoverable superseded captures, so "take it with me" includes the recovery
@@ -393,12 +422,13 @@ def build_bundle(
     # `latest_events` doctor aggregates — no per-item query, no disagreement.
     items, verdicts, events, strengths = _gather_scope(
         db_path, query, source, category, stage, tag, concept, fidelity, drift,
-        strength,
+        strength, content_duplicate,
     )
 
     title = f"# Scrolls Custody Bundle: {query}"
     scope = _scope_note(
-        source, category, stage, tag, concept, fidelity, drift, strength
+        source, category, stage, tag, concept, fidelity, drift, strength,
+        content_duplicate,
     )
     if scope:
         title += f" ({scope})"
@@ -586,6 +616,7 @@ def build_bundle_html(
     drift: str | None = None,
     strength: str | None = None,
     with_archive: bool = False,
+    content_duplicate: bool = False,
 ) -> str:
     """Render the scoped custody bundle as a self-contained, offline HTML briefing.
 
@@ -601,6 +632,10 @@ def build_bundle_html(
     drift posture, exactly as in `build_bundle` — both share `_gather_scope`, so
     the two forms cannot disagree about what the custody scope selects. `strength`
     (roadmap H318) is the rank-axis third scope, threaded identically.
+    `content_duplicate` (roadmap H341) is the content-identity axis, threaded
+    identically — both forms scope to the byte-identical-held matches via the same
+    `_gather_scope` clause, so the HTML briefing and the Markdown bundle cannot
+    disagree about the redundant slice.
 
     **Export-only — not a re-import unit.** The canonical lossless round-trip
     stays a property of the Markdown form (`build_bundle`/`import bundle`); the
@@ -612,11 +647,12 @@ def build_bundle_html(
     """
     items, verdicts, events, strengths = _gather_scope(
         db_path, query, source, category, stage, tag, concept, fidelity, drift,
-        strength,
+        strength, content_duplicate,
     )
 
     scope = _scope_note(
-        source, category, stage, tag, concept, fidelity, drift, strength
+        source, category, stage, tag, concept, fidelity, drift, strength,
+        content_duplicate,
     )
     heading = f"Scrolls Custody Bundle: {query}"
     title = heading + (f" ({scope})" if scope else "")
@@ -1350,6 +1386,7 @@ def _scope_note(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> str:
     """A `source=…, category=…` summary of the active facets, else '' (as `context`).
 
@@ -1358,6 +1395,9 @@ def _scope_note(
     drift posture it covers — the provenance of *what slice* was shared, beside
     the existing query/facet echo. `strength` (roadmap H318, the rank-axis scope)
     reports likewise, so a rank-scoped bundle names which strength band it covers.
+    `content_duplicate` (roadmap H341, the content-identity scope) is a boolean —
+    a bare `content-duplicate` marker (no value), so a redundancy-scoped bundle's
+    title names that it carries only the byte-identical-held slice.
     """
     parts = []
     if source is not None:
@@ -1376,6 +1416,8 @@ def _scope_note(
         parts.append(f"drift={drift}")
     if strength is not None:
         parts.append(f"strength={strength}")
+    if content_duplicate:
+        parts.append("content-duplicate")
     return ", ".join(parts)
 
 

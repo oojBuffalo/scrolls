@@ -3979,6 +3979,121 @@ def test_bundle_html_custody_scope(scrolls_home):
     assert "wikipedia:en:Partial" not in html_bundle
 
 
+# --- export bundle --content-duplicate: the content-identity axis on the
+# shareable bundle (H341), the content-identity sibling of `export bundle
+# --fidelity`/`--drift` (H258) and the export companion of the `_Duplicates:_`
+# briefing line (H331). A pure thread-through: `_gather_scope` carries the flag to
+# the `search_items`/`count_matches` whole-library `content_hash` sub-count clause
+# (H338), so the briefing AND the lossless block carry exactly the byte-identical-
+# held matches — "ship only the redundant copies for a recipient to dedup". ---
+
+
+def _seed_bundle_content_dups(db):
+    """A byte-identical pair + a unique held + a NULL-hash reference, all on "alpha".
+
+    `dupA`/`dupB` share `content_hash=deadbeef` (a mirror under two ids, distinct
+    URLs — a content-identity duplicate, not a URL-spelling one); `solo` is a unique
+    held singleton; `ref` carries no `content_hash`. So `content_duplicate=True`
+    keeps exactly `{dupA, dupB}`, dropping the unique and NULL-hash items (the H325
+    NULL-safe rule), and the kept set folds one `_Duplicates:_` group.
+    """
+    insert_item(db, make_item("wikipedia:en:dupA", "alpha database", "Body."))
+    insert_item(db, make_item("wikipedia:en:dupB", "alpha database mirror", "Body."))
+    insert_item(db, make_item("wikipedia:en:solo", "alpha solo", "Body.",
+                              content_hash="solohash"))
+    insert_item(db, make_item("wikipedia:en:ref", "alpha reference", "Body.",
+                              content_hash=None))
+
+
+def test_bundle_content_duplicate_keeps_only_siblings(scrolls_home):
+    # `build_bundle(content_duplicate=True)` carries only the matches the library
+    # holds a byte-identical copy of (the one content group), dropping the unique
+    # held match and the NULL-hash reference — in both the lossless block (parse)
+    # and the re-folded `_Duplicates:_` line over the kept slice.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_bundle_content_dups(db)
+
+    bundle = build_bundle(db, "alpha", content_duplicate=True)
+    assert sorted(i.id for i in parse_bundle(bundle)) == [
+        "wikipedia:en:dupA", "wikipedia:en:dupB"
+    ]
+    # the `_Duplicates:_` line re-folds over exactly the kept pair (H331)
+    assert (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in bundle
+    )
+    # the unfiltered bundle carries the unique + reference matches too
+    assert len(parse_bundle(build_bundle(db, "alpha"))) == 4
+
+
+def test_bundle_content_duplicate_named_in_the_title(scrolls_home):
+    # provenance of *what slice* was shared: the title scope note echoes the boolean
+    # as a bare `content-duplicate` marker (no value), beside any facet/custody echo
+    main(["init"])
+    db = get_paths().db_path
+    _seed_bundle_content_dups(db)
+
+    bundle = build_bundle(db, "alpha", content_duplicate=True)
+    assert bundle.startswith(
+        "# Scrolls Custody Bundle: alpha (content-duplicate)\n"
+    )
+    # composes in the scope note beside a custody value
+    scoped = build_bundle(db, "alpha", fidelity="full", content_duplicate=True)
+    assert scoped.startswith(
+        "# Scrolls Custody Bundle: alpha (fidelity=full, content-duplicate)\n"
+    )
+
+
+def test_bundle_html_content_duplicate_keeps_only_siblings(scrolls_home):
+    # the HTML form shares `_gather_scope`, so it scopes to the same redundant slice
+    # — only the byte-identical pair appears as scroll sections
+    main(["init"])
+    db = get_paths().db_path
+    _seed_bundle_content_dups(db)
+
+    doc = build_bundle_html(db, "alpha", content_duplicate=True)
+    assert "Scrolls Custody Bundle: alpha (content-duplicate)" in doc
+    assert doc.count('<section class="scroll">') == 2
+    assert "wikipedia:en:dupA" in doc and "wikipedia:en:dupB" in doc
+    assert "wikipedia:en:solo" not in doc and "wikipedia:en:ref" not in doc
+
+
+def test_export_bundle_cli_content_duplicate_round_trips_and_reflags(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the round-trip custody guarantee (the H336 `content_hash`-travels shape): a
+    # content-duplicate-scoped `export bundle` → `import bundle` into a fresh library
+    # B re-holds exactly the redundant pair, and B's `doctor.custody.content_duplicates`
+    # re-flags the same group — the redundancy a recipient receives is real, the
+    # lossless block carried the `content_hash`.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_bundle_content_dups(db_a)
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "alpha", "--content-duplicate"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Scrolls Custody Bundle: alpha (content-duplicate)\n")
+    bundle_path = tmp_path / "dups.md"
+    bundle_path.write_text(out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 2
+
+    # exactly the redundant pair landed; the unique + reference matches never travelled
+    assert get_item(db_b, "wikipedia:en:dupA") is not None
+    assert get_item(db_b, "wikipedia:en:dupB") is not None
+    assert get_item(db_b, "wikipedia:en:solo") is None
+    assert get_item(db_b, "wikipedia:en:ref") is None
+    # B re-flags the same group — the content_hash survived the bundle round-trip
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1 and dup["total_items"] == 2
+
+
 # --- the explainable-ranking surface on the shareable bundle (H317) ----------
 #
 # `scrolls export bundle <query>` is built from the *same* ranked `search_items`

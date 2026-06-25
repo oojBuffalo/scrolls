@@ -5487,6 +5487,118 @@ def test_cmd_export_items_unknown_tier_on_the_programmatic_path_is_exit_1(
     assert "error" in json.loads(captured.err)
 
 
+# --- export items --content-duplicate: the content-identity axis on the JSONL
+# backup (H341), the content-identity sibling of `export items --fidelity`/`--drift`
+# (H259). A pure thread-through: `list_items` already applies the
+# `--content-duplicate` whole-library sibling sieve (H338, the
+# `content_duplicate_index` fold), so the backup scopes to "only the redundant
+# copies, so a recipient can dedup" with no new sieve. ---
+
+
+def test_export_items_content_duplicate_scopes_the_backup(scrolls_home, capsys):
+    # `export items --content-duplicate` backs up only the held items carrying a
+    # byte-identical sibling (the two content groups), dropping the unique held
+    # item and the NULL-hash reference — and the backed-up ids equal exactly the
+    # union of `doctor`'s content-duplicate group members (the drill-from-the-report
+    # tie the `list --content-duplicate` browse filter already pins).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    exit_code = main(["export", "items", "--content-duplicate"])
+    assert exit_code == 0
+    ids = {json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()}
+    assert ids == {"web:a", "arxiv:1", "web:p", "web:q"}  # unique + ref dropped
+
+    main(["doctor"])
+    groups = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]["groups"]
+    members = {item_id for group in groups for item_id in group["ids"]}
+    assert ids == members
+
+
+def test_export_items_content_duplicate_is_byte_identical_to_the_unscoped_subset(
+    scrolls_home, capsys
+):
+    # the core backup guarantee (the H259 shape): a content-duplicate-scoped backup
+    # is byte-for-byte the matching subset of the whole-library backup — `list_items`
+    # preserves saved order under the post-SQL sibling sieve, so the scoped stream is
+    # exactly the unscoped lines for the redundant ids.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["export", "items"])
+    unscoped = capsys.readouterr().out
+    main(["export", "items", "--content-duplicate"])
+    scoped = capsys.readouterr().out
+
+    dup_ids = {"web:a", "arxiv:1", "web:p", "web:q"}
+    expected = "".join(
+        line
+        for line in unscoped.splitlines(keepends=True)
+        if json.loads(line)["id"] in dup_ids
+    )
+    assert scoped == expected
+    assert scoped  # non-vacuous: the seed holds byte-identical pairs
+
+
+def test_export_items_content_duplicate_composes_with_source(scrolls_home, capsys):
+    # the filter ANDs with --source, and the sibling scope is whole-library (a
+    # content group spans sources, the H328 rule), so --source web still backs up
+    # web:a whose only sibling (arxiv:1) lives in another source. --fidelity narrows
+    # to one group (the H338 composition, carried to the backup path).
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["export", "items", "--content-duplicate", "--source", "web"])
+    ids = {json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()}
+    assert ids == {"web:a", "web:p", "web:q"}  # arxiv:1 out of source scope
+
+    main(["export", "items", "--content-duplicate", "--fidelity", "full"])
+    ids = {json.loads(line)["id"] for line in capsys.readouterr().out.splitlines()}
+    assert ids == {"web:a", "arxiv:1"}  # group 1 (full); the partial group drops
+
+
+def test_export_items_content_duplicate_round_trips_and_reflags(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the round-trip custody guarantee (the H336 `content_hash`-travels shape): an
+    # unscoped content-duplicate backup → fresh `import items` into B re-holds
+    # exactly the redundant rows, and B's `doctor.custody.content_duplicates`
+    # re-flags the *same* groups — the redundancy is a property the lossless backup
+    # carries, not one silently lost because `content_hash` did not travel.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["export", "items", "--content-duplicate"])
+    out_path = tmp_path / "dups-only.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored-home"))
+    main(["init"])
+    capsys.readouterr()
+    exit_code = main(["import", "items", str(out_path)])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["items"] == 4
+
+    # the filtered-out unique + reference rows never travelled
+    db_b = get_paths().db_path
+    assert get_item(db_b, "web:solo") is None
+    assert get_item(db_b, "web:ref") is None
+
+    # B re-flags the same two groups (4 members) — the content_hash survived
+    main(["doctor"])
+    dup = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 2
+    assert dup["total_items"] == 4
+
+
 def test_import_items_missing_file_is_an_error(scrolls_home, tmp_path, capsys):
     exit_code = main(["import", "items", str(tmp_path / "nowhere.jsonl")])
     assert exit_code == 1

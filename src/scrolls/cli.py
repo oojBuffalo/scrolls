@@ -656,6 +656,18 @@ def build_parser() -> argparse.ArgumentParser:
         "drifted to ship only the moved rows for a recapture handoff). ANDs with "
         "--fidelity",
     )
+    export_items_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only back up items the library holds a byte-identical copy of under "
+        "another id — the content-duplicate set (the content-identity custody "
+        "shape); the JSONL is the subset `scrolls list --content-duplicate` "
+        "enumerates, so a recipient can dedup the redundant copies. A boolean flag "
+        "(yes/no per item), report-only (never a merge). The sibling may live in "
+        "another source, so ANDed with --source it backs up that source's items "
+        "with a byte-identical sibling anywhere. ANDs with --fidelity/--drift",
+    )
     export_events_parser = export_sub.add_parser(
         "events",
         help="Export the verify ledger (custody events) as a lossless JSONL "
@@ -815,6 +827,19 @@ def build_parser() -> argparse.ArgumentParser:
         "the sieve narrows the complete matched set (e.g. --strength strong to "
         "share only the matches whose query is in the title). The rendered "
         "_Strength:_ headline describes the kept set. ANDs with --fidelity/--drift",
+    )
+    export_bundle_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only scrolls the library holds a byte-identical copy of under another "
+        "id — the content-duplicate set (the content-identity custody shape); the "
+        "briefing and lossless block carry exactly the redundant holdings, so a "
+        "recipient can decide what to dedup. A boolean flag (yes/no per item), "
+        "report-only (never a merge). The sibling may live in another source "
+        "(whole-library scope), so ANDed with --source it ships that source's items "
+        "with a byte-identical sibling anywhere. ANDs with --fidelity/--drift/"
+        "--strength",
     )
     export_bundle_parser.add_argument(
         "--format",
@@ -1582,7 +1607,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
         if args.export_command == "items":
             return _cmd_export_items(
-                args.source, args.category, args.tag, args.fidelity, args.drift
+                args.source, args.category, args.tag, args.fidelity, args.drift,
+                args.content_duplicate,
             )
         if args.export_command == "events":
             return _cmd_export_events(
@@ -1610,6 +1636,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.drift,
                 args.strength,
                 args.with_archive,
+                args.content_duplicate,
             )
         return _cmd_export_opml()
     if args.command == "ingest":
@@ -2516,6 +2543,7 @@ def _cmd_export_items(
     tag: str | None,
     fidelity: str | None = None,
     drift: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     paths = get_paths()
     # the same durable-property facets `export bookmarks` offers scope the
@@ -2524,10 +2552,14 @@ def _cmd_export_items(
     # add the two custody axes — "back up only my full-fidelity holdings" /
     # "ship only the drifted rows for a recapture handoff" — folding the same
     # `list --fidelity`/`--drift` sieve, so the JSONL is the byte-identical
-    # subset of the unscoped backup. An unknown value is rejected by argparse
-    # `choices` (exit 2) before reaching here; on the library path `list_items`
-    # raises ValueError (the empty-vocabulary belt-and-braces → exit 1, the
-    # `export bundle` precedent).
+    # subset of the unscoped backup. `content_duplicate` (H341) adds the
+    # content-identity axis — "back up only the redundant copies so a recipient
+    # can dedup" — folding the same `list --content-duplicate` whole-library
+    # sibling sieve (H338, the `content_duplicate_index` fold); the post-SQL
+    # sieve preserves saved order, so the scoped JSONL stays the byte-identical
+    # subset. An unknown value is rejected by argparse `choices` (exit 2) before
+    # reaching here; on the library path `list_items` raises ValueError (the
+    # empty-vocabulary belt-and-braces → exit 1, the `export bundle` precedent).
     try:
         items = (
             list_items(
@@ -2537,6 +2569,7 @@ def _cmd_export_items(
                 tag=tag,
                 fidelity=fidelity,
                 drift=drift,
+                content_duplicate=content_duplicate,
             )
             if paths.db_path.exists()
             else []
@@ -2729,6 +2762,7 @@ def _cmd_export_bundle(
     drift: str | None = None,
     strength: str | None = None,
     with_archive: bool = False,
+    content_duplicate: bool = False,
 ) -> int:
     paths = get_paths()
     # markdown (default) is the canonical, lossless, re-importable bundle; html
@@ -2739,6 +2773,11 @@ def _cmd_export_bundle(
     # `choices` (exit 2) before reaching here, and on the library path by
     # `search_items` (ValueError → exit 1, the empty-vocabulary belt-and-braces).
     # `strength` (H318) is the rank-axis third scope, rejected the same way.
+    # `content_duplicate` (H341) is the content-identity axis — "ship only the
+    # redundant copies so a recipient can dedup" — threaded through the same
+    # `search_items`/`count_matches` whole-library `content_hash` sub-count clause
+    # (H338), so the shared `_gather_scope` sieves the items, ledger, and events
+    # block to exactly the byte-identical-held matches.
     # `--with-archive` (H280) appends the in-scope items' prior-content archive in a
     # third fenced block (opt-in — the bundle stays lean by default).
     builder = build_bundle_html if fmt == "html" else build_bundle
@@ -2755,6 +2794,7 @@ def _cmd_export_bundle(
             drift=drift,
             strength=strength,
             with_archive=with_archive,
+            content_duplicate=content_duplicate,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
