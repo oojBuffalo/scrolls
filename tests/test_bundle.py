@@ -4174,6 +4174,123 @@ def test_export_bundle_cli_content_duplicate_round_trips_and_reflags(
     assert dup["total_groups"] == 1 and dup["total_items"] == 2
 
 
+# --- the prune *guidance* travels the bundle round-trip (H360) ----------------
+#
+# H354 pinned that the byte-identity *re-flags `doctor`* on a recipient (the
+# redundancy a peer receives is real). H360 pins that the *actionable guidance* —
+# which copy to keep + the `scrolls rm` to prune the rest, the H356
+# `duplicate_prunes` block — re-derives identically there: an operator who receives
+# a shared bundle gets the same prune plan the sender saw. `_canonical_keep` (H356)
+# ranks a byte-identical group by **fidelity → `saved_at` → id**, all three of which
+# the lossless `export/import bundle` round-trip preserves (the H216/H258
+# custody-scope round-trip), so the recipient's `maintain` must surface a
+# `duplicate_prunes` whose `{content_hash, keep, prune, command}` partition matches
+# the sender's member-for-member. The library is materialised on both sides (the
+# documented `doctor --fix` restore) so `maintain --no-recheck` runs clean and
+# network-free, reading the guidance off the *same* live `doctor` groups.
+
+
+def test_duplicate_prune_guidance_travels_the_bundle_round_trip(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the sender names a keep + an `rm` for the redundant copy; the recipient who
+    # rebuilds from the content-duplicate-scoped bundle alone re-derives the SAME
+    # plan — the canonical-keep axes (fidelity/saved_at/id) all travelled losslessly.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_bundle_content_dups(db_a)
+    # materialise the per-scroll markdown so `maintain` runs clean (no `missing_scrolls`)
+    assert main(["doctor", "--fix"]) == 0
+    capsys.readouterr()
+
+    # the sender's prune guidance (network-free: `--no-recheck` never touches the seam)
+    assert main(["maintain", "--no-recheck"]) == 0
+    sender_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+    # one group, keep the lowest-id copy (all tie on fidelity + saved_at here)
+    assert sender_prunes == [
+        {
+            "content_hash": "deadbeef",
+            "keep": "wikipedia:en:dupA",
+            "prune": ["wikipedia:en:dupB"],
+            "command": "scrolls rm wikipedia:en:dupB",
+        }
+    ]
+
+    # ship only the redundant pair (the H341 content-duplicate scope)
+    assert main(["export", "bundle", "alpha", "--content-duplicate"]) == 0
+    bundle_path = tmp_path / "dups.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # a fresh, empty library B rebuilt from the bundle alone, then the documented
+    # `doctor --fix` / `kb` restore (the H336 round-trip discipline)
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 2
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    # the recipient re-derives the SAME prune plan member-for-member — the keep,
+    # the prune set, and the literal `scrolls rm` command all reproduce
+    assert main(["maintain", "--no-recheck"]) == 0
+    recipient_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+    assert recipient_prunes == sender_prunes
+
+
+def test_duplicate_prune_keep_is_stable_when_saved_at_decides_the_round_trip(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the sabotage check: `_canonical_keep` breaks a fidelity tie by *earliest
+    # `saved_at`, then lowest id*. Seed a byte-identical pair where the two tie-breaks
+    # DISAGREE — the earliest-saved copy has the HIGHER id — so the keep is decided by
+    # `saved_at`, not id. If the round-trip dropped `saved_at`, the recipient's keep
+    # would fall back to the lowest id (`aaa`); a keep that stays the higher-id `bbb`
+    # proves `saved_at` travelled losslessly with the holding.
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item("wikipedia:en:bbb", "alpha origin", "Body.",
+                                saved_at="2026-06-01T00:00:00+00:00"))
+    insert_item(db_a, make_item("wikipedia:en:aaa", "alpha mirror", "Body.",
+                                saved_at="2026-06-20T00:00:00+00:00"))
+    assert main(["doctor", "--fix"]) == 0
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    sender_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+    # saved_at decides: keep the earliest-saved `bbb`, prune the lower-id `aaa`
+    assert sender_prunes == [
+        {
+            "content_hash": "deadbeef",
+            "keep": "wikipedia:en:bbb",
+            "prune": ["wikipedia:en:aaa"],
+            "command": "scrolls rm wikipedia:en:aaa",
+        }
+    ]
+    # non-vacuous: the keep is NOT the lowest id, so id alone could not have picked it
+    assert sender_prunes[0]["keep"] != min(["wikipedia:en:aaa", "wikipedia:en:bbb"])
+
+    assert main(["export", "bundle", "alpha", "--content-duplicate"]) == 0
+    bundle_path = tmp_path / "dups.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    # the keep is STILL `bbb` on the recipient — saved_at survived, so the canonical
+    # pick did not flip to the lowest-id fallback
+    assert main(["maintain", "--no-recheck"]) == 0
+    recipient_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+    assert recipient_prunes == sender_prunes
+    assert recipient_prunes[0]["keep"] == "wikipedia:en:bbb"
+
+
 # --- the explainable-ranking surface on the shareable bundle (H317) ----------
 #
 # `scrolls export bundle <query>` is built from the *same* ranked `search_items`
