@@ -2184,6 +2184,37 @@ def _works_custody_mix_mcp():
     return db
 
 
+def _content_dup_works_mix_mcp():
+    """Works spread across the content-identity axis — the MCP twin of
+    `test_works._content_dup_work_mix` (roadmap H344). works_over order (-reps, doi):
+    - Work B (10.2000/b, 3 reps): two *full* reps holding the SAME bytes (sha256:dupB)
+      + a *reference* rep → content_duplicate, and it holds a reference form.
+    - Work A (10.1000/a, 2 reps): two *full* reps holding the SAME bytes (sha256:dupA)
+      → content_duplicate, both full.
+    - Work C (10.3000/c, 2 reps): two *full* reps holding DIFFERENT bytes → not a dup.
+    Library must already exist.
+    """
+    from scrolls.items import ScrollItem, insert_item
+
+    db = get_paths().db_path
+
+    def _item(item_id, source, doi, content_hash):
+        return ScrollItem(
+            id=item_id, source=source, source_id=item_id.split(":", 1)[1],
+            url=f"https://ex.com/{item_id}", saved_at="2026-06-12T00:00:00+00:00",
+            title=item_id, links=(f"https://doi.org/{doi}",), stage="rendered",
+            raw_text="body" if content_hash else None, content_hash=content_hash)
+
+    insert_item(db, _item("arxiv:a", "arxiv", "10.1000/a", "sha256:dupA"))
+    insert_item(db, _item("crossref:ca", "crossref", "10.1000/a", "sha256:dupA"))
+    insert_item(db, _item("arxiv:b", "arxiv", "10.2000/b", "sha256:dupB"))
+    insert_item(db, _item("biorxiv:b", "biorxiv", "10.2000/b", "sha256:dupB"))
+    insert_item(db, _item("crossref:cb", "crossref", "10.2000/b", None))  # reference
+    insert_item(db, _item("arxiv:c", "arxiv", "10.3000/c", "sha256:c1"))
+    insert_item(db, _item("crossref:cc", "crossref", "10.3000/c", "sha256:c2"))
+    return db
+
+
 def test_get_works_filters_by_fidelity_tier(scrolls_home):
     # the holdings axis on the consolidation surface — the MCP twin of
     # `scrolls works --fidelity` (roadmap H262), lifting `list_scrolls(fidelity=)`
@@ -2307,6 +2338,56 @@ def test_get_works_at_risk_matches_the_cli_twin(scrolls_home, capsys):
     assert main(["works", "--at-risk", "--fidelity", "full"]) == 0
     cli_payload = json.loads(capsys.readouterr().out)
     assert mcp_server.get_works(at_risk=True, fidelity="full") == cli_payload
+
+
+def test_get_works_content_duplicate_browses_the_byte_identical_works(scrolls_home):
+    # the content-identity browse predicate on the consolidation surface — the MCP twin
+    # of `scrolls works --content-duplicate` (roadmap H344), the per-work
+    # content_duplicate flag (H329) as a browse predicate.
+    from scrolls.cli import main
+
+    main(["init"])
+    _content_dup_works_mix_mcp()
+
+    payload = mcp_server.get_works(content_duplicate=True)
+    # B (full pair shares bytes) and A (full pair shares bytes) are kept; C (distinct) drops
+    assert [w["doi"] for w in payload["works"]] == ["10.2000/b", "10.1000/a"]
+    # each kept work's content_duplicate flag reads true (the drill-from-the-flag tie)
+    assert all(w["content_duplicate"] for w in payload["works"])
+    # the boolean predicate rides the scope echo, present only when set (G2)
+    assert payload["scope"] == {"min_representations": 2, "content_duplicate": True}
+    # unset → pruned, like the CLI twin
+    assert "content_duplicate" not in mcp_server.get_works()["scope"]
+
+
+def test_get_works_content_duplicate_ands_with_the_custody_filters(scrolls_home):
+    # `content_duplicate` ANDs with the per-rep contains-filters, the same as the CLI
+    # twin: among the two duplicate works, only B holds a reference rep.
+    from scrolls.cli import main
+
+    main(["init"])
+    _content_dup_works_mix_mcp()
+
+    assert [
+        w["doi"]
+        for w in mcp_server.get_works(content_duplicate=True, fidelity="reference")["works"]
+    ] == ["10.2000/b"]
+    assert [
+        w["doi"]
+        for w in mcp_server.get_works(content_duplicate=True, fidelity="full")["works"]
+    ] == ["10.2000/b", "10.1000/a"]
+
+
+def test_get_works_content_duplicate_matches_the_cli_twin(scrolls_home, capsys):
+    # CLI↔MCP parity: the same content-duplicate-scoped works payload on both surfaces
+    # (both route through `filter_works(content_duplicate=True)` + `works.to_payload`).
+    main(["init"])
+    _content_dup_works_mix_mcp()
+    capsys.readouterr()  # drain the `init` output so only the `works` JSON remains
+
+    assert main(["works", "--content-duplicate", "--fidelity", "reference"]) == 0
+    cli_payload = json.loads(capsys.readouterr().out)
+    assert mcp_server.get_works(content_duplicate=True, fidelity="reference") == cli_payload
 
 
 def test_mcp_browse_twins_are_array_only_per_source_custody_rides_object_twins(scrolls_home):

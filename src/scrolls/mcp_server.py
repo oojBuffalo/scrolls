@@ -529,6 +529,7 @@ def get_works(
     fidelity: str | None = None,
     drift: str | None = None,
     at_risk: bool = False,
+    content_duplicate: bool = False,
 ) -> dict[str, Any]:
     """Scholarly works the library holds more than one representation of.
 
@@ -576,6 +577,15 @@ def get_works(
     ANDs with `fidelity`/`drift` (e.g. `at_risk=True, fidelity="full"` for the recapture
     candidates whose content is still in hand but whose work is at risk).
 
+    `content_duplicate=True` keeps only the works that hold the **same bytes under two
+    representations** — a form byte-identical to a sibling (the `content_duplicate` flag
+    above as a browse predicate, the consolidation twin of
+    `list_scrolls(content_duplicate=)`). It is the **within-work** scope: a work is kept
+    iff its own forms duplicate each other, distinct from `list_scrolls`'s whole-library
+    sibling scope (an item whose twin lives anywhere). A boolean property, not a
+    vocabulary value; report-only, never a merge (raw is sacred). ANDs with
+    `fidelity`/`drift`/`at_risk`.
+
     Pass `item` (an id or URL) for the *per-item* lens — the work(s) that one
     item represents, with every saved sibling representation: an item that
     found one form (a search hit) learns which other forms of the same work
@@ -585,9 +595,11 @@ def get_works(
     """
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
-    # `at_risk` is a boolean predicate, not a vocabulary value, so it rides the scope
-    # echo only when set (`or None` → pruned by `to_payload` like an unset facet, G2).
+    # `at_risk`/`content_duplicate` are boolean predicates, not vocabulary values, so each
+    # rides the scope echo only when set (`or None` → pruned by `to_payload` like an unset
+    # facet, G2).
     at_risk_scope = at_risk or None
+    content_duplicate_scope = content_duplicate or None
     if item is not None:
         resolved = resolve_item_id(item)
         works = works_for_item(items, resolved)
@@ -596,6 +608,7 @@ def get_works(
             "fidelity": fidelity,
             "drift": drift,
             "at_risk": at_risk_scope,
+            "content_duplicate": content_duplicate_scope,
         }
     else:
         works = works_over(items, min_representations=min_representations)
@@ -604,10 +617,16 @@ def get_works(
             "fidelity": fidelity,
             "drift": drift,
             "at_risk": at_risk_scope,
+            "content_duplicate": content_duplicate_scope,
         }
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
     works = filter_works(
-        works, verdicts, fidelity=fidelity, drift=drift, at_risk=at_risk
+        works,
+        verdicts,
+        fidelity=fidelity,
+        drift=drift,
+        at_risk=at_risk,
+        content_duplicate=content_duplicate,
     )
     return works_payload(works, len(items), scope=scope, verdicts=verdicts)
 

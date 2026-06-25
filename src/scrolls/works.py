@@ -263,6 +263,7 @@ def filter_works(
     fidelity: str | None = None,
     drift: str | None = None,
     at_risk: bool = False,
+    content_duplicate: bool = False,
 ) -> list[Work]:
     """Keep only the works matching the given custody scope(s).
 
@@ -289,6 +290,21 @@ def filter_works(
     closed vocabulary (`FIDELITY_TIERS`/`DRIFT_POSTURES`) raises ValueError, so a typo
     is a loud could-not-check (G1), exactly as `filter_related` and the CLI `choices=`
     (exit 2) reject one.
+
+    `content_duplicate` is the **content-identity browse predicate** (roadmap H344):
+    when ``True`` it keeps only the works that **hold the same bytes under two
+    representations** — the H329 `work_content_duplicate` flag (≥2 reps share a non-null
+    `content_hash`) turned into a sieve, the consolidation analogue of `list
+    --content-duplicate` (H338). It is the **within-work** scope the flag already carries
+    (the H329 consolidation discipline): a work is kept iff *its own* representations
+    duplicate each other, so a cross-source content pair that forms no work is never kept
+    here — distinct from `list --content-duplicate`'s whole-library sibling scope, which
+    keeps an item whose byte-identical twin lives *anywhere*. Like `at_risk` it is a
+    boolean property, not a vocabulary value, and reads no ledger (`content_hash` is
+    item-intrinsic, carried on the `Representation`), so it composes with — **ANDs** with
+    — the contains-axes and `at_risk` over the same already-clustered works. Report-only,
+    names no merge (the H325 raw-is-sacred discipline; content-identity across forms is
+    custody-distinct provenance, never a fabricated act).
 
     `at_risk` is the **at-risk browse predicate** (roadmap H265): when ``True`` it
     keeps only the works **no representation safely holds** — the H261 `work_custody`
@@ -322,7 +338,7 @@ def filter_works(
             f"unknown drift posture {drift!r}; "
             f"choose one of {', '.join(DRIFT_POSTURES)}"
         )
-    if fidelity is None and drift is None and not at_risk:
+    if fidelity is None and drift is None and not at_risk and not content_duplicate:
         return works
     verdicts = verdicts or {}
     return [
@@ -331,6 +347,10 @@ def filter_works(
         if (
             not at_risk
             or not work_custody(work.representations, verdicts)["safely_held"]
+        )
+        and (
+            not content_duplicate
+            or work_content_duplicate(work.representations)
         )
         and any(
             (fidelity is None or rep.fidelity == fidelity)

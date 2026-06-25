@@ -447,6 +447,17 @@ def build_parser() -> argparse.ArgumentParser:
         "ANDs with --fidelity/--drift (e.g. --at-risk --fidelity full for the "
         "recapture candidates whose content is still in hand)",
     )
+    works_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only works that hold the SAME bytes under two representations — a "
+        "form byte-identical to a sibling (the consolidation-surface twin of "
+        "`scrolls list --content-duplicate`, the per-work content_duplicate flag as "
+        "a browse predicate). Within-work scope: a work is kept iff its own forms "
+        "duplicate each other, distinct from `list`'s whole-library sibling scope. A "
+        "boolean flag, report-only (never a merge); ANDs with --fidelity/--drift/--at-risk",
+    )
 
     follow_parser = subparsers.add_parser(
         "follow", help="Subscribe to an RSS/Atom feed for sync (JSON output)"
@@ -1554,6 +1565,7 @@ def main(argv: list[str] | None = None) -> int:
             args.fidelity,
             args.drift,
             args.at_risk,
+            args.content_duplicate,
         )
     if args.command == "follow":
         return _cmd_follow(args.url)
@@ -3960,13 +3972,16 @@ def _cmd_works(
     fidelity: str | None = None,
     drift: str | None = None,
     at_risk: bool = False,
+    content_duplicate: bool = False,
 ) -> int:
     paths = get_paths()
     items = list_items(paths.db_path) if paths.db_path.exists() else []
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
-    # `--at-risk` is a boolean predicate, not a vocabulary value, so it rides the scope
-    # echo only when set (`or None` → pruned by `to_payload` like an unset facet, G2).
+    # `--at-risk`/`--content-duplicate` are boolean predicates, not vocabulary values, so
+    # each rides the scope echo only when set (`or None` → pruned by `to_payload` like an
+    # unset facet, G2).
     at_risk_scope = at_risk or None
+    content_duplicate_scope = content_duplicate or None
     try:
         if ref is not None:  # the per-item lens: this item's work(s) and siblings
             resolved = resolve_item_id(ref)
@@ -3979,6 +3994,7 @@ def _cmd_works(
                 "fidelity": fidelity,
                 "drift": drift,
                 "at_risk": at_risk_scope,
+                "content_duplicate": content_duplicate_scope,
             }
         else:
             works = works_over(items, min_representations=min_representations)
@@ -3987,15 +4003,22 @@ def _cmd_works(
                 "fidelity": fidelity,
                 "drift": drift,
                 "at_risk": at_risk_scope,
+                "content_duplicate": content_duplicate_scope,
             }
-        # The consolidation-surface custody sieve (roadmap H262/H265): keep whole works
-        # that contain a representation at the custody value(s) and/or that no
-        # representation safely holds (`--at-risk`) — before `to_payload`, so
+        # The consolidation-surface custody sieve (roadmap H262/H265/H344): keep whole
+        # works that contain a representation at the custody value(s), that no
+        # representation safely holds (`--at-risk`), and/or that hold the same bytes
+        # under two forms (`--content-duplicate`) — before `to_payload`, so
         # `stats.custody` partitions the reported set. An unknown id and an unknown
         # custody value both raise ValueError (the identical could-not-check path, G1),
         # though argparse `choices=` already rejects a bad CLI value with exit 2.
         works = filter_works(
-            works, verdicts, fidelity=fidelity, drift=drift, at_risk=at_risk
+            works,
+            verdicts,
+            fidelity=fidelity,
+            drift=drift,
+            at_risk=at_risk,
+            content_duplicate=content_duplicate,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)

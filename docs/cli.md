@@ -4793,7 +4793,7 @@ $ scrolls graph
 [exit 0]
 ```
 
-### `scrolls works [ref] [--min N] [--fidelity T] [--drift P] [--at-risk]`
+### `scrolls works [ref] [--min N] [--fidelity T] [--drift P] [--at-risk] [--content-duplicate]`
 
 Scholarly works the library holds more than one representation of, keyed
 by DOI (ADR 0069, `tests/test_works.py`). One work — an arXiv preprint,
@@ -4946,6 +4946,28 @@ with the per-item `ref` lens too — `works <id> --at-risk` answers "is the work
 item represents at risk?" (`test_cli_works_at_risk_browses_the_unsafely_held_works`,
 `test_cli_works_at_risk_ands_with_the_custody_filters`,
 `test_cli_works_at_risk_composes_with_the_per_item_ref_lens`).
+
+`--content-duplicate` is the **content-identity browse predicate** (roadmap H344,
+`tests/test_works.py`): it keeps only the works that **hold the same bytes under two
+representations** — the per-work `content_duplicate == true` flag (above, H329: ≥2 reps
+share a non-null `content_hash`) surfaced here as a *filter*, the consolidation-surface
+twin of `scrolls list --content-duplicate` (H338). It is the **within-work** scope the
+flag already carries: a work is kept iff *its own* forms duplicate each other — distinct
+from `list --content-duplicate`'s whole-library sibling scope, which keeps an item whose
+byte-identical twin lives *anywhere*. A boolean property, not a `--fidelity`/`--drift`
+value, reading **no ledger** (`content_hash` is item-intrinsic), so it **ANDs** with
+`--fidelity`/`--drift`/`--at-risk`: `--content-duplicate --fidelity reference` keeps the
+duplicate-bearing works that *also* hold a reference form. The same
+`work_content_duplicate` fold the per-work flag reads (one rule, two reads — the
+drill-from-the-flag tie), applied before the report cut so `stats.custody` partitions
+exactly the kept set; the flag rides the `scope` echo, present only when set (G2). The
+H325 NULL-skip holds (a reference-only rep fingerprints nothing, so a full+reference pair
+is not a duplicate). **Report-only, never a merge** (raw is sacred). Composes with the
+per-item `ref` lens too — `works <id> --content-duplicate` answers "does the work this
+item represents hold a byte-identical pair?", and rides the MCP `get_works` twin
+(`test_cli_works_content_duplicate_browses_the_byte_identical_works`,
+`test_cli_works_content_duplicate_ands_with_the_custody_filters`,
+`test_get_works_content_duplicate_matches_the_cli_twin`).
 
 With a `ref` (an item id or URL — the saved URL is a valid handle wherever
 an id is, ADR 0028), `works` reports the *per-item* lens instead: the

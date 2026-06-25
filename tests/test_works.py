@@ -1012,6 +1012,92 @@ def test_filter_works_at_risk_false_is_the_unfiltered_identity():
     assert filter_works(works, at_risk=False) is works
 
 
+# --- H344: the content-identity browse predicate on the consolidation surface ----
+# `filter_works(content_duplicate=True)` keeps the works that hold the SAME bytes under
+# two representations — the H329 `work_content_duplicate` flag (≥2 reps share a non-null
+# `content_hash`) turned into a sieve, the consolidation analogue of `list
+# --content-duplicate` (H338). Within-work scope (a work is kept iff its own forms
+# duplicate each other), a boolean property reading no ledger, ANDing with the per-rep
+# contains-filters and `at_risk`.
+
+
+def _content_dup_work_mix():
+    """Works spread across the content-identity axis, for the H344 browse filter.
+
+    works_over orders by (-representations, doi):
+    - Work B (10.2000/b, 3 reps, first): two *full* reps holding the SAME bytes
+      (sha256:dupB) + a *reference* rep → content_duplicate, and it also holds a
+      reference form (for the --fidelity composition).
+    - Work A (10.1000/a, 2 reps): two *full* reps holding the SAME bytes (sha256:dupA)
+      → content_duplicate, both full, no reference rep.
+    - Work C (10.3000/c, 2 reps): two *full* reps holding DIFFERENT bytes → NOT a
+      content duplicate (the normal preprint-vs-published case).
+    """
+    return [
+        _rep("arxiv:a", "10.1000/a", "sha256:dupA"),
+        _rep("crossref:ca", "10.1000/a", "sha256:dupA"),
+        _rep("arxiv:b", "10.2000/b", "sha256:dupB"),
+        _rep("biorxiv:b", "10.2000/b", "sha256:dupB"),
+        _rep("crossref:cb", "10.2000/b", None),  # reference-only form
+        _rep("arxiv:c", "10.3000/c", "sha256:c1"),
+        _rep("crossref:cc", "10.3000/c", "sha256:c2"),
+    ]
+
+
+def test_filter_works_content_duplicate_keeps_only_byte_identical_works():
+    works = works_over(_content_dup_work_mix())
+    # B (3 reps, full pair shares bytes) and A (2 reps, full pair shares bytes) are kept;
+    # C (distinct bytes) drops out — works_over's (-reps, doi) order is B then A
+    assert _dois(filter_works(works, content_duplicate=True)) == [
+        "10.2000/b", "10.1000/a"]
+
+
+def test_filter_works_content_duplicate_drops_distinct_and_single_holder():
+    # the H329 fold's two falses: a work whose reps hold DIFFERENT bytes (C), and a work
+    # where only one rep holds content (a full + a reference rep, the NULL-skip) — neither
+    # is a byte-identical pair. A two-rep mix of one full + one reference is dropped.
+    items = [
+        _rep("arxiv:c", "10.3000/c", "sha256:c1"),
+        _rep("crossref:cc", "10.3000/c", "sha256:c2"),  # distinct bytes
+        _rep("arxiv:d", "10.4000/d", "sha256:d"),
+        _rep("crossref:cd", "10.4000/d", None),  # only one rep holds content
+    ]
+    assert filter_works(works_over(items), content_duplicate=True) == []
+
+
+def test_filter_works_content_duplicate_ands_with_the_per_rep_filters():
+    # `content_duplicate` ANDs with the contains-filters. Among the two duplicate works
+    # (B, A), only B holds a reference rep, so --fidelity reference narrows to B; both
+    # hold full reps, so --fidelity full keeps both.
+    works = works_over(_content_dup_work_mix())
+    assert _dois(filter_works(works, content_duplicate=True, fidelity="reference")) == [
+        "10.2000/b"]
+    assert _dois(filter_works(works, content_duplicate=True, fidelity="full")) == [
+        "10.2000/b", "10.1000/a"]
+
+
+def test_filter_works_content_duplicate_drills_the_unfiltered_flag():
+    # the drill-from-the-flag tie (the `works --at-risk`↔`safely_held` precedent): the
+    # works kept by content_duplicate=True are EXACTLY the works whose `content_duplicate`
+    # flag reads true in an unfiltered listing — one rule, two reads.
+    from scrolls.works import work_content_duplicate
+
+    items = _content_dup_work_mix()
+    works = works_over(items)
+    flagged = [w.doi for w in works if work_content_duplicate(w.representations)]
+    assert _dois(filter_works(works, content_duplicate=True)) == flagged
+    # and it agrees with the rendered payload flag (the same fold to_payload carries)
+    payload = to_payload(works, len(items), scope={"min_representations": 2})
+    assert [w["doi"] for w in payload["works"] if w["content_duplicate"]] == flagged
+
+
+def test_filter_works_content_duplicate_false_is_the_unfiltered_identity():
+    works = works_over(_content_dup_work_mix())
+    # content_duplicate defaults False; with no other axis it returns the input unchanged,
+    # no ledger read (the H262 identity, now also guarding the content-duplicate early exit)
+    assert filter_works(works, content_duplicate=False) is works
+
+
 def _seed_two_work_custody_mix(db):
     """Insert the three-work custody mix into a real library (the CLI/MCP seed)."""
     from scrolls.custody import record_events
@@ -1020,6 +1106,12 @@ def _seed_two_work_custody_mix(db):
     for item in items:
         insert_item(db, item)
     record_events(db, list(verdicts.values()))
+
+
+def _seed_content_dup_work_mix(db):
+    """Insert the content-identity work mix into a real library (the H344 CLI seed)."""
+    for item in _content_dup_work_mix():
+        insert_item(db, item)
 
 
 # --- CLI ---------------------------------------------------------------
@@ -1305,6 +1397,61 @@ def test_cli_works_at_risk_composes_with_the_per_item_ref_lens(db, capsys):
     assert payload["scope"] == {"ref": "arxiv:x", "at_risk": True}
     # biorxiv:y's work Y is safely held → empty (an explicit "this work is not at risk")
     assert main(["works", "biorxiv:y", "--at-risk"]) == 0
+    assert json.loads(capsys.readouterr().out)["works"] == []
+
+
+# --- H344: `scrolls works --content-duplicate` browse predicate ----------
+
+
+def test_cli_works_content_duplicate_browses_the_byte_identical_works(db, capsys):
+    _seed_content_dup_work_mix(db)
+    assert main(["works", "--content-duplicate"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # B (3 reps, full pair shares bytes) and A (2 reps, full pair shares bytes) are kept;
+    # C (distinct bytes) drops out — works_over's (-reps, doi) order is B then A
+    assert [w["doi"] for w in payload["works"]] == ["10.2000/b", "10.1000/a"]
+    # each kept work's content_duplicate flag reads true (the drill-from-the-flag tie)
+    assert all(w["content_duplicate"] for w in payload["works"])
+    # the boolean predicate rides the scope echo, present only when set (G2)
+    assert payload["scope"] == {"min_representations": 2, "content_duplicate": True}
+    # stats.custody partitions exactly the kept set — B's two full + reference siblings
+    # and A's two full reps (5 reps across the two kept works)
+    assert payload["stats"]["works"] == 2
+    assert payload["stats"]["custody"]["tiers"] == {
+        "full": 4, "partial": 0, "reference": 1}
+
+
+def test_cli_works_content_duplicate_omits_the_flag_from_scope_when_unset(db, capsys):
+    _seed_content_dup_work_mix(db)
+    assert main(["works"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # unset → pruned from the scope echo (the lean unfiltered shape); every work travels
+    assert "content_duplicate" not in payload["scope"]
+    assert payload["scope"] == {"min_representations": 2}
+    assert [w["doi"] for w in payload["works"]] == [
+        "10.2000/b", "10.1000/a", "10.3000/c"]
+
+
+def test_cli_works_content_duplicate_ands_with_the_custody_filters(db, capsys):
+    _seed_content_dup_work_mix(db)
+    # content-duplicate AND holds a reference rep → B only (A is a pure full pair);
+    # the within-work + fidelity axes AND on the kept works
+    assert main(["works", "--content-duplicate", "--fidelity", "reference"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.2000/b"]
+    assert payload["scope"] == {
+        "min_representations": 2, "fidelity": "reference", "content_duplicate": True}
+
+
+def test_cli_works_content_duplicate_composes_with_the_per_item_ref_lens(db, capsys):
+    _seed_content_dup_work_mix(db)
+    # arxiv:a's work A holds a byte-identical pair → kept, anchor echoed beside the flag
+    assert main(["works", "arxiv:a", "--content-duplicate"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [w["doi"] for w in payload["works"]] == ["10.1000/a"]
+    assert payload["scope"] == {"ref": "arxiv:a", "content_duplicate": True}
+    # arxiv:c's work C holds distinct bytes → empty (an explicit "no byte-identical pair")
+    assert main(["works", "arxiv:c", "--content-duplicate"]) == 0
     assert json.loads(capsys.readouterr().out)["works"] == []
 
 
