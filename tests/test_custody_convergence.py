@@ -7754,6 +7754,110 @@ def test_content_duplicate_browse_aggregate_surfaces_agree_on_one_count(scrolls_
     assert len(json.loads(capsys.readouterr().out)["works"]) == 0
 
 
+def test_content_duplicate_graph_node_set_converges_with_doctor_members(
+    scrolls_home, capsys
+):
+    # roadmap H362: the relationship-graph node set joins the content-identity
+    # convergence picture — the LAST `--content-duplicate` read surface outside the
+    # H332/H346 ties. H346 ties the `--content-duplicate` COUNT across the
+    # browse/aggregate surfaces and H332 ties the per-item READ across the read
+    # surfaces, but the link graph (`graph --content-duplicate`, H352) is in
+    # NEITHER, so a future change to `content_duplicate_subgraph`/`induced_subgraph`
+    # (H352) or the shared `content_duplicate_index` (H325) could pass H352's own
+    # graph tests yet desync the graph node set from `doctor`'s flagged members. This
+    # is the graph-axis guard: the node-id set of `graph --content-duplicate --all`
+    # == the union of `doctor.custody.content_duplicates` group members ==
+    # `list --content-duplicate`'s kept ids, with the MCP `get_link_graph(
+    # content_duplicate=True)` twin at byte-parity (the graph-axis completion of the
+    # H332 cross-surface picture).
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    expected_groups, _total_groups, total_items = _seed_content_identity(db)
+    capsys.readouterr()
+
+    # the divergence-truth source: the union of `doctor`'s content-duplicate group
+    # members (both shapes; web:uniq + web:ref are held but in no group)
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    doctor_members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert doctor_members == {m for g in expected_groups for m in g}
+    assert len(doctor_members) == total_items == 4
+    assert len(list_items(db)) == 6  # non-vacuous: 2 held items are in no group
+
+    # the `list --content-duplicate` kept set (the browse-axis truth H338/H346 tie)
+    assert main(["list", "--content-duplicate"]) == 0
+    list_members = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    assert list_members == doctor_members
+
+    # 1. `graph --content-duplicate --all` — `--all` so the ISOLATED cross-source pair
+    #    surfaces: web:m1/web:m2 share only a `content_hash`, which mints NO edge
+    #    (content identity is report-only — H352), so they are isolated nodes and would
+    #    be dropped by the default connected-only view. Its node-id set equals exactly
+    #    `doctor`'s members == the list kept set.
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    graph_all = json.loads(capsys.readouterr().out)
+    graph_nodes = {n["id"] for n in graph_all["nodes"]}
+    assert graph_nodes == doctor_members == list_members
+    assert graph_all["stats"]["items"] == graph_all["stats"]["nodes"] == 4
+
+    # 2. the MCP twin reads byte-parity — the whole scoped payload, not just the set
+    mcp_graph = mcp_server.get_link_graph(content_duplicate=True, include_isolated=True)
+    assert {n["id"] for n in mcp_graph["nodes"]} == doctor_members
+    assert mcp_graph == graph_all
+
+    # 3. `--all` is load-bearing: the DEFAULT view keeps only the CONNECTED duplicate
+    #    nodes — the within-work pair shares a DOI link (an edge) so both survive, but
+    #    the cross-source pair is isolated and falls out without `--all`. A strict
+    #    subset of `doctor`'s members, proving the isolated pair genuinely needs --all
+    #    (so the node-set tie above is not silently dropping the cross-source group).
+    assert main(["graph", "--content-duplicate"]) == 0
+    graph_connected = {n["id"] for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert graph_connected == {"arxiv:w", "crossref:10.1000/x"}
+    assert graph_connected < doctor_members
+
+    # 4. the induced-subgraph rule (H352), and why the NODE set is the converging tie,
+    #    not the edge set: a content group spanning two clusters keeps both nodes but
+    #    mints NO cross-cluster edge — the within-work pair keeps its real DOI edge, the
+    #    cross-source pair stays present-but-unlinked.
+    edges = {(e["from"], e["to"]) for e in graph_all["edges"]}
+    assert ("arxiv:w", "crossref:10.1000/x") in edges  # the within-work DOI edge survives
+    assert not any("web:m1" in e or "web:m2" in e for e in edges)  # no minted content edge
+
+    # --- sabotage (the H346 data-tracking non-vacuity discipline): re-hash one
+    # cross-source member so group B dissolves; the graph node set, the list set, the
+    # MCP twin, and `doctor`'s members all fall to the within-work pair in lockstep. A
+    # constant set hard-coded into the tie above would survive at rest but break here —
+    # the node set tracks the data, never a shared literal (the H332 discipline).
+    import dataclasses
+
+    m1 = next(it for it in list_items(db) if it.id == "web:m1")
+    assert update_item(db, dataclasses.replace(m1, content_hash="sha256:nowunique"))
+    capsys.readouterr()
+
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    doctor_members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert doctor_members == {"arxiv:w", "crossref:10.1000/x"}
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    graph_nodes = {n["id"] for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert main(["list", "--content-duplicate"]) == 0
+    list_members = {r["id"] for r in json.loads(capsys.readouterr().out)}
+    mcp_nodes = {
+        n["id"]
+        for n in mcp_server.get_link_graph(
+            content_duplicate=True, include_isolated=True
+        )["nodes"]
+    }
+    assert (
+        graph_nodes
+        == list_members
+        == mcp_nodes
+        == doctor_members
+        == {"arxiv:w", "crossref:10.1000/x"}
+    )
+
+
 def test_content_duplicate_facet_partition_is_complete_across_every_facet_axis(
     scrolls_home, capsys
 ):
