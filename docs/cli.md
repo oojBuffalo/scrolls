@@ -2233,6 +2233,34 @@ debt suggests nothing — `--source` never fabricates a command for an absent fi
 The whole-library pass is unchanged: with no scope declared, the strict-subset rule
 governs as above.
 
+The report also carries a **`duplicate_prunes`** block — the content-identity
+counterpart of `suggested` (roadmap H356). The `suggested` block turns every
+*repairable* finding into the command that closes it, but the content-duplicate
+finding (`doctor`'s `custody.content_duplicates`, the byte-identical holdings the
+`_Duplicates:_` headline counts) is deliberately *not* a repairable category: there
+is no library-wide auto-fix and `doctor --fix` never merges a content duplicate
+(holding two faithful copies is a redundancy fact an operator may want, not a defect,
+and byte-identity across ids is custody-distinct provenance — raw is sacred). So an
+operator saw "N group(s) of byte-identical content" with no guidance on *which copy to
+keep* or *how to prune the rest*. `duplicate_prunes` fills that gap with **report-only**
+guidance — one entry **per byte-identical group**, `{content_hash, keep, prune,
+command}`: the `keep` copy (a deterministic canonical pick — **highest fidelity, then
+earliest `saved_at`, then lowest id**, the ADR 0095 canonical-representation rule on the
+content-identity axis), the `prune` ids (every other member, sorted), and the single
+`scrolls rm <ids>` command that prunes them (`rm` takes several ids). It is **never
+auto-executed and never a `doctor --fix` step** — a prune is an operator decision, so
+this is *guidance*, not a repair the pass performs. Derived from `doctor`'s
+authoritative `content_duplicates.groups`, so it converges with the `_Duplicates:_`
+headline by construction: a clean library — or a `--source` pass, where a content group
+spans sources so the whole-library check stays `status: "skipped"` — has no groups and
+yields the honest empty `[]` (the same omit-when-clean / scoped-skip the headline
+takes). Like `suggested` it rides the live pass only and is never recorded in the
+snapshot, so `--history`/`--trend` carry none
+(`test_suggest_duplicate_prunes_keeps_the_highest_fidelity_copy`,
+`test_suggest_duplicate_prunes_is_report_only_never_a_doctor_fix_step`,
+`test_maintain_report_carries_the_content_duplicate_prune_guidance`,
+`test_maintain_source_scoped_pass_omits_the_prune_guidance`).
+
 The report also carries a **`by_source`** member — the per-source custody
 breakdown the audit already produces (`doctor`'s `custody.by_source`, the same
 `{tiers, drift, coverage}` aggregate split per source, including the per-source

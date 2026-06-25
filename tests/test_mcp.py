@@ -4458,7 +4458,7 @@ def test_run_maintenance_returns_the_maintain_report_shape(scrolls_home):
         "archive_integrity_headline", "duplicates_headline", "by_source",
         "attention", "at_risk_works",
         "enrichment_by_source",
-        "summary_by_source", "delta", "issues", "suggested",
+        "summary_by_source", "delta", "issues", "suggested", "duplicate_prunes",
     }
     # whole-library and offline by default: the recheck is the one live network
     # edge (behind the `live_recapture` seam), and an MCP tool must not trigger
@@ -4561,7 +4561,7 @@ def test_run_maintenance_source_scopes_the_pass_to_one_source(scrolls_home):
         "archive_integrity_headline", "duplicates_headline", "by_source",
         "attention", "at_risk_works",
         "enrichment_by_source",
-        "summary_by_source", "delta", "issues", "suggested",
+        "summary_by_source", "delta", "issues", "suggested", "duplicate_prunes",
     }
     assert report["source"] == "web"
     # offline, the H196 posture — an MCP pass never triggers an implicit re-capture

@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from scrolls.custody import (
+    FIDELITY_TIERS,
     latest_events,
     parse_since,
     recheck_coverage,
@@ -732,6 +733,97 @@ def _scoped_refresh(
             for s in offenders
         ]
     return [{"command": command, "addresses": [category]}]
+
+
+def _canonical_keep(ids: list[str], by_id: dict[str, ScrollItem]) -> str:
+    """The copy to keep for a content-duplicate group (roadmap H356).
+
+    A deterministic canonical pick over a group of byte-identical members —
+    **highest fidelity, then earliest ``saved_at``, then lowest id** — the ADR 0095
+    canonical-representation precedent (`works._canonical`) on the content-identity
+    axis. The rule deliberately differs from `_canonical`'s *source* precedence: the
+    copies are byte-identical, so source rank is irrelevant; what matters is which
+    copy the library still holds at the best fidelity (the most re-derivable content)
+    and acquired first. `full` > `partial` > `reference` via the `FIDELITY_TIERS`
+    index (a ``min``, so tier 0 = `full` wins); ties break to the earliest
+    ``saved_at`` (ISO timestamps sort lexically), then the lowest id, so the keep is
+    stable run to run.
+
+    Defensive (the module's degrade-safely posture): an id absent from ``by_id`` — a
+    group member outside the resolved item set, which the whole-library fold should
+    never produce — sorts worst on every axis, so it is never the keep yet can still
+    be pruned.
+    """
+
+    def key(item_id: str) -> tuple[int, str, str]:
+        item = by_id.get(item_id)
+        if item is None:
+            return (len(FIDELITY_TIERS), "", item_id)
+        return (FIDELITY_TIERS.index(get_fidelity(item)), item.saved_at, item_id)
+
+    return min(ids, key=key)
+
+
+def suggest_duplicate_prunes(
+    content_duplicates: dict[str, Any], items: list[ScrollItem]
+) -> list[dict[str, Any]]:
+    """Per-group prune guidance for byte-identical holdings (roadmap H356).
+
+    `suggest_repairs` (H40) turns every *repairable* finding into the explicit
+    command that closes it, but the content-identity finding
+    (`doctor.custody.content_duplicates`, H325) is deliberately absent from
+    `_REPAIR_COMMANDS`: there is no library-wide auto-fix and `doctor --fix`
+    correctly never merges a duplicate (raw is sacred; content-identity across ids is
+    custody-distinct provenance, custody-vision §2.4 / H337). So an operator sees "N
+    group(s) of byte-identical content" (the H327 `_Duplicates:_` line) with no
+    guidance on *which copy to keep* or *how to prune the rest*. This fills that gap
+    with **report-only** guidance — never auto-executed, never a `doctor --fix` step:
+    for each byte-identical holding group, the **keep** copy (a deterministic
+    canonical pick, `_canonical_keep`) and the `scrolls rm` command that prunes the
+    redundant copies. A prune is an operator decision (raw is sacred), so this is
+    *guidance*, not a repair the pass performs.
+
+    **Per-group** (decisive choice a): each group keeps a different copy, so it
+    threads as its own report block beside `suggested` rather than a single
+    `_REPAIR_COMMANDS` category command (which maps one finding category → one fixed
+    command — the wrong shape for a per-group, never-auto-fixable finding). The
+    groups are `doctor`'s authoritative `custody.content_duplicates.groups` (the
+    single divergence-truth source, H325), so this converges with the `_Duplicates:_`
+    headline and the JSON audit by construction: a clean library — or a
+    `--source`-scoped pass, where a content group spans sources so the block stays
+    `status: "skipped"` with no `groups` (decisive choice b, H328) — has no `groups`
+    and yields the honest empty list (decisive choice c, the H40 omit-when-clean
+    discipline).
+
+    ``items`` is the whole-library holdings (a content group's members are
+    cross-source, H328), used only to resolve each group's keep copy.
+
+    Each entry is ``{content_hash, keep, prune, command}``:
+
+    - ``keep`` — the one copy to retain (`_canonical_keep`);
+    - ``prune`` — the redundant ids to remove (every member but ``keep``), sorted;
+    - ``command`` — the single ``scrolls rm <prune ids>`` that prunes them (`rm`
+      takes ``nargs="+"``), the explicit act an operator runs — **never
+      auto-executed, never a `doctor --fix` step** (decisive choice d, H325/H337).
+    """
+    groups = content_duplicates.get("groups", [])
+    if not groups:
+        return []
+    by_id = {item.id: item for item in items}
+    suggestions = []
+    for group in groups:
+        ids = group["ids"]
+        keep = _canonical_keep(ids, by_id)
+        prune = sorted(member for member in ids if member != keep)
+        suggestions.append(
+            {
+                "content_hash": group["content_hash"],
+                "keep": keep,
+                "prune": prune,
+                "command": "scrolls rm " + " ".join(prune),
+            }
+        )
+    return suggestions
 
 
 def report_by_source(report: dict[str, Any]) -> dict[str, dict[str, dict[str, int]]]:
@@ -1439,6 +1531,17 @@ def assemble_report(
         delta = None
 
     by_source = report_by_source(report)
+    # Per-group prune guidance for the content-identity finding (roadmap H356):
+    # `doctor`'s content-duplicate report has no `_REPAIR_COMMANDS` entry (there is
+    # no auto-fix — `doctor --fix` never merges a duplicate, H337), so turn each
+    # byte-identical group into the keep copy + the `scrolls rm` that prunes the
+    # rest. Whole-library only — under a `--source` pass the block is `skipped` with
+    # no `groups` (a content group spans sources, H328) — so the whole-library items
+    # load happens only when the unscoped audit actually found redundancy (the common
+    # clean case loads nothing). Derived from `doctor`'s authoritative `groups`, so it
+    # converges with the `_Duplicates:_` headline and the JSON audit by construction.
+    content_dupes = report["custody"].get("content_duplicates", {})
+    dupe_items = list_items(paths.db_path) if content_dupes.get("groups") else []
     return {
         "recorded_at": now,
         "source": source,
@@ -1515,4 +1618,9 @@ def assemble_report(
         "delta": delta,
         "issues": report["issues"],
         "suggested": suggest_repairs(report, source=source),
+        # the content-identity prune guidance (roadmap H356): per-group keep copy +
+        # the `scrolls rm` that prunes the redundant copies — report-only, never a
+        # `doctor --fix` step (the content-duplicate finding has no auto-fix, H337).
+        # Empty on a clean library or a `--source`-scoped pass (no `groups`).
+        "duplicate_prunes": suggest_duplicate_prunes(content_dupes, dupe_items),
     }

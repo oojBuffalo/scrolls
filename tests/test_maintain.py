@@ -67,6 +67,7 @@ from scrolls.maintain import (
     save_snapshot,
     snapshot_headline,
     snapshot_path,
+    suggest_duplicate_prunes,
     suggest_repairs,
     weakest_source,
 )
@@ -1884,6 +1885,188 @@ def test_suggest_repairs_without_a_source_keeps_the_h181_strict_subset_rule():
     ]
 
 
+# --- the content-duplicate prune guidance (roadmap H356) -------------------
+#
+# `suggest_repairs` (H40) names the command that closes each *repairable* finding,
+# but the content-identity finding (`doctor.custody.content_duplicates`, H325) is
+# deliberately absent from `_REPAIR_COMMANDS`: there is no auto-fix and `doctor
+# --fix` never merges a duplicate (raw is sacred; content identity across ids is
+# custody-distinct provenance, H337). `suggest_duplicate_prunes` fills that gap with
+# report-only, per-group guidance — the keep copy + the `scrolls rm` that prunes the
+# rest — derived from `doctor`'s authoritative groups, so it converges with the
+# `_Duplicates:_` headline by construction.
+
+
+def _cd_block(groups, *, status="ok"):
+    """A `custody.content_duplicates` block carrying per-group `ids` (H325 shape).
+
+    `groups` is a list of `(content_hash, ids)` — the per-group list the prune
+    guidance reads (unlike `_dup_block`, which keeps only the totals the headline
+    needs)."""
+    return {
+        "status": status,
+        "groups": [{"content_hash": h, "ids": sorted(ids)} for h, ids in groups],
+        "total_groups": len(groups),
+        "total_items": sum(len(ids) for _, ids in groups),
+    }
+
+
+def _cd_item(item_id, *, content_hash, saved_at, fidelity="full"):
+    """A held item at a chosen fidelity tier, for the keep-copy canonical rule.
+
+    `full` holds a re-derivable body (`raw_text`, captured stage); `partial` holds
+    only a summary; `reference` holds no content — the three `FIDELITY_TIERS` the
+    keep rule ranks (`get_fidelity`)."""
+    base = dict(id=item_id, source=item_id.split(":")[0], url=f"https://{item_id}",
+                saved_at=saved_at, content_hash=content_hash)
+    if fidelity == "full":
+        return ScrollItem(**base, raw_text="body", stage="rendered")
+    if fidelity == "partial":
+        return ScrollItem(**base, summary="a summary", stage="rendered")
+    return ScrollItem(**base, stage="detected")  # reference: no content held
+
+
+def test_suggest_duplicate_prunes_on_a_clean_library_is_empty():
+    # G1 honest absence: no byte-identical groups → no guidance, never a fabricated
+    # one (the H40 omit-when-clean discipline on the content-identity axis).
+    assert suggest_duplicate_prunes(_cd_block([]), []) == []
+
+
+def test_suggest_duplicate_prunes_on_a_skipped_block_is_empty():
+    # A `--source` pass leaves the block `status: "skipped"` with no `groups` (a
+    # content group spans sources, H328) → no prune guidance, converging with the
+    # omitted `_Duplicates:_` headline.
+    block = _cd_block([], status="skipped")
+    assert suggest_duplicate_prunes(block, []) == []
+
+
+def test_suggest_duplicate_prunes_keeps_the_highest_fidelity_copy():
+    # The keep rule's first axis: of two byte-identical holdings, keep the one held
+    # at the better fidelity (the fuller, more re-derivable copy) and prune the rest.
+    items = [
+        _cd_item("web:a", content_hash="sha256:x", saved_at="2026-01-02T00:00:00+00:00",
+                 fidelity="partial"),
+        _cd_item("web:b", content_hash="sha256:x", saved_at="2026-01-03T00:00:00+00:00",
+                 fidelity="full"),
+    ]
+    block = _cd_block([("sha256:x", ["web:a", "web:b"])])
+    assert suggest_duplicate_prunes(block, items) == [
+        {
+            "content_hash": "sha256:x",
+            "keep": "web:b",  # full beats partial, even though it was saved later
+            "prune": ["web:a"],
+            "command": "scrolls rm web:a",
+        }
+    ]
+
+
+def test_suggest_duplicate_prunes_breaks_a_fidelity_tie_by_earliest_then_id():
+    # Equal fidelity → keep the earliest `saved_at`; equal saved_at → keep the lowest
+    # id (the ADR 0095 canonical tiebreak, deterministic run to run).
+    earliest = [
+        _cd_item("web:later", content_hash="sha256:x",
+                 saved_at="2026-02-02T00:00:00+00:00"),
+        _cd_item("web:earlier", content_hash="sha256:x",
+                 saved_at="2026-01-01T00:00:00+00:00"),
+    ]
+    block = _cd_block([("sha256:x", ["web:earlier", "web:later"])])
+    assert suggest_duplicate_prunes(block, earliest)[0]["keep"] == "web:earlier"
+
+    same_time = [
+        _cd_item("web:b", content_hash="sha256:x", saved_at="2026-01-01T00:00:00+00:00"),
+        _cd_item("web:a", content_hash="sha256:x", saved_at="2026-01-01T00:00:00+00:00"),
+    ]
+    block2 = _cd_block([("sha256:x", ["web:a", "web:b"])])
+    assert suggest_duplicate_prunes(block2, same_time)[0]["keep"] == "web:a"
+
+
+def test_suggest_duplicate_prunes_rm_command_lists_every_redundant_copy():
+    # A 3-id group: keep one, the single `scrolls rm` prunes the other two (`rm`
+    # takes nargs="+"), the `prune` list sorted for a stable command.
+    items = [
+        _cd_item("web:keep", content_hash="sha256:x",
+                 saved_at="2026-01-01T00:00:00+00:00", fidelity="full"),
+        _cd_item("web:c", content_hash="sha256:x",
+                 saved_at="2026-01-02T00:00:00+00:00", fidelity="partial"),
+        _cd_item("web:b", content_hash="sha256:x",
+                 saved_at="2026-01-03T00:00:00+00:00", fidelity="partial"),
+    ]
+    block = _cd_block([("sha256:x", ["web:b", "web:c", "web:keep"])])
+    [suggestion] = suggest_duplicate_prunes(block, items)
+    assert suggestion["keep"] == "web:keep"
+    assert suggestion["prune"] == ["web:b", "web:c"]
+    assert suggestion["command"] == "scrolls rm web:b web:c"
+
+
+def test_suggest_duplicate_prunes_handles_a_cross_source_group():
+    # A content group spans sources (a web save and an arxiv mirror of the same
+    # bytes, H328) — the keep/prune name ids from different sources, the whole-library
+    # scope the prune guidance shares with `doctor`'s report.
+    items = [
+        _cd_item("arxiv:2401.0001", content_hash="sha256:x",
+                 saved_at="2026-01-01T00:00:00+00:00", fidelity="full"),
+        _cd_item("web:mirror", content_hash="sha256:x",
+                 saved_at="2026-01-02T00:00:00+00:00", fidelity="partial"),
+    ]
+    block = _cd_block([("sha256:x", ["arxiv:2401.0001", "web:mirror"])])
+    assert suggest_duplicate_prunes(block, items) == [
+        {
+            "content_hash": "sha256:x",
+            "keep": "arxiv:2401.0001",
+            "prune": ["web:mirror"],
+            "command": "scrolls rm web:mirror",
+        }
+    ]
+
+
+def test_suggest_duplicate_prunes_emits_one_entry_per_group():
+    # Two independent byte-identical groups → two prune entries, each keeping its own
+    # copy (per-group, not a single aggregate command — decisive choice a).
+    items = [
+        _cd_item("web:a1", content_hash="sha256:x",
+                 saved_at="2026-01-01T00:00:00+00:00"),
+        _cd_item("web:a2", content_hash="sha256:x",
+                 saved_at="2026-01-02T00:00:00+00:00"),
+        _cd_item("web:b1", content_hash="sha256:y",
+                 saved_at="2026-01-01T00:00:00+00:00"),
+        _cd_item("web:b2", content_hash="sha256:y",
+                 saved_at="2026-01-02T00:00:00+00:00"),
+    ]
+    block = _cd_block(
+        [("sha256:x", ["web:a1", "web:a2"]), ("sha256:y", ["web:b1", "web:b2"])]
+    )
+    suggestions = suggest_duplicate_prunes(block, items)
+    assert [s["keep"] for s in suggestions] == ["web:a1", "web:b1"]
+    assert [s["command"] for s in suggestions] == [
+        "scrolls rm web:a2",
+        "scrolls rm web:b2",
+    ]
+
+
+def test_suggest_duplicate_prunes_is_report_only_never_a_doctor_fix_step():
+    # The load-bearing custody decision: the prune is `scrolls rm` (an operator
+    # decision, raw is sacred) — NEVER `doctor --fix`, which correctly never merges a
+    # *content* duplicate (H337). The content-identity finding stays absent from the
+    # auto-fixable `_REPAIR_COMMANDS` set; this is guidance, not a repair the pass
+    # runs. (The fixable `"duplicates"` category is the *separate* URL-spelling
+    # auto-mergeable finding, ADR 0023 — a different shape, H325.)
+    from scrolls.maintain import _REPAIR_COMMANDS
+
+    fixable = {cat for _, cats in _REPAIR_COMMANDS for cat in cats}
+    assert "content_duplicates" not in fixable
+
+    items = [
+        _cd_item("web:a", content_hash="sha256:x",
+                 saved_at="2026-01-01T00:00:00+00:00", fidelity="full"),
+        _cd_item("web:b", content_hash="sha256:x",
+                 saved_at="2026-01-02T00:00:00+00:00", fidelity="partial"),
+    ]
+    block = _cd_block([("sha256:x", ["web:a", "web:b"])])
+    [suggestion] = suggest_duplicate_prunes(block, items)
+    assert suggestion["command"].startswith("scrolls rm ")
+    assert "doctor --fix" not in suggestion["command"]
+
+
 # --- the command (offline, dogfood-style) ---------------------------------
 
 TOPIC = "transformer"
@@ -2018,6 +2201,80 @@ def test_maintain_report_carries_the_one_line_custody_headline(home, monkeypatch
     # so the maintain line can never disagree with the bundle/context/status family
     held = list_items(home.db_path)
     assert report["headline"] == custody_headline(held, latest_events(home.db_path))
+
+
+def test_maintain_report_carries_the_content_duplicate_prune_guidance(
+    home, monkeypatch, capsys
+):
+    """End-to-end (roadmap H356): a byte-identical pair held under two ids surfaces
+    a per-group `duplicate_prunes` entry — the keep copy + the `scrolls rm` that
+    prunes the redundant copy — converging with `doctor`'s `content_duplicates`
+    groups for the same library. Report-only: the pass never executes the prune."""
+    earlier = _rendered(
+        "web", None, "https://example.com/original",
+        content_hash="sha256:identical", saved_at="2026-06-10T00:00:00+00:00",
+    )
+    later = _rendered(
+        "web", None, "https://example.com/mirror",
+        content_hash="sha256:identical", saved_at="2026-06-12T00:00:00+00:00",
+    )
+    unique = _rendered(
+        "web", None, "https://example.com/unrelated",
+        content_hash="sha256:unique-one",
+    )
+    _build([earlier, later, unique])
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    # one group, keep the earliest-saved copy, prune the later one with `scrolls rm`
+    assert report["duplicate_prunes"] == [
+        {
+            "content_hash": "sha256:identical",
+            "keep": earlier.id,
+            "prune": [later.id],
+            "command": f"scrolls rm {later.id}",
+        }
+    ]
+    # converges with `doctor`'s authoritative groups for the same library: one group,
+    # whose member ids are exactly keep ∪ prune (no surface can read a different set)
+    doctor_groups = run_doctor(home)["custody"]["content_duplicates"]["groups"]
+    assert len(report["duplicate_prunes"]) == len(doctor_groups)
+    [entry] = report["duplicate_prunes"]
+    assert sorted([entry["keep"], *entry["prune"]]) == doctor_groups[0]["ids"]
+    # report-only: the redundant copy is still held (the pass named `rm`, never ran it)
+    assert get_item(home.db_path, later.id) is not None
+
+
+def test_maintain_source_scoped_pass_omits_the_prune_guidance(
+    home, monkeypatch, capsys
+):
+    """A `--source` pass leaves the whole-library `content_duplicates` check skipped
+    (a content group spans sources, H328), so `duplicate_prunes` is empty even when
+    the in-scope source holds a byte-identical pair — converging with the omitted
+    `_Duplicates:_` headline (the scoped non-persisting triage posture)."""
+    a = _rendered(
+        "web", None, "https://example.com/a",
+        content_hash="sha256:identical", saved_at="2026-06-10T00:00:00+00:00",
+    )
+    b = _rendered(
+        "web", None, "https://example.com/b",
+        content_hash="sha256:identical", saved_at="2026-06-12T00:00:00+00:00",
+    )
+    _build([a, b])
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
+    assert main(["maintain", "--source", "web"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["duplicate_prunes"] == []
+    # and the whole-library pass on the same library *does* flag it (the contrast)
+    capsys.readouterr()
+    assert main(["maintain"]) == 0
+    whole = json.loads(capsys.readouterr().out)
+    assert len(whole["duplicate_prunes"]) == 1
 
 
 def test_maintain_headline_on_an_uninitialized_library_is_zero_scrolls(home, capsys):
