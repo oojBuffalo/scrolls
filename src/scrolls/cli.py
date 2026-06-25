@@ -741,6 +741,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--drift drifted to ship the full custody history of the moved items for a "
         "recapture handoff). ANDs with --fidelity",
     )
+    export_events_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only the custody history of items the library holds a byte-identical "
+        "copy of under another id — the content-duplicate set (the content-identity "
+        "custody shape); the item-set sieve selects the items `scrolls list "
+        "--content-duplicate` enumerates, then their whole ledger travels, so a "
+        "recipient deduping the redundant copies gets the full proof of when each "
+        "was verified. A boolean flag (yes/no per item), report-only (never a merge). "
+        "The sibling may live in another source (whole-library scope), so ANDed with "
+        "--source it ships that source's items with a byte-identical sibling "
+        "anywhere. ANDs with --fidelity/--drift; composes with --since",
+    )
     export_archive_parser = export_sub.add_parser(
         "archive",
         help="Export the prior-content archive (ADR 0106) as a lossless JSONL "
@@ -782,6 +796,20 @@ def build_parser() -> argparse.ArgumentParser:
         "then their whole archived history travels (e.g. --drift drifted to back up "
         "the recoverable priors of the moved items for a recapture handoff). ANDs "
         "with --fidelity/--source; mutually exclusive with --id",
+    )
+    export_archive_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only the recovery store of items the library holds a byte-identical "
+        "copy of under another id — the content-duplicate set (the content-identity "
+        "custody shape); the item-set sieve selects the items `scrolls list "
+        "--content-duplicate` enumerates, then their whole archived history travels. "
+        "A boolean flag (yes/no per item), report-only (never a merge). The sibling "
+        "may live in another source (whole-library scope), so ANDed with --source it "
+        "ships that source's items with a byte-identical sibling anywhere. ANDs with "
+        "--fidelity/--drift/--source; mutually exclusive with --id; composes with "
+        "--since",
     )
     export_archive_parser.add_argument(
         "--since",
@@ -1646,10 +1674,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.since,
                 args.fidelity,
                 args.drift,
+                args.content_duplicate,
             )
         if args.export_command == "archive":
             return _cmd_export_archive(
-                args.id, args.source, args.fidelity, args.drift, args.since
+                args.id, args.source, args.fidelity, args.drift, args.since,
+                args.content_duplicate,
             )
         if args.export_command == "bundle":
             return _cmd_export_bundle(
@@ -2618,6 +2648,7 @@ def _cmd_export_events(
     since: str | None = None,
     fidelity: str | None = None,
     drift: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     # whole-library portable custody (H72): the verify ledger as a lossless JSONL
     # stream, the custody sibling of `export items`. Scoped by the same
@@ -2635,6 +2666,14 @@ def _cmd_export_events(
     # `choices` (exit 2) before reaching here; on the library path `list_items`
     # raises ValueError (the empty-vocabulary belt-and-braces → exit 1, the
     # `export items`/`export bundle` precedent).
+    #
+    # `content_duplicate` (H347) is the content-identity axis on the same item-set
+    # sieve — "ship the custody history of only the redundant copies, so a recipient
+    # can dedup with the full proof of when each was verified" — folding the same
+    # whole-library `list --content-duplicate` sibling sieve (H338) `export items`
+    # already folds (H341). Whole-library scope (a content group spans sources), so
+    # ANDed with --source it still ships a source's item whose byte-identical sibling
+    # lives elsewhere. Report-only, never a merge (the H325 no-fabricated-act rule).
     #
     # `--since <ISO>` (H75) windows the stream to events at/after the boundary —
     # an incremental backup since the last sweep. Validated first so a malformed
@@ -2655,6 +2694,7 @@ def _cmd_export_events(
                 tag=tag,
                 fidelity=fidelity,
                 drift=drift,
+                content_duplicate=content_duplicate,
             )
             if paths.db_path.exists()
             else []
@@ -2679,6 +2719,7 @@ def _cmd_export_archive(
     fidelity: str | None = None,
     drift: str | None = None,
     since: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     # the portable recovery store (H280): the prior-content archive (ADR 0106) as a
     # lossless JSONL stream, the recovery-store sibling of `export events`. A library
@@ -2688,10 +2729,14 @@ def _cmd_export_archive(
     #
     # `--id <ref>` scopes to one item's archived priors (resolving a URL to the id
     # `add` would mint, the `archive list --id` precedent). The *library-filter
-    # group* `--source`/`--fidelity`/`--drift` is the other way to pick the item set
-    # whose recovery store travels — an *item-set sieve* (H301/H302): resolve the
-    # in-scope held item ids via the same `list --source`/`--fidelity`/`--drift`
-    # primitive `export events` folds (H260), then ship their whole archived history.
+    # group* `--source`/`--fidelity`/`--drift`/`--content-duplicate` is the other way
+    # to pick the item set whose recovery store travels — an *item-set sieve*
+    # (H301/H302, the content-identity axis added H347): resolve the in-scope held
+    # item ids via the same `list --source`/`--fidelity`/`--drift`/
+    # `--content-duplicate` primitive `export events` folds (H260/H347), then ship
+    # their whole archived history. `--content-duplicate` backs up "the recoverable
+    # priors of the redundant copies so a recipient can dedup"; its sibling scope is
+    # whole-library (a content group spans sources), report-only / never a merge.
     # `--fidelity full` backs up "the recovery history of holdings I can re-derive
     # offline"; `--drift drifted` backs up "the recoverable priors of the moved
     # items for a recapture handoff" — the items' *whole* archive, exactly as
@@ -2714,13 +2759,16 @@ def _cmd_export_archive(
     # --since` analogue): re-importing the overlapping union stays idempotent (the
     # archive dedups by `(item_id, prior_hash)`, ADR 0106).
     if ref is not None and (
-        source is not None or fidelity is not None or drift is not None
+        source is not None
+        or fidelity is not None
+        or drift is not None
+        or content_duplicate
     ):
         print(
             json.dumps({
                 "error": "export archive --id <ref> selects one item; it cannot "
                 "combine with the library-filter scope "
-                "(--source/--fidelity/--drift)"
+                "(--source/--fidelity/--drift/--content-duplicate)"
             }),
             file=sys.stderr,
         )
@@ -2742,14 +2790,20 @@ def _cmd_export_archive(
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
-    elif source is not None or fidelity is not None or drift is not None:
+    elif (
+        source is not None
+        or fidelity is not None
+        or drift is not None
+        or content_duplicate
+    ):
         # resolve the library-filter group to its held item ids (the same
-        # `list --source`/`--fidelity`/`--drift` item-set sieve `export events`
-        # folds), then their archived priors travel. An empty selection (a source
-        # with no held items, or no holding at the custody value) is a valid empty
-        # backup (the unmatched `--id` precedent), never an error; a missing/pre-init
-        # library likewise. An unknown fidelity/drift value surfaces `list_items`'
-        # ValueError as exit 1 (argparse `choices` already rejects it as exit 2).
+        # `list --source`/`--fidelity`/`--drift`/`--content-duplicate` item-set sieve
+        # `export events` folds), then their archived priors travel. An empty
+        # selection (a source with no held items, or no holding at the custody value)
+        # is a valid empty backup (the unmatched `--id` precedent), never an error; a
+        # missing/pre-init library likewise. An unknown fidelity/drift value surfaces
+        # `list_items`' ValueError as exit 1 (argparse `choices` already rejects it as
+        # exit 2).
         try:
             item_ids = (
                 [
@@ -2759,6 +2813,7 @@ def _cmd_export_archive(
                         source=source,
                         fidelity=fidelity,
                         drift=drift,
+                        content_duplicate=content_duplicate,
                     )
                 ]
                 if paths.db_path.exists()

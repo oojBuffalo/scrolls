@@ -548,6 +548,50 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   guard (H348), the compiled group-page `_Duplicates:_` scope line (H349), the `related --content-duplicate`
   relationship filter (H350), and the compiled-surface content-identity dogfood loop (H351).** **Next:** H347
   (the `export events`/`export archive --content-duplicate` custody-record export filter).
+  **H347 (2026-06-25) shipped the custody-record export filter** — `--content-duplicate` on **both**
+  whole-library custody-record backups, `scrolls export events` (the verify ledger) and `scrolls export
+  archive` (the prior-content recovery store), as the **content-identity sibling of `export events`/`export
+  archive --fidelity`/`--drift` (H260/H302)** and the custody-record counterpart of `export items
+  --content-duplicate` (H341). Both are an **item-set sieve** (the documented H260 design — the one choice this
+  slice carries forward): the flag narrows the *item resolution* via the same whole-library `list
+  --content-duplicate` sibling sieve (H338, the `content_duplicate_index` fold) the item/bundle exports already
+  fold, then the **whole ledger** / **whole archived history** of those selected items travels — so a recipient
+  deduping the redundant copies keeps the *full* custody proof (when each was verified) and the *full* recovery
+  store (every recoverable prior) of each redundant holding, not a single matching row. A pure thread-through:
+  `_cmd_export_events`/`_cmd_export_archive` already resolve their item set with `list_items`, so the slice only
+  threads `content_duplicate=` into that call (no new sieve, no schema change). **Whole-library sibling scope**
+  (a content group spans sources, the H328 rule), so ANDed with `--source` it still ships a source's item whose
+  byte-identical sibling lives in *another* source (the cross-source `web:a`/`arxiv:1` mirror). Composes with
+  `--since` (the orthogonal time window) and ANDs with `--fidelity`/`--drift`; report-only / never a merge (the
+  H325 no-fabricated-act rule). On `export archive` the flag **joins the `--id`-vs-library-filter-group mutual
+  exclusion** (`--id` names one precise item, `--content-duplicate` is an item-set sieve — two selection modes,
+  so mixing is exit 2, the `--source`/custody precedent), and the resolution branch + the error message gained
+  the new axis. **CLI-only** (no MCP twin — the documented `export events`/`export archive` posture, like
+  `verify`/`maintain`/`export bundle`/`export items`). The content-duplicate-scoped events backup round-trips
+  losslessly into a fresh library with no leakage of the unique item's events (the H72 round-trip narrowed to
+  the content-identity shape). 6 tests (`tests/test_cli.py` — 3 events: ships-the-siblings'-whole-ledger +
+  tie-to-`doctor`'s-group-members, whole-library-scope-under-`--source` + `--since`/`--drift` composition,
+  lossless round-trip; 3 archive: ships-the-siblings'-whole-store + `--source` AND, `--fidelity` AND +
+  `--since` orthogonal window, rejects-`--id`-combination). Suite **4070 passed**. Precondition: H338 (the
+  `list --content-duplicate` sibling sieve), H260/H302 (the `export events`/`export archive` item-set-sieve
+  shape). **With H347 the content-identity theme's export legs are complete across *every* export surface —
+  `export items` (H341), `export bundle` (H341), `export events`, and `export archive`; the open legs are the
+  `facets` partition-completeness guard (H348), the compiled group-page `_Duplicates:_` scope line (H349), the
+  `related --content-duplicate` relationship filter (H350), and the compiled-surface content-identity dogfood
+  loop (H351).** **Buffer refresh (2026-06-25, the maintenance rule — 4 open legs is below the ~6 floor):** two
+  concrete slices queued to keep the queue full —
+  **H352 (the `graph --content-duplicate` subgraph filter)**: `scrolls graph` (CLI + MCP `get_graph`) gains
+  `--content-duplicate` to scope the relationship graph to nodes the library holds a byte-identical copy of
+  under another id — the node-set analogue of `list --content-duplicate`, narrowing to the nodes whose H343
+  `content_duplicate_ids` is non-empty (report-only, whole-library sibling scope, ANDs with the existing graph
+  scopes; precondition H343 the graph node carries `content_duplicate_ids` + H338 the sibling sieve); and
+  **H353 (the content-duplicate-on-import notice)**: `import items`/`import bundle` add a `content_duplicates`
+  count to their JSON result when an imported row lands byte-identical to one already held (or to another row
+  in the same import) — the import-time analogue of the conflict-on-import *detect* leg (H272), report-only /
+  never an auto-merge (the H325 discipline), so an operator learns "this import added N redundant copies" and
+  can run the existing prune flow (precondition H325 the `content_duplicate_groups` fold + H216 the import
+  round-trip).** **Next:** H348 (the `facets content-duplicate` partition-completeness guard — duplicate +
+  unique buckets sum to the held-item total, the count-side partition invariant).
 
 - **cap 8 — re-derivable enrichment.** Classification *and* LLM concept
   summaries record inputs/method and regenerate on request:

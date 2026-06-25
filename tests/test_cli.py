@@ -6788,6 +6788,115 @@ def test_cmd_export_archive_unknown_tier_on_the_programmatic_path_is_exit_1(
     assert "error" in json.loads(captured.err)
 
 
+# --- export archive --content-duplicate: the content-identity item-set sieve on
+# the recovery-store backup (H347), the content-identity sibling of `export archive
+# --fidelity`/`--drift` (H302) and the archive counterpart of `export events
+# --content-duplicate`. The *whole* recovery store of each selected item travels, so
+# a recipient deduping the redundant copies keeps the recoverable priors of each. --
+
+
+def _seed_archive_for_content_duplicate_scope():
+    """A cross-source byte-identical *held* pair, each with its own recovery store,
+    + a unique held item with its own store; inits the library, returns the db path.
+
+    `web:a` and `arxiv:1` both end *held* at `content_hash=sha256:dup` (a mirror
+    captured by two adapters → a cross-source content group, so the sibling scope is
+    whole-library), and each archived divergent priors on the way there — web:a a
+    2-prior chain (`wa0`@06-21, `wa1`@06-22), arxiv:1 a 1-prior chain (`ar0`@06-21).
+    The distinct depths prove the *whole* recovery store of the selected items
+    travels. `web:solo` holds unique bytes with its own 1-prior store (`so0`), the
+    non-vacuous item left behind. All three are full-fidelity (a re-derivable body),
+    so `--fidelity full` keeps the pair and `--fidelity reference` empties it."""
+    main(["init"])
+    db = get_paths().db_path
+
+    def hold(item_id, source, initial_hash, adopt_hashes):
+        # insert a held capture, then adopt a chain ending held at adopt_hashes[-1];
+        # each adoption archives the prior held capture (ADR 0106) at a fixed stamp
+        held = ScrollItem(
+            id=item_id, source=source, url=f"https://{item_id}.example",
+            saved_at="2026-06-11T00:00:00+00:00", title="Held",
+            raw_text="<raw>a body</raw>", extracted_text="a body",
+            content_hash=initial_hash,
+            markdown_path=f"scrolls/{item_id}.md", stage="rendered")
+        insert_item(db, held)
+        for n, h in enumerate(adopt_hashes, 1):
+            held = dataclasses.replace(held, content_hash=h)
+            adopt_incoming(db, held, archived_at=f"2026-06-2{n}T00:00:00+00:00")
+
+    hold("web:a", "web", "sha256:wa0", ["sha256:wa1", "sha256:dup"])
+    hold("arxiv:1", "arxiv", "sha256:ar0", ["sha256:dup"])
+    hold("web:solo", "web", "sha256:so0", ["sha256:solo"])
+    return db
+
+
+def test_export_archive_content_duplicate_ships_the_siblings_recovery_store(
+    scrolls_home, capsys
+):
+    # `--content-duplicate` selects the items the library holds a byte-identical copy
+    # of under another id (the H338 sibling sieve), then ships their *whole* archived
+    # history (web:a's 2 priors + arxiv:1's 1 — distinct depths), dropping web:solo's
+    # recovery store. The whole-library sibling scope mirrors `export items
+    # --content-duplicate` (H341).
+    _seed_archive_for_content_duplicate_scope()
+    capsys.readouterr()
+
+    assert main(["export", "archive", "--content-duplicate"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:a", "arxiv:1"}  # web:solo dropped
+    assert len(rows) == 3  # web:a's 2 priors + arxiv:1's 1 — the whole stores
+
+    # ANDs with --source; the sibling scope stays whole-library, so --source web still
+    # keeps web:a (its sibling arxiv:1 lives in another source), arxiv:1 falls out
+    assert main(["export", "archive", "--content-duplicate", "--source", "web"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:a"}
+    assert len(rows) == 2  # web:a's whole store; arxiv:1 out of source scope
+
+
+def test_export_archive_content_duplicate_ands_with_fidelity_and_composes_with_since(
+    scrolls_home, capsys
+):
+    # --content-duplicate ANDs with --fidelity (both narrow the item set) and
+    # composes with the orthogonal --since window on archived_at. The pair is
+    # full-fidelity, so --fidelity full keeps it and --fidelity reference empties it.
+    _seed_archive_for_content_duplicate_scope()
+    capsys.readouterr()
+
+    assert main(["export", "archive", "--content-duplicate", "--fidelity", "full"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:a", "arxiv:1"}
+    assert len(rows) == 3
+
+    # an empty intersection (no reference-fidelity duplicate) is the honest empty doc
+    assert main(["export", "archive", "--content-duplicate", "--fidelity", "reference"]) == 0
+    assert capsys.readouterr().out == ""
+
+    # --since is an orthogonal time window: web:a's wa1 prior was archived 06-22, all
+    # other priors at 06-21, so a 06-22 boundary windows them out — only wa1 survives
+    assert main([
+        "export", "archive", "--content-duplicate", "--since", "2026-06-22T00:00:00+00:00",
+    ]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [row["prior_hash"] for row in rows] == ["sha256:wa1"]
+    assert all(row["archived_at"] >= "2026-06-22T00:00:00+00:00" for row in rows)
+
+
+def test_export_archive_content_duplicate_rejects_combination_with_id(
+    scrolls_home, capsys
+):
+    # `--id` selects one precise item; `--content-duplicate` is the library-filter
+    # group (an item-set sieve) — two selection modes, so mixing them is a loud usage
+    # error (exit 2, stderr JSON, no stdout), the both-id-and-source / id-and-custody
+    # precedent extended to the content-identity axis.
+    _seed_archive_for_content_duplicate_scope()
+    capsys.readouterr()
+    assert main(["export", "archive", "--id", "web:a", "--content-duplicate"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""  # never a partial backup
+    assert "error" in json.loads(captured.err)
+
+
 # --- export archive --since <ISO>: the incremental recovery-store backup, the
 # `export events --since` analogue on the archive axis — an orthogonal *time*
 # window on archived_at (H303) ------------------------------------------------
@@ -7522,6 +7631,135 @@ def test_cmd_export_events_unknown_tier_on_the_programmatic_path_is_exit_1(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+# --- export events --content-duplicate: the content-identity item-set sieve on
+# the verify-ledger backup (H347), the content-identity sibling of `export events
+# --fidelity`/`--drift` (H260) and the ledger counterpart of `export items
+# --content-duplicate` (H341). `list_items` already applies the whole-library
+# sibling sieve (H338); the *whole ledger* of each selected item travels, so a
+# recipient deduping the redundant copies gets the full proof of when each was
+# verified. ----------------------------------------------------------------------
+
+
+def _seed_events_for_content_duplicate_scope():
+    """A cross-source byte-identical pair (each with a custody ledger) + a unique
+    held item with its own ledger; inits the library and returns its db path.
+
+    `web:a` (web) and `arxiv:1` (arxiv) end *held* at `content_hash=sha256:dup` — a
+    mirror captured by two adapters, a *cross-source* content group, so the sibling
+    scope is genuinely whole-library. `web:solo` holds unique bytes. web:a carries a
+    two-row ledger (an `unchanged` then a `drifted`), so `--content-duplicate`
+    shipping its *whole* ledger (not just one matching row) is observable; the drift
+    event records a divergence but never overwrites the held `content_hash` column
+    (custody §2.1), so the pair still groups byte-identical."""
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://e.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="alpha copy",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="arxiv:1", source="arxiv", url="https://arxiv.org/abs/1",
+        saved_at="2026-06-12T01:00:00+00:00", title="alpha mirror",
+        extracted_text="body", raw_text="<r>body</r>",
+        content_hash="sha256:dup", stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:solo", source="web", url="https://e.com/solo",
+        saved_at="2026-06-12T02:00:00+00:00", title="alpha solo",
+        extracted_text="x", raw_text="<r>x</r>",
+        content_hash="sha256:solo", stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:a", "2026-06-13T00:00:00+00:00", "unchanged",
+                     "sha256:dup", "sha256:dup"),
+        CustodyEvent("web:a", "2026-06-15T00:00:00+00:00", "drifted",
+                     "sha256:dup", "sha256:moved"),
+        CustodyEvent("arxiv:1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:dup", "sha256:dup"),
+        CustodyEvent("web:solo", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:solo", "sha256:solo"),
+    ])
+    return db
+
+
+def test_export_events_content_duplicate_ships_the_siblings_whole_ledger(
+    scrolls_home, capsys
+):
+    # `--content-duplicate` selects the items the library holds a byte-identical
+    # copy of under another id (the H338 sibling sieve), then ships their *whole*
+    # ledger — web:a's pre-drift `unchanged` row travels with its `drifted` one (the
+    # item-set-vs-per-row decision, the H260 shape) — and drops web:solo's ledger.
+    # The kept ids equal doctor's content-duplicate group members.
+    main(["init"])
+    _seed_events_for_content_duplicate_scope()
+    capsys.readouterr()
+
+    assert main(["export", "events", "--content-duplicate"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:a", "arxiv:1"}  # web:solo dropped
+    # web:a's whole two-row ledger travelled, not just the drifted row
+    web_a = [row["status"] for row in rows if row["item_id"] == "web:a"]
+    assert web_a == ["unchanged", "drifted"]
+
+    main(["doctor"])
+    groups = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]["groups"]
+    members = {item_id for group in groups for item_id in group["ids"]}
+    assert {row["item_id"] for row in rows} == members
+
+
+def test_export_events_content_duplicate_is_whole_library_scope_under_source(
+    scrolls_home, capsys
+):
+    # the sibling scope is whole-library (a content group spans sources, the H328
+    # rule), so `--source web` still ships web:a whose only sibling (arxiv:1) lives
+    # in another source; arxiv:1 falls out of source scope, web:solo has no sibling.
+    main(["init"])
+    _seed_events_for_content_duplicate_scope()
+    capsys.readouterr()
+
+    assert main(["export", "events", "--content-duplicate", "--source", "web"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["item_id"] for row in rows} == {"web:a"}  # arxiv:1 out of source scope
+
+    # composes with --since (window the rows) and ANDs with --drift (select the
+    # item): only web:a's drifted row at/after the boundary survives
+    assert main([
+        "export", "events", "--content-duplicate", "--drift", "drifted",
+        "--since", "2026-06-15T00:00:00+00:00",
+    ]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["item_id"] == "web:a"
+    assert rows[0]["status"] == "drifted"
+
+
+def test_export_events_content_duplicate_round_trips_into_a_fresh_library(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    # the dedup-handoff contract: `import events` of a content-duplicate-scoped
+    # backup restores exactly the redundant items' custody history — no leakage of
+    # the unique item's events (the H72 round-trip narrowed to the content-identity
+    # shape, the H260 drift-scoped precedent).
+    main(["init"])
+    _seed_events_for_content_duplicate_scope()
+    capsys.readouterr()
+
+    main(["export", "events", "--content-duplicate"])
+    out_path = tmp_path / "dups-ledger.jsonl"
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "events", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"imported": 3, "skipped": 0, "events": 3}
+
+    from scrolls.custody import item_events
+    db = get_paths().db_path
+    # the pair's whole ledgers restored (newest-first); web:solo's event never travelled
+    assert [e.status for e in item_events(db, "web:a")] == ["drifted", "unchanged"]
+    assert [e.status for e in item_events(db, "arxiv:1")] == ["unchanged"]
+    assert item_events(db, "web:solo") == []
 
 
 def test_list_after_adds_prints_summaries(scrolls_home, capsys):
