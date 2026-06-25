@@ -1819,6 +1819,54 @@ def test_skipping_the_prune_leaves_the_content_duplicate_flagged_everywhere(
     )
 
 
+# --- the whole-library posture headline dogfood leg (H369/H370) -----------
+#
+# H369 distilled the custody sub-blocks into one whole-library `custody.posture` verdict
+# on `doctor`; H370 surfaces it as the readable `_Posture:_` line on the scheduled
+# `maintain` pass an operator skims + the `status` `custody.posture` scalar. Two
+# load-bearing properties this leg proves end-to-end against a real library: (1) unlike
+# every other headline the `_Posture:_` line is rendered ALWAYS — including the clean
+# `sound` verdict (the "all clear" line has briefing value, the H370 divergence from the
+# omit-when-clean `_Archive:_`/`_Duplicates:_` siblings); (2) a content-duplicate
+# redundancy that the `_Duplicates:_` line flags does NOT move the posture off `sound`
+# (byte-identical holdings are a redundancy fact, never a defect — excluded from the
+# verdict, H369). So the two lines coexist on one report: the pair is surfaced as
+# redundancy, yet custody stays sound. All three surfaces (`doctor` JSON, the `maintain`
+# headline, the `status` scalar) read one verdict by construction.
+
+
+def test_a_flagged_content_duplicate_keeps_the_maintain_posture_sound(home, capsys):
+    """*flag the redundancy, keep the verdict sound* (H369/H370): a mirror pair is held,
+    so the `_Duplicates:_` line flags one byte-identical group — but the `_Posture:_`
+    line still reads `sound`, because content duplicates are excluded from the custody
+    verdict (a redundancy fact, never a defect, H369). The `sound` line is rendered
+    even though nothing is wrong (the H370 always-render divergence), and the three
+    surfaces — `doctor`'s `custody.posture`, the `maintain` `posture_headline`, and the
+    `status` `custody.posture` scalar — read the same verdict by construction.
+    """
+    home("library")
+    items, _mirror_a, _mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()  # drain the kb report
+
+    # the `maintain` report: the duplicates line flags the pair, the posture stays sound
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    assert report["posture_headline"] == "_Posture: sound._"
+
+    # `doctor`'s JSON verdict — the authoritative fold the headline renders
+    assert main(["doctor"]) == 0
+    posture = json.loads(capsys.readouterr().out)["custody"]["posture"]
+    assert posture == {"verdict": "sound", "reasons": []}
+
+    # the `status` scalar twin — the same verdict, carried whole (verdict + reasons)
+    assert main(["status"]) == 0
+    assert json.loads(capsys.readouterr().out)["custody"]["posture"] == posture
+
+
 # --- the suggested-prune dogfood leg (H357) -------------------------------
 #
 # H356 turned the content-identity finding into *actionable* guidance: a per-group

@@ -4482,8 +4482,8 @@ def test_run_maintenance_returns_the_maintain_report_shape(scrolls_home):
     assert set(report) == {
         "recorded_at", "source", "fidelity", "recheck", "compiled", "custody",
         "headline", "at_risk_headline", "conflicts_headline",
-        "archive_integrity_headline", "duplicates_headline", "by_source",
-        "attention", "at_risk_works",
+        "archive_integrity_headline", "duplicates_headline", "posture_headline",
+        "by_source", "attention", "at_risk_works",
         "enrichment_by_source",
         "summary_by_source", "delta", "issues", "suggested", "duplicate_prunes",
     }
@@ -4585,8 +4585,8 @@ def test_run_maintenance_source_scopes_the_pass_to_one_source(scrolls_home):
     assert set(report) == {
         "recorded_at", "source", "fidelity", "recheck", "compiled", "custody",
         "headline", "at_risk_headline", "conflicts_headline",
-        "archive_integrity_headline", "duplicates_headline", "by_source",
-        "attention", "at_risk_works",
+        "archive_integrity_headline", "duplicates_headline", "posture_headline",
+        "by_source", "attention", "at_risk_works",
         "enrichment_by_source",
         "summary_by_source", "delta", "issues", "suggested", "duplicate_prunes",
     }

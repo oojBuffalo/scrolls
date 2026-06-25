@@ -59,6 +59,7 @@ from scrolls.maintain import (
     last_run_boundary,
     load_snapshot,
     log_path,
+    posture_headline,
     read_log,
     report_at_risk_works,
     report_by_source,
@@ -79,7 +80,7 @@ from scrolls.render import write_scroll
 
 def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
                    coverage=None, at_risk=0, conflicts=0, archive_mismatched=0,
-                   dup_groups=0, dup_items=0):
+                   dup_groups=0, dup_items=0, posture=None):
     """A minimal doctor report shaped like `run_doctor`'s custody block.
 
     `coverage` mirrors the drift block's `{verified, total}` recheck-coverage
@@ -93,6 +94,8 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
     `dup_groups`/`dup_items` mirror `custody.content_duplicates.total_groups`/
     `.total_items` — the byte-identical holding groups and their members (roadmap
     H325/H327); default to zero (no content-duplicate redundancy).
+    `posture` mirrors the whole-library `custody.posture` verdict block (roadmap
+    H369/H370); defaults to the honest `sound`/empty skeleton (nothing contributes).
     """
     full_drift = {
         "checked": 0, "unverified": 0, "unchanged": 0,
@@ -116,6 +119,7 @@ def _doctor_report(score, tiers, drift, enrichment_stale=0, summaries_stale=0,
             "content_duplicates": {"status": "ok", "groups": [],
                                    "total_groups": dup_groups,
                                    "total_items": dup_items},
+            "posture": posture or {"verdict": "sound", "reasons": []},
         }
     }
 
@@ -158,6 +162,10 @@ def test_custody_snapshot_distils_only_the_custody_scalars():
         # `custody.content_duplicates.total_groups`/`.total_items`
         "content_duplicate_groups": 0,
         "content_duplicate_items": 0,
+        # the whole-library posture verdict (H369/H370): the JSON-`status`
+        # counterpart of the readable `_Posture:_` line, read off `custody.posture`
+        # whole (verdict + reasons) — a clean report folds to the sound/empty default
+        "posture": {"verdict": "sound", "reasons": []},
     }
 
 
@@ -607,6 +615,73 @@ def test_duplicates_headline_span_is_parametrized_for_the_trend_twin():
     assert duplicates_headline(_dup_block(4, 9), 2, span="over 4 runs") == (
         "_Duplicates: 4 group(s) of byte-identical content (9 item(s)) (▲2 over 4 runs)._"
     )
+
+
+# --- posture_headline (the readable whole-library posture line, roadmap H370) ---
+#
+# The readable surfacing of `doctor`'s whole-library `custody.posture` verdict (H369)
+# for the scheduled `maintain` pass an operator skims: the one line distilling the
+# `sound`/`attention`/`at_risk` band + its contributing reasons. The deliberate
+# divergence from the `archive_integrity_headline`/`duplicates_headline` omit-when-clean
+# siblings: this line names the *whole-library* verdict, so it is rendered ALWAYS —
+# the one line that says "all clear" (`sound`) has briefing value (the roadmap's resolve).
+
+
+def test_posture_headline_names_the_verdict_and_its_reasons():
+    # a hard loss + a soft concern: the at_risk verdict plus both contributing reasons,
+    # rendered in the fixed severity order `doctor` lists them (hard before soft)
+    assert posture_headline("at_risk", ["custody_integrity", "source_drift"]) == (
+        "_Posture: at_risk (custody_integrity, source_drift)._"
+    )
+
+
+def test_posture_headline_attention_names_its_single_reason():
+    # a soft concern alone (a peer divergence): attention + the one reason
+    assert posture_headline("attention", ["open_conflicts"]) == (
+        "_Posture: attention (open_conflicts)._"
+    )
+
+
+def test_posture_headline_sound_is_always_rendered_with_no_parenthetical():
+    # the documented divergence from the omit-when-clean siblings (H298/H327): a sound
+    # library still renders its line — the "all clear" verdict has briefing value — and
+    # with no reasons there is no parenthetical clause, never a fabricated `(…)`
+    assert posture_headline("sound", []) == "_Posture: sound._"
+
+
+def test_posture_headline_drops_the_parenthetical_when_reasons_are_empty():
+    # defensive: a non-sound verdict with no reasons cannot arise by construction (a
+    # non-sound band requires ≥1 contributing axis), but the renderer still drops the
+    # empty `()` rather than emitting a bare `(…)` — the verdict-only line
+    assert posture_headline("at_risk", []) == "_Posture: at_risk._"
+
+
+# --- custody_snapshot carries the posture verdict (roadmap H370) -----------
+#
+# `custody_snapshot` gains the `posture` field — `doctor`'s whole-library
+# `custody.posture` verdict + reasons (H369) — the `status` JSON twin of the readable
+# `_Posture:_` `maintain` line (the `archive_mismatched` precedent: `status` carries the
+# machine value, `maintain` renders the line). A pure read of the report `run_doctor`
+# already produced, so `status.custody.posture` converges with `doctor.custody.posture`
+# and the `maintain` headline by construction.
+
+
+def test_custody_snapshot_carries_the_posture_verdict_and_reasons():
+    report = _doctor_report(
+        100, {"full": 1}, {"checked": 1, "unchanged": 1},
+        posture={"verdict": "at_risk", "reasons": ["custody_integrity"]},
+    )
+    snap = custody_snapshot(report)
+    assert snap["posture"] == {"verdict": "at_risk", "reasons": ["custody_integrity"]}
+
+
+def test_custody_snapshot_posture_tolerates_an_absent_block():
+    # a report predating H369 (no posture block) reads the honest skeleton default
+    # `sound`/empty, never a KeyError — the module's degrade-safely posture (ADR 0082)
+    report = _doctor_report(100, {"full": 1}, {"checked": 1, "unchanged": 1})
+    del report["custody"]["posture"]
+    snap = custody_snapshot(report)
+    assert snap["posture"] == {"verdict": "sound", "reasons": []}
 
 
 def test_delta_on_first_run_has_null_befores_and_changes():

@@ -1705,16 +1705,28 @@ point, and stop. `→ capN` marks the PRD capability. These are the un-started
 > ×13 + `tests/test_mcp.py` ×1) + 1 full-block keyset update + ADR 0107 + the
 > `get_library_health` docstring/tool-description. Suite **4143 passed**. → cap 1, cap 7.
 >
-> **Custody-posture theme — remaining legs (un-started, the `fidelity`/`drift`
+> **Custody-posture theme — remaining legs (the `fidelity`/`drift`
 > surface-propagation precedent; preconditions H369):**
-> - **H370 — the readable `_Posture:_` headline on `maintain` + the `scrolls status`
->   scalar twin.** `custody_snapshot` gains a `posture` scalar (the `archive_mismatched`
->   precedent — status carries the machine value, maintain renders the line), and a
->   `posture_headline(verdict, reasons)` renders ``_Posture: at_risk (custody_integrity,
->   source_drift)._`` from the *same* `custody.posture` fold `doctor` audits. Omit-when-
->   `sound`? **No** — unlike the other headlines this names the *whole-library* verdict, so
->   render it always (the one line that says "all clear" has value); resolve in the slice.
->   → cap 1, cap 7.
+> - **H370 — SHIPPED 2026-06-25 — the readable `_Posture:_` headline on `maintain` + the
+>   `scrolls status` posture twin.** `custody_snapshot` gains a `posture` field carrying
+>   `doctor`'s whole-library `custody.posture` verdict block **whole** (`{verdict, reasons}`,
+>   not a bare scalar — so `status.custody.posture` is field-for-field equal to
+>   `doctor.custody.posture`, the H373 convergence held by construction; the
+>   `archive_mismatched` precedent — `status` carries the machine value, `maintain` renders
+>   the line), and a new `posture_headline(verdict, reasons)` renders ``_Posture: at_risk
+>   (custody_integrity, source_drift)._`` (reasons comma-joined; a verdict with no reasons
+>   drops the parenthetical → the bare ``_Posture: sound._``) from the *same* `custody.posture`
+>   fold `doctor` audits, wired into the live `assemble_report` beside the
+>   `_Conflicts:_`/`_Archive:_`/`_Duplicates:_` headlines. **Resolved: always rendered** —
+>   unlike the omit-when-clean siblings (H298/H327) this names the *whole-library* verdict, so
+>   the clean `sound` "all clear" line still renders (it never returns `None`), the one
+>   documented divergence. The cross-run movement clause (`sound → attention`) is the deferred
+>   **H372** trend leg — this is the point-in-time line. 9 tests (`tests/test_maintain.py` ×6:
+>   4 `posture_headline` unit + 2 snapshot-carries; `tests/test_cli.py` ×2: `status` sound +
+>   attention convergence; `tests/test_dogfood.py` ×1: a flagged content-duplicate keeps the
+>   live `maintain` posture `sound` across `doctor`/headline/`status`) + 3 keyset updates
+>   (`tests/test_mcp.py` ×2 report keyset, `tests/test_cli.py` ×1 + `tests/test_maintain.py`
+>   ×1 snapshot exact-match). Suite **4152 passed**. → cap 1, cap 7.
 > - **H371 — the `_Posture:_` briefing line on `export bundle` + `scrolls context`.** The
 >   shareable-briefing leg (the H277 `_Conflicts:_` / H298 `_Archive:_` precedent), so a
 >   custody verdict travels with a shared bundle. → cap 9, cap 1.

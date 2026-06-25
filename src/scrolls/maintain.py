@@ -187,9 +187,26 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
     content group spans sources, so like the whole-library-only `at_risk` a `--source`
     audit leaves the block `status: "skipped"` and these read the honest `0`. Read
     defensively: a report predating H325 (no `content_duplicates` block) reads `0`.
+
+    Includes the **whole-library posture verdict** (`custody.posture`, roadmap
+    H369/H370) — `doctor`'s one-field distillation of the custody sub-blocks into a
+    `sound`/`attention`/`at_risk` band plus the contributing `reasons` (custody-vision
+    §3.1). This is the JSON-`status` counterpart of the readable `_Posture:_` `maintain`
+    line (the `archive_mismatched` precedent — `status` carries the machine value where
+    `maintain` renders the line), carried **whole** (the `{verdict, reasons}` dict, not a
+    bare scalar) so `status.custody.posture` is field-for-field equal to
+    `doctor.custody.posture`. A **pure read** of the report `run_doctor` already produced
+    (`_assess_custody_posture` folds the same sub-blocks, no extra query), so the two
+    converge with the `maintain` headline by construction. Scope-honest like the verdict
+    itself: a `--source` audit's posture reflects only the source-attributable axes (the
+    whole-library alarms skip), exactly as the underlying fold reports. Read defensively:
+    a report predating H369 (no `posture` block) folds to the honest skeleton default
+    ``{"verdict": "sound", "reasons": []}`` (an empty/uncomputed posture is healthy, the
+    `run_doctor` skeleton contract), never a `KeyError`.
     """
     custody = doctor_report["custody"]
     drift = custody["drift"]
+    posture = custody.get("posture", {"verdict": "sound", "reasons": []})
     return {
         "score": custody["score"],
         "tiers": dict(custody["tiers"]),
@@ -219,6 +236,20 @@ def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
         "content_duplicate_items": custody.get("content_duplicates", {}).get(
             "total_items", 0
         ),
+        # the whole-library posture verdict (roadmap H369/H370): `doctor`'s
+        # `custody.posture` one-field distillation (sound/attention/at_risk + the
+        # contributing reasons) — the JSON-`status` counterpart of the readable
+        # `_Posture:_` `maintain` line (the `archive_mismatched` precedent: `status`
+        # carries the machine value, `maintain` renders the line). Carried *whole* (a
+        # fresh `{verdict, reasons}` copy, not a bare scalar) so `status.custody.posture`
+        # is field-for-field equal to `doctor.custody.posture`. A pure read of the report
+        # `run_doctor` already produced (`_assess_custody_posture`, no extra query), so
+        # the two converge with the headline by construction. Read defensively: a report
+        # predating H369 folds to the honest `sound`/empty skeleton, never a `KeyError`.
+        "posture": {
+            "verdict": posture.get("verdict", "sound"),
+            "reasons": list(posture.get("reasons", [])),
+        },
     }
 
 
@@ -506,6 +537,46 @@ def duplicates_headline(
     else:
         clause = f"no change {span}"
     return f"{base} ({clause})._"
+
+
+def posture_headline(verdict: str, reasons: list[str]) -> str:
+    """The readable whole-library posture ``_Posture:_`` line (roadmap H370).
+
+    The readable surfacing of `doctor`'s `custody.posture` verdict (H369) for the
+    scheduled `maintain` pass an operator skims: the one line distilling the custody
+    sub-blocks into a ``sound``/``attention``/``at_risk`` band plus its contributing
+    reasons (custody-vision §3.1), so the operator reads *"is the library in good
+    custody?"* in one glance instead of cross-referencing the score / tiers / drift /
+    `_Conflicts:_` / `_Archive:_` / `_Duplicates:_` lines beside it:
+
+        ``_Posture: at_risk (custody_integrity, source_drift)._``
+
+    `verdict` is the worst band any custody axis fires and `reasons` lists **every**
+    contributor in `doctor`'s fixed severity order (hard before soft) — the same two
+    fields `doctor`'s `custody.posture` block carries and the `status`
+    `custody.posture` scalar (H370) reads, so the three surfaces converge by
+    construction. The reasons render as a comma-joined parenthetical; a verdict with
+    **no** reasons drops the clause entirely (the bare ``_Posture: <verdict>._``),
+    never a fabricated empty ``(…)``.
+
+    **The deliberate divergence from the omit-when-clean siblings**
+    (`archive_integrity_headline` H298, `duplicates_headline` H327): this line is
+    rendered **always**, including the clean ``sound`` verdict. Those siblings name a
+    *specific defect* (a tampered backup, a redundant holding) whose absence is the
+    silent norm; this line names the *whole-library* custody verdict, and the one line
+    that says "all clear" has briefing value — an operator skimming the report wants to
+    see custody is sound, not infer it from the absence of the other lines. So unlike
+    every other `maintain` headline, `posture_headline` never returns ``None`` (the
+    roadmap's resolved "render it always").
+
+    A pure renderer over the verdict + reasons (no audit, no ledger read) — the live
+    pass folds `doctor`'s `custody.posture` block once and threads its two fields here,
+    so the rendered line and the `doctor`/`status` JSON verdict can never disagree.
+    """
+    base = f"_Posture: {verdict}"
+    if not reasons:
+        return f"{base}._"
+    return f"{base} ({', '.join(reasons)})._"
 
 
 def render_archive_integrity(
@@ -1605,6 +1676,24 @@ def assemble_report(
         "duplicates_headline": duplicates_headline(
             report["custody"].get("content_duplicates", {}),
             None if delta is None else delta["content_duplicate_groups"]["change"],
+        ),
+        # the readable whole-library posture line (roadmap H369/H370): `doctor`'s
+        # `custody.posture` verdict (sound/attention/at_risk) + its contributing reasons,
+        # distilled into one line for the scheduled pass an operator skims — the readable
+        # counterpart of the snapshot's `posture` scalar `status` carries (H370). Rendered
+        # from the *same* live audit block `doctor` reports (not the distilled snapshot),
+        # so it converges with `doctor`'s `custody.posture` and the `status` scalar by
+        # construction. **Unlike every other headline it is rendered always** — including
+        # the clean `sound` verdict — because it names the *whole-library* custody verdict,
+        # and the one line that says "all clear" has briefing value (the H370 resolve, the
+        # documented divergence from the omit-when-clean `_Archive:_`/`_Duplicates:_`
+        # siblings). The cross-run posture-movement clause (`sound → attention`) is the
+        # deferred H372 trend leg — this is the point-in-time line. Under `--source` the
+        # verdict reflects only the source-attributable axes (the whole-library alarms
+        # skip), exactly as the underlying `_assess_custody_posture` fold reports.
+        "posture_headline": posture_headline(
+            report["custody"].get("posture", {}).get("verdict", "sound"),
+            report["custody"].get("posture", {}).get("reasons", []),
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

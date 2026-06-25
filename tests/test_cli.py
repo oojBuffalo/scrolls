@@ -11,6 +11,7 @@ from scrolls.classify import RULESET_FINGERPRINT, stale_classifications
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
+    conflict_event,
     custody_counts_by_source,
     custody_headline,
     latest_events,
@@ -163,6 +164,9 @@ def _custody_headline(score):
         # library holds no byte-identical content → the honest 0s
         "content_duplicate_groups": 0,
         "content_duplicate_items": 0,
+        # the whole-library posture verdict (H370): an empty/uninitialized library
+        # holds nothing to lose → the honest `sound`/empty skeleton default
+        "posture": {"verdict": "sound", "reasons": []},
     }
 
 
@@ -5430,6 +5434,81 @@ def test_status_custody_conflicts_source_scopes_like_the_drift_scalar(
     assert conflicts_for([]) == 1                       # whole library
     assert conflicts_for(["--source", "arxiv"]) == 1    # the conflicting source
     assert conflicts_for(["--source", "web"]) == 0      # the unaffected source
+
+
+# --- status custody.posture verdict (H370): the JSON-status counterpart of the
+# readable `_Posture:_` maintain line (H370), carrying `doctor`'s whole-library
+# `custody.posture` verdict block (H369) *whole* (verdict + reasons) into the machine
+# `custody` snapshot `scrolls status` renders — `status` shows no readable posture line,
+# so it carries the machine value (the `archive_mismatched`/`conflicts` precedent). ---
+
+
+def _held_full_item(paths, url="https://example.com/held", content_hash="sha256:held1"):
+    """A full-fidelity held scroll written to disk (raw + extracted + hash), so the
+    integrity audit finds nothing to flag — the clean `sound` starting point."""
+    item = ScrollItem(
+        id=make_item_id("web", None, url),
+        source="web",
+        source_id=None,
+        url=url,
+        saved_at="2026-06-14T00:00:00+00:00",
+        extracted_text="A fully held capture we can re-derive.",
+        content_hash=content_hash,
+        stage="rendered",
+        provenance={"adapter": "web", "fetched_at": "2026-06-14T00:00:05+00:00"},
+    )
+    insert_item(paths.db_path, write_scroll(paths, item))
+    return item
+
+
+def test_status_custody_posture_is_sound_on_a_clean_library(scrolls_home, capsys):
+    """A fully held, re-derivable capture with no losses anywhere ⇒ the honest `sound`
+    verdict with empty reasons (the skeleton default's healthy state), converging
+    field-for-field with `doctor`'s `custody.posture` by construction."""
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+    _held_full_item(paths)
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody["posture"] == {"verdict": "sound", "reasons": []}
+    # convergence by construction: the verdict IS the doctor custody view, carried whole
+    assert custody["posture"] == run_doctor(paths)["custody"]["posture"]
+
+
+def test_status_custody_posture_surfaces_an_open_conflict_as_attention(
+    scrolls_home, capsys
+):
+    """H370: `status`'s machine `custody` snapshot carries the whole-library posture
+    verdict beside drift/at-risk/conflicts. An unresolved import conflict is a soft
+    concern ⇒ `attention` naming `open_conflicts`, converging field-for-field with
+    `doctor`'s `custody.posture` by construction (the same distilled `run_doctor` view
+    `status` already renders) — and it never lowers the integrity score (a peer
+    divergence is not our drift, M2)."""
+    paths = get_paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    from scrolls.db import init_db
+
+    init_db(paths.db_path)
+    held = _held_full_item(paths)
+    # a peer's re-import disagreed with the held copy — an unresolved conflict, no loss
+    record_events(paths.db_path, [conflict_event(
+        held.id, held_hash="sha256:held1", incoming_hash="sha256:peer",
+        now="2026-06-22T00:00:00+00:00")])
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+    custody = json.loads(capsys.readouterr().out)["custody"]
+    assert custody["posture"] == {"verdict": "attention", "reasons": ["open_conflicts"]}
+    # convergence by construction: the verdict is the doctor custody view, carried whole
+    report = run_doctor(paths)
+    assert custody["posture"] == report["custody"]["posture"]
+    assert custody == custody_snapshot(report)
+    assert custody["score"] == 100  # the conflict moves the posture, never the score
 
 
 # --- status custody.archive_mismatched scalar (H298): the JSON-status counterpart
