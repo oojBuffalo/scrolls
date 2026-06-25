@@ -642,6 +642,7 @@ def get_context_bundle(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> str:
     """A compact Markdown bundle for a topic: best matches, excerpts, source links.
@@ -691,6 +692,16 @@ def get_context_bundle(
     whose query is in the title) and the rendered `_Strength:_` headline
     describes exactly the kept set. An unknown band is an error, never a silent
     empty bundle.
+
+    `content_duplicate` (a flag) is the content-identity scope, the twin of
+    `search_scrolls(content_duplicate=)` and `scrolls context --content-duplicate`:
+    it keeps only the matches the library holds a byte-identical copy of under
+    another id (the same non-null `content_hash`), so an agent can brief on exactly
+    the redundant holdings it might dedup. Sieved before the cap like
+    `fidelity`/`drift`/`strength`, named in the title, and the kept slice re-folds
+    the Coverage line and the `_Duplicates:_` briefing. The sibling may live in
+    another source (a content group spans the query scope), and it is report-only —
+    never a merge (raw is sacred).
     """
     paths = get_paths()
     return build_context(
@@ -705,6 +716,7 @@ def get_context_bundle(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
         budget=budget,
     )
 

@@ -136,6 +136,7 @@ def build_context(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
     budget: str = DEFAULT_BUDGET,
 ) -> str:
     """Render the Markdown bundle for a query; raises ValueError on a blank one.
@@ -168,6 +169,24 @@ def build_context(
     the rendered headline describes exactly what the bundle contains. An unknown
     tier/posture raises ValueError (`search_items`, a closed vocabulary; the CLI
     also rejects it via argparse `choices`).
+
+    `content_duplicate` (roadmap H345) is the *content-identity* browse scope — the
+    same boolean `scrolls list`/`search --content-duplicate` add (H338), here lifted
+    to the context bundle beside `--fidelity`/`--drift`/`--strength`. It keeps only
+    the matches the library holds a byte-identical copy of under another id (the same
+    non-null `content_hash`), so an agent can build context from "only the topics I
+    hold a redundant copy of" — the "brief me on exactly the redundant holdings so I
+    can decide what to dedup" handoff. It reuses the H338
+    `search_items(content_duplicate=)` clause (the correlated `content_hash`
+    sub-count), so the kept set cannot disagree with `list`/`search`; the sibling may
+    live in *any* source (a content group spans the query/source scope — the H328
+    cross-source rule, distinct from the query scope of the matched rows). Threaded
+    straight into `search_items`/`count_matches` beside `fidelity`/`drift`/`strength`
+    (the same before-cap sieve), so it ANDs with them and the facets, scopes the
+    candidate set *before* the `limit`/`budget` cap, and the kept slice re-folds both
+    the Coverage denominator and the H331 `_Duplicates:_` briefing line (which
+    `context` already imports as `render_content_duplicates`). Report-only — names no
+    merge (raw is sacred, H325).
 
     `strength` (roadmap H316) is the *rank-axis* third custody-style scope — the
     same before-cap threshold band `scrolls search --strength` adds (H314), here
@@ -223,6 +242,7 @@ def build_context(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     kept, folded = _collapse_by_work(hits)
     # Fetch every matched row once (kept + folded). `items` (the bundle's kept,
@@ -242,7 +262,8 @@ def build_context(
 
     title = f"# Scrolls Context Bundle: {query}"
     scope = _scope_note(
-        source, category, stage, tag, concept, fidelity, drift, strength
+        source, category, stage, tag, concept, fidelity, drift, strength,
+        content_duplicate,
     )
     if scope:
         title += f" ({scope})"
@@ -268,6 +289,7 @@ def build_context(
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        content_duplicate=content_duplicate,
     )
     lines += [_coverage_line(matched, len(hits)), ""]
     # The bundle-level rank-confidence headline (roadmap H315): one `_Strength:_`
@@ -581,6 +603,7 @@ def _scope_note(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> str:
     """A `source=…, category=…, …` summary of the active facets, else ''.
 
@@ -592,7 +615,10 @@ def _scope_note(
     too, so a custody-scoped bundle's title names which holdings tier / drift
     posture it covers. `strength` (roadmap H316, the rank-axis scope) reads
     verbatim as well, so a rank-scoped bundle names which strength band it
-    covers.
+    covers. `content_duplicate` (roadmap H345, the content-identity scope) is a
+    boolean — a bare `content-duplicate` marker (no value, the H341 `export
+    bundle` idiom), so a redundancy-scoped bundle's title names that it carries
+    only the byte-identical-held slice.
     """
     parts = []
     if source is not None:
@@ -611,6 +637,8 @@ def _scope_note(
         parts.append(f"drift={drift}")
     if strength is not None:
         parts.append(f"strength={strength}")
+    if content_duplicate:
+        parts.append("content-duplicate")
     return ", ".join(parts)
 
 

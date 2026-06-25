@@ -293,6 +293,21 @@ def build_parser() -> argparse.ArgumentParser:
         "_Strength:_ headline describes the kept set",
     )
     context_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only matches the library holds a byte-identical copy of under "
+        "another id — the content-duplicate set (the content-identity custody "
+        "shape); the browse-axis companion of `scrolls list`/`search "
+        "--content-duplicate` and `show`'s content_duplicate_ids, lifted to the "
+        "context bundle. A boolean flag, report-only (never a merge), sieved "
+        "before --limit/--budget. The sibling may live in another source (a "
+        "content group spans the query scope), so it briefs the top matches with "
+        "a byte-identical sibling anywhere held; the kept slice re-folds the "
+        "Coverage line and the _Duplicates:_ briefing. ANDs with "
+        "--fidelity/--drift/--strength",
+    )
+    context_parser.add_argument(
         "--budget",
         choices=CONTEXT_BUDGET_TIERS,
         default=DEFAULT_CONTEXT_BUDGET,
@@ -1538,6 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
             args.fidelity,
             args.drift,
             args.strength,
+            args.content_duplicate,
             args.budget,
         )
     if args.command == "detect":
@@ -3854,6 +3870,7 @@ def _cmd_context(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
     budget: str = DEFAULT_CONTEXT_BUDGET,
 ) -> int:
     paths = get_paths()
@@ -3870,6 +3887,7 @@ def _cmd_context(
             fidelity=fidelity,
             drift=drift,
             strength=strength,
+            content_duplicate=content_duplicate,
             budget=budget,
         )
     except ValueError as exc:

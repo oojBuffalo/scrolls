@@ -2550,3 +2550,182 @@ def test_context_cli_rejects_unknown_strength(scrolls_home):
     with pytest.raises(SystemExit) as exc:
         main(["context", "ranking", "--strength", "bogus"])
     assert exc.value.code == 2
+
+
+# --- H345: `context --content-duplicate` — the content-identity browse filter ---
+# The content-identity axis lifted to the agent context bundle, beside
+# `context --fidelity`/`--drift`/`--strength` (H257/H316): keep only the matches
+# the library holds a byte-identical copy of under another id (the same
+# `content_hash`). A boolean flag, whole-library sibling scope, report-only (never
+# a merge, H325), ANDed before the `--limit`/`--budget` cap. It reuses the H338
+# `search_items(content_duplicate=)` clause (the correlated `content_hash`
+# sub-count), so the kept set cannot disagree with `list`/`search
+# --content-duplicate`, and the kept slice re-folds the Coverage denominator and
+# the H331 `_Duplicates:_` briefing line.
+
+
+def _best_match_ids(out):
+    """The `id` in backticks on each numbered Best-Matches line, in order."""
+    ids = []
+    in_best = False
+    for line in out.splitlines():
+        if line.startswith("## Best Matches"):
+            in_best = True
+            continue
+        if in_best and line.startswith("## "):
+            break
+        if in_best and re.match(r"^\d+\. ", line):
+            ids.append(re.search(r"\(`([^`]+)`\)", line).group(1))
+    return ids
+
+
+def _seed_content_dup_mix(db):
+    """Two byte-identical `database` matches + a unique held + a NULL-hash, all matching.
+
+    `A`/`B` share `deadbeef` (a content-duplicate pair, held in full); `C` holds
+    distinct content (`cafef00d`); `D` holds no content (NULL hash). All four match
+    the query `database`, so `--content-duplicate` provably keeps only the pair and
+    drops the unique and NULL-hash holdings.
+    """
+    insert_item(db, make_item(
+        "wikipedia:en:A", "Alpha database", "A shared database body.",
+        content_hash="deadbeef", raw_text="<raw>A shared database body.</raw>"))
+    insert_item(db, make_item(
+        "wikipedia:en:B", "Beta database", "A shared database body.",
+        content_hash="deadbeef", raw_text="<raw>A shared database body.</raw>"))
+    insert_item(db, make_item(
+        "wikipedia:en:C", "Gamma database", "A distinct database body.",
+        content_hash="cafef00d", raw_text="<raw>A distinct database body.</raw>"))
+    insert_item(db, make_item(
+        "wikipedia:en:D", "Delta database", "A bodiless database stub."))
+    # ^ no content_hash → NULL, never a duplicate
+
+
+def test_context_content_duplicate_keeps_only_redundant_holdings(scrolls_home, capsys):
+    # roadmap H345: `--content-duplicate` keeps only the matches the library holds a
+    # byte-identical copy of under another id — the H338 browse filter on the third
+    # browse surface. Drops the unique (`C`) and the NULL-hash (`D`) holdings.
+    main(["init"])
+    _seed_content_dup_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--content-duplicate")
+    assert set(_best_match_ids(out)) == {"wikipedia:en:A", "wikipedia:en:B"}
+    # the unique and NULL-hash holdings are dropped
+    assert "wikipedia:en:C" not in out and "wikipedia:en:D" not in out
+    # unfiltered, all four match
+    bare = run_context(capsys, "database")
+    assert set(_best_match_ids(bare)) == {
+        "wikipedia:en:A", "wikipedia:en:B", "wikipedia:en:C", "wikipedia:en:D"
+    }
+
+
+def test_context_content_duplicate_uses_whole_library_sibling_scope(scrolls_home, capsys):
+    # decisive choice (b): whole-library sibling scope, not the query/source scope of
+    # the matched rows. `A` matches `database` and its byte-identical sibling `B` is
+    # OFF-query (no `database` token), yet `A` is still kept — its sibling is held
+    # anywhere in the library (the H328 cross-source rule).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:A", "Alpha database", "A shared body.",
+        content_hash="deadbeef", raw_text="<raw>A shared body.</raw>"))
+    insert_item(db, make_item(
+        "wikipedia:en:B", "Beta tarragon", "A shared body.",  # off-query sibling
+        content_hash="deadbeef", raw_text="<raw>A shared body.</raw>"))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--content-duplicate")
+    assert _best_match_ids(out) == ["wikipedia:en:A"]  # kept: its sibling is held
+    assert "tarragon" not in out  # B is off-query, never a match
+
+
+def test_context_content_duplicate_rescopes_coverage_and_duplicates_line(scrolls_home, capsys):
+    # the kept slice re-folds the Coverage denominator (`count_matches` under the same
+    # axis) and the H331 `_Duplicates:_` briefing line: the bundle covers 2 (the pair),
+    # never the library-wide 4, and the readable duplicate line describes the kept set.
+    main(["init"])
+    _seed_content_dup_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    bare = run_context(capsys, "database")
+    assert "Coverage: all 4 matching scrolls" in bare
+
+    out = run_context(capsys, "database", "--content-duplicate")
+    assert "Coverage: all 2 matching scrolls" in out
+    assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in out
+
+
+def test_context_content_duplicate_sieves_before_the_limit(scrolls_home, capsys):
+    # the before-cap sieve (the list-sieve shape, like --fidelity/--drift/--strength):
+    # `--content-duplicate --limit 1` returns the top match *among the duplicates*, and
+    # the Coverage denominator counts only the 2 duplicate matches (never the 4), so a
+    # capped content-scoped bundle stays scope-honest about its own content scope.
+    main(["init"])
+    _seed_content_dup_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--content-duplicate", "--limit", "1")
+    assert "the top 1 of 2 matching scrolls" in out
+    # the one kept match is one of the duplicate pair (the unique/NULL were sieved out)
+    assert _best_match_ids(out)[0] in ("wikipedia:en:A", "wikipedia:en:B")
+
+
+def test_context_content_duplicate_ands_with_fidelity(scrolls_home, capsys):
+    # the content axis ANDs with the per-item custody axes: a byte-identical pair, one
+    # held full and one partial, so `--content-duplicate --fidelity full` keeps only the
+    # full one — both the content sieve and the holdings sieve apply.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item(
+        "wikipedia:en:Full", "Full database copy", "a shared database body.",
+        content_hash="deadbeef", raw_text="<raw>a shared database body.</raw>"))
+    # hash + summary only (no body) → partial fidelity, still a content-dup of Full
+    part = make_item("wikipedia:en:Part", "Partial database copy", "x",
+                     content_hash="deadbeef")
+    insert_item(db, dataclasses.replace(
+        part, extracted_text=None, summary="a partial database digest."))
+    capsys.readouterr()
+
+    # content-duplicate alone keeps both byte-identical holdings
+    both = run_context(capsys, "database", "--content-duplicate")
+    assert set(_best_match_ids(both)) == {"wikipedia:en:Full", "wikipedia:en:Part"}
+    # ANDed with --fidelity full, only the full-fidelity copy survives
+    out = run_context(capsys, "database", "--content-duplicate", "--fidelity", "full")
+    assert _best_match_ids(out) == ["wikipedia:en:Full"]
+    assert "wikipedia:en:Part" not in out
+
+
+def test_context_content_duplicate_scope_named_in_the_title(scrolls_home, capsys):
+    # a content-scoped bundle is self-documenting: the title carries a bare
+    # `content-duplicate` marker (no value — a boolean), the H341 `export bundle`
+    # scope-note idiom, beside the existing facet echo (and reads last).
+    main(["init"])
+    _seed_content_dup_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--content-duplicate")
+    assert out.startswith("# Scrolls Context Bundle: database (content-duplicate)\n")
+    out = run_context(
+        capsys, "database", "--source", "wikipedia", "--content-duplicate"
+    )
+    assert out.startswith(
+        "# Scrolls Context Bundle: database (source=wikipedia, content-duplicate)\n"
+    )
+
+
+def test_context_content_duplicate_converges_with_search(scrolls_home, capsys):
+    # the kept ids ≡ exactly `search --content-duplicate` over the same query scope
+    # (the H338 browse-filter convergence; no works here, so the work-collapse is a
+    # no-op and the two sets agree id-for-id) — both fold the same `search_items`
+    # `content_hash` sub-count clause, so they cannot disagree.
+    main(["init"])
+    _seed_content_dup_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--content-duplicate")
+    main(["search", "database", "--content-duplicate"])
+    search_ids = {row["id"] for row in json.loads(capsys.readouterr().out)}
+    assert set(_best_match_ids(out)) == search_ids == {
+        "wikipedia:en:A", "wikipedia:en:B"
+    }

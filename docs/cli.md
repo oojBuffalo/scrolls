@@ -4992,7 +4992,7 @@ $ scrolls works arxiv:1706.03762
 [exit 0]
 ```
 
-### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--strength W]`
+### `scrolls context <query> [--limit N] [--budget B] [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity F] [--drift D] [--strength W] [--content-duplicate]`
 
 The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
@@ -5217,6 +5217,37 @@ the `build_context`/MCP path (`test_context_cli_rejects_unknown_strength`,
 (`test_get_context_bundle_filters_by_match_strength`,
 `test_get_context_bundle_rejects_an_unknown_match_strength` in
 `tests/test_mcp.py`).
+
+`--content-duplicate` is the **content-identity** browse scope (roadmap H345,
+`tests/test_context.py`) — the same boolean `scrolls list`/`search
+--content-duplicate` add (H338), here lifted to the context bundle beside
+`--fidelity`/`--drift`/`--strength`, the third browse surface to carry it. It
+keeps only the matches the library holds a byte-identical copy of under another
+id (the same non-null `content_hash` — a mirror, a cross-post, or one work
+captured by two adapters), so an agent can brief on **exactly the redundant
+holdings it might dedup** (`test_context_content_duplicate_keeps_only_redundant_holdings`).
+A **boolean** flag, present-or-absent (not a value); the sibling may live in
+*any* source — a content group spans the query scope (the whole-library sibling
+rule, H328), so a match is kept when its byte-identical twin is held *anywhere*,
+not only among the query's other hits
+(`test_context_content_duplicate_uses_whole_library_sibling_scope`). It reuses
+the H338 `search_items(content_duplicate=)` clause (the correlated `content_hash`
+sub-count), so the kept set cannot disagree with `list`/`search` — `context
+--content-duplicate`'s ids equal `search --content-duplicate`'s over the same
+query scope (`test_context_content_duplicate_converges_with_search`). It ANDs
+with the facets and the custody axes — `--content-duplicate --fidelity full`
+keeps only the redundant copies held in full
+(`test_context_content_duplicate_ands_with_fidelity`) — and sieves the candidate
+set **before** the `--limit`/`--budget` cap, so the Coverage denominator counts
+only the redundant matches and the kept slice re-folds the `_Duplicates:_`
+briefing line (`test_context_content_duplicate_rescopes_coverage_and_duplicates_line`,
+`test_context_content_duplicate_sieves_before_the_limit`). The scope note carries
+a bare `content-duplicate` marker — `(content-duplicate)`, the H341 `export
+bundle` idiom — beside the facet echo
+(`test_context_content_duplicate_scope_named_in_the_title`). It is **report-only**
+— never a merge (raw is sacred, H325). It reaches MCP clients through the same
+`get_context_bundle(query, content_duplicate=)` twin, at byte parity with the CLI
+(`test_get_context_bundle_filters_by_content_duplicate` in `tests/test_mcp.py`).
 
 ```console
 $ scrolls context "local search"

@@ -2951,6 +2951,34 @@ def test_get_context_bundle_rejects_an_unknown_match_strength(scrolls_home):
         mcp_server.get_context_bundle("ranking", strength="strongest")
 
 
+def test_get_context_bundle_filters_by_content_duplicate(scrolls_home, capsys):
+    # roadmap H345 — the content-identity browse filter reaches the agent context
+    # bundle over MCP, the twin of `scrolls context --content-duplicate` and the
+    # content sibling of get_context_bundle(fidelity=/drift=/strength=). Keeps only
+    # the matches the library holds a byte-identical copy of under another id (the
+    # same `content_hash`), whole-library sibling scope, named in the title; byte
+    # parity with the CLI bundle.
+    from scrolls.cli import main
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)  # `alpha` matches the two dup groups + solo + ref
+
+    bundle = mcp_server.get_context_bundle("alpha", content_duplicate=True)
+    assert bundle.startswith("# Scrolls Context Bundle: alpha (content-duplicate)")
+    # the four byte-identical members are kept (two cross-source/single-source groups)
+    for kept in ("web:a", "arxiv:1", "web:p", "web:q"):
+        assert kept in bundle
+    # the unique-held and the NULL-hash reference are dropped
+    assert "web:solo" not in bundle and "web:ref" not in bundle
+
+    # byte parity with the CLI `context --content-duplicate`
+    capsys.readouterr()  # clear the init/seed stdout
+    main(["context", "alpha", "--content-duplicate"])
+    cli_bundle = capsys.readouterr().out
+    assert bundle == cli_bundle
+
+
 def test_search_and_bundle_honor_tag_and_concept_facets(scrolls_home):
     # The tag/concept membership facets (ADR 0059) reach MCP clients through
     # the same search_items/build_context, so lock both surfaces here.
