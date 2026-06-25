@@ -352,3 +352,152 @@ def test_mcp_dogfood_flow_hold_prove_detect_then_recurring_maintenance(
     assert all(run["snapshot"]["drift"]["drifted"] == 1 for run in envelope["runs"])
     assert envelope["trend"]["score"]["change"] == 0
     assert envelope["trend"]["posture"] == "holding"
+
+
+# --- the content-identity MCP-surface dogfood leg (H355) ------------------
+#
+# The content-identity theme (byte-identical holdings under different ids, H325)
+# is dogfooded over the CLI read/render/maintain surfaces (H340) and the compiled
+# `library/` pages (H351). The surface an *agent* actually drives — the Model
+# Context Protocol — had no content-identity dogfood: an agent reading
+# `get_library_health`'s `content_duplicates` block (the H325 twin) should be able
+# to enumerate *precisely* those redundant holdings via
+# `list_scrolls(content_duplicate=True)` (the H338 twin), and after a real prune of
+# one copy `get_library_health` should re-read zero groups — the MCP-transport
+# analogue of the CLI `doctor → list --content-duplicate → prune → doctor` loop.
+#
+# The prune itself has **no MCP twin** (the MCP surface is read-only on holdings —
+# the same read/act boundary `get_library_health` draws against `scrolls doctor
+# --fix`, and the reason this module's flow has no "take it with me" leg): a prune
+# is an operator choice the shell makes (`scrolls rm`), never an auto-merge (H325:
+# raw is sacred, two faithful copies are a redundancy *fact*, not a defect to
+# collapse). So the *reads* run over MCP and the *act* is the CLI `rm` the operator
+# chooses — the same composition the H204 attention leg uses (read the MCP signal,
+# act on the shell).
+
+# Two captures of the same bytes under two ids — a content-identity duplicate
+# (H325), the MCP module's analogue of test_dogfood's `_held_topic_with_a_mirror`.
+_MIRROR_BODY = "One survey's bytes, mirrored under two ids."
+_MIRROR_HASH = "sha256:byte-identical-mirror"
+
+
+def _held_topic_with_a_mirror() -> tuple[list[ScrollItem], ScrollItem, ScrollItem]:
+    """The held topic plus a byte-identical pair: same `content_hash`/body, two ids.
+
+    The pair is held under two sources/urls (web + blog) so the content group spans
+    sources — the whole-library sibling scope (H328) the MCP twins read — while the
+    three unique topic scrolls carry their own distinct hashes, so the duplicate
+    surfaces single out *only* the redundant pair, never a unique holding.
+    """
+    mirror_a = _rendered(
+        "web", None, "https://example.com/transformer-survey-mirror-a",
+        title="Transformer Survey (mirror A)",
+        raw_text=_MIRROR_BODY, extracted_text=_MIRROR_BODY,
+        content_hash=_MIRROR_HASH, category="survey", domain="machine learning",
+        concepts=("Transformer",), tags=("mirror",),
+    )
+    mirror_b = _rendered(
+        "blog", None, "https://example.com/transformer-survey-mirror-b",
+        title="Transformer Survey (mirror B)",
+        raw_text=_MIRROR_BODY, extracted_text=_MIRROR_BODY,
+        content_hash=_MIRROR_HASH, category="survey", domain="machine learning",
+        concepts=("Transformer",), tags=("mirror",),
+    )
+    return _held_topic() + [mirror_a, mirror_b], mirror_a, mirror_b
+
+
+def _hold_with_mirror() -> tuple[list[ScrollItem], ScrollItem, ScrollItem, object]:
+    """*hold* the topic plus a byte-identical mirror pair, then compile the views —
+    the `_hold` shape with a content duplicate planted (a finished ingest's
+    leftovers, built the way an agent would, no network)."""
+    main(["init"])
+    paths = get_paths()
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    for item in items:
+        insert_item(paths.db_path, write_scroll(paths, item))
+    mcp_server.compile_library()
+    return items, mirror_a, mirror_b, paths
+
+
+def test_mcp_spot_a_content_duplicate_then_prune_clears_it_over_the_transport(
+    scrolls_home, capsys
+):
+    """*spot the redundancy → enumerate it → prune → it clears* over MCP (H355):
+    the content-identity agent loop end to end on the transport an agent drives.
+
+    Hold the same bytes under two ids and the two MCP read twins name the *same*
+    pair — `get_library_health`'s `content_duplicates` block (the whole-library
+    audit, H325) reports one group of two, and `list_scrolls(content_duplicate=True)`
+    (H338) enumerates *exactly* those two held ids (the group's members — the two
+    surfaces converge by construction, H332). Then the operator prunes one copy with
+    the CLI `scrolls rm` (the chosen act — the MCP surface holds no delete twin; raw
+    is sacred, never an auto-merge, H325), and **both MCP reads fall to clean in one
+    step**: zero groups and an empty enumeration (H330's unconditional omit-when-clean
+    — a count that fell *to* zero is a pruned copy, not a defect repaired). The three
+    unique topic scrolls are named by *neither* read throughout, so the loop is a
+    genuine narrowing, not a one-pair library.
+    """
+    import json
+
+    items, mirror_a, mirror_b, _ = _hold_with_mirror()
+    capsys.readouterr()  # drain the `init` report so only the `rm` output is read
+
+    # --- spot: the whole-library audit names one group of two -----------------
+    dups = mcp_server.get_library_health()["content_duplicates"]
+    assert dups["total_groups"] == 1 and dups["total_items"] == 2
+    assert dups["groups"] == [
+        {"content_hash": _MIRROR_HASH, "ids": sorted([mirror_a.id, mirror_b.id])}
+    ]
+
+    # --- enumerate: `list_scrolls(content_duplicate=True)` returns *exactly* the
+    #     held members of that group — the audit's `ids`, member-for-member (H338
+    #     ≡ H325 by construction); the three unique topic scrolls are excluded.
+    redundant = mcp_server.list_scrolls(content_duplicate=True)
+    assert sorted(s["id"] for s in redundant) == sorted([mirror_a.id, mirror_b.id])
+    assert sorted(s["id"] for s in redundant) == dups["groups"][0]["ids"]
+    # the three distinct-hash topic scrolls (items minus the planted mirror pair)
+    unique_ids = {item.id for item in items} - {mirror_a.id, mirror_b.id}
+    assert len(unique_ids) == 3
+    assert unique_ids.isdisjoint({s["id"] for s in redundant})
+
+    # --- prune: a real `scrolls rm` the operator chooses (no MCP delete twin) --
+    assert main(["rm", mirror_a.id]) == 0
+    rm_out = json.loads(capsys.readouterr().out)
+    assert rm_out["removed"] == 1 and rm_out["failed"] == 0
+
+    # --- clears: both MCP reads fall to clean in lockstep ---------------------
+    cleared = mcp_server.get_library_health()["content_duplicates"]
+    assert cleared["total_groups"] == 0 and cleared["total_items"] == 0
+    assert cleared["groups"] == []
+    # the surviving copy is now unique — no held sibling, so the enumeration empties
+    assert mcp_server.list_scrolls(content_duplicate=True) == []
+    # …but the survivor is still held (the prune removed one copy, not the bytes):
+    # an unfiltered list still carries mirror B, and `get_scroll` still resolves it.
+    survivors = {s["id"] for s in mcp_server.list_scrolls()}
+    assert mirror_b.id in survivors and mirror_a.id not in survivors
+    assert mcp_server.get_scroll(mirror_b.id)["content_duplicate_ids"] == []
+
+
+def test_mcp_skipping_the_prune_leaves_the_content_duplicate_flagged(scrolls_home):
+    """*the prune is what clears it* (H355, the mutation guard): re-reading both MCP
+    twins **without** the `rm` leaves the pair still flagged on each — so the clean
+    reads above are driven by the operator's chosen prune, not by the re-read.
+
+    `get_library_health`/`list_scrolls` are read-only custody posture (H325 — no MCP
+    surface collapses a content duplicate; only an explicit `scrolls rm` removes a
+    held copy), so the redundancy persists across re-reads until the operator acts —
+    the H340/H351 prune-drives-the-clear discipline on the MCP transport.
+    """
+    items, mirror_a, mirror_b, _ = _hold_with_mirror()
+
+    # re-read both twins with no `rm` — the only change from the loop above
+    dups = mcp_server.get_library_health()["content_duplicates"]
+    assert dups["total_groups"] == 1 and dups["total_items"] == 2
+    assert dups["groups"][0]["ids"] == sorted([mirror_a.id, mirror_b.id])
+
+    redundant = mcp_server.list_scrolls(content_duplicate=True)
+    assert sorted(s["id"] for s in redundant) == sorted([mirror_a.id, mirror_b.id])
+
+    # and the per-item twin still names the cross-source sibling each way (H328)
+    assert mcp_server.get_scroll(mirror_a.id)["content_duplicate_ids"] == [mirror_b.id]
+    assert mcp_server.get_scroll(mirror_b.id)["content_duplicate_ids"] == [mirror_a.id]
