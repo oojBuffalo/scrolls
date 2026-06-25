@@ -444,6 +444,7 @@ def get_related_scrolls(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> list[dict[str, Any]]:
     """Items connected to one item — same-work, link edges, shared concepts/tags — with reasons.
 
@@ -468,7 +469,12 @@ def get_related_scrolls(
     sieve runs *before* the cap, so you get the top neighbours *at that value*
     (e.g. only the full-fidelity neighbours you can re-derive offline, only the
     ones that have drifted, or only the `strong` same-work/link bonds), and the
-    axes AND. `strength` is a threshold (at or above the band). An unknown
+    axes AND. `strength` is a threshold (at or above the band). `content_duplicate`
+    (a flag) keeps only the neighbours the library holds a byte-identical copy of
+    under another id — those whose own `content_duplicate_ids` is non-empty (the
+    relationship-surface twin of `list_scrolls`/`search_scrolls`'s
+    `content_duplicate`); the twin may live anywhere in the library, even under the
+    anchor itself or another source, and it ANDs with the other axes. An unknown
     tier/posture/band is an error, never a silent empty neighbourhood. `item_id`
     is the item's id or the URL that saved it (ADR 0028), resolved like
     `get_scroll`'s. An unknown item is an error.
@@ -486,6 +492,7 @@ def get_related_scrolls(
             fidelity=fidelity,
             drift=drift,
             strength=strength,
+            content_duplicate=content_duplicate,
         )
     ]
     for hit in hits:

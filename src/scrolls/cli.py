@@ -146,7 +146,12 @@ from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_i
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
-from scrolls.related import filter_related, scored_related, tally_relation_strength
+from scrolls.related import (
+    filter_related,
+    related_duplicate_ids,
+    scored_related,
+    tally_relation_strength,
+)
 from scrolls.remove import remove_item
 from scrolls.render import write_scroll
 from scrolls.scope import scope_envelope
@@ -1349,6 +1354,17 @@ def build_parser() -> argparse.ArgumentParser:
         "that strength*. ANDs with --fidelity/--drift",
     )
     related_parser.add_argument(
+        "--content-duplicate",
+        action="store_true",
+        help="Only neighbours the library holds a byte-identical copy of under "
+        "another id (roadmap H350) — the relationship-surface twin of `scrolls list "
+        "--content-duplicate` / `search --content-duplicate`: keep the neighbours "
+        "whose own content is also held under some other id (their "
+        "`content_duplicate_ids` is non-empty). Whole-library sibling scope (the twin "
+        "may live in another source, or be the anchor itself); the sieve runs before "
+        "--limit; report-only. ANDs with --fidelity/--drift/--strength",
+    )
+    related_parser.add_argument(
         "--stats",
         action="store_true",
         help="Wrap the array in a scope-honest {scope, stats, results} "
@@ -1774,7 +1790,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_paths()
     if args.command == "related":
         return _cmd_related(
-            args.id, args.limit, args.stats, args.fidelity, args.drift, args.strength
+            args.id, args.limit, args.stats, args.fidelity, args.drift, args.strength,
+            args.content_duplicate,
         )
     if args.command == "rm":
         return _cmd_rm(args.refs)
@@ -3959,22 +3976,29 @@ def _cmd_related(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     paths = get_paths()
     try:
         resolved = resolve_item_id(item_id)
-        # The full custody-/rank-filtered scored set (roadmap H254/H324):
+        # The full custody-/rank-/content-filtered scored set (roadmap H254/H324/H350):
         # `filter_related` narrows per axis *before* the cap, so the bare view's
         # `[:limit]` returns the top neighbours at that value and the --stats
         # denominator counts the kept set. An unknown id and an unknown custody/rank
         # value both raise ValueError, so the could-not-check path is identical
         # (G1) — though argparse's `choices=` already rejects a bad CLI value
-        # with exit 2 before we get here.
+        # with exit 2 before we get here. `--content-duplicate` is a boolean property
+        # (no closed vocab), so it folds the whole-library content sieve (H350) — the
+        # twin may live anywhere, even outside the neighbourhood.
+        duplicate_ids = (
+            related_duplicate_ids(paths.db_path) if content_duplicate else None
+        )
         hits = filter_related(
             scored_related(paths.db_path, resolved),
             fidelity=fidelity,
             drift=drift,
             strength=strength,
+            duplicate_ids=duplicate_ids,
         )
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -3984,14 +4008,16 @@ def _cmd_related(
         return 0
     matched = len(hits)
     rows = _related_rows(hits[:limit])
-    # The custody/rank filters ride the scope echo so a reader holding only the
+    # The custody/rank/content filters ride the scope echo so a reader holding only the
     # envelope recovers which neighbourhood it covered (G2); `None` is pruned
-    # by `scope_envelope`, so an unfiltered call keeps the lean scope shape.
+    # by `scope_envelope`, so an unfiltered call keeps the lean scope shape. The
+    # content-duplicate flag echoes as a bare boolean (the H338 present/absent idiom).
     scope = {
         "item": resolved,
         "fidelity": fidelity,
         "drift": drift,
         "strength": strength,
+        "content_duplicate": True if content_duplicate else None,
         "limit": limit,
     }
     # `stats.custody` (roadmap H99): the custody tally over the matched related

@@ -621,6 +621,57 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   the `graph --content-duplicate` subgraph filter (H352), and the content-duplicate-on-import notice (H353).**
   **Next:** H349 (the compiled group-page `_Duplicates:_` scope line — `kb._write_page` carries the
   `_Custody:_` scope block but no `_Duplicates:_` line, a verified gap on the compiled group surface).
+  **H349 (2026-06-25) — DECLINED after a docs-grounded self-grill, not implemented.** The queued framing
+  ("a verified gap: `kb._write_page` carries `_Custody:_` but no `_Duplicates:_` line") was **imprecise**: it
+  is not a gap but a **deliberate, tested H334 decision** — `test_kb_group_pages_omit_the_content_duplicate_line`
+  explicitly asserts even `categories/news.md` (which holds *both* members of a byte-identical pair in scope)
+  omits the line. Adding a group-page `_Duplicates:_` headline reverses that decision, and the grill found it is
+  the *less* coherent design, two ways: **(a) the whole-library form misleads** — a whole-library count on a
+  single-source `sources/*` page (which shows only one member of a cross-source group) claims a group the page
+  half-shows (the reason H334 made it `index.md`-only, beside the at-risk/archive lines); **(b) the in-scope
+  form (the H331 briefing posture) desyncs from the per-row marker** — the per-row `· also held as <id>` marker
+  (H333) is **whole-library sibling-scoped** (it names a cross-source twin even on a single-source page,
+  `test_kb_list_pages_name_a_byte_identical_sibling`), so an in-scope headline that counted 0 while a row named
+  a sibling would read as a contradiction. The current state is the cleanest: **precise per-row "also held as"
+  markers (whole-library, H333) + no misleading aggregate headline on group pages**; the aggregate `_Duplicates:_`
+  line stays where its scope is honest — whole-library `index.md` (H334) and the in-scope `export bundle`/`context`
+  *briefings* (H331), which carry a *self-contained* scope (no per-row-vs-headline split). No production change;
+  the decision is recorded here so a future run does not re-attempt the reversal. (Catching a queued slice that
+  would undo a sound tested decision is the autonomous-discernment posture CLAUDE.md asks for, not churn.)
+  **H350 (2026-06-25) shipped the `related --content-duplicate` relationship filter** — the content-identity
+  completion of the custody-filter family on the **last** filtered read surface: `scrolls related <id>
+  --content-duplicate` (+ the MCP `get_related_scrolls(content_duplicate=)` twin) keeps only the neighbours the
+  library holds a **byte-identical copy of under another id** — those whose own `content_duplicate_ids` is
+  non-empty (their id keys the whole-library `content_duplicate_index`). The relationship-surface twin of
+  `list`/`search --content-duplicate` (H338) and `context --content-duplicate` (H345), beside `related
+  --fidelity`/`--drift` (H254) and `--strength` (H324). A new shared **`related.related_duplicate_ids(db)`** folds
+  the **same** `content_duplicate_index` the browse filters select on and `doctor`'s `custody.content_duplicates`
+  counts, returned as the set of sibling-bearing ids and threaded into `filter_related(duplicate_ids=)` as a pure
+  per-hit sieve (the `fidelity`/`drift`/`strength` precedent — `filter_related` stays db-free; each entry point,
+  `find_related`/`count_related`/the CLI `_cmd_related`, builds the set when the flag is set). **Decisive choices:**
+  (a) a **boolean flag** (present/absent, the H338 idiom — `None` is no filter, an even-empty set is the honest
+  empty neighbourhood, never a fall-through to the whole set); (b) **whole-library sibling scope** (the H328
+  cross-source rule — the twin may live anywhere, even the *anchor itself* or another source, so a neighbour is
+  kept by its library-wide redundancy, not its bond to the anchor); (c) **distinct from the H326 `identical
+  content` edge** — that edge (a `reasons` entry) fires only when a neighbour shares the *anchor's* bytes, whereas
+  `--content-duplicate` keeps a neighbour byte-identical to *any* other held item (a `web:pairA`/`web:pairB` pair
+  unrelated to the anchor is kept, carries no `identical content` reason — the filter is the neighbour's library
+  property, decoupled from the relation); (d) **sieves before `--limit`** (the H254 sieve-before-cap, so the cap
+  returns the top neighbours *that are content-duplicates*, pinned against a unique neighbour deliberately
+  out-scoring a duplicate one); (e) report-only / names no merge (H325); (f) ANDs with `--fidelity`/`--drift`/
+  `--strength`, rides the `--stats` scope echo as a bare boolean (`None`-pruned when absent). 10 tests
+  (`tests/test_related.py` — keeps-only-redundant, whole-library-scope, library-property-not-the-edge,
+  count-honours-filter, ANDs-with-custody, sieves-before-cap, CLI rows, CLI scope echo, unfiltered-omit, MCP twin)
+  + `docs/cli.md` (the `--content-duplicate` paragraph + the header signature). Suite **4081 passed**. Precondition:
+  H338 (the `list/search --content-duplicate` sibling sieve + the `content_duplicate_index` fold), H254 (the
+  `related --fidelity`/`--drift` filter-family + the before-cap sieve), H326 (the `identical content` edge this is
+  decoupled from). **With H350 the content-identity filter family is complete across *every* filtered read surface
+  — `list`/`search` (H338), `context` (H345), `works` (H344), `export items`/`bundle`/`events`/`archive` (H341/H347),
+  and now `related`; the open legs are the compiled-surface content-identity dogfood loop (H351), the `graph
+  --content-duplicate` subgraph filter (H352), and the content-duplicate-on-import notice (H353).** **Next:** H352
+  (the `graph --content-duplicate` subgraph filter — note the induced-subgraph edge-integrity question: filtering
+  to content-duplicate nodes must drop or preserve edges touching removed nodes coherently, unlike the per-hit
+  `related` sieve), with H351 (the compiled-surface dogfood loop) and H353 (the import-time notice) behind it.
 
 - **cap 8 — re-derivable enrichment.** Classification *and* LLM concept
   summaries record inputs/method and regenerate on request:

@@ -4614,7 +4614,7 @@ The last `--stats` call is the honest empty: nothing matched, but the
 result still names the scope it checked (`query`, `source=arxiv`), so it
 can never be misread as "the library holds nothing about sqlite."
 
-### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--strength BAND] [--limit N] [--stats]`
+### `scrolls related <id> [--fidelity TIER] [--drift POSTURE] [--strength BAND] [--content-duplicate] [--limit N] [--stats]`
 
 Deterministic, explainable connections (IDEAS.md §10,
 `tests/test_related.py`): **identical content** (two items hold byte-identical
@@ -4682,10 +4682,35 @@ totals the bands at or above `<band>` (threshold, strongest-first prefix)
 (`test_cli_related_strength_drills_from_the_tally`,
 `test_related_strength_ands_with_fidelity`).
 
+`--content-duplicate` keeps only neighbours the library holds a **byte-identical
+copy of under another id** (roadmap H350) — the relationship-surface twin of
+`list`/`search --content-duplicate` (H338), completing the content-identity
+filter family across the read surfaces. A boolean flag (present/absent): a
+neighbour is kept iff its own `content_duplicate_ids` is non-empty — its bytes
+are also held under some *other* id. The sieve folds the **same** whole-library
+`content_duplicate_index` `list`/`search --content-duplicate` select on and
+`doctor`'s `custody.content_duplicates` count, so the three agree by
+construction. Scope is **whole-library** (the H328 cross-source rule): the
+byte-identical twin may live anywhere — under the anchor item itself, or in
+another source — so a neighbour is kept by its library-wide redundancy, *not* by
+how it relates to the anchor. This makes the filter **distinct from the
+`identical content` edge**: that edge (a `reasons` entry) fires only when a
+neighbour shares the *anchor's* bytes, whereas `--content-duplicate` keeps a
+neighbour byte-identical to *any* other held item, even one outside the
+neighbourhood. Report-only (raw is sacred, H325 — it names no merge). The sieve
+runs **before** `--limit` (the `--fidelity` sieve shape), so the cap returns the
+top neighbours *that are content-duplicates*, and it **ANDs** with
+`--fidelity`/`--drift`/`--strength`. With `--stats` the flag rides the echoed
+`scope` as a bare boolean and `matched` counts the filtered set
+(`test_cli_related_content_duplicate_filters_the_rows`,
+`test_find_related_content_duplicate_is_the_library_property_not_the_edge`,
+`test_find_related_content_duplicate_sieves_before_the_cap`).
+
 `--stats` wraps the array in the same scope-honest `{scope, stats,
 results}` envelope `search`/`list` use (the completeness contract G2):
 `scope` names the anchor `item`, the `limit`, and any
-`--fidelity`/`--drift`/`--strength` filter honored (pruned when absent), and
+`--fidelity`/`--drift`/`--strength`/`--content-duplicate` filter honored (pruned
+when absent), and
 `stats` reports `returned`, `matched`
 (every item that relates *within the active filters*, counted past the cap —
 `src/scrolls/related.py` `count_related`), `truncated`, and a `custody`

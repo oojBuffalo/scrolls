@@ -72,7 +72,13 @@ from scrolls.custody import (
     latest_events,
 )
 from scrolls.graph import identity_tokens, link_tokens
-from scrolls.items import ScrollItem, get_fidelity, get_item, list_items
+from scrolls.items import (
+    ScrollItem,
+    content_duplicate_index,
+    get_fidelity,
+    get_item,
+    list_items,
+)
 from scrolls.render import slugify
 from scrolls.works import DOI_RESOLVER, item_dois
 
@@ -176,26 +182,30 @@ def find_related(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> list[RelatedHit]:
     """The best `limit` items related to `item_id`, best matches first.
 
     The capped public view (the MCP `get_related_scrolls` and bare `scrolls
     related` both read it). Raises ValueError when the item does not exist.
 
-    `fidelity`/`drift`/`strength` narrow the neighbourhood per axis *before* the
-    cap (roadmap H254/H324, the `list`-sieve shape), so the cap returns the
-    top-`limit` neighbours **at that value**, not the matching ones among the
-    top-`limit`. Each folds the same per-hit field it is read off
-    (`get_fidelity`/`drift_posture`/`relation_strength`), so a neighbour is selected
-    by exactly the value it shows; `strength` is a threshold (at or above the band).
-    The axes AND. An unknown tier/posture/band raises ValueError (closed vocab), the
-    same could-not-check contract `list_items` enforces.
+    `fidelity`/`drift`/`strength`/`content_duplicate` narrow the neighbourhood per
+    axis *before* the cap (roadmap H254/H324/H350, the `list`-sieve shape), so the
+    cap returns the top-`limit` neighbours **at that value**, not the matching ones
+    among the top-`limit`. Each folds the same per-hit field it is read off
+    (`get_fidelity`/`drift_posture`/`relation_strength`/the content fold), so a
+    neighbour is selected by exactly the property it shows; `strength` is a threshold
+    (at or above the band), `content_duplicate` keeps only neighbours the library
+    holds a byte-identical copy of under another id. The axes AND. An unknown
+    tier/posture/band raises ValueError (closed vocab), the same could-not-check
+    contract `list_items` enforces.
     """
     return filter_related(
         scored_related(db_path, item_id),
         fidelity=fidelity,
         drift=drift,
         strength=strength,
+        duplicate_ids=related_duplicate_ids(db_path) if content_duplicate else None,
     )[:limit]
 
 
@@ -206,6 +216,7 @@ def count_related(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    content_duplicate: bool = False,
 ) -> int:
     """How many items relate to `item_id` at all, ignoring the cap.
 
@@ -215,9 +226,10 @@ def count_related(
     related items" from "the top N of more". Raises ValueError on an unknown
     id, exactly like `find_related`, so the could-not-check path is identical.
 
-    `fidelity`/`drift`/`strength` narrow the count to the same filtered neighbourhood
-    `find_related` returns (roadmap H254/H324), so the `--stats` denominator counts
-    the kept set — never the whole scored set when a filter is in play.
+    `fidelity`/`drift`/`strength`/`content_duplicate` narrow the count to the same
+    filtered neighbourhood `find_related` returns (roadmap H254/H324/H350), so the
+    `--stats` denominator counts the kept set — never the whole scored set when a
+    filter is in play.
     """
     return len(
         filter_related(
@@ -225,8 +237,27 @@ def count_related(
             fidelity=fidelity,
             drift=drift,
             strength=strength,
+            duplicate_ids=related_duplicate_ids(db_path) if content_duplicate else None,
         )
     )
+
+
+def related_duplicate_ids(db_path: Path) -> set[str]:
+    """The held ids carrying ≥1 byte-identical sibling under another id — the
+    whole-library `content_duplicate_index` keys (roadmap H350/H328).
+
+    The relationship-surface predicate behind `related --content-duplicate`: a
+    neighbour is kept iff its own id holds the same bytes as some *other* held id —
+    its `content_duplicate_ids` is non-empty (`show`/`get_scroll` H328, the per-node
+    graph read H343). Folds the **same** `content_duplicate_index`
+    `list`/`search`/`context --content-duplicate` select on (H338/H345) and `doctor`'s
+    `custody.content_duplicates` counts, so the sieve agrees with them by construction.
+    **Whole-library** (the H328 cross-source rule): the byte-identical twin may live
+    outside the neighbourhood — even the anchor item itself or another source — so the
+    predicate reads every held item, not the scored set. A unique or NULL/empty-hash
+    neighbour is absent (the H325 skip), so it is dropped.
+    """
+    return set(content_duplicate_index(list_items(db_path)))
 
 
 def filter_related(
@@ -235,19 +266,25 @@ def filter_related(
     fidelity: str | None = None,
     drift: str | None = None,
     strength: str | None = None,
+    duplicate_ids: set[str] | None = None,
 ) -> list[RelatedHit]:
-    """Narrow scored related hits per custody/rank axis (the H254/H324 sieve).
+    """Narrow scored related hits per custody/rank axis (the H254/H324/H350 sieve).
 
-    The relationship-surface twin of `list --fidelity`/`--drift` and `search
-    --strength`: it folds the *same* per-hit `fidelity`/`drift`/`relation_strength`
-    the node shape is read off (`get_fidelity`/`drift_posture`, roadmap H56; the
-    H322 band), so a neighbour is kept by exactly the value it shows. The axes AND.
-    `strength` is a **threshold** (at or above the band): `strong` keeps only
-    identity/citation bonds, `moderate` adds topical overlap, `weak` keeps all —
-    the columns at or above `strength` being the strongest-first prefix of
-    `RELATION_STRENGTH_BANDS` (the H314 `search --strength` semantics on the relation
-    axis). Closed vocabulary (`FIDELITY_TIERS`/`DRIFT_POSTURES`/`RELATION_STRENGTH_BANDS`)
-    → ValueError, so a typo is a loud could-not-check, never a silent empty
+    The relationship-surface twin of `list --fidelity`/`--drift`, `search
+    --strength`, and `list/search --content-duplicate`: it folds the *same* per-hit
+    `fidelity`/`drift`/`relation_strength` the node shape is read off
+    (`get_fidelity`/`drift_posture`, roadmap H56; the H322 band), so a neighbour is
+    kept by exactly the value it shows. The axes AND. `strength` is a **threshold**
+    (at or above the band): `strong` keeps only identity/citation bonds, `moderate`
+    adds topical overlap, `weak` keeps all — the columns at or above `strength` being
+    the strongest-first prefix of `RELATION_STRENGTH_BANDS` (the H314 `search
+    --strength` semantics on the relation axis). `duplicate_ids`, when given, is the
+    whole-library set of ids holding a byte-identical sibling (`_duplicate_ids`, the
+    H350 content-identity sieve): a neighbour is kept iff its id is in the set —
+    `None` applies no content filter, an (even empty) set keeps only its members (an
+    empty set is the honest empty neighbourhood, never the whole set). Closed
+    vocabulary (`FIDELITY_TIERS`/`DRIFT_POSTURES`/`RELATION_STRENGTH_BANDS`) →
+    ValueError, so a typo is a loud could-not-check, never a silent empty
     neighbourhood (the `list_items` contract). Order is preserved, so a caller slicing
     `[:limit]` after this still gets the top-`k` neighbours *at that value*.
     """
@@ -277,6 +314,13 @@ def filter_related(
         # idea on the in-Python relation sieve.
         kept = set(RELATION_STRENGTH_BANDS[: RELATION_STRENGTH_BANDS.index(strength) + 1])
         hits = [hit for hit in hits if hit.relation_strength in kept]
+    if duplicate_ids is not None:
+        # the H350 content-identity sieve: keep only neighbours the library holds a
+        # byte-identical copy of under another id (their id keys the whole-library
+        # content fold). A boolean property, so no closed-vocab check — `None` is
+        # "no filter", a set is the kept membership (an empty set is the honest empty
+        # neighbourhood, never a silent fall-through to the whole set).
+        hits = [hit for hit in hits if hit.id in duplicate_ids]
     return hits
 
 

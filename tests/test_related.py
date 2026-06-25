@@ -1233,3 +1233,175 @@ def test_cli_related_unfiltered_scope_omits_the_custody_keys(db, capsys):
     scope = json.loads(capsys.readouterr().out)["scope"]
     assert scope == {"item": "web:anchor", "limit": 10}
     assert "fidelity" not in scope and "drift" not in scope
+
+
+# --- H350: --content-duplicate — the content-identity sieve on the relationship surface ---
+#
+# The relationship-surface completion of the `list`/`search`/`context
+# --content-duplicate` browse family (H338/H345): keep only the neighbours the
+# library holds a *byte-identical copy of under another id* — those whose own
+# `content_duplicate_ids` is non-empty (their id keys the whole-library
+# `content_duplicate_index`, the same fold `doctor`'s `custody.content_duplicates`
+# counts). Whole-library sibling scope (H328 — the twin may live anywhere, even the
+# anchor itself or another source), a boolean flag (present/absent, the H338 idiom),
+# report-only (raw is sacred, H325), and it ANDs with the H254/H324
+# `--fidelity`/`--drift`/`--strength` axes. Distinct from the H326 "identical
+# content" *edge*: that fires when a neighbour shares the *anchor's* bytes; this
+# keeps a neighbour redundant *anywhere* in the library, whatever its bond to the
+# anchor.
+
+
+def _related_content_duplicate_mix(db):
+    """An anchor + neighbours all related by a shared tag, split by content identity:
+
+    - ``web:mirror`` holds the anchor's *exact bytes* (``sha256:dup``) — its only
+      byte-identical sibling is the anchor itself, so the whole-library predicate
+      keeps it though no *other neighbour* shares those bytes (the H328 scope);
+    - ``web:pairA``/``web:pairB`` are byte-identical to *each other* (``sha256:pair``),
+      a content group that never touches the anchor — kept by their library-wide
+      redundancy, though their bond to the anchor is only the shared tag (so the
+      filter is the neighbour's *library property*, not the H326 identical-content
+      edge — neither carries an ``identical content`` reason);
+    - ``web:uniq`` carries distinct bytes (``sha256:uniq``) — no sibling, dropped;
+    - ``web:ref`` is a reference pointer (NULL hash) — no bytes, dropped (H325 skip).
+    """
+    insert_item(db, make_item(
+        "web:anchor", tags=("shared",), raw_text="<raw>", content_hash="sha256:dup"))
+    insert_item(db, make_item(
+        "web:mirror", tags=("shared",), raw_text="<raw>", content_hash="sha256:dup"))
+    insert_item(db, make_item(
+        "web:pairA", tags=("shared",), raw_text="<raw>", content_hash="sha256:pair"))
+    insert_item(db, make_item(
+        "web:pairB", tags=("shared",), raw_text="<raw>", content_hash="sha256:pair"))
+    insert_item(db, make_item(
+        "web:uniq", tags=("shared",), raw_text="<raw>", content_hash="sha256:uniq"))
+    insert_item(db, make_item("web:ref", tags=("shared",)))  # NULL hash → no bytes
+
+
+def test_find_related_content_duplicate_keeps_only_redundant_neighbours(db):
+    # the core sieve: only the neighbours the library holds a byte-identical copy of
+    # under another id survive — the mirror (twin = anchor) and the byte-identical
+    # pair (twins = each other); the unique and the NULL-hash reference drop.
+    _related_content_duplicate_mix(db)
+    kept = {h.id for h in find_related(db, "web:anchor", content_duplicate=True)}
+    assert kept == {"web:mirror", "web:pairA", "web:pairB"}
+    # the unfiltered neighbourhood is strictly larger (non-vacuous): uniq + ref too
+    whole = {h.id for h in find_related(db, "web:anchor")}
+    assert whole == {"web:mirror", "web:pairA", "web:pairB", "web:uniq", "web:ref"}
+
+
+def test_find_related_content_duplicate_is_whole_library_scope(db):
+    # H328: a neighbour whose *only* byte-identical twin is the anchor itself (held
+    # under no *other* neighbour) is still redundant in the library, so it is kept —
+    # the predicate reads the whole-library content fold, not the neighbourhood.
+    _related_content_duplicate_mix(db)
+    kept = {h.id for h in find_related(db, "web:anchor", content_duplicate=True)}
+    assert "web:mirror" in kept  # twin = anchor, no other neighbour shares those bytes
+
+
+def test_find_related_content_duplicate_is_the_library_property_not_the_edge(db):
+    # the H326 identical-content *edge* fires only when a neighbour shares the
+    # ANCHOR's bytes; `--content-duplicate` keeps a neighbour redundant ANYWHERE.
+    # web:pairA is byte-identical to web:pairB (not the anchor), so it is kept yet
+    # its bond to the anchor carries no `identical content` reason — proof the filter
+    # is the neighbour's library property, decoupled from how it relates to the anchor.
+    _related_content_duplicate_mix(db)
+    hits = {h.id: h for h in find_related(db, "web:anchor", content_duplicate=True)}
+    assert "web:pairA" in hits
+    assert not any("identical content" in r for r in hits["web:pairA"].reasons)
+    # while the mirror (which DOES share the anchor's bytes) carries the edge reason
+    assert any("identical content" in r for r in hits["web:mirror"].reasons)
+
+
+def test_count_related_honours_the_content_duplicate_filter(db):
+    # the --stats denominator counts the *filtered* neighbourhood, so a
+    # `related --content-duplicate --stats` truncation marker is honest about its set.
+    _related_content_duplicate_mix(db)
+    assert count_related(db, "web:anchor") == 5  # the whole neighbourhood
+    assert count_related(db, "web:anchor", content_duplicate=True) == 3
+
+
+def test_find_related_content_duplicate_ands_with_the_custody_axes(db):
+    # the axes AND (H254): the duplicates are all `full` fidelity, so
+    # content_duplicate + fidelity=full keeps the 3; ANDed with fidelity=reference
+    # (only the unique-and-dropped web:ref is reference) it is the honest empty set.
+    _related_content_duplicate_mix(db)
+    full = {
+        h.id
+        for h in find_related(db, "web:anchor", content_duplicate=True, fidelity="full")
+    }
+    assert full == {"web:mirror", "web:pairA", "web:pairB"}
+    assert find_related(
+        db, "web:anchor", content_duplicate=True, fidelity="reference"
+    ) == []
+
+
+def _related_content_duplicate_rank(db):
+    """A duplicate neighbour deliberately *out-scored* by a unique one, so a filter
+    that ran *after* the cap would wrongly drop the duplicate the user asked for.
+
+    ``web:uniqhi`` (unique bytes) shares 2 concepts → outranks the duplicate;
+    ``web:dup`` (byte-identical to its sibling ``web:sib``, which is unrelated to the
+    anchor) shares 1 concept → lower. So the whole-library content fold makes
+    ``web:dup`` the redundant neighbour even though its twin is never a neighbour.
+    """
+    insert_item(db, make_item("web:anchor", concepts=("alpha", "beta")))
+    insert_item(db, make_item(
+        "web:uniqhi", concepts=("alpha", "beta"),
+        raw_text="<u>", content_hash="sha256:u"))   # unique, top score
+    insert_item(db, make_item(
+        "web:dup", concepts=("alpha",),
+        raw_text="<d>", content_hash="sha256:d"))    # duplicate, lower score
+    insert_item(db, make_item(
+        "web:sib", raw_text="<d>", content_hash="sha256:d"))  # web:dup's twin, unrelated
+
+
+def test_find_related_content_duplicate_sieves_before_the_cap(db):
+    # the H254 sieve-before-cap shape: the filter runs *before* `[:limit]`, so the
+    # cap returns the top-k neighbours *that are content-duplicates*, not the
+    # duplicates among the top-k.
+    _related_content_duplicate_rank(db)
+    # unfiltered, the unique neighbour is #1 overall
+    assert find_related(db, "web:anchor", limit=1)[0].id == "web:uniqhi"
+    # content_duplicate + limit=1 returns the top *duplicate*, skipping the
+    # higher-scoring unique one — proof the sieve precedes the cap
+    capped = find_related(db, "web:anchor", limit=1, content_duplicate=True)
+    assert [h.id for h in capped] == ["web:dup"]
+
+
+def test_cli_related_content_duplicate_filters_the_rows(db, capsys):
+    _related_content_duplicate_mix(db)
+    capsys.readouterr()
+    assert main(["related", "web:anchor", "--content-duplicate"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert {r["id"] for r in rows} == {"web:mirror", "web:pairA", "web:pairB"}
+
+
+def test_cli_related_stats_scope_echoes_content_duplicate(db, capsys):
+    # G2 scope honesty: the flag rides the scope echo (a bare boolean), and `matched`
+    # counts the filtered neighbourhood.
+    _related_content_duplicate_mix(db)
+    capsys.readouterr()
+    assert main(["related", "web:anchor", "--content-duplicate", "--stats"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == {
+        "item": "web:anchor", "content_duplicate": True, "limit": 10
+    }
+    assert payload["stats"]["matched"] == 3
+
+
+def test_cli_related_unfiltered_scope_omits_content_duplicate(db, capsys):
+    # the `None`-is-pruned convention: an unfiltered call keeps the lean scope shape.
+    _related_content_duplicate_mix(db)
+    capsys.readouterr()
+    main(["related", "web:anchor", "--stats"])
+    scope = json.loads(capsys.readouterr().out)["scope"]
+    assert "content_duplicate" not in scope
+
+
+def test_mcp_get_related_scrolls_content_duplicate_filter(db):
+    from scrolls.mcp_server import get_related_scrolls
+
+    _related_content_duplicate_mix(db)
+    kept = get_related_scrolls("web:anchor", content_duplicate=True)
+    assert {h["id"] for h in kept} == {"web:mirror", "web:pairA", "web:pairB"}
