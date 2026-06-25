@@ -400,7 +400,14 @@ from scrolls.custody import (
 )
 from scrolls.doctor import run_doctor
 from scrolls.facets import compute_facets
-from scrolls.items import ScrollItem, get_fidelity, insert_item, list_items, update_item
+from scrolls.items import (
+    ScrollItem,
+    get_fidelity,
+    get_item,
+    insert_item,
+    list_items,
+    update_item,
+)
 from scrolls.maintain import (
     append_log_entry,
     compute_delta,
@@ -7126,6 +7133,211 @@ def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_ho
     # the briefing lines fall too — same string on bundle and context
     assert headline in build_bundle(db, "topic")
     assert headline in build_context(db, "topic")
+
+
+# --- the content-identity EXPORT round-trip family guard (roadmap H354) --------
+#
+# H332 above pins that the `content_duplicate_groups` fold reads identically across
+# every *read* surface of one library. This section pins the orthogonal claim: the
+# byte-identity a library holds survives a real `export → import` into a FRESH
+# `SCROLLS_HOME` and re-detects on the recipient — the cross-*transport* family
+# guarantee. Each content-scoped export leg pins its own round-trip beside its slice
+# (H341's `export items`/`bundle`, H347's `export events`/`archive`), but no single
+# test asserts the WHOLE family survives over the canonical dual-shape fixture, so a
+# change to how `content_hash` serializes on any one transport could pass that leg's
+# own test yet silently break the cross-transport guarantee.
+#
+# The decisive distinction this guard documents — the four `--content-duplicate`
+# export surfaces split into two transport CLASSES, and only one re-flags `doctor`:
+#
+#   - HOLDINGS transports (`export items`, `export bundle`) carry the held rows'
+#     `content_hash` (the JSONL per-row column / the uncollapsed `@generated`
+#     lossless block), so a fresh B re-flags `doctor.custody.content_duplicates`
+#     directly — "the duplicate re-flags on the recipient" is literally true here.
+#   - CUSTODY-RECORD transports (`export events`, `export archive`) are scoped BY the
+#     content-duplicate item set (H347) but carry the verify LEDGER / recovery STORE
+#     of those items, NOT their held content — `import events`/`import archive`
+#     populate only `custody_events`/`item_archive`, never re-holding a row. So a
+#     fresh B importing one of these has an EMPTY `items` table and `doctor` re-flags
+#     nothing; their content-identity guarantee is the item-SET sieve (exactly the
+#     redundant members' records travel), the documented holdings-vs-record boundary.
+#
+# Asserting a `doctor(B)` re-flag for the custody-record transports would be a false
+# whole-library equality (the H332 narrower-scope discipline: pin each surface to the
+# guarantee it actually carries, never a borrowed one).
+
+
+_HOLDINGS_TRANSPORTS = [
+    # (export argv, import subcommand) — the two transports that carry held content
+    pytest.param(["export", "items", "--content-duplicate"], "items", id="export-items"),
+    pytest.param(
+        ["export", "bundle", "topic", "--content-duplicate"], "bundle", id="export-bundle"
+    ),
+]
+
+
+def _doctor_dups(paths):
+    """`doctor`'s content-duplicate audit as ``(group-id-sets, total_groups, total_items)``."""
+    dup = run_doctor(paths)["custody"]["content_duplicates"]
+    return (
+        {frozenset(g["ids"]) for g in dup["groups"]},
+        dup["total_groups"],
+        dup["total_items"],
+    )
+
+
+def _imported_count(result):
+    """The count an import result reports — `import items` keys it `items`, the rest `imported`."""
+    return result.get("items", result.get("imported"))
+
+
+@pytest.mark.parametrize("export_args, import_subcmd", _HOLDINGS_TRANSPORTS)
+def test_content_identity_holdings_transport_reflags_the_dual_shape_round_trip(
+    export_args, import_subcmd, scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # roadmap H354 (the family guard, holdings tier): each HOLDINGS transport —
+    # `export items` (per-row `content_hash`) and `export bundle` (the uncollapsed
+    # `@generated` lossless block) — carries the held rows, so a content-duplicate
+    # scoped export → `import` into a FRESH library B re-flags `doctor`'s SAME groups,
+    # member for member, over the dual-shape fixture (both the within-work pair and
+    # the cross-source pair), with no leakage of the unique + NULL-hash holdings.
+    main(["init"])
+    db_a = get_paths().db_path
+    expected_groups, _, _ = _seed_content_identity(db_a)
+    capsys.readouterr()
+
+    # non-vacuous on the sender: A flags both shapes (2 groups / 4 members)
+    assert _doctor_dups(get_paths()) == (expected_groups, 2, 4)
+
+    out_path = tmp_path / "export.txt"
+    assert main(export_args) == 0
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # a fresh, empty library B rebuilt from this one transport alone
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+    assert main(["import", import_subcmd, str(out_path)]) == 0
+    assert _imported_count(json.loads(capsys.readouterr().out)) == 4
+
+    # B re-flags EXACTLY the two travelled groups, id for id — the content_hash
+    # survived the transport with both shapes intact (not merely the scalar counts)
+    assert _doctor_dups(get_paths()) == (expected_groups, 2, 4)
+    # no leakage: the unique + NULL-hash holdings never travelled
+    assert get_item(db_b, "web:uniq") is None
+    assert get_item(db_b, "web:ref") is None
+
+
+@pytest.mark.parametrize("export_args, import_subcmd", _HOLDINGS_TRANSPORTS)
+def test_content_identity_holdings_reflag_drops_a_rehashed_group_in_lockstep(
+    export_args, import_subcmd, scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the family guard's sabotage half: re-hashing ONE member of the cross-source
+    # group on the sender BEFORE the export dissolves that group at the source, so it
+    # is no longer a duplicate and never travels — B then re-flags ONLY the within-work
+    # group. The re-flag tracks the exported `content_hash`, not a constant baked into
+    # the transport (the H336 mutation discipline, here as a cross-transport family
+    # check that runs identically over both holdings transports).
+    import dataclasses
+
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_content_identity(db_a)
+
+    # web:m1 no longer shares bytes with web:m2 → the cross-source group B dissolves
+    m1 = next(it for it in list_items(db_a) if it.id == "web:m1")
+    assert update_item(db_a, dataclasses.replace(m1, content_hash="sha256:rehashed"))
+    capsys.readouterr()
+
+    out_path = tmp_path / "export.txt"
+    assert main(export_args) == 0
+    out_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", import_subcmd, str(out_path)]) == 0
+    capsys.readouterr()
+
+    # only the within-work group survived to B — the cross-source group dropped in
+    # lockstep with the sabotage (proving B's re-flag is the travelled data, not a
+    # baked-in literal)
+    assert _doctor_dups(get_paths()) == (
+        {frozenset({"arxiv:w", "crossref:10.1000/x"})},
+        1,
+        2,
+    )
+
+
+def test_content_identity_custody_record_transports_carry_the_item_set_not_held_content(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # roadmap H354 (the family guard, custody-record tier): the OTHER two
+    # content-scoped export surfaces — `export events` (the verify ledger) and
+    # `export archive` (the recovery store) — are scoped BY the content-duplicate item
+    # set (H347) but carry each member's custody RECORDS, never its held content. So a
+    # fresh library B importing one of these has an empty `items` table:
+    # `doctor.custody.content_duplicates` re-flags NOTHING. The content-identity
+    # guarantee these transports carry is the item-SET sieve (the records reference
+    # exactly the redundant members — no unique/NULL-hash leakage), the documented
+    # holdings-vs-custody-record boundary the re-flag tiers above do not cross.
+    from scrolls.items import ArchiveRecord, import_archive
+
+    main(["init"])
+    db_a = get_paths().db_path
+    expected_groups, _, _ = _seed_content_identity(db_a)
+    redundant = {item_id for group in expected_groups for item_id in group}  # the 4 members
+    # seed a verify-ledger event AND an archived prior on each redundant member so both
+    # custody-record exports are non-vacuous; the unique + reference items get neither
+    # (they must never leak into the content-scoped record export). `insert_item` writes
+    # no events, so these are the only ledger rows — exactly one per redundant member.
+    record_events(db_a, [
+        CustodyEvent(item_id, "2026-06-20T00:00:00+00:00", "unchanged",
+                     "sha256:held", "sha256:held")
+        for item_id in sorted(redundant)
+    ])
+    import_archive(db_a, [
+        ArchiveRecord(item_id, "2026-06-19T00:00:00+00:00", "sha256:prior", None,
+                      {"id": item_id, "content_hash": "sha256:prior"})
+        for item_id in sorted(redundant)
+    ])
+    capsys.readouterr()
+
+    # export BOTH custody-record transports from the SAME sender A (before B exists)
+    exports = {}
+    for export_args, name in [
+        (["export", "events", "--content-duplicate"], "events"),
+        (["export", "archive", "--content-duplicate"], "archive"),
+    ]:
+        assert main(export_args) == 0
+        out = capsys.readouterr().out
+        rows = [json.loads(line) for line in out.splitlines()]
+        # the item-SET sieve: records for EXACTLY the 4 redundant members, no leakage
+        assert rows and {row["item_id"] for row in rows} == redundant
+        path = tmp_path / f"{name}.jsonl"
+        path.write_text(out, encoding="utf-8")
+        exports[name] = (path, len(rows))
+
+    # each imports into its OWN fresh library B — the boundary holds per transport
+    for name in ("events", "archive"):
+        path, count = exports[name]
+        monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / f"library-{name}"))
+        main(["init"])
+        db_b = get_paths().db_path
+        capsys.readouterr()
+        assert main(["import", name, str(path)]) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["imported"] == count and result["skipped"] == 0
+        # idempotent: re-importing the same backup is a custody no-op (dedup by content)
+        assert main(["import", name, str(path)]) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["imported"] == 0 and result["skipped"] == count
+
+        # the boundary: B holds NO items, so `doctor` re-flags nothing — these
+        # transports carry the redundant item SET, not the held content a re-flag needs
+        assert list_items(db_b) == []
+        assert _doctor_dups(get_paths()) == (set(), 0, 0)
 
 
 def test_content_duplicate_browse_filter_converges_with_doctor_groups(scrolls_home, capsys):
