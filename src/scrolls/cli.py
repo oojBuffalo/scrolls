@@ -101,6 +101,7 @@ from scrolls.items import (
     archived_snapshots,
     classification_provenance,
     content_duplicate_ids,
+    content_duplicate_index,
     diff_snapshot,
     dump_archive_export,
     get_fidelity,
@@ -2304,7 +2305,7 @@ _MAX_CONFLICT_IDS = 5
 
 def _merge_items(
     db_path: Path, items: list[ScrollItem], *, accept_incoming: bool = False
-) -> tuple[dict[str, int], list[str], list[str]]:
+) -> tuple[dict[str, int], list[str], list[str], list[str]]:
     """Insert items custody-safely, partitioning each skip into unchanged vs conflict.
 
     The shared core of the **lossless** importers (`import items`, and the bundle
@@ -2318,8 +2319,14 @@ def _merge_items(
     ``{imported, skipped, unchanged, conflict, adopted}`` with ``skipped ==
     unchanged + conflict`` by construction, ``conflicts`` is the sorted, deduped,
     **uncapped** distinct ids whose held copy diverged and was *kept* — the M2
-    structured-completeness twin of the bounded `_warn_conflicts` stderr line — and
-    ``adopted`` the sorted distinct ids whose held copy was *replaced* (accept mode).
+    structured-completeness twin of the bounded `_warn_conflicts` stderr line —
+    ``adopted`` the sorted distinct ids whose held copy was *replaced* (accept mode),
+    and ``imported`` the sorted distinct ids freshly *inserted* (the `imported`
+    outcome). The freshly-inserted ids are what the content-duplicate-on-import
+    notice (`_content_duplicates_added`, roadmap H353) scopes to: a content
+    redundancy *this* import introduced is a new row that landed byte-identical to a
+    distinct held copy, so an `unchanged`/`conflict`/`adopted` row (a same-id skip or
+    replace) never counts — keeping the notice idempotent across re-imports.
 
     Each kept conflict is **recorded** as a custody event on the held item (roadmap
     H274): a divergence is no longer just a transient warning the next import
@@ -2344,12 +2351,14 @@ def _merge_items(
     counts = {"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": 0}
     conflict_ids: set[str] = set()
     adopted_ids: set[str] = set()
+    imported_ids: set[str] = set()
     events: list[CustodyEvent] = []
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for item in items:
         outcome = merge_item(db_path, item)
         if outcome == "imported":
             counts["imported"] += 1
+            imported_ids.add(item.id)
         elif outcome == "conflict" and accept_incoming:
             # adopt the incoming capture (ADR 0106): archive the held (prior) copy,
             # replace the row with the incoming one, and record the supersession —
@@ -2387,7 +2396,7 @@ def _merge_items(
                     )
                 )
     record_events(db_path, events)
-    return counts, sorted(conflict_ids), sorted(adopted_ids)
+    return counts, sorted(conflict_ids), sorted(adopted_ids), sorted(imported_ids)
 
 
 def _warn_conflicts(conflict_ids: list[str]) -> None:
@@ -2443,6 +2452,58 @@ def _warn_adopted(adopted_ids: list[str]) -> None:
         }),
         file=sys.stderr,
     )
+
+
+def _content_duplicates_added(items: list[ScrollItem], new_ids: list[str]) -> int:
+    """How many freshly-imported rows landed byte-identical to another held copy (roadmap H353).
+
+    The import-time analogue of the conflict-on-import *detect* leg (H272) on the
+    content-identity axis: where a `conflict` flags an incoming row whose held copy
+    *diverged*, this counts an incoming row that *converged* — landed byte-identical
+    to a distinct held id (or to another row in the same import). **Report-only**,
+    never an auto-merge (the H325 discipline — two faithful copies are a redundancy
+    fact an operator may want, never a defect): so unlike `_warn_conflicts` it rides
+    *no* stderr warning and never touches the exit code, the quiet informational
+    counterpart of the loud divergence signal.
+
+    Scoped to the **freshly-inserted** ids (``new_ids``, the `imported` outcomes), so
+    a clean re-import of an already-held copy reports 0 — idempotent and honest about
+    what *this* import introduced, the point-in-time counterpart of `doctor`'s
+    whole-library standing count (`custody.content_duplicates`). Folds the
+    whole-library `content_duplicate_index` over ``items`` (the post-import library on
+    the live path, or the simulated post-import set on the dry-run preview) and counts
+    the freshly-imported ids that gained a byte-identical sibling. A NULL/empty-hash
+    row is absent from the index (the H325 NULL-safe rule), so a reference-only import
+    counts nothing.
+    """
+    new = set(new_ids)
+    if not new:
+        return 0
+    index = content_duplicate_index(items)
+    return sum(1 for item_id in new if item_id in index)
+
+
+def _simulated_post_import_items(
+    db_path: Path, imported_items: list[ScrollItem], new_ids: list[str]
+) -> list[ScrollItem]:
+    """The library as a content-only import would leave it, without writing (roadmap H353).
+
+    The dry-run feed for `_content_duplicates_added`: the held rows as-is plus the
+    rows INSERT OR IGNORE would freshly insert — the *first* occurrence per new id (a
+    within-batch repeat sees the prior insert, the `_preview_merge_items` kept-copy
+    rule). An `unchanged`/`conflict`/`adopted` row contributes nothing new (its id is
+    already held, so the held copy already feeds the fold), which is why only
+    ``new_ids`` rows are appended. Feeding this to the *same* `content_duplicate_index`
+    fold the live path reads off the real post-import library keeps the dry-run's
+    `content_duplicates` byte-identical to the import it predicts (the H220/H273
+    preview-fidelity discipline on the content-identity axis).
+    """
+    new = set(new_ids)
+    added: dict[str, ScrollItem] = {}
+    for item in imported_items:
+        if item.id in new and item.id not in added:
+            added[item.id] = item
+    return list_items(db_path) + list(added.values())
 
 
 def _preview_merge_items(
@@ -2546,13 +2607,30 @@ def _cmd_import_items(path: str, accept_incoming: bool = False) -> int:
     # incoming capture: the held copy is replaced by the incoming one (its prior
     # capture archived, recoverable), recorded as a `superseded` event. Opt-in only —
     # without the flag a conflict is surfaced and the held copy kept.
-    counts, conflicts, adopted = _merge_items(
+    counts, conflicts, adopted, new_ids = _merge_items(
         paths.db_path, imported_items, accept_incoming=accept_incoming
     )
     _warn_conflicts(conflicts)
     _warn_adopted(adopted)
     print(json.dumps(
-        {**counts, "conflicts": conflicts, "adopted": adopted, **stats}
+        {
+            **counts,
+            "conflicts": conflicts,
+            "adopted": adopted,
+            # how many freshly-imported rows landed byte-identical to a distinct held
+            # copy — or to another row in the same import (roadmap H353). The
+            # import-time, point-in-time counterpart of `doctor`'s whole-library
+            # `custody.content_duplicates` count: report-only / never an auto-merge
+            # (the H325 discipline), no stderr warning (a redundancy fact, not a
+            # divergence), idempotent across re-imports (scoped to the freshly-
+            # inserted ids). Always present — `0` is the honest "this import added no
+            # redundant copies"; a non-zero count points an operator at the existing
+            # prune flow (`list --content-duplicate` / `doctor`).
+            "content_duplicates": _content_duplicates_added(
+                list_items(paths.db_path), new_ids
+            ),
+            **stats,
+        }
     ))
     return 0
 
@@ -3005,7 +3083,7 @@ def _cmd_import_bundle(
     # `--accept-incoming` (roadmap H278, ADR 0106) adopts a diverging incoming
     # capture: the held copy is replaced (its prior capture archived, recoverable),
     # recorded as a `superseded` event. Opt-in only.
-    counts, conflicts, adopted = _merge_items(
+    counts, conflicts, adopted, new_ids = _merge_items(
         paths.db_path, imported_items, accept_incoming=accept_incoming
     )
     _warn_conflicts(conflicts)
@@ -3050,6 +3128,16 @@ def _cmd_import_bundle(
         # (H278, accept-incoming) — `[]` unless `--accept-incoming` was given; the
         # prior copies are archived (recoverable via `scrolls archive`).
         "adopted": adopted,
+        # how many freshly-imported rows landed byte-identical to a distinct held
+        # copy — or to another row in the same bundle (roadmap H353). The bundle's
+        # content-identity sibling of the `conflict` divergence count: report-only /
+        # never an auto-merge (the H325 discipline), no stderr warning, idempotent
+        # across re-imports (scoped to the freshly-inserted ids). `0` is the honest
+        # "this bundle added no redundant copies"; the dry-run preview predicts the
+        # same number (the H220 preview-fidelity guarantee).
+        "content_duplicates": _content_duplicates_added(
+            list_items(paths.db_path), new_ids
+        ),
         "items": len(imported_items),
         "events": {
             "imported": ev_imported,
@@ -3140,6 +3228,17 @@ def _preview_import_bundle(
         **counts,
         "conflicts": conflicts,
         "adopted": adopted,
+        # the predicted content-duplicate-on-import notice (roadmap H353): the same
+        # count the live bundle import reports, computed without writing by folding
+        # `content_duplicate_index` over the *simulated* post-import library (held
+        # rows + the would-be-inserted new rows). The H220 "preview never drifts from
+        # reality" guarantee on the content-identity axis — pinned by the byte-identity
+        # check that strips only `dry_run`/`new`/`held` and asserts the rest matches
+        # the live import.
+        "content_duplicates": _content_duplicates_added(
+            _simulated_post_import_items(paths.db_path, imported_items, new_ids),
+            new_ids,
+        ),
         "items": len(imported_items),
         "new": new_ids,
         "held": held_ids,
@@ -4655,7 +4754,7 @@ def _cmd_archive_restore(
             paths.db_path, [prior], accept_incoming=True
         )
     else:
-        counts, _conflicts, adopted = _merge_items(
+        counts, _conflicts, adopted, _new = _merge_items(
             paths.db_path, [prior], accept_incoming=True
         )
     outcome = _restore_outcome(counts)

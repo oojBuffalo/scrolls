@@ -3935,6 +3935,8 @@ def test_export_items_round_trips_through_import(
         "conflict": 0,
         "adopted": [],
         "conflicts": [],
+        # a single fresh item into an empty library — no byte-identical sibling (H353)
+        "content_duplicates": 0,
         "items": 1,
     }
     restored = get_item(get_paths().db_path, "arxiv:1706.03762")
@@ -3959,6 +3961,8 @@ def test_import_items_is_idempotent(scrolls_home, tmp_path, capsys):
         "conflict": 0,
         "adopted": [],
         "conflicts": [],
+        # nothing was freshly inserted, so the import added no redundant copy (H353)
+        "content_duplicates": 0,
         "items": 1,
     }
 
@@ -4026,6 +4030,9 @@ def test_import_items_surfaces_a_content_conflict(scrolls_home, tmp_path, capsys
         "conflict": 1,
         "adopted": [],
         "conflicts": ["arxiv:1706.03762"],
+        # a conflict is a same-id divergence, not a freshly-inserted copy — no content
+        # duplicate added (H353); the two notices are distinct custody axes
+        "content_duplicates": 0,
         "items": 1,
     }
     # the held copy is preserved byte-for-byte — surfaced, never overwritten
@@ -4070,6 +4077,162 @@ def test_import_items_partitions_a_mixed_batch(scrolls_home, tmp_path, capsys):
     assert payload["conflicts"] == ["arxiv:1706.03762"]
     # the coherence invariant: every skip is exactly one of unchanged | conflict
     assert payload["skipped"] == payload["unchanged"] + payload["conflict"]
+
+
+def _incoming_item(item_id, content_hash, *, source="web", body="body"):
+    """A model-complete incoming row (a lossless `import items` line) for the
+    content-duplicate-on-import tests — its `content_hash` is what content identity
+    folds on (roadmap H353). A `None` body + `None` hash makes a reference-only row."""
+    return ScrollItem(
+        id=item_id,
+        source=source,
+        url=f"https://e.com/{item_id.replace(':', '_')}",
+        saved_at="2026-06-20T00:00:00+00:00",
+        title=f"title {item_id}",
+        extracted_text=body,
+        raw_text=f"<r>{body}</r>" if body is not None else None,
+        content_hash=content_hash,
+        stage="rendered" if body is not None else "detected",
+    )
+
+
+def test_import_items_reports_a_content_duplicate_against_a_held_copy(
+    scrolls_home, tmp_path, capsys
+):
+    """H353: a freshly-imported row that lands byte-identical to a *distinct held id*
+    is counted in `content_duplicates` — the import-time, point-in-time counterpart
+    of `doctor`'s whole-library `custody.content_duplicates`. Report-only: the held
+    copy is untouched, no stderr warning rides (a redundancy fact, not a divergence),
+    and the count points an operator at the existing prune flow."""
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, _incoming_item("web:held", "sha256:dup"))
+    capsys.readouterr()
+
+    # an incoming row under a *new* id but the *same* bytes (a mirror saved twice)
+    out_path = tmp_path / "incoming.jsonl"
+    out_path.write_text(
+        dump_items_export([_incoming_item("web:mirror", "sha256:dup")]), encoding="utf-8"
+    )
+    assert main(["import", "items", str(out_path)]) == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload["imported"] == 1
+    assert payload["content_duplicates"] == 1  # the mirror is redundant with web:held
+    # report-only: the held copy is preserved and no stderr warning rides (a content
+    # duplicate is a redundancy fact, never a defect — unlike a conflict)
+    assert get_item(db, "web:held").content_hash == "sha256:dup"
+    assert err == ""
+    # converges with the whole-library report: both members are now a flagged group
+    main(["doctor"])
+    dup = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert members == {"web:held", "web:mirror"}
+
+
+def test_import_items_reports_content_duplicates_within_the_same_import(
+    scrolls_home, tmp_path, capsys
+):
+    """H353: the "or to another row in the same import" leg — two freshly-imported
+    rows byte-identical to *each other* (neither held before) both count, so a single
+    import of a redundant pair reports `content_duplicates == 2`."""
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    out_path = tmp_path / "pair.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _incoming_item("web:one", "sha256:same"),
+            _incoming_item("web:two", "sha256:same"),
+        ]),
+        encoding="utf-8",
+    )
+    assert main(["import", "items", str(out_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 2
+    assert payload["content_duplicates"] == 2
+
+
+def test_import_items_content_duplicates_is_zero_on_an_idempotent_reimport(
+    scrolls_home, tmp_path, capsys
+):
+    """H353: the notice is scoped to what *this* import freshly inserts, so a clean
+    re-import of an already-held redundant pair adds nothing — `content_duplicates`
+    falls to 0 even though the library still holds the duplicate group (that standing
+    redundancy is `doctor`'s job, not the import's). Idempotent and honest."""
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    out_path = tmp_path / "pair.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _incoming_item("web:one", "sha256:same"),
+            _incoming_item("web:two", "sha256:same"),
+        ]),
+        encoding="utf-8",
+    )
+    main(["import", "items", str(out_path)])
+    assert json.loads(capsys.readouterr().out)["content_duplicates"] == 2
+
+    # re-import the identical batch: every row is `unchanged`, nothing freshly added
+    main(["import", "items", str(out_path)])
+    second = json.loads(capsys.readouterr().out)
+    assert second["imported"] == 0 and second["unchanged"] == 2
+    assert second["content_duplicates"] == 0  # added no redundant copy this run
+
+    # but the standing whole-library redundancy is unchanged — still one group
+    main(["doctor"])
+    dup = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert dup["total_groups"] == 1
+
+
+def test_import_items_content_duplicates_is_zero_for_a_unique_import(
+    scrolls_home, tmp_path, capsys
+):
+    """H353: distinct content earns no notice — two rows with different bytes, none
+    held, report `content_duplicates == 0`."""
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    out_path = tmp_path / "unique.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _incoming_item("web:a", "sha256:aaa"),
+            _incoming_item("web:b", "sha256:bbb"),
+        ]),
+        encoding="utf-8",
+    )
+    main(["import", "items", str(out_path)])
+    assert json.loads(capsys.readouterr().out)["content_duplicates"] == 0
+
+
+def test_import_items_content_duplicates_skips_null_hash_references(
+    scrolls_home, tmp_path, capsys
+):
+    """H353: a reference-only row holds no captured bytes (NULL `content_hash`), so it
+    fingerprints nothing — importing two such rows counts no content duplicate (the
+    H325 NULL-safe rule, the same skip the whole-library fold makes)."""
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    out_path = tmp_path / "refs.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _incoming_item("web:r1", None, body=None),
+            _incoming_item("web:r2", None, body=None),
+        ]),
+        encoding="utf-8",
+    )
+    main(["import", "items", str(out_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 2
+    assert payload["content_duplicates"] == 0
 
 
 def test_merge_item_classifies_the_insert_outcome(scrolls_home):
@@ -5491,6 +5654,9 @@ def test_export_items_custody_scoped_backup_round_trips_through_import(
         "conflict": 0,
         "adopted": [],
         "conflicts": [],
+        # the two full-tier rows hold distinct bytes (one hashed, one NULL) — no
+        # content duplicate (H353)
+        "content_duplicates": 0,
         "items": 2,
     }
 

@@ -2241,10 +2241,10 @@ def test_import_bundle_dry_run_whole_events_block_matches_a_real_import_under_or
 # --- import bundle --dry-run preview (roadmap H220) ------------------------
 
 
-def _export_bundle_to(tmp_path, capsys, name="briefing.md"):
-    """Capture `export bundle database` to a file; return its path."""
+def _export_bundle_to(tmp_path, capsys, name="briefing.md", query="database"):
+    """Capture `export bundle <query>` to a file; return its path."""
     capsys.readouterr()
-    assert main(["export", "bundle", "database"]) == 0
+    assert main(["export", "bundle", query]) == 0
     bundle_path = tmp_path / name
     bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
     return bundle_path
@@ -2322,6 +2322,11 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         "conflict": 0,
         "adopted": [],
         "conflicts": [],
+        # both seeded scrolls carry the default `content_hash` ("deadbeef"), so the
+        # freshly-imported arxiv row lands byte-identical to B's held SQLite — one
+        # content duplicate (H353); the dry-run predicts the same `1` the real import
+        # below reports (preview-fidelity on the content-identity axis)
+        "content_duplicates": 1,
         "items": 2,
         # the reviewable id lists (H226) — dry-run-only, alongside `dry_run`
         "new": ["arxiv:1706.03762"],
@@ -2347,6 +2352,75 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
     assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == real
     # the real import stays terse — no reviewable id lists
     assert "new" not in real and "held" not in real
+
+
+def test_import_bundle_reports_a_content_duplicate_against_a_held_copy(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    """H353 on the bundle importer: a bundle row that lands byte-identical to a
+    *distinct id already held* in the target library is counted in
+    `content_duplicates` — the bundle sibling of the `import items` notice,
+    report-only / no stderr warning (a redundancy fact, not a divergence)."""
+    main(["init"])
+    db_a = get_paths().db_path
+    # A holds a mirror — the same bytes as B's copy under a different id
+    insert_item(db_a, make_item(
+        "wikipedia:en:Mirror", "Mirror", "Shared database bytes.",
+        content_hash="sha256:dup"))
+    bundle_path = _export_bundle_to(tmp_path, capsys)
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    insert_item(db_b, make_item(
+        "wikipedia:en:Held", "Held", "Shared database bytes.",
+        content_hash="sha256:dup"))
+    capsys.readouterr()
+
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert payload["imported"] == 1
+    assert payload["content_duplicates"] == 1  # the mirror is redundant with Held
+    # report-only: no stderr warning rides (unlike a conflict)
+    assert err == ""
+    # both members now form a whole-library content group in B
+    main(["doctor"])
+    dup = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert members == {"wikipedia:en:Held", "wikipedia:en:Mirror"}
+
+
+def test_import_bundle_dry_run_predicts_content_duplicates(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    """H353 preview-fidelity (H220 on the content-identity axis): a bundle carrying a
+    byte-identical pair (two ids, same bytes) is predicted to add 2 content duplicates
+    *without writing*, and the live import reports the same — the dry-run folds the
+    notice over the *simulated* post-import library, so it never drifts from reality."""
+    main(["init"])
+    db_a = get_paths().db_path
+    insert_item(db_a, make_item(
+        "wikipedia:en:One", "One", "Twin database bytes.", content_hash="sha256:twin"))
+    insert_item(db_a, make_item(
+        "wikipedia:en:Two", "Two", "Twin database bytes.", content_hash="sha256:twin"))
+    bundle_path = _export_bundle_to(tmp_path, capsys)
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    db_b = get_paths().db_path
+    capsys.readouterr()
+
+    # the dry-run predicts the notice without writing a row
+    assert main(["import", "bundle", str(bundle_path), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["content_duplicates"] == 2
+    assert get_item(db_b, "wikipedia:en:One") is None  # pure read
+
+    # the live import reports the same count (the preview never lies)
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    real = json.loads(capsys.readouterr().out)
+    assert real["content_duplicates"] == preview["content_duplicates"] == 2
 
 
 def test_import_bundle_dry_run_previews_orphan_events(
@@ -2670,6 +2744,12 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
         "conflict": 0,
         "adopted": [],
         "conflicts": [],
+        # the freshly-inserted arxiv row carries the *same* default `content_hash`
+        # ("deadbeef") as the already-held SQLite scroll — a distinct id, byte-identical
+        # content — so the import lands one content duplicate (H353), and the dry-run
+        # predicts it off the simulated post-import library exactly as the live import
+        # reports it (preview-fidelity on the content-identity axis)
+        "content_duplicates": 1,
         "items": 4,
         "events": {
             "imported": 2,

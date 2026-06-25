@@ -2784,6 +2784,25 @@ copy was replaced). The adopted ids ride the structured `adopted` list
 `test_import_items_accept_incoming_clears_the_conflict_aggregate`,
 `test_import_items_accept_incoming_is_idempotent`).
 
+**A content duplicate *this* import added is counted** (roadmap H353). Beside the
+`conflict` *divergence* notice rides its content-identity twin: `content_duplicates`
+counts the freshly-inserted rows that landed **byte-identical** to a *distinct* held
+copy — or to another row in the same import (the same captured `content_hash` under
+two ids: a mirror, a cross-post, one work saved twice). It is the import-time, **point-
+in-time** counterpart of `doctor`'s whole-library standing `custody.content_duplicates`
+count: where `doctor` reports the redundancy the library holds *now*, this reports the
+redundancy *this run introduced*. **Report-only** (the H325 discipline — two faithful
+copies are a redundancy fact, never a defect): unlike `conflict` it rides **no stderr
+warning** and never touches the exit code, and it is **idempotent** — scoped to the
+freshly-inserted ids, so a clean re-import of an already-held copy reports `0` even
+while the duplicate group still stands (that standing redundancy is `doctor`'s job). A
+non-zero count points an operator at the existing prune flow (`list --content-duplicate`,
+`scrolls doctor`); a NULL-hash reference-only row fingerprints nothing and never counts
+(`test_import_items_reports_a_content_duplicate_against_a_held_copy`,
+`test_import_items_reports_content_duplicates_within_the_same_import`,
+`test_import_items_content_duplicates_is_zero_on_an_idempotent_reimport`,
+`test_import_items_content_duplicates_skips_null_hash_references`).
+
 | Key | Meaning |
 | --- | --- |
 | `imported` | new items inserted |
@@ -2792,28 +2811,35 @@ copy was replaced). The adopted ids ride the structured `adopted` list
 | `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept) |
 | `conflicts` | the distinct ids whose held copy diverged and was *kept* (sorted, uncapped) |
 | `adopted` | the distinct ids whose held copy was *replaced* by the incoming under `--accept-incoming` (prior archived); `[]` otherwise |
+| `content_duplicates` | how many freshly-imported rows landed byte-identical to a distinct held copy (or to another row in the same import) — report-only, idempotent; `0` when this import added no redundant copy |
 | `items` | item records read from the file (blank lines excluded) |
 
 ```console
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 6, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": [], "conflicts": [], "items": 6}
+{"imported": 6, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": [], "conflicts": [], "content_duplicates": 0, "items": 6}
 [exit 0]
 
 $ scrolls import items /tmp/scrolls-demo.BgrqMO/library.jsonl
-{"imported": 0, "skipped": 6, "unchanged": 6, "conflict": 0, "adopted": [], "conflicts": [], "items": 6}
+{"imported": 0, "skipped": 6, "unchanged": 6, "conflict": 0, "adopted": [], "conflicts": [], "content_duplicates": 0, "items": 6}
 [exit 0]
 
 # an incoming copy of a held id with different captured content — surfaced,
 # not silently dropped; the held copy is kept (custody §2.4)
 $ scrolls import items /tmp/diverged.jsonl
 {"warning": "1 item(s) in this import conflict with a held copy (different content — kept the held copy, not overwritten): `github:sqlite/sqlite`"}   # stderr
-{"imported": 0, "skipped": 1, "unchanged": 0, "conflict": 1, "adopted": [], "conflicts": ["github:sqlite/sqlite"], "items": 1}
+{"imported": 0, "skipped": 1, "unchanged": 0, "conflict": 1, "adopted": [], "conflicts": ["github:sqlite/sqlite"], "content_duplicates": 0, "items": 1}
 [exit 0]
 
 # adopt the diverging copy instead — the held copy is replaced, the prior archived
 $ scrolls import items /tmp/diverged.jsonl --accept-incoming
 {"warning": "1 held copy(ies) replaced by the incoming capture (accept-incoming — prior archived, recoverable via `scrolls archive show`): `github:sqlite/sqlite`"}   # stderr
-{"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": ["github:sqlite/sqlite"], "conflicts": [], "items": 1}
+{"imported": 0, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": ["github:sqlite/sqlite"], "conflicts": [], "content_duplicates": 0, "items": 1}
+[exit 0]
+
+# a mirror saved twice: the second row lands byte-identical to the held copy →
+# one content duplicate (report-only, no warning — run `list --content-duplicate` to prune)
+$ scrolls import items /tmp/mirror.jsonl
+{"imported": 1, "skipped": 0, "unchanged": 0, "conflict": 0, "adopted": [], "conflicts": [], "content_duplicates": 1, "items": 1}
 [exit 0]
 ```
 
@@ -3475,8 +3501,8 @@ the events restore. `--dry-run` predicts the archive restore without writing
 
 `--dry-run` (roadmap H220) **previews** the merge and writes nothing: an agent
 handed a shared bundle can see *exactly* what an import would add vs. skip — the
-same `{imported, skipped, unchanged, conflict, conflicts, items, events, archive}`
-summary the real import prints, plus a `"dry_run": true` marker — before committing to it.
+same `{imported, skipped, unchanged, conflict, conflicts, content_duplicates, items,
+events, archive}` summary the real import prints, plus a `"dry_run": true` marker — before committing to it.
 It is the read-only sibling of the custody-safe import (ADR 0082): the item
 partition is computed by `_preview_merge_items` (the read-only twin of
 `_merge_items`), event counts by the same content-dedup the writer uses
@@ -3503,6 +3529,19 @@ conflicts against it, and the id rides `new` (library-absent) *and* `conflicts`
 (`test_import_bundle_dry_run_predicts_the_conflict_set`,
 `test_import_bundle_within_bundle_dup_with_divergent_content_conflicts_on_both`).
 
+The bundle importer also counts the **content duplicates *this* import adds**
+(roadmap H353), exactly as `import items` does (the same `content_duplicates` count):
+a freshly-inserted bundle row that lands **byte-identical** to a *distinct* held copy —
+or to another row in the same bundle. Report-only / no stderr warning, the point-in-
+time counterpart of `doctor`'s whole-library standing `custody.content_duplicates`, and
+**idempotent** (scoped to the freshly-inserted ids, so a clean re-import reports `0`).
+The `--dry-run` **predicts** the same number, folding the content-identity index over
+the *simulated* post-import library (held rows + the would-be-inserted new rows) — so
+the preview's `content_duplicates` is byte-identical to the live import's, the same
+"preview never drifts from reality" guarantee the conflict prediction holds
+(`test_import_bundle_reports_a_content_duplicate_against_a_held_copy`,
+`test_import_bundle_dry_run_predicts_content_duplicates`).
+
 The dry-run also names *which* scrolls are new vs. already held (roadmap H226), so
 the counts ("2 new") become reviewable ("`new`: which two") — an operator can
 confirm the bundle adds what they expect before committing. The `new` and `held`
@@ -3519,6 +3558,7 @@ the real import stays terse
 | `conflict` | skipped: held copy has a **different** `content_hash` (divergence surfaced, held copy kept, H273) |
 | `conflicts` | the distinct ids whose held copy diverged from the incoming bundle row and was *kept* — sorted, deduped, uncapped (H273); `[]` on a clean import |
 | `adopted` | the distinct ids whose held copy was *replaced* by the incoming bundle row under `--accept-incoming` (prior archived, H278); `[]` otherwise |
+| `content_duplicates` | how many freshly-imported rows landed byte-identical to a distinct held copy (or to another row in the same bundle) — report-only, idempotent, predicted under `--dry-run` (H353); `0` when the bundle added no redundant copy |
 | `items` | scroll records read from the custody block |
 | `new` | (dry-run only) the would-be-imported item ids — sorted, deduped; `len(new) == imported` |
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |
