@@ -7340,6 +7340,170 @@ def test_content_identity_custody_record_transports_carry_the_item_set_not_held_
         assert _doctor_dups(get_paths()) == (set(), 0, 0)
 
 
+# --- the content-duplicate-on-import ↔ doctor convergence guard (roadmap H358) -
+#
+# H353 ships the import-time `content_duplicates` count (`_content_duplicates_added`,
+# the import-act analogue of the conflict-on-import detect leg) and pins its OWN cases
+# (held-twin / within-import / idempotent-zero, tests/test_cli.py). But no test ties
+# that POINT-IN-TIME count to `doctor`'s STANDING whole-library read on the same
+# library, so a future change to either `_content_duplicates_added`'s freshly-inserted-
+# id scope or `content_duplicate_groups`' grouping could pass each surface's own tests
+# yet desync the two readings of the same redundancy — the import-axis sibling of the
+# H346/H348 browse/aggregate convergence ties.
+#
+# The SOUND tie (both surfaces fold the same `content_duplicate_index`): the import's
+# reported count == the number of THIS import's freshly-inserted ids that `doctor` now
+# lists in a flagged group. Grill finding (mirrors H354's unsound-premise catch): the
+# queued spec ALSO asserted `import count == the INCREASE in doctor.total_items`, but
+# that is FALSE for the held-twin case — importing a mirror of a HELD singleton grows
+# total_items by 2 (the held copy is *activated* into a flagged group alongside the new
+# row) while the import counts only the 1 freshly-inserted member. The total_items
+# increase equals the import count ONLY when no held singleton activates (the
+# within-import case); the id-membership tie holds in BOTH, so that is the tie this
+# guard pins (the increase-exceeds-count is documented and asserted as the held-twin
+# distinction, not borrowed as a false equality — the H332 narrower-scope discipline).
+
+
+def test_import_content_duplicates_converges_with_doctor_standing_groups(
+    scrolls_home, tmp_path, capsys
+):
+    # roadmap H358: the held-twin case across a CROSS-SOURCE boundary, so the guard is
+    # non-vacuous against the documented sabotage — narrowing the import fold to one
+    # source (dropping the cross-source sibling) breaks this agreement while leaving
+    # H353's same-source held-twin case green.
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    db = get_paths().db_path
+    # a CROSS-SOURCE held singleton: `arxiv:held` holds bytes no other id holds yet
+    insert_item(db, _item(
+        "arxiv:held", "Held preprint", source="arxiv",
+        url="https://arxiv.org/abs/held", extracted_text="topic body",
+        raw_text="<r>topic</r>", content_hash="sha256:dup", stage="rendered",
+    ))
+    capsys.readouterr()
+
+    # before the import: a lone hash-bearing item is NOT a group (the ≥2-id floor)
+    before = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert (before["total_groups"], before["total_items"]) == (0, 0)
+
+    # import a byte-identical mirror under a DIFFERENT source — forms the cross-source pair
+    out_path = tmp_path / "mirror.jsonl"
+    out_path.write_text(
+        dump_items_export([_item(
+            "web:mirror", "Mirror", source="web",
+            url="https://e.com/mirror", extracted_text="topic body",
+            raw_text="<r>topic</r>", content_hash="sha256:dup", stage="rendered",
+        )]),
+        encoding="utf-8",
+    )
+    assert main(["import", "items", str(out_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    # exactly one row was freshly inserted, and the import flagged it as redundant
+    assert payload["imported"] == 1 and payload["content_duplicates"] == 1
+    new_ids = {"web:mirror"}  # imported == 1 → the only freshly-inserted row
+
+    # the standing whole-library read now flags the cross-source pair, id for id
+    after = run_doctor(get_paths())["custody"]["content_duplicates"]
+    flagged = {item_id for group in after["groups"] for item_id in group["ids"]}
+    assert flagged == {"arxiv:held", "web:mirror"}
+
+    # THE CONVERGENCE: the import-time count == the count of THIS import's freshly-
+    # inserted ids `doctor` now lists in a flagged group (both fold the same index)
+    assert payload["content_duplicates"] == len(new_ids & flagged)
+
+    # the grill finding pinned so it cannot silently regress: the increase in doctor's
+    # total_items (0 → 2) EXCEEDS the import count (1), because importing the mirror
+    # activated the held singleton `arxiv:held` into the group too — the held-twin case
+    # where `import count == increase in total_items` is FALSE
+    assert after["total_items"] - before["total_items"] == 2
+    assert after["total_items"] - before["total_items"] > payload["content_duplicates"]
+
+
+def test_within_import_pair_increase_equals_count_but_membership_tie_is_the_invariant(
+    scrolls_home, tmp_path, capsys
+):
+    # roadmap H358 (the within-import contrast): when the whole group is freshly
+    # imported (no held singleton to activate), the total_items increase DOES equal the
+    # import count — but the id-membership tie is what holds in BOTH cases, so it is the
+    # invariant the guard rests on (the held-twin test above is the case that breaks the
+    # increase equality).
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    before = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert (before["total_groups"], before["total_items"]) == (0, 0)
+
+    out_path = tmp_path / "pair.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _item("web:one", "One", extracted_text="b", raw_text="<r>b</r>",
+                  content_hash="sha256:same", stage="rendered"),
+            _item("web:two", "Two", extracted_text="b", raw_text="<r>b</r>",
+                  content_hash="sha256:same", stage="rendered"),
+        ]),
+        encoding="utf-8",
+    )
+    assert main(["import", "items", str(out_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 2 and payload["content_duplicates"] == 2
+    new_ids = {"web:one", "web:two"}
+
+    after = run_doctor(get_paths())["custody"]["content_duplicates"]
+    flagged = {item_id for group in after["groups"] for item_id in group["ids"]}
+    assert flagged == new_ids
+
+    # the membership tie (the invariant) and the increase equality (true only here)
+    assert payload["content_duplicates"] == len(new_ids & flagged)
+    assert after["total_items"] - before["total_items"] == payload["content_duplicates"]
+
+
+def test_idempotent_reimport_reports_zero_while_doctor_standing_count_holds(
+    scrolls_home, tmp_path, capsys
+):
+    # roadmap H358 (the point-in-time vs standing split, made a guard): a clean
+    # re-import of an already-held redundant pair freshly inserts nothing, so the import
+    # reports `content_duplicates: 0` — while `doctor`'s STANDING whole-library count is
+    # UNCHANGED (the redundancy is still held; pruning it is `doctor`'s job, not the
+    # import's). The convergence holds with an EMPTY freshly-inserted set: zero imported
+    # ids appear in doctor's groups, matching the zero the import reports.
+    from scrolls.items_export import dump_items_export
+
+    main(["init"])
+    capsys.readouterr()
+    out_path = tmp_path / "pair.jsonl"
+    out_path.write_text(
+        dump_items_export([
+            _item("web:one", "One", extracted_text="b", raw_text="<r>b</r>",
+                  content_hash="sha256:same", stage="rendered"),
+            _item("web:two", "Two", extracted_text="b", raw_text="<r>b</r>",
+                  content_hash="sha256:same", stage="rendered"),
+        ]),
+        encoding="utf-8",
+    )
+    # first import holds the redundant pair; doctor flags one group of two
+    assert main(["import", "items", str(out_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["content_duplicates"] == 2
+    standing = run_doctor(get_paths())["custody"]["content_duplicates"]
+    assert (standing["total_groups"], standing["total_items"]) == (1, 2)
+
+    # re-import the identical batch: every row is `unchanged`, nothing freshly inserted
+    assert main(["import", "items", str(out_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 0 and payload["content_duplicates"] == 0
+    new_ids: set[str] = set()  # imported == 0 → nothing freshly inserted
+
+    # the standing read is UNCHANGED — the redundancy is still held, not re-counted
+    after = run_doctor(get_paths())["custody"]["content_duplicates"]
+    flagged = {item_id for group in after["groups"] for item_id in group["ids"]}
+    assert (after["total_groups"], after["total_items"]) == (1, 2)
+    assert flagged == {"web:one", "web:two"}
+
+    # the convergence holds with an empty fresh set: 0 == 0
+    assert payload["content_duplicates"] == len(new_ids & flagged)
+
+
 def test_content_duplicate_browse_filter_converges_with_doctor_groups(scrolls_home, capsys):
     # roadmap H338: the `--content-duplicate` browse filter (the content-identity
     # analogue of `--fidelity`/`--drift`) reads off the *same* `content_duplicate_groups`
