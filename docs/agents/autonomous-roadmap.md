@@ -408,6 +408,41 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   (H344), the `context` browse filter (H345), the unified browse/aggregate convergence guard (H346), and —
   newly queued this run to keep the buffer fresh — the events/archive export filter (H347).** **Next:**
   H342 (the `facets content-duplicate` aggregate).
+  **H342 (2026-06-24) shipped the facets-aggregate leg** — `scrolls facets content-duplicate` /
+  MCP `list_facets("content-duplicate")` partitions the held items into a `duplicate`/`unique` two-bucket
+  aggregate (the new eighth `facets.FIELDS` dimension, keyed under the `--content-duplicate` flag spelling),
+  the **browse/discovery counterpart** of the H338 `--content-duplicate` drill — the content-identity
+  axis's `facets fidelity`/`drift` analogue (the drill-from-the-count discovery half of the search/browse
+  pair). `duplicate` is a member of a flagged `content_duplicate_groups` group (carries ≥1 byte-identical
+  sibling); `unique` is the complement (a genuinely lone capture *or* a NULL/empty-`content_hash` reference
+  item — no bytes to match, the H325 NULL-safe rule). **Convergence by construction** (the heart of the
+  slice): the `duplicate` count folds the *same* `content_duplicate_index` primitive (H328/H333) the
+  `--content-duplicate` drill selects on and `doctor`'s `custody.content_duplicates` counts, so over the
+  whole library it equals `doctor`/`get_library_health`'s `total_items` (the *M* in the H327
+  `_Duplicates:_` headline) and over any scope it equals the rows the drill returns — the `drift` ↔ `facets
+  drift` twin on the content-identity axis. **Whole-library sibling scope** even under `--source` (a content
+  group spans sources, the H328 cross-source rule): the fold reads the whole library (a lightweight
+  `id`+`content_hash` load, the `_load_facet_columns` no-bodies precedent) and only the *scoped* ids are
+  partitioned by membership — so `facets content-duplicate --source S` reports how many of S's items have a
+  byte-identical sibling held *anywhere*, exactly the set `--source S --content-duplicate` returns. The two
+  buckets **partition the scope** (counts sum to the held total, the `fidelity`/`drift`/`method` shape), a
+  clean library reports only `unique` (`Counter` emits no empty `duplicate` bucket — omit-when-clean),
+  ranked count-desc then value-asc like every dimension. **Report-only**, never a merge (raw is sacred,
+  H325). The MCP twin rides `compute_facets`'s `field` forward for free (CLI `choices`/MCP both auto-pick up
+  the new `FIELDS` member); the empty/before-init keyset tests gained the `content-duplicate: []` key. 9
+  tests (`tests/test_facets.py` ×6: partitions + clean-only-unique + empty-well-shaped + cross-source-scope +
+  doctor/drill convergence + default-field-set-and-ordered; `tests/test_cli.py` ×2: partitions/drills +
+  whole-library-sibling-scope; `tests/test_mcp.py` ×1: list_facets converges-with-drill-and-doctor + CLI
+  byte-parity) + `docs/cli.md`. Suite **4038 passed**. Precondition: H338 (the `--content-duplicate` drill +
+  the `content_duplicate_index` fold), H48/H28 (the `facets drift`/`method` derived-dimension precedent).
+  **With H342 the content-identity theme's read+relate+maintain+per-item+work+trend+briefing+
+  convergence-guard+rendered-per-item+compiled-index+MCP-trend-parity+bundle-round-trip+no-merge-guard+
+  browse-filter+rendered-marker-guard+dogfood-loop+export-filter+facets-aggregate legs are shipped
+  (H325–H342); the open legs are the graph node leg (H343), the work-consolidation browse filter (H344), the
+  `context` browse filter (H345), the unified browse/aggregate convergence guard (H346), the events/archive
+  export filter (H347), and — newly queued this run to keep the buffer fresh — the `facets` cross-surface
+  convergence guard (H348).** **Next:** H343 (the `graph` content-duplicate node leg — the relationship
+  graph surfaces the content-identity edge as a node attribute, the H326 `related` edge's graph twin).
 
 - **cap 8 — re-derivable enrichment.** Classification *and* LLM concept
   summaries record inputs/method and regenerate on request:

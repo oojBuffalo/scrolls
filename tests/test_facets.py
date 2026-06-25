@@ -333,3 +333,111 @@ def test_limit_caps_each_dimension(db_path):
 def test_unknown_field_is_rejected(db_path):
     with pytest.raises(ValueError):
         compute_facets(db_path, field="bogus")
+
+
+# --- content-duplicate (byte-identical holdings, roadmap H342) -------------
+
+
+def test_content_duplicate_partitions_held_items_into_duplicate_and_unique(db_path):
+    # the browse aggregate of the content-identity shape (H325): each held item by
+    # whether it carries ≥1 byte-identical sibling. A held pair sharing a hash is
+    # `duplicate`; the lone item and the no-content reference item are `unique`.
+    seed(
+        db_path,
+        [
+            make_item("web:a", content_hash="cafe1234"),
+            make_item("web:b", content_hash="cafe1234"),  # byte-identical to web:a
+            make_item("web:c", content_hash="deadbeef"),  # held, unique content
+            make_item("web:d"),  # no content_hash — a reference item, holds no bytes
+        ],
+    )
+    facet = compute_facets(db_path, field="content-duplicate")["facets"]["content-duplicate"]
+    assert {entry["value"]: entry["count"] for entry in facet} == {
+        "duplicate": 2,
+        "unique": 2,
+    }
+    # ranked by count desc then value asc, like every other dimension
+    assert facet[0] == {"value": "duplicate", "count": 2}
+
+
+def test_content_duplicate_clean_library_reports_only_unique(db_path):
+    # no two held items share a hash → no `duplicate` bucket at all (Counter only
+    # emits what it sees), the omit-when-clean shape the other facets follow
+    seed(
+        db_path,
+        [
+            make_item("web:a", content_hash="cafe1234"),
+            make_item("web:b", content_hash="deadbeef"),
+            make_item("web:c"),  # reference item
+        ],
+    )
+    facet = compute_facets(db_path, field="content-duplicate")["facets"]["content-duplicate"]
+    assert facet == [{"value": "unique", "count": 3}]
+
+
+def test_content_duplicate_facet_empty_library_is_well_shaped(db_path):
+    assert compute_facets(db_path, field="content-duplicate") == {
+        "facets": {"content-duplicate": []}
+    }
+
+
+def test_content_duplicate_scope_partitions_scoped_set_but_sibling_is_whole_library(db_path):
+    # the H328 cross-source rule: a content group spans sources, so `--source S`
+    # reports how many of S's items have a byte-identical sibling held *anywhere*.
+    # web:a's sibling lives in arxiv, yet web:a is still counted `duplicate`.
+    seed(
+        db_path,
+        [
+            make_item("web:a", source="web", content_hash="cafe1234"),
+            make_item("arxiv:a", source="arxiv", content_hash="cafe1234"),  # sibling, other source
+            make_item("web:c", source="web", content_hash="deadbeef"),  # web, unique content
+        ],
+    )
+    scoped = compute_facets(db_path, field="content-duplicate", source="web")[
+        "facets"
+    ]["content-duplicate"]
+    assert {entry["value"]: entry["count"] for entry in scoped} == {
+        "duplicate": 1,  # web:a — its sibling is in arxiv but it still counts
+        "unique": 1,  # web:c
+    }
+
+
+def test_content_duplicate_facet_converges_with_doctor_and_the_drill_filter(db_path, tmp_path):
+    # the `duplicate` count folds the same `content_duplicate_index` (H325) that
+    # `doctor`'s `custody.content_duplicates` counts and `list --content-duplicate`
+    # (H338) selects, so all three agree over the whole library by construction.
+    from scrolls.doctor import run_doctor
+    from scrolls.items import list_items
+    from scrolls.paths import get_paths
+
+    seed(
+        db_path,
+        [
+            make_item("web:a", content_hash="cafe1234"),
+            make_item("web:b", content_hash="cafe1234"),
+            make_item("arxiv:x", source="arxiv", content_hash="abcd0001"),
+            make_item("github:x", source="github", content_hash="abcd0001"),
+            make_item("web:lone", content_hash="0ddba11"),
+        ],
+    )
+    duplicate = {
+        entry["value"]: entry["count"]
+        for entry in compute_facets(db_path, field="content-duplicate")["facets"][
+            "content-duplicate"
+        ]
+    }.get("duplicate", 0)
+    doctor = run_doctor(get_paths(tmp_path))["custody"]["content_duplicates"]
+    drilled = list_items(db_path, content_duplicate=True)
+    # facet count ≡ doctor's total_items ≡ rows the --content-duplicate drill returns
+    assert duplicate == doctor["total_items"] == len(drilled) == 4
+    assert doctor["total_groups"] == 2
+
+
+def test_content_duplicate_in_default_field_set_and_well_ordered(db_path):
+    # with no `field` the dimension rides the full payload, last (newest axis)
+    seed(db_path, [make_item("web:a", content_hash="cafe1234"),
+                   make_item("web:b", content_hash="cafe1234")])
+    payload = compute_facets(db_path)
+    assert "content-duplicate" in payload["facets"]
+    assert list(payload["facets"])[-1] == "content-duplicate"
+    assert payload["facets"]["content-duplicate"] == [{"value": "duplicate", "count": 2}]

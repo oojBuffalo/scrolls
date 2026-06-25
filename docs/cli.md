@@ -4270,7 +4270,8 @@ those values can be, so an agent learns the library's real categories,
 tags, and concept slugs before filtering. Output is
 `{"facets": {dimension: [{"value", "count", …}, …]}}`; with no `field`,
 every dimension (`sources`, `categories`, `tags`, `concepts`, `fidelity`,
-`drift`, `method`) is reported, in that order, and a `field` narrows the
+`drift`, `method`, `content-duplicate`) is reported, in that order, and a
+`field` narrows the
 payload to that one (`test_facets_reports_every_dimension`,
 `test_facets_single_field_returns_only_that_dimension`). An empty or
 uninitialized library reports every dimension as `[]`
@@ -4318,6 +4319,27 @@ set by hand vs still unclassified?", and completes the search ≡ list ≡ MCP
 ≡ facets parity on the aggregate axis
 (`test_method_counts_by_how_the_category_was_produced`,
 `test_facets_method_buckets_how_categories_were_produced`).
+
+`content-duplicate` partitions the held items into `duplicate`/`unique` by
+whether each carries a **byte-identical sibling** — the same bytes held under
+another id (the content-identity custody shape, roadmap H325). It is the browse
+aggregate of the same `items.content_duplicate_index` that `list`/`search
+--content-duplicate` (H338) select on and `doctor`'s `custody.content_duplicates`
+counts, so the `duplicate` count converges with both over the same scope: over the
+whole library it equals `doctor`'s `total_items` (the *M* in the `maintain`
+`_Duplicates:_` headline), and over any scope it equals the rows the
+`--content-duplicate` drill returns (drill-from-the-count, the `drift` ↔ `facets
+drift` twin on the content-identity axis). The sibling fold is **whole-library**
+even under `--source` (a content group spans sources, the H328 cross-source rule),
+so `scrolls facets content-duplicate --source S` reports how many of S's items have
+a byte-identical sibling held *anywhere*. `unique` covers both a genuinely lone
+capture and a NULL/empty-`content_hash` reference item (which holds no bytes to
+match); a clean library reports only `unique` (the omit-when-clean shape — no empty
+`duplicate` bucket). Report-only, never a merge — the facet names what an operator
+may dedup, the tool never does (raw is sacred). It answers "how redundant is my
+library — how many holdings are byte-for-byte copies of another?"
+(`test_facets_content_duplicate_partitions_and_drills_from_the_count`,
+`test_content_duplicate_facet_converges_with_doctor_and_the_drill_filter`).
 
 ```console
 $ scrolls facets

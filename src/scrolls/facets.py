@@ -16,16 +16,22 @@ facets grouped exactly as the KB and the `--tag`/`--concept` filters group them
 the filters key on. Each tag/concept count is the number of *distinct* items
 carrying it, so two spellings of one concept on one item count it once.
 
-The `fidelity`, `drift`, and `method` dimensions are *derived* rather than
-stored columns. `fidelity` counts items by custody tier (ADR 0097); `drift`
-counts them by custody **drift posture** read from the verify ledger
-(`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H48 — the browse
-aggregate of `custody.drift_posture` over `latest_events`, so it converges with
-`doctor`'s `custody.drift` and the scope custody headlines for the same scope);
-`method` counts them by how each held category was produced (`rules-v1`/
+The `fidelity`, `drift`, `method`, and `content-duplicate` dimensions are
+*derived* rather than stored columns. `fidelity` counts items by custody tier
+(ADR 0097); `drift` counts them by custody **drift posture** read from the verify
+ledger (`verified`/`unverified`/`drifted`/`rotted`/`error`, roadmap H48 — the
+browse aggregate of `custody.drift_posture` over `latest_events`, so it converges
+with `doctor`'s `custody.drift` and the scope custody headlines for the same
+scope); `method` counts them by how each held category was produced (`rules-v1`/
 `llm-v1`, or the honest `user-set`/`unclassified` buckets) — the aggregate
 counterpart of the per-item `classification` view (roadmap H20/H26), built from
 the same `classification_view` derivation so the two never disagree.
+`content-duplicate` partitions held items into `duplicate`/`unique` by whether
+each carries a byte-identical sibling (roadmap H342 — the browse aggregate of the
+content-identity shape H325, folding the same `content_duplicate_index` that
+`list/search --content-duplicate` selects on and `doctor`'s
+`custody.content_duplicates` counts, so the `duplicate` count converges with both
+over the same scope).
 
 The same optional facets that scope search scope the enumeration too, reusing
 `items.item_filters`. `None` never filters.
@@ -43,13 +49,23 @@ from scrolls.custody import drift_posture, latest_events
 from scrolls.items import (
     ScrollItem,
     classification_view,
+    content_duplicate_index,
     fidelity_tier,
     item_filters,
     register_facet_functions,
 )
 from scrolls.kb import group_concepts, group_tags
 
-FIELDS = ("sources", "categories", "tags", "concepts", "fidelity", "drift", "method")
+FIELDS = (
+    "sources",
+    "categories",
+    "tags",
+    "concepts",
+    "fidelity",
+    "drift",
+    "method",
+    "content-duplicate",
+)
 
 DEFAULT_LIMIT = 20
 
@@ -103,6 +119,10 @@ def compute_facets(
             facets["drift"] = _drift_counts(conn, where, params, limit, db_path=db_path)
         if "method" in wanted:
             facets["method"] = _method_counts(conn, where, params, limit)
+        if "content-duplicate" in wanted:
+            facets["content-duplicate"] = _content_duplicate_counts(
+                conn, where, params, limit
+            )
     finally:
         conn.close()
     return {"facets": {name: facets[name] for name in wanted}}
@@ -290,3 +310,64 @@ def _method_bucket(category: str | None, provenance_json: str | None) -> str:
     if view is not None:
         return view["by"]
     return "user-set" if category is not None else "unclassified"
+
+
+def _content_duplicate_counts(
+    conn: sqlite3.Connection, where: str, params: list[str], limit: int | None
+) -> list[dict[str, Any]]:
+    """Partition held items by content-identity redundancy (roadmap H342).
+
+    The browse aggregate of the content-identity custody shape (H325): each scoped
+    held item is bucketed by whether it carries **≥1 byte-identical sibling** — the
+    same bytes held under another id. `duplicate` is a member of a flagged
+    `content_duplicate_groups` group; `unique` carries no byte-identical sibling
+    (a genuinely lone capture *or* a NULL/empty-`content_hash` reference item, which
+    holds no bytes to match — the H325 NULL-safe rule). The two buckets **partition
+    the scope** (their counts sum to the held total), the `fidelity`/`drift`/`method`
+    shape, and a clean library reports only `unique` (`Counter` emits no empty
+    `duplicate` bucket — the omit-when-clean shape).
+
+    The discovery counterpart `list/search --content-duplicate` (H338) drills from:
+    the `duplicate` count folds the **same** `content_duplicate_index` primitive the
+    filter selects on and `doctor`'s `custody.content_duplicates` counts, so over the
+    whole library `duplicate` ≡ `doctor`'s `total_items` (the *M* in the `_Duplicates:_`
+    headline) and, over any scope, ≡ the rows the drill returns (drill-from-the-count
+    convergence, the `drift` ↔ `facets drift` twin on the content-identity axis).
+
+    The sibling index is folded over the **whole library** — a content group spans
+    sources (the H328 cross-source rule), so the fold never sees the scoped `where` —
+    and only the *scoped* ids are then partitioned by membership. So
+    `facets content-duplicate --source S` reports how many of S's items have a
+    byte-identical sibling held *anywhere* (the sibling may live in another source),
+    exactly the set `--source S --content-duplicate` would return. Reads only ids and
+    hashes here, never the bodies, like `_fidelity_counts`/`_drift_counts`.
+    """
+    sibling_index = content_duplicate_index(_load_content_hashes(conn))
+    rows = conn.execute(f"SELECT id FROM items{where}", params).fetchall()
+    counts = Counter(
+        "duplicate" if row["id"] in sibling_index else "unique" for row in rows
+    )
+    entries = [{"value": value, "count": count} for value, count in counts.items()]
+    return _rank(entries, limit)
+
+
+def _load_content_hashes(conn: sqlite3.Connection) -> list[ScrollItem]:
+    """Whole-library lightweight items carrying only `id` + `content_hash`.
+
+    `content_duplicate_index` reads only those two fields, and the sibling fold
+    must see the **whole library** (a content group spans sources, the H328
+    cross-source rule) — never the scoped `where` — so this reads every row's id and
+    hash with no filter and skips the heavy body columns `list_items` would load
+    (the `_load_facet_columns` lightweight-load precedent).
+    """
+    rows = conn.execute("SELECT id, content_hash FROM items").fetchall()
+    return [
+        ScrollItem(
+            id=row["id"],
+            source="",
+            url="",
+            saved_at="",
+            content_hash=row["content_hash"],
+        )
+        for row in rows
+    ]

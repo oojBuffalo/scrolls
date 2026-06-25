@@ -1008,6 +1008,34 @@ def test_content_duplicate_filter_is_cli_mcp_byte_parity(scrolls_home, capsys):
     assert as_json(mcp_server.search_scrolls("alpha", content_duplicate=True)) == cli_search
 
 
+def test_list_facets_content_duplicate_converges_with_the_drill_and_doctor(scrolls_home, capsys):
+    # H342: `list_facets("content-duplicate")` partitions held items into
+    # duplicate/unique by the SAME content_duplicate_index the `--content-duplicate`
+    # drill selects on and doctor counts, so the `duplicate` count ≡ the drill's row
+    # count ≡ doctor's total_items, and the MCP facet is byte-parity with the CLI.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    facet = {
+        e["value"]: e["count"]
+        for e in mcp_server.list_facets("content-duplicate")["facets"]["content-duplicate"]
+    }
+    assert facet == {"duplicate": 4, "unique": 2}
+    # drill-from-the-count: facet duplicate ≡ the rows --content-duplicate returns
+    assert facet["duplicate"] == len(mcp_server.list_scrolls(content_duplicate=True))
+    # and ≡ doctor's whole-library content-duplicate item total (get_library_health
+    # returns the custody block directly)
+    health = mcp_server.get_library_health()["content_duplicates"]
+    assert facet["duplicate"] == health["total_items"] == 4
+
+    # MCP facet reads byte-identical to the CLI `facets content-duplicate`
+    main(["facets", "content-duplicate"])
+    cli_facet = json.loads(capsys.readouterr().out)
+    assert mcp_server.list_facets("content-duplicate") == cli_facet
+
+
 def test_list_scrolls_surfaces_the_custody_fidelity_tier(scrolls_home):
     # custody state travels with browse results (ADR 0097): an agent sees which
     # items it holds in full without a follow-up get_scroll
@@ -1140,6 +1168,7 @@ def test_list_facets_before_init_is_empty_but_well_shaped(scrolls_home):
             "fidelity": [],
             "drift": [],
             "method": [],
+            "content-duplicate": [],
         }
     }
 

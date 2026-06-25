@@ -2291,6 +2291,55 @@ def test_search_content_duplicate_stats_denominator(scrolls_home, capsys):
     assert payload["stats"]["truncated"] is True
 
 
+def test_facets_content_duplicate_partitions_and_drills_from_the_count(scrolls_home, capsys):
+    # H342: `facets content-duplicate` partitions held items into duplicate/unique,
+    # and the `duplicate` count folds the SAME content_duplicate_index the
+    # `--content-duplicate` drill selects on and `doctor` counts — so the three agree.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["facets", "content-duplicate"])
+    facet = json.loads(capsys.readouterr().out)["facets"]["content-duplicate"]
+    # the full partition over the six held items: 4 duplicated, 2 (solo + ref) not
+    assert {e["value"]: e["count"] for e in facet} == {"duplicate": 4, "unique": 2}
+    assert facet[0] == {"value": "duplicate", "count": 4}  # ranked by count desc
+
+    # drill-from-the-count: the `duplicate` bucket equals the rows the drill returns
+    main(["list", "--content-duplicate"])
+    drilled = json.loads(capsys.readouterr().out)
+    assert len(drilled) == 4
+
+    # ...and equals doctor's whole-library content-duplicate item total
+    main(["doctor"])
+    duplicates = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert duplicates["total_items"] == 4
+    assert duplicates["total_groups"] == 2
+
+
+def test_facets_content_duplicate_scope_is_whole_library_sibling(scrolls_home, capsys):
+    # H342: --source narrows the partitioned set but the sibling fold stays
+    # whole-library (the H328 cross-source rule), so web:a counts as `duplicate`
+    # under --source web even though its only sibling (arxiv:1) lives in another
+    # source — exactly the set `list --source web --content-duplicate` returns.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+    capsys.readouterr()
+
+    main(["facets", "content-duplicate", "--source", "web"])
+    facet = {
+        e["value"]: e["count"]
+        for e in json.loads(capsys.readouterr().out)["facets"]["content-duplicate"]
+    }
+    # web items: web:a (sibling in arxiv) + web:p + web:q are duplicate; solo + ref unique
+    assert facet == {"duplicate": 3, "unique": 2}
+
+    main(["list", "--source", "web", "--content-duplicate"])
+    assert len(json.loads(capsys.readouterr().out)) == facet["duplicate"]
+
+
 def test_list_surfaces_the_classification_method(scrolls_home, fake_wikipedia_api, capsys):
     from scrolls.classify import RULESET_FINGERPRINT
 
@@ -8487,6 +8536,7 @@ def test_facets_uninitialized_library_is_empty_but_well_shaped(scrolls_home, cap
             "fidelity": [],
             "drift": [],
             "method": [],
+            "content-duplicate": [],
         }
     }
 

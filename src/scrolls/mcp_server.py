@@ -318,8 +318,13 @@ def list_facets(
     The discovery counterpart to search_scrolls/list_scrolls: it answers
     "what can I filter by?" before you filter. With no `field`, reports every
     dimension — `sources`, `categories`, `tags`, `concepts`, plus the derived
-    `fidelity` (custody tier) and `method` (how each held category was produced:
-    `rules-v1`/`llm-v1`, or the honest `user-set`/`unclassified` buckets) — as
+    `fidelity` (custody tier), `method` (how each held category was produced:
+    `rules-v1`/`llm-v1`, or the honest `user-set`/`unclassified` buckets), and
+    `content-duplicate` (the held items partitioned into `duplicate`/`unique` by
+    whether each carries a byte-identical sibling — the browse aggregate of the
+    content-identity shape, whose `duplicate` count equals what the
+    `content_duplicate=True` drill returns and what get_library_health's
+    `content_duplicates.total_items` counts over the same scope) — as
     `{"facets": {dimension: [{"value", "count", ...}, ...]}}`; pass a `field`
     to narrow to one. Each list is ranked by count then value and capped at
     `limit` (default 20). Categories report the unclassified pool as the empty
