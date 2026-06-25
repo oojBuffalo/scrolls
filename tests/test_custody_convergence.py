@@ -7135,6 +7135,83 @@ def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_ho
     assert headline in build_context(db, "topic")
 
 
+# --- the prune-GUIDANCE MCP↔CLI byte-parity guard (roadmap H361) ---------------
+#
+# The H332 family above ties the content-duplicate *count/read* across surfaces.
+# This pins the orthogonal claim on the *actionable* axis: the `maintain`
+# `duplicate_prunes` block (H356) — for each byte-identical group, which copy to
+# KEEP plus the `scrolls rm` that prunes the rest — reads IDENTICALLY whether an
+# operator runs CLI `scrolls maintain` or an agent drives MCP `run_maintenance`.
+# Both transports route the whole-library holdings through the one shared
+# `maintain.assemble_report` (so the block converges by construction), but no test
+# pinned the *values*: the H196 whole-report parity guard runs over a fixture with
+# no byte-identical pair, so its `duplicate_prunes` comparison is the vacuous
+# `[] == []`. A future change that post-shaped the block on one transport — or
+# folded a different item set for one — would pass every per-transport test yet
+# hand the agent a different keep/prune partition than the operator sees. Pin it
+# on the non-vacuous dual-shape fixture (the block is non-empty), and the honest
+# clean `[]` case.
+
+
+def test_run_maintenance_duplicate_prunes_byte_parity_with_cli_maintain(
+    scrolls_home, capsys
+):
+    # roadmap H361: MCP `run_maintenance`'s `duplicate_prunes` equals CLI
+    # `maintain --no-recheck`'s member-for-member (same content_hash/keep/prune/
+    # command per group) over one library holding two byte-identical groups — the
+    # agent reads the EXACT prune guidance the operator sees.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    _, total_groups, _ = _seed_content_identity(db)
+    capsys.readouterr()
+
+    # the MCP maintenance pass (offline by default, H196) and the CLI pass over the
+    # same unchanged holdings — neither recheck nor the snapshot/log bookkeeping the
+    # MCP pass records touches the content-duplicate groups the block folds, so the
+    # block is identical regardless of pass order (a delta-independent surface).
+    mcp_prunes = mcp_server.run_maintenance()["duplicate_prunes"]
+    assert main(["maintain", "--no-recheck"]) == 0
+    cli_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+
+    # non-vacuous: the dual-shape fixture yields one prune entry per group (H356), so
+    # this is a real partition comparison, not an `[] == []` tautology the H196 whole-
+    # report guard reduces to on its duplicate-free fixture.
+    assert len(cli_prunes) == total_groups == 2
+    assert {entry["content_hash"] for entry in cli_prunes} == {"sha256:dupA", "sha256:dupB"}
+    assert all(
+        set(entry) == {"content_hash", "keep", "prune", "command"} for entry in cli_prunes
+    )
+
+    # the byte-parity claim: same keep/prune/command partition on both transports
+    assert mcp_prunes == cli_prunes
+
+
+def test_run_maintenance_duplicate_prunes_empty_on_a_clean_library(scrolls_home, capsys):
+    # roadmap H361: the honest-empty side of the parity — a library with no byte-
+    # identical holdings yields `[]` on BOTH transports (the H356 omit-when-clean
+    # discipline holds equally over MCP and CLI), so the agent and the operator agree
+    # there is nothing to prune.
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    # one content-bearing held item, in no duplicate group
+    insert_item(db, _item(
+        "web:solo", "A unique topic note",
+        extracted_text="solo body", raw_text="<raw>solo</raw>",
+        content_hash="sha256:solo", stage="rendered",
+    ))
+    capsys.readouterr()
+
+    mcp_prunes = mcp_server.run_maintenance()["duplicate_prunes"]
+    assert main(["maintain", "--no-recheck"]) == 0
+    cli_prunes = json.loads(capsys.readouterr().out)["duplicate_prunes"]
+
+    assert mcp_prunes == cli_prunes == []
+
+
 # --- the content-identity EXPORT round-trip family guard (roadmap H354) --------
 #
 # H332 above pins that the `content_duplicate_groups` fold reads identically across
