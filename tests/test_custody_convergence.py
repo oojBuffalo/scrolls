@@ -6862,7 +6862,8 @@ def test_context_drift_filter_partitions_the_facets_drift_aggregate(scrolls_home
 # `content_duplicate_items` scalars (H327), the readable `maintain` `_Duplicates:_`
 # headline (H327/H330), the per-item `show`/`get_scroll` `content_duplicate_ids`
 # siblings (H328), the work-level `works`/`get_works` `content_duplicate` flag
-# (H329), and the `export bundle` + `context` `_Duplicates:_` briefing lines (H331).
+# (H329), the `export bundle` + `context` `_Duplicates:_` briefing lines (H331), and
+# the per-`graph`-node `content_duplicate_ids` read (H343, the tenth surface).
 # Each leg *claims* convergence-by-construction — one fold, rendered or sliced many
 # ways — and that claim is pinned per-leg in scattered tests. This section pins it
 # ONCE, the content-identity analogue of `test_every_custody_surface_converges_on_
@@ -7041,6 +7042,20 @@ def test_every_content_identity_surface_converges_on_one_picture(scrolls_home, c
     assert headline in build_bundle(db, "topic")
     assert headline in build_context(db, "topic")
 
+    # --- 7. the `graph` per-node siblings reconstruct the groups (H343) ----------
+    # the relationship-graph node carries `content_duplicate_ids` beside its
+    # `fidelity`/`drift`; `--all` enumerates every item as a node (the established
+    # node-≡-item enumeration this guard uses), so the per-node siblings read at
+    # byte-parity with the per-item `show`, span the graph's components (the
+    # cross-source group B is two isolated nodes yet each names the other), and
+    # their union reconstructs exactly the whole-library groups.
+    assert main(["graph", "--all"]) == 0
+    graph_nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    graph_siblings = {nid: n["content_duplicate_ids"] for nid, n in graph_nodes.items()}
+    assert graph_siblings == cli_siblings  # graph node ≡ the per-item `show` read
+    assert _groups_from_per_item(graph_siblings) == expected_groups
+    assert graph_siblings["web:uniq"] == [] and graph_siblings["web:ref"] == []
+
 
 def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_home, capsys):
     # sabotage check (roadmap H332): dissolving the within-work byte-identical pair
@@ -7089,6 +7104,16 @@ def test_content_identity_convergence_moves_every_surface_in_lockstep(scrolls_ho
         siblings[item.id] = json.loads(capsys.readouterr().out)["content_duplicate_ids"]
     assert siblings["arxiv:w"] == [] and siblings["crossref:10.1000/x"] == []
     assert _groups_from_per_item(siblings) == {frozenset({"web:m1", "web:m2"})}
+
+    # the graph nodes fall in lockstep too (H343): re-hashing dropped the within-work
+    # pair from every per-node sibling list, leaving only the cross-source group
+    assert main(["graph", "--all"]) == 0
+    graph_siblings = {
+        n["id"]: n["content_duplicate_ids"]
+        for n in json.loads(capsys.readouterr().out)["nodes"]
+    }
+    assert graph_siblings == siblings  # graph node ≡ the per-item `show` read
+    assert _groups_from_per_item(graph_siblings) == {frozenset({"web:m1", "web:m2"})}
 
     # the work-level flag flips True → False (its forms no longer share bytes), while
     # the work is still reported — the honest within-work scope tracking the data

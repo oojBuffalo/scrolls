@@ -1584,6 +1584,50 @@ def test_get_link_graph_empty_library(scrolls_home):
     }
 
 
+def test_get_link_graph_nodes_carry_content_duplicate_ids_at_parity_with_cli(scrolls_home, capsys):
+    # roadmap H343: each MCP graph node carries `content_duplicate_ids` (its
+    # byte-identical siblings) beside the per-node `fidelity`/`drift`, reading
+    # byte-for-byte the same as the CLI `graph` payload (CLI + MCP share
+    # `graph.to_payload`) — so an agent walking the link graph over MCP sees a
+    # node's redundancy without a second `get_scroll`.
+    import json
+
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    # a byte-identical pair, both linked to a shared hub so all three are nodes
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A copy",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:dup",
+        stage="rendered", links=("https://ex.com/hub",)))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="A byte-identical copy",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:dup",
+        stage="rendered", links=("https://ex.com/hub",)))
+    insert_item(db, ScrollItem(
+        id="web:hub", source="web", url="https://ex.com/hub",
+        saved_at="2026-06-12T02:00:00+00:00", title="Hub",
+        extracted_text="other", raw_text="<raw>other</raw>", content_hash="sha256:hub",
+        stage="rendered"))
+
+    nodes = {n["id"]: n for n in mcp_server.get_link_graph()["nodes"]}
+    assert nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert nodes["web:b"]["content_duplicate_ids"] == ["web:a"]
+    assert nodes["web:hub"]["content_duplicate_ids"] == []  # unique content
+
+    # byte-for-byte parity with the CLI `graph` payload (one fold, both surfaces)
+    capsys.readouterr()
+    assert main(["graph"]) == 0
+    cli_nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert {nid: n["content_duplicate_ids"] for nid, n in nodes.items()} == {
+        nid: n["content_duplicate_ids"] for nid, n in cli_nodes.items()
+    }
+
+
 def test_get_link_graph_custody_carries_the_weakest_source_flag(scrolls_home):
     # roadmap H164: the weakest-source `attention` flag rides MCP `get_link_graph`
     # for free (CLI + MCP share `graph.to_payload`), and names the same source the

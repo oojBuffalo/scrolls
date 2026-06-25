@@ -201,6 +201,85 @@ def test_graph_node_last_checked_matches_the_related_and_list_surfaces(db, capsy
     assert list_rows["arxiv:2605.27848"]["last_checked"] == ts
 
 
+def test_graph_nodes_carry_their_content_duplicate_siblings(db, capsys):
+    # the node shape carries the per-item content-identity axis too (H343): the
+    # *other* held ids byte-identical to this one, beside the fidelity/drift it
+    # already rides. A byte-identical pair (same content_hash, distinct ids/urls)
+    # plus a unique hub; each member of the pair names the other, the hub names none.
+    insert_item(db, make_item(
+        "web:a", content_hash="sha256:dup",
+        links=("https://example.org/web:hub",)))
+    insert_item(db, make_item(
+        "web:b", content_hash="sha256:dup",
+        links=("https://example.org/web:hub",)))
+    insert_item(db, make_item("web:hub", content_hash="sha256:unique"))
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert nodes["web:b"]["content_duplicate_ids"] == ["web:a"]
+    assert nodes["web:hub"]["content_duplicate_ids"] == []  # unique content
+
+
+def test_graph_unique_and_null_hash_nodes_have_no_content_duplicate_ids(db, capsys):
+    # the always-present derived axis is the honest empty `[]` for a uniquely-held
+    # item and for a reference-only item carrying no content_hash at all (the H325
+    # NULL-skip), the same posture fidelity/drift hold on a bare node.
+    insert_item(db, make_item(
+        "web:has-content", content_hash="sha256:solo",
+        links=("https://example.org/web:ref",)))
+    insert_item(db, make_item("web:ref"))  # reference only: no content_hash
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert nodes["web:has-content"]["content_duplicate_ids"] == []  # unique hash
+    assert nodes["web:ref"]["content_duplicate_ids"] == []  # NULL hash, nothing held
+
+
+def test_graph_node_content_duplicate_ids_matches_the_show_surface(db, capsys):
+    # per-item parity for the content-identity axis: a given item names the same
+    # byte-identical siblings whether reached as a graph node or inspected with
+    # `show` (the H328 read), the H56/H86 convergence invariant on the new axis.
+    insert_item(db, make_item(
+        "web:a", content_hash="sha256:dup",
+        links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b", content_hash="sha256:dup"))
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    graph_nodes = {n["id"]: n for n in json.loads(capsys.readouterr().out)["nodes"]}
+    assert main(["show", "web:a"]) == 0
+    show = json.loads(capsys.readouterr().out)
+
+    assert graph_nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert graph_nodes["web:a"]["content_duplicate_ids"] == show["content_duplicate_ids"]
+
+
+def test_graph_cross_component_content_duplicate_sibling_named(db, capsys):
+    # a content group spans the graph's components (the H328 cross-source/whole-
+    # scope rule): two byte-identical items linked into *different* clusters still
+    # name each other as content siblings, distinct from the edge structure.
+    insert_item(db, make_item(
+        "web:a", content_hash="sha256:dup",
+        links=("https://example.org/web:x",)))
+    insert_item(db, make_item("web:x"))  # a's cluster
+    insert_item(db, make_item(
+        "web:b", content_hash="sha256:dup",
+        links=("https://example.org/web:y",)))
+    insert_item(db, make_item("web:y"))  # b's cluster
+    capsys.readouterr()
+
+    assert main(["graph"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    nodes = {n["id"]: n for n in payload["nodes"]}
+    # two separate clusters, no edge joins a↔b, yet each names the other's bytes
+    assert payload["stats"]["clusters"] == 2
+    assert nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert nodes["web:b"]["content_duplicate_ids"] == ["web:a"]
+
+
 def test_only_connected_items_are_nodes_by_default(db):
     insert_item(db, make_item(
         "x:1111",

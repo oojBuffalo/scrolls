@@ -4726,14 +4726,20 @@ a preprint's published DOI), with `via` the link that matched. Resolution
 is the same two-sided, source-detecting match `related` uses (ADR 0023),
 so the graph is exactly the connections `related` would find, materialized
 at once. Nodes carry the `id`, `source`, `title`, `url`, `stage`, `fidelity`,
-`drift`, `last_checked` shape `related` hits use — the full per-item custody
+`drift`, `last_checked`, `content_duplicate_ids` shape — the full per-item custody
 picture travels with the node: the `fidelity` tier (how much is held, ADR 0100),
 the `drift` posture (whether the source moved, roadmap H56, read from the verify
-ledger), and `last_checked` (*when* that posture was taken, or `null` when never
-re-checked, roadmap H86) — the same three fields a `related` hit and the browse
-rows carry, read through the same `custody.drift_posture`/`custody.last_checked`
-over `latest_events`, so a node reads the same wherever it is reached. Sorted by
-id; edges sorted by `(from, to)`.
+ledger), `last_checked` (*when* that posture was taken, or `null` when never
+re-checked, roadmap H86), and `content_duplicate_ids` (the *other* held ids
+byte-identical to this node — its `content_hash` siblings, `[]` when uniquely held
+or holding no content, roadmap H343) — the same custody picture a `related` hit,
+`show`/`get_scroll`, and the browse rows carry, read through the same
+`custody.drift_posture`/`custody.last_checked` over `latest_events` plus the
+whole-scope `items.content_duplicate_index` fold (computed once, not per node), so
+a node reads the same wherever it is reached and an agent walking the graph sees a
+node's redundancy without a second `show`. The content-identity axis is
+**report-only** — a node names its byte-identical twins, never a merge (raw is
+sacred). Sorted by id; edges sorted by `(from, to)`.
 
 Nodes are the *connected* items by default — `--all` widens it to every
 item, isolated ones included. `stats.items` is always the library total,
@@ -4783,7 +4789,7 @@ pinned in `test_graph_attention_converges_with_status_maintain_and_doctor`.
 
 ```console
 $ scrolls graph
-{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00"}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null}}}
+{"nodes": [{"id": "arxiv:1706.03762", "source": "arxiv", "title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762", "stage": "rendered", "fidelity": "full", "drift": "verified", "last_checked": "2026-06-14T00:00:00+00:00", "content_duplicate_ids": []}, {"id": "x:2222", "source": "x", "title": "@karpathy: the attention paper still holds up", "url": "https://x.com/karpathy/status/2222", "stage": "rendered", "fidelity": "full", "drift": "unverified", "last_checked": null, "content_duplicate_ids": []}], "edges": [{"from": "x:2222", "to": "arxiv:1706.03762", "via": "https://arxiv.org/abs/1706.03762"}], "stats": {"items": 2, "nodes": 2, "edges": 1, "clusters": 1, "custody": {"tiers": {"full": 2, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "by_source": {"arxiv": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 1, "unverified": 0, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 1, "total": 1}}, "x": {"tiers": {"full": 1, "partial": 0, "reference": 0}, "drift": {"verified": 0, "unverified": 1, "drifted": 0, "rotted": 0, "error": 0}, "coverage": {"verified": 0, "total": 1}}}, "attention": null}}}
 [exit 0]
 ```
 

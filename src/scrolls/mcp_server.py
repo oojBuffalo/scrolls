@@ -504,7 +504,11 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     `include_isolated` widens it to every item; `stats.items` is the library
     total. Each node carries its custody `fidelity` tier (full/partial/
     reference, ADR 0097), the same tier get_related_scrolls reports, so a node
-    says how much of the item the library holds. `stats.custody` summarises how
+    says how much of the item the library holds, plus its `drift` posture,
+    `last_checked` timestamp, and `content_duplicate_ids` (the *other* held ids
+    byte-identical to it, the per-node form of get_scroll's read, empty when
+    unique — roadmap H343), so an agent walking the graph sees a node's
+    redundancy in place. `stats.custody` summarises how
     custody stands across the whole `stats.items` scope — fidelity-tier and
     drift-posture counts (the same tally doctor/facets/the headlines report), so
     the graph's custody totals converge with them for the scope. `stats.custody.

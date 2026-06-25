@@ -36,7 +36,13 @@ from scrolls.custody import (
     last_checked,
     weakest_source,
 )
-from scrolls.items import ScrollItem, get_fidelity, list_items, make_item_id
+from scrolls.items import (
+    ScrollItem,
+    content_duplicate_index,
+    get_fidelity,
+    list_items,
+    make_item_id,
+)
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
 
@@ -63,11 +69,13 @@ class Node:
     it the library holds — the same tier `scrolls related` carries, keeping the
     two shapes identical now that fidelity travels with related hits. The
     item-intrinsic fields live on the node; the per-node custody **drift posture**
-    and **last_checked** timestamp (which need the verify ledger) are added in
-    `to_payload` from the `verdicts` it is passed (roadmap H56/H86), so the node
-    shape an agent reads carries the full per-item custody picture — *how much*
-    (fidelity), *whether the source moved* (drift), and *as of when* (last_checked)
-    — without coupling graph building to the ledger.
+    and **last_checked** timestamp (which need the verify ledger) and the
+    **content_duplicate_ids** siblings (which need the whole-scope content fold) are
+    added in `to_payload` (roadmap H56/H86/H343), so the node shape an agent reads
+    carries the full per-item custody picture — *how much* (fidelity), *whether the
+    source moved* (drift), *as of when* (last_checked), and *what else holds the same
+    bytes* (content_duplicate_ids) — without coupling graph building to the ledger
+    or re-grouping per node.
     """
 
     id: str
@@ -225,6 +233,17 @@ def to_payload(
     rows (`list`/`search`/`show`) and `related` hits report. The per-item parity
     counterpart of the scope-level `stats.custody` convergence.
 
+    Each node also carries `content_duplicate_ids` (roadmap H343) — the *other*
+    held ids byte-identical to it (its `content_hash` siblings, `[]` when unique or
+    NULL-hash), the per-node form of the `show`/`get_scroll` read (H328) and the
+    compiled "also held as" marker (H333). Folded once over the whole `stats.items`
+    scope via `content_duplicate_index` (not a per-node O(n²) re-group, the H333
+    compile precedent), so the sibling scope spans the graph's components — an agent
+    walking the relationship graph sees a node's redundancy in place. It converges
+    with the per-item `show`/`get_scroll` read by construction (both read the same
+    H325 groups), the tenth surface of the H332 cross-surface guard. Report-only —
+    a node names its byte-identical twins, never a merge command (raw is sacred).
+
     `stats.custody` is the graph-surface member of the custody-headline family
     (roadmap H52): the shared `custody.custody_counts` tally — fidelity-tier and
     drift-posture counts — over the *whole* `stats.items` scope (not just the
@@ -271,6 +290,16 @@ def to_payload(
     custody = custody_counts(scope, verdicts)
     custody["by_source"] = custody_counts_by_source(scope, verdicts)
     custody["attention"] = weakest_source(custody["by_source"])
+    # The per-item content-identity siblings (roadmap H343): each node's *other*
+    # held ids byte-identical to it, the per-node form of the `show`/`get_scroll`
+    # `content_duplicate_ids` read (H328) beside the per-node `fidelity`/`drift`.
+    # Folded once over the whole `scope` (the same `stats.custody` scope, not a
+    # per-node O(n²) re-group), so a content group spans the graph's components —
+    # an agent walking the relationship graph sees a node's redundancy without a
+    # second `show`. A missing id reads as the honest empty `[]` (unique / NULL
+    # hash, the H325 skip), the always-present derived-axis posture `fidelity`/
+    # `drift` hold. Report-only, names no command (raw is sacred).
+    dup_index = content_duplicate_index(scope)
     return {
         "nodes": [
             {
@@ -282,6 +311,7 @@ def to_payload(
                 "fidelity": node.fidelity,
                 "drift": drift_posture(verdicts.get(node.id)),
                 "last_checked": last_checked(verdicts.get(node.id)),
+                "content_duplicate_ids": dup_index.get(node.id, []),
             }
             for node in graph.nodes
         ],
