@@ -242,6 +242,13 @@ def run_doctor(
                 "total_groups": 0,
                 "total_items": 0,
             },
+            # The whole-library custody **posture** verdict (custody-vision §3.1) —
+            # the single "is the library in good custody?" read distilled from the
+            # blocks above by `_assess_custody_posture` after every check runs. The
+            # skeleton default is the honest verdict for a library with nothing to lose:
+            # an uninitialized/missing library (the early return below) is empty, hence
+            # `sound` with no contributing `reasons`.
+            "posture": {"verdict": "sound", "reasons": []},
         },
     }
     if not paths.db_path.exists():
@@ -267,6 +274,7 @@ def run_doctor(
     _check_custody_conflicts(paths, report, items)
     _check_enrichment_provenance(report, items)
     _check_summary_provenance(paths, report, items)
+    _assess_custody_posture(report)
     return report
 
 
@@ -496,6 +504,81 @@ def _check_custody_integrity(
     total = len(items)
     clean = total - custody["issues"]
     custody["score"] = 100 if total == 0 else round(100 * clean / total)
+
+
+# The custody dimensions that, when present, contribute to the posture verdict —
+# each `(reason, band, read)` naming the stable reason slug, its severity band, and
+# the pure read off the custody block that fires it. Order is fixed and severity-
+# descending (hard before soft), so `reasons` always lists contributors worst-first.
+_POSTURE_AXES = (
+    # HARD losses → at_risk: custody is actually compromised.
+    ("custody_integrity", "hard", lambda c: c["issues"] > 0),
+    ("at_risk_works", "hard", lambda c: c["works"]["at_risk"] > 0),
+    ("archive_integrity", "hard", lambda c: c["archive"]["mismatched"] > 0),
+    # SOFT concerns → attention: a decision is wanted, but nothing is lost.
+    ("open_conflicts", "soft", lambda c: c["conflicts"]["items"] > 0),
+    ("source_drift", "soft",
+     lambda c: c["drift"]["drifted"] > 0 or c["drift"]["rotted"] > 0),
+)
+
+
+def _assess_custody_posture(report: dict) -> None:
+    """Distil the custody sub-blocks into one whole-library posture (custody-vision §3.1).
+
+    The "categorized breakdown → single verdict" the vision calls for: an agent asks
+    *"is the library in good custody?"* once instead of cross-referencing seven blocks.
+    A **deterministic fold** over the report `run_doctor` has already produced — no
+    network, no new judgment, rebuildable from the same blocks — so it asserts nothing
+    integrity (§2.8) doesn't already verify; it only *summarises* verified findings, and
+    `reasons` keeps it explainable, never a black box (§2.6).
+
+    The three bands are grounded in the codebase's own severity distinctions:
+
+    - ``at_risk`` — a **hard** custody loss is present: a custody integrity finding
+      (`custody.issues > 0` — a fingerprint we can't reproduce, a missing scroll/
+      provenance), an at-risk work (`custody.works.at_risk` — every representation
+      degraded or moved), or an archive-integrity mismatch (`custody.archive.mismatched`
+      — a tamper alarm whose restore would adopt content under a different hash than
+      advertised). These mean custody is *actually compromised*.
+    - ``attention`` — no hard loss, but a **soft** concern wants a decision: an open
+      import conflict (`custody.conflicts.items` — a peer's capture disagreed; reconcile
+      it) or source drift (`custody.drift.drifted/rotted` — the live source moved;
+      recapture may be warranted).
+    - ``sound`` — none of the above: every held copy faithful, re-derivable, provenance-
+      complete, unmoved, undisputed, untampered.
+
+    Two deliberate exclusions:
+
+    - **Drift never reaches ``at_risk``** (it is ``attention``) and never lowers the
+      integrity `score`. This is the §3.8 dogfood invariant lifted to the verdict:
+      *detecting* that a source drifted moves the **posture**, not the integrity score —
+      raw is sacred, drift is a recorded *event*, not a defect (§2.4).
+    - **Content duplicates are excluded entirely.** Byte-identical holdings under
+      different ids are a redundancy *fact*, never a defect (H325) — holding two faithful
+      copies is honest custody, so a content-duplicate-only library stays ``sound``.
+
+    `verdict` is the **worst** band any axis fires (hard wins over soft); `reasons` lists
+    **every** contributing axis in fixed severity order (hard before soft), so an agent
+    triaging an ``at_risk`` library sees the whole picture, not only the worst axis.
+
+    Scope honesty (the same the sub-blocks carry): under `doctor --source` the whole-
+    library alarms `at_risk_works`/`archive_integrity` are `status: "skipped"` (a work
+    spans sources; the archive is one whole-library store), so they contribute nothing
+    and a scoped posture reflects only the source-attributable axes — integrity, drift,
+    conflicts. A whole-library verdict therefore requires a whole-library run, exactly
+    as those alarms already do. A missing/uninitialized library keeps the skeleton
+    default `sound` (empty, hence healthy — the `run_doctor` contract).
+    """
+    custody = report["custody"]
+    reasons = [name for name, _band, fires in _POSTURE_AXES if fires(custody)]
+    hard = [name for name, band, fires in _POSTURE_AXES if band == "hard" and fires(custody)]
+    if hard:
+        verdict = "at_risk"
+    elif reasons:
+        verdict = "attention"
+    else:
+        verdict = "sound"
+    custody["posture"] = {"verdict": verdict, "reasons": reasons}
 
 
 def _check_custody_drift(

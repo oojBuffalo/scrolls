@@ -2728,6 +2728,33 @@ def test_get_library_health_carries_the_archive_integrity_block(scrolls_home):
     assert health == run_doctor(get_paths())["custody"]["archive"]
 
 
+def test_get_library_health_carries_the_custody_posture(scrolls_home):
+    """H369: the whole-library custody posture verdict (`custody.posture`,
+    custody-vision §3.1) rides the MCP `get_library_health` twin for free (the tool
+    returns `run_doctor`'s whole custody block), so an agent operating purely over MCP
+    reads the single "is the library in good custody?" verdict in one field instead of
+    cross-referencing seven blocks — and it converges with the CLI `doctor` by
+    construction."""
+    from scrolls.custody import conflict_event, record_events
+    from scrolls.doctor import run_doctor
+
+    # a clean rendered holding → sound
+    _seed_verifiable_item(content_hash="sha256:held")
+    assert mcp_server.get_library_health()["posture"] == {
+        "verdict": "sound", "reasons": []}
+
+    # an unresolved import conflict is a soft concern → attention (the integrity score
+    # is untouched — a peer disagreement is not our drift, M2)
+    record_events(get_paths().db_path, [conflict_event(
+        "web:demo", held_hash="sha256:held", incoming_hash="sha256:peer",
+        now="2026-06-22T00:00:00+00:00")])
+    health = mcp_server.get_library_health()
+    assert health["posture"] == {"verdict": "attention", "reasons": ["open_conflicts"]}
+    assert health["score"] == 100
+    # converges field-for-field with the CLI doctor (the audit-twin guarantee)
+    assert health["posture"] == run_doctor(get_paths())["custody"]["posture"]
+
+
 def _seed_string_twin_pages(db):
     """A rendered, concept- and tag-bearing pair so a compiled library has a
     concept page and a tag page for the string twins to serve.

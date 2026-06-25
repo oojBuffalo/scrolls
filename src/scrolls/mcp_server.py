@@ -94,7 +94,8 @@ _INSTRUCTIONS = (
     "get_concept_page (or get_tag_page) to follow connections, get_link_graph "
     "for the whole "
     "library's link structure at once, get_library_health for the "
-    "whole-library custody audit (score, fidelity tiers, drift, and which "
+    "whole-library custody audit (the sound/attention/at_risk posture verdict, "
+    "score, fidelity tiers, drift, and which "
     "source needs attention), list_archived/get_archived to read the "
     "prior-content recovery store (what an accept-incoming adoption superseded, "
     "and the recoverable prior snapshot), "
@@ -874,10 +875,15 @@ def get_library_health(source: str | None = None) -> dict[str, Any]:
     (full/partial/reference), the `drift` posture counts (with `coverage`
     `{verified, total}` and the recent `events`), the per-source `by_source` map
     (`{source: {tiers, drift, coverage}}`, the same split `status`/`doctor` carry),
-    and the `enrichment`/`summaries` re-derivability blocks — plus two distilled
-    members `status` adds: the weakest-source `attention` flag (the one source
-    carrying the most actionable loss, with its `{source, tiers, drift, coverage,
-    reason, command}`, or `null` when none stands out) and the one-line `headline`.
+    the `works`/`archive`/`conflicts`/`content_duplicates` custody blocks, the
+    `enrichment`/`summaries` re-derivability blocks, and the whole-library custody
+    `posture` (`{verdict: sound|attention|at_risk, reasons}`, custody-vision §3.1) —
+    the single "is the library in good custody?" verdict distilled from those blocks,
+    so an agent reads it in one field instead of cross-referencing all of them — plus
+    two distilled members `status` adds: the weakest-source `attention` flag (the one
+    source carrying the most actionable loss, with its `{source, tiers, drift,
+    coverage, reason, command}`, or `null` when none stands out) and the one-line
+    `headline`.
 
     `source` scopes the *whole* read to one source's held items (roadmap H167) —
     the MCP sibling of the CLI `doctor --source` (H162) / `status --source` (H166)

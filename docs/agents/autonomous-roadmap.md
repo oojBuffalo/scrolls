@@ -1672,6 +1672,59 @@ preconditions are shipped), finish it to a committed/tested/clean stopping
 point, and stop. `→ capN` marks the PRD capability. These are the un-started
 **work** slices; the next checkpoint (H256) follows.
 
+> **⚠ Maintenance debt (flag for the next full-refresh run, 2026-06-25).** This file is
+> **~632 KB — 2.4× the ~256 KB Read-tool ceiling** (maintenance-rule §6; the H187 lesson
+> triggered at 370 KB), so it can no longer be read in one call. The bloat is the
+> ~1.6 K-line **Status snapshot** + this ~900-line queue preamble, which have re-accreted
+> into a per-slice changelog (maintenance-rule §4: *git is the changelog*). The next
+> once-per-24h full refresh **must re-compact**: fold the SHIPPED rows still sitting in
+> this "un-started" section (H334–H362, and H369 below) into the **Shipped ledger**,
+> collapse the snapshot prose to a compact current-state summary, and prune the stale
+> queue preamble. This run shipped a capability (H369) + this flag rather than attempt the
+> risky full rewrite as a bundled secondary task.
+
+> **H369 — SHIPPED 2026-06-25 — opens the *custody-posture* theme (custody-vision §3.1,
+> ADR 0107).** `doctor`'s `custody.posture` distils the seven custody audit blocks into
+> one whole-library verdict — `{verdict: sound|attention|at_risk, reasons}` — the single
+> *"is this library in good custody?"* read the vision §3.1 calls for ("a custody score
+> with a categorized breakdown"), so an agent reads it in one field instead of weighing
+> seven blocks. A **deterministic fold** over the report `run_doctor` already produced
+> (`_assess_custody_posture`, no network/no new data): `at_risk` on a **hard** loss (a
+> custody integrity finding, an at-risk work, an archive tamper), `attention` on a
+> **soft** concern (an open conflict, source drift), else `sound`; `verdict` = the worst
+> band, `reasons` lists every contributor worst-first (axes declared once in
+> `_POSTURE_AXES`). **Drift is `attention`, never `at_risk`, and never lowers the
+> integrity `score`** (the §3.8 dogfood invariant lifted to the verdict); **content
+> duplicates contribute nothing** (H325, a redundancy fact never a defect). Scope honesty
+> mirrors the folded blocks (under `--source` the whole-library alarms skip → only
+> source-attributable axes count); report-only (never `issues`/`fixed`/the exit code). The
+> MCP `get_library_health` twin carries it for free (the `{**custody}` spread → byte-parity
+> with CLI `doctor`). **Surface taken off-queue** (the planned H363–H368 forward-hardening
+> guards stay un-started below; this took the next free number) because it is a genuine
+> §3.1 capability, not another correct-by-construction guard. 14 tests (`tests/test_doctor.py`
+> ×13 + `tests/test_mcp.py` ×1) + 1 full-block keyset update + ADR 0107 + the
+> `get_library_health` docstring/tool-description. Suite **4143 passed**. → cap 1, cap 7.
+>
+> **Custody-posture theme — remaining legs (un-started, the `fidelity`/`drift`
+> surface-propagation precedent; preconditions H369):**
+> - **H370 — the readable `_Posture:_` headline on `maintain` + the `scrolls status`
+>   scalar twin.** `custody_snapshot` gains a `posture` scalar (the `archive_mismatched`
+>   precedent — status carries the machine value, maintain renders the line), and a
+>   `posture_headline(verdict, reasons)` renders ``_Posture: at_risk (custody_integrity,
+>   source_drift)._`` from the *same* `custody.posture` fold `doctor` audits. Omit-when-
+>   `sound`? **No** — unlike the other headlines this names the *whole-library* verdict, so
+>   render it always (the one line that says "all clear" has value); resolve in the slice.
+>   → cap 1, cap 7.
+> - **H371 — the `_Posture:_` briefing line on `export bundle` + `scrolls context`.** The
+>   shareable-briefing leg (the H277 `_Conflicts:_` / H298 `_Archive:_` precedent), so a
+>   custody verdict travels with a shared bundle. → cap 9, cap 1.
+> - **H372 — the cross-run posture-movement clause** (`sound → attention`, etc.), the
+>   `at_risk`/`conflicts` trend precedent (`compute_delta`/`compute_trend`), reported never
+>   a posture trigger. Precondition: H370 (the snapshot scalar to difference). → cap 1, cap 7.
+> - **H373 — the cross-surface posture convergence guard** — `status.custody.posture` ≡
+>   `doctor.custody.posture` ≡ the `maintain` headline ≡ MCP, the H367 boot↔audit precedent
+>   on the posture axis (test-only). Precondition: H370/H371. → cap 1, cap 7.
+
 **The horizon, re-derived at this H218 checkpoint (2026-06-21), advanced through
 H264 (the consolidation theme H261–H263 closed; H264 completed the at-risk alarm's
 readable side).** Two themes that ran the last ~50 slices are now *closed*: the

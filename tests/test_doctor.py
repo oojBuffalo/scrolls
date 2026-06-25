@@ -18,7 +18,7 @@ from dataclasses import replace
 import pytest
 
 from scrolls.cli import main
-from scrolls.custody import CustodyEvent, record_events
+from scrolls.custody import conflict_event, CustodyEvent, record_events
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
 from scrolls.items import (
@@ -1063,6 +1063,11 @@ def test_doctor_cli_emits_the_custody_report(paths, capsys):
             # one item → no content_hash is shared across ids, so the redundancy
             # report is computed (status ok) and flags no group (H325)
             "status": "ok", "groups": [], "total_groups": 0, "total_items": 0,
+        },
+        "posture": {
+            # every block above is clean → the whole-library custody verdict is
+            # sound, no contributing reasons (custody-vision §3.1, H369)
+            "verdict": "sound", "reasons": [],
         },
     }
 
@@ -2494,3 +2499,158 @@ def test_fix_never_merges_a_content_identity_duplicate(paths):
     # repairable issues/fixed tallies or the exit code (H325 report-only discipline)
     assert report["issues"] == 1
     assert report["fixed"] == 1
+
+
+# --- whole-library custody posture verdict (custody-vision §3.1, roadmap H369) ---
+#
+# `custody.posture` distils the already-computed custody sub-blocks into one
+# whole-library verdict — `sound` / `attention` / `at_risk` — plus the contributing
+# `reasons`, so an agent reads "is the library in good custody?" in a single field
+# instead of cross-referencing seven blocks. A deterministic fold over the report
+# `run_doctor` already produced (no network, no new judgment): the severity bands are
+# grounded in the codebase's own distinctions — a HARD loss (an integrity finding, an
+# at-risk work, an archive-integrity mismatch) is `at_risk`; a SOFT concern needing a
+# decision (an open import conflict, source drift) is `attention`; otherwise `sound`.
+
+
+def test_clean_library_posture_is_sound(paths):
+    # a single full-fidelity, re-derivable holding with no losses anywhere → sound,
+    # the empty reasons list (nothing contributes).
+    _rendered(paths, _web_item("https://example.com/post", fetched=True,
+                               extracted_text="full body", content_hash="sha256:123"))
+    posture = run_doctor(paths)["custody"]["posture"]
+    assert posture == {"verdict": "sound", "reasons": []}
+
+
+def test_empty_library_posture_is_sound(paths):
+    # an initialized but empty library holds nothing to lose → the honest sound verdict
+    posture = run_doctor(paths)["custody"]["posture"]
+    assert posture == {"verdict": "sound", "reasons": []}
+
+
+def test_uninitialized_library_posture_is_sound(scrolls_home):
+    # no database → run_doctor returns early; the posture stays at its honest skeleton
+    # default (a missing library is empty, hence healthy — the run_doctor contract)
+    posture = run_doctor(get_paths())["custody"]["posture"]
+    assert posture == {"verdict": "sound", "reasons": []}
+
+
+def test_integrity_finding_makes_posture_at_risk(paths):
+    # a stored content_hash with neither raw nor extracted text to reproduce it is a
+    # hard custody loss (we hold a fingerprint of content we can no longer verify) —
+    # `custody.issues > 0` drives the posture to at_risk with the integrity reason.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/ghost", content_hash="sha256:orphan"))
+    custody = run_doctor(paths)["custody"]
+    assert custody["issues"] == 1
+    assert custody["posture"] == {"verdict": "at_risk", "reasons": ["custody_integrity"]}
+
+
+def test_at_risk_works_make_posture_at_risk(paths):
+    # a work no representation safely holds (every copy degraded or moved) is a
+    # consolidation-level hard loss → at_risk. The seed also drifts one rep, so the
+    # softer source_drift reason rides along beneath the hard at_risk_works one.
+    _seed_works_custody_mix(paths)
+    posture = run_doctor(paths)["custody"]["posture"]
+    assert posture["verdict"] == "at_risk"
+    assert "at_risk_works" in posture["reasons"]
+
+
+def test_archive_mismatch_makes_posture_at_risk(paths):
+    # a corrupt recovery row whose advertised prior_hash no longer equals its
+    # snapshot body's content_hash is an un-launderable tamper alarm — a hard loss
+    # (restore would adopt content under a different hash than advertised) → at_risk.
+    item_id = _seed_archived_prior(paths)
+    _tamper_archive(paths.db_path, item_id, prior_hash="sha256:tampered")
+    custody = run_doctor(paths)["custody"]
+    assert custody["archive"]["mismatched"] == 1
+    assert custody["posture"] == {"verdict": "at_risk", "reasons": ["archive_integrity"]}
+
+
+def test_open_conflict_makes_posture_attention(paths):
+    # an unresolved import conflict (a peer's capture disagreed with the held copy) is
+    # a soft concern needing a reconcile decision, not a custody loss — attention, and
+    # it never lowers the integrity score (a peer disagreement is not our drift, M2).
+    held = _web_item("https://example.com/post", fetched=True, content_hash="sha256:held")
+    insert_item(paths.db_path, held)
+    record_events(paths.db_path, [conflict_event(
+        held.id, held_hash="sha256:held", incoming_hash="sha256:peer",
+        now="2026-06-22T00:00:00+00:00")])
+    custody = run_doctor(paths)["custody"]
+    assert custody["conflicts"]["items"] == 1
+    assert custody["score"] == 100  # the conflict is not an integrity defect
+    assert custody["posture"] == {"verdict": "attention", "reasons": ["open_conflicts"]}
+
+
+def test_source_drift_makes_posture_attention_not_the_integrity_score(paths):
+    # the §3.8 dogfood invariant, lifted to the posture verdict: detecting that a
+    # source drifted moves the *posture* (sound → attention, a recapture decision)
+    # WITHOUT lowering the *integrity score* — raw is sacred, drift is a recorded
+    # event, not a defect. Drift is a soft concern, never the hard at_risk band.
+    held = _web_item("https://example.com/post", fetched=True,
+                     extracted_text="body", content_hash="sha256:old")
+    insert_item(paths.db_path, held)
+    record_events(paths.db_path, [CustodyEvent(
+        item_id=held.id, checked_at="2026-06-20T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:old", observed_hash="sha256:new")])
+    custody = run_doctor(paths)["custody"]
+    assert custody["drift"]["drifted"] == 1
+    assert custody["score"] == 100  # drift moves posture, never the integrity score
+    assert custody["posture"] == {"verdict": "attention", "reasons": ["source_drift"]}
+
+
+def test_content_duplicates_alone_keep_posture_sound(paths):
+    # byte-identical holdings under different ids are a redundancy *fact*, never a
+    # defect (H325): holding two faithful copies is honest custody. They are excluded
+    # from the posture entirely — a content-duplicate-only library stays sound.
+    _content_pair(paths)
+    custody = run_doctor(paths)["custody"]
+    assert custody["content_duplicates"]["total_groups"] == 1
+    assert custody["posture"] == {"verdict": "sound", "reasons": []}
+
+
+def test_posture_lists_every_contributing_reason_worst_band_wins(paths):
+    # a hard loss and a soft concern at once: the verdict is the worst band (at_risk),
+    # but reasons names *both* contributors in fixed severity order (hard before soft),
+    # so an agent triaging an at_risk library sees the whole picture, not just the worst.
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/ghost", content_hash="sha256:orphan"))  # integrity finding
+    drifted = _web_item("https://example.com/moved", fetched=True,
+                        extracted_text="body", content_hash="sha256:old")
+    insert_item(paths.db_path, drifted)
+    record_events(paths.db_path, [CustodyEvent(
+        item_id=drifted.id, checked_at="2026-06-20T00:00:00+00:00",
+        status="drifted", prior_hash="sha256:old", observed_hash="sha256:new")])
+    posture = run_doctor(paths)["custody"]["posture"]
+    assert posture == {
+        "verdict": "at_risk", "reasons": ["custody_integrity", "source_drift"]}
+
+
+def test_posture_never_feeds_issues_or_the_exit_code(paths):
+    # like every custody report block, the posture is a triage signal, never the
+    # repairable structural issues or doctor's exit code — an at_risk posture from an
+    # upstream loss doctor cannot fix still exits 0 (no structural drift to repair).
+    insert_item(paths.db_path, _web_item(
+        "https://example.com/ghost", content_hash="sha256:orphan"))
+    report = run_doctor(paths)
+    assert report["custody"]["posture"]["verdict"] == "at_risk"
+    assert report["issues"] == 0
+    assert main(["doctor"]) == 0
+
+
+def test_scoped_posture_reflects_only_source_attributable_axes(paths):
+    # under --source the whole-library alarms (at-risk works, archive integrity) are
+    # skipped — not source-attributable — so a scoped posture reflects only the
+    # source-attributable axes (integrity, drift, conflicts). A tampered archive (a
+    # whole-library store) is invisible to a scoped audit, so the scoped posture over
+    # an otherwise-clean source reads sound, the same scope honesty those blocks carry.
+    item_id = _seed_archived_prior(paths)  # held under "web"
+    _tamper_archive(paths.db_path, item_id, prior_hash="sha256:tampered")
+    insert_item(paths.db_path, _arxiv_item("clean"))  # an unrelated, clean source
+
+    whole = run_doctor(paths)["custody"]
+    assert whole["posture"]["verdict"] == "at_risk"  # the archive alarm fires unscoped
+
+    scoped = run_doctor(paths, source="arxiv")["custody"]
+    assert scoped["archive"]["status"] == "skipped"  # whole-library store not in scope
+    assert scoped["posture"] == {"verdict": "sound", "reasons": []}
