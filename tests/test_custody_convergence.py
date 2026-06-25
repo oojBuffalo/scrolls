@@ -7301,6 +7301,82 @@ def test_content_duplicate_browse_aggregate_surfaces_agree_on_one_count(scrolls_
     assert len(json.loads(capsys.readouterr().out)["works"]) == 0
 
 
+def test_content_duplicate_facet_partition_is_complete_across_every_facet_axis(
+    scrolls_home, capsys
+):
+    # roadmap H348: the partition-completeness companion to H346's count convergence.
+    # H346 pins the `duplicate` COUNT agrees across every browse/aggregate surface; this
+    # pins the *count-side partition invariant* — that `facets content-duplicate` is a
+    # TOTAL PARTITION of the held set: `duplicate` + `unique` sum to the held-item total,
+    # and that total is the SAME held total each OTHER derived facet axis (`fidelity`/
+    # `drift`/`method`) partitions. All four derived axes count over the same scoped rows
+    # (`SELECT … FROM items{where}`), so they cover one held set — content identity must
+    # never silently include or drop a row the others keep.
+    #
+    # The distinct failure mode this catches (and H346 would miss): a future edit that
+    # dropped NULL-hash reference rows from the content-duplicate fold — bucketing them
+    # NEITHER `duplicate` NOR `unique` — leaves the `duplicate` count (and every H346
+    # surface) untouched yet breaks the partition here. The held set is the universe the
+    # custody picture is responsible for; a row that falls out of every bucket is a row
+    # the library has quietly stopped accounting for.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_identity(db)  # 6 held: 4 in 2 groups, web:uniq, web:ref (NULL hash)
+    capsys.readouterr()
+
+    def axis(field, **scope):
+        return _facet_map(
+            compute_facets(db, field=field, limit=None, **scope)["facets"][field]
+        )
+
+    def partition_total(field, **scope):
+        return sum(axis(field, **scope).values())
+
+    DERIVED = ("fidelity", "drift", "method")
+
+    # whole library: content-duplicate partitions the 6 held items into duplicate=4
+    # (both groups) + unique=2 (web:uniq + the NULL-hash web:ref — the NULL-skip item is
+    # still a held member, bucketed `unique`, never dropped), and that 6 is the SAME held
+    # total each other derived axis partitions — one held set covered four ways.
+    cd = axis("content-duplicate")
+    assert cd == {"duplicate": 4, "unique": 2}
+    held_total = len(list_items(db))
+    assert held_total == 6
+    assert cd["duplicate"] + cd["unique"] == held_total
+    for field in DERIVED:
+        assert partition_total(field) == held_total  # one held set, four partitions
+
+    # per source: the partition stays complete under `--source` — web holds
+    # {m1, m2, uniq, ref} = 4 rows; m1/m2's sibling is within web so both count
+    # `duplicate`, uniq + the NULL-hash ref are `unique`, and the sum is still the whole
+    # scoped held set (the NULL-hash row is never dropped from the scoped count).
+    web_cd = axis("content-duplicate", source="web")
+    web_total = len(list_items(db, source="web"))
+    assert web_total == 4
+    assert web_cd == {"duplicate": 2, "unique": 2}
+    assert web_cd["duplicate"] + web_cd["unique"] == web_total
+    for field in DERIVED:
+        assert partition_total(field, source="web") == web_total
+
+    # --- sabotage (non-vacuity): re-hash one within-work member so group A dissolves.
+    # The partition's COMPLETENESS is invariant (still sums to 6) — only its SPLIT moves
+    # (duplicate 4 → 2, unique 2 → 4, the two former group-A members fall to unique). A
+    # guard that only watched the `duplicate` count (H346) tracks the split; this one
+    # tracks completeness, so a bug that silently dropped a row from the fold (changing
+    # the sum, not the split) survives H346 but fails here.
+    import dataclasses
+
+    crossref = next(it for it in list_items(db) if it.id == "crossref:10.1000/x")
+    assert update_item(db, dataclasses.replace(crossref, content_hash="sha256:distinct"))
+    capsys.readouterr()
+
+    cd = axis("content-duplicate")
+    assert cd == {"duplicate": 2, "unique": 4}  # arxiv:w + crossref now lone hashes
+    assert cd["duplicate"] + cd["unique"] == len(list_items(db)) == 6
+    for field in DERIVED:
+        assert partition_total(field) == 6  # completeness unchanged by the re-hash
+
+
 def _seed_rendered_content_identity(db):
     """A *rendered* library with a known byte-identical structure, for the compiled
     `library/` "also held as" marker (H333) to be parsed back off the pages.

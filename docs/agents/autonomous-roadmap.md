@@ -592,6 +592,35 @@ custody bundle (M4, ADR 0103), and the offline dogfood proof
   can run the existing prune flow (precondition H325 the `content_duplicate_groups` fold + H216 the import
   round-trip).** **Next:** H348 (the `facets content-duplicate` partition-completeness guard — duplicate +
   unique buckets sum to the held-item total, the count-side partition invariant).
+  **H348 (2026-06-25) shipped the partition-completeness guard** — the *count-side partition* companion to
+  H346's *count convergence*: one pinned test
+  (`test_content_duplicate_facet_partition_is_complete_across_every_facet_axis`, beside the H346/H332 ties)
+  that `facets content-duplicate` is a **total partition** of
+  the held set — `duplicate` + `unique` sum to the held-item total, and that total is the **same** held total
+  each *other* derived facet axis (`fidelity`/`drift`/`method`) partitions. All four derived axes count over
+  the same scoped rows (`SELECT … FROM items{where}`), so they cover one held set; the guard asserts content
+  identity never silently includes or drops a row the others keep. **The distinct failure mode it catches that
+  H346 misses:** a future edit that dropped NULL-hash reference rows from the content-duplicate fold (bucketing
+  them *neither* `duplicate` *nor* `unique`) leaves the `duplicate` count — and every H346 browse/aggregate
+  surface — untouched yet breaks the partition here (sabotage-verified: dropping the unique rows from
+  `_content_duplicate_counts` turns the guard red; the `duplicate`-count-only assertions stay green). Holds
+  **whole-library AND per-source** (the NULL-hash `web:ref` row is still bucketed `unique`, never dropped under
+  `--source web`), and a sabotage re-hash moves the partition's *split* (duplicate 4 → 2, unique 2 → 4) while
+  its *completeness* (sum = 6) is invariant — so the guard tracks completeness, not the split. Test-only, no
+  production change (every axis already partitions by construction; this makes the *family completeness*
+  regression-proof — the partition analogue of H346's count agreement). 1 test
+  (`tests/test_custody_convergence.py`). Suite **4071 passed**. Precondition: H342 (the `facets
+  content-duplicate` aggregate + its `duplicate`/`unique` partition), H346 (the count-convergence guard this
+  completes on the partition axis), H332 (the cross-surface convergence-guard home + the dual-shape fixture).
+  **With H348 the content-identity theme's read+relate+maintain+per-item+work+trend+briefing+convergence-guard+
+  rendered-per-item+compiled-index+MCP-trend-parity+bundle-round-trip+no-merge-guard+browse-filter+
+  rendered-marker-guard+dogfood-loop+export-filter+facets-aggregate+graph-node+work-consolidation-browse-filter+
+  context-browse-filter+unified-browse-aggregate-guard+partition-completeness-guard legs are shipped
+  (H325–H348); the open legs are the compiled group-page `_Duplicates:_` scope line (H349), the `related
+  --content-duplicate` relationship filter (H350), the compiled-surface content-identity dogfood loop (H351),
+  the `graph --content-duplicate` subgraph filter (H352), and the content-duplicate-on-import notice (H353).**
+  **Next:** H349 (the compiled group-page `_Duplicates:_` scope line — `kb._write_page` carries the
+  `_Custody:_` scope block but no `_Duplicates:_` line, a verified gap on the compiled group surface).
 
 - **cap 8 — re-derivable enrichment.** Classification *and* LLM concept
   summaries record inputs/method and regenerate on request:
