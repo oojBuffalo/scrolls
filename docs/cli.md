@@ -4741,7 +4741,7 @@ $ scrolls related x:2222 --limit 1 --stats
 [exit 0]
 ```
 
-### `scrolls graph [--all]`
+### `scrolls graph [--all] [--content-duplicate]`
 
 The whole-library link graph in one call (ADR 0044, `tests/test_graph.py`).
 Where `related` scores *one* item's neighborhood, this resolves *every*
@@ -4767,12 +4767,33 @@ node's redundancy without a second `show`. The content-identity axis is
 sacred). Sorted by id; edges sorted by `(from, to)`.
 
 Nodes are the *connected* items by default — `--all` widens it to every
-item, isolated ones included. `stats.items` is always the library total,
+item, isolated ones included. `stats.items` is the library total,
 so `nodes`/`edges` read as connectivity against the whole; `stats.clusters`
 counts the connected components with 2+ members — the link clusters the
 KB's `graph.md` page renders (ADR 0062), so a singleton added by `--all` is
 not counted (`test_cli_graph_stats_count_clusters`). An empty or
 uninitialized library is an empty graph, exit 0.
+
+`--content-duplicate` (roadmap H352) scopes the graph to nodes the library
+holds a **byte-identical copy of under another id** — those whose
+`content_duplicate_ids` is non-empty (the same whole-library
+`items.content_duplicate_index` `doctor`'s `custody.content_duplicates`
+counts) — the node-set analogue of `list --content-duplicate` lifted to the
+relationship graph. The subgraph is **induced**: an edge survives only when
+*both* its endpoints survive, so the result stays well-formed (no edge dangles
+at a removed node) — and it drops edges from the *already-resolved* full graph
+rather than re-resolving links over the kept subset, which could mint an edge
+the full graph never had (`test_graph_content_duplicate_induces_never_re_resolves`).
+Whole-library sibling scope (roadmap H328): a content group spanning two
+clusters keeps both ends even with no edge between them
+(`test_graph_content_duplicate_spans_components`). It is **report-only** — it
+names the redundant nodes, never a merge — and **ANDs with `--all`** (the
+default view shows only connected duplicate nodes; `--all` surfaces an isolated
+duplicate pair too, `test_graph_content_duplicate_ands_with_all`). `stats`
+then describes the scoped subgraph — `stats.items`/`stats.custody` count the
+content-duplicate set, not the whole library
+(`test_graph_content_duplicate_stats_describe_the_scoped_set`). A library with
+no byte-identical holdings yields the honest empty subgraph, exit 0.
 
 `stats.custody` is the graph-surface member of the custody-headline family
 (`scrolls status`, the bundle/`context` briefings, `facets fidelity`/`drift`):

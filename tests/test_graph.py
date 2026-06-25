@@ -770,3 +770,192 @@ def test_graph_over_drops_links_to_items_outside_the_given_set():
     # so the edge is dropped — the rendered-only behavior kb.py relies on
     assert graph_over([a]).edges == ()
     assert [(e.from_id, e.to_id) for e in graph_over([a, b]).edges] == [("web:a", "web:b")]
+
+
+# --- induced_subgraph / graph --content-duplicate (the content-identity ------
+# --- node-set filter, roadmap H352) -----------------------------------------
+
+
+def test_induced_subgraph_keeps_nodes_and_only_edges_among_them(db):
+    # the generic node-set filter: keep the nodes in `keep`, and an edge iff BOTH
+    # endpoints survive — never a dangling edge to a removed node (the edge
+    # integrity that keeps `connected_components` well-formed). `items` and
+    # `item_count` narrow to the kept set so the stats describe the scope.
+    from scrolls.graph import induced_subgraph
+
+    insert_item(db, make_item("web:a", links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b", links=("https://example.org/web:c",)))
+    insert_item(db, make_item("web:c"))  # the chain a → b → c
+
+    full = build_graph(db)
+    assert [(e.from_id, e.to_id) for e in full.edges] == [("web:a", "web:b"),
+                                                          ("web:b", "web:c")]
+    sub = induced_subgraph(full, {"web:a", "web:b"})
+    assert [n.id for n in sub.nodes] == ["web:a", "web:b"]  # web:c dropped
+    # b → c is dropped (c removed); a → b survives (both kept) — never a dangle
+    assert [(e.from_id, e.to_id) for e in sub.edges] == [("web:a", "web:b")]
+    assert sub.item_count == 2  # items narrowed to the kept set
+    assert {item.id for item in sub.items} == {"web:a", "web:b"}
+
+
+def test_graph_content_duplicate_keeps_only_redundant_nodes(db, capsys):
+    # the node-set analogue of `list --content-duplicate`: scope the graph to nodes
+    # the library holds a byte-identical copy of under another id. A duplicate pair
+    # (web:a/web:b, same hash) both link to a unique hub; --content-duplicate keeps
+    # only the pair, the unique hub falls out.
+    insert_item(db, make_item("web:a", content_hash="sha256:dup",
+                              links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b", content_hash="sha256:dup"))
+    insert_item(db, make_item("web:hub", content_hash="sha256:unique"))
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in payload["nodes"]] == ["web:a", "web:b"]
+    # the kept nodes still carry their content_duplicate_ids (each names the other)
+    nodes = {n["id"]: n for n in payload["nodes"]}
+    assert nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert nodes["web:b"]["content_duplicate_ids"] == ["web:a"]
+
+
+def test_graph_content_duplicate_induces_edges_among_kept_nodes(db, capsys):
+    # the edge-integrity decision: an edge between two kept (duplicate) nodes
+    # survives; an edge to a dropped (unique) node is dropped, not left dangling.
+    # web:a links to BOTH its duplicate sibling web:b and the unique hub web:c.
+    insert_item(db, make_item("web:a", content_hash="sha256:dup", links=(
+        "https://example.org/web:b", "https://example.org/web:c")))
+    insert_item(db, make_item("web:b", content_hash="sha256:dup"))
+    insert_item(db, make_item("web:c", content_hash="sha256:unique"))
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in payload["nodes"]] == ["web:a", "web:b"]  # c dropped
+    # a → b kept (both duplicates); a → c dropped (c removed) — well-formed
+    assert [(e["from"], e["to"]) for e in payload["edges"]] == [("web:a", "web:b")]
+    assert payload["stats"]["clusters"] == 1  # the surviving pair is one cluster
+
+
+def test_graph_content_duplicate_induces_never_re_resolves(db):
+    # the precise edge-integrity guarantee the per-hit `related` sieve does not
+    # raise: inducing drops edges from the *already-resolved* full graph — it does
+    # NOT re-resolve links over the kept subset, which could mint an edge the full
+    # graph never had. web:a's link resolves to the UNIQUE web:c in the full graph
+    # (the clean normalized token, claimed by c which was saved first); web:d holds
+    # the same bytes as web:a and would catch the link's raw (utm) token only if c
+    # were gone. Inducing keeps {a, d}, drops a → c, and never invents a → d;
+    # re-resolving the {a, d} subset WOULD invent a → d.
+    from scrolls.graph import content_duplicate_subgraph
+    from scrolls.items import list_items
+
+    insert_item(db, make_item("web:a", content_hash="sha256:dup",
+                              saved_at="2026-06-12T00:00:00+00:00",
+                              links=("https://e.com/x?utm_source=ref",)))
+    insert_item(db, make_item("web:c", url="https://e.com/x",
+                              content_hash="sha256:unique",
+                              saved_at="2026-06-12T01:00:00+00:00"))  # claims normalized
+    insert_item(db, make_item("web:d", url="https://e.com/x?utm_source=ref",
+                              content_hash="sha256:dup",
+                              saved_at="2026-06-12T02:00:00+00:00"))
+
+    full = build_graph(db, include_isolated=True)
+    # the full graph: a's link resolves to the unique hub c, never to d
+    assert [(e.from_id, e.to_id) for e in full.edges] == [("web:a", "web:c")]
+
+    induced = content_duplicate_subgraph(full)
+    assert {n.id for n in induced.nodes} == {"web:a", "web:d"}  # the duplicate pair
+    assert induced.edges == ()  # a → c dropped; a → d NOT invented
+
+    # contrast: re-resolving the kept subset *would* mint the a → d edge — exactly
+    # the artifact inducing avoids
+    items = {it.id: it for it in list_items(db)}
+    reresolved = graph_over([items["web:a"], items["web:d"]], include_isolated=True)
+    assert [(e.from_id, e.to_id) for e in reresolved.edges] == [("web:a", "web:d")]
+
+
+def test_graph_content_duplicate_ands_with_all(db, capsys):
+    # composes with --all: a content-duplicate pair with no edge between them is
+    # isolated, so the default view (connected nodes only) shows neither, while
+    # --content-duplicate --all surfaces both. The two scopes AND.
+    insert_item(db, make_item("web:a", content_hash="sha256:dup"))  # no links
+    insert_item(db, make_item("web:b", content_hash="sha256:dup"))  # isolated pair
+    insert_item(db, make_item("web:hub", content_hash="sha256:unique",
+                              links=("https://example.org/web:other",)))
+    insert_item(db, make_item("web:other", content_hash="sha256:other2"))
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate"]) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert default["nodes"] == []  # the duplicate pair is isolated → no nodes
+    assert default["edges"] == []
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    widened = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in widened["nodes"]] == ["web:a", "web:b"]  # the pair
+
+
+def test_graph_content_duplicate_spans_components(db, capsys):
+    # whole-library sibling scope (H328): a content group spanning two clusters
+    # keeps BOTH ends even though no edge joins them — the filter is the node's
+    # library-wide redundancy, decoupled from the edge structure.
+    insert_item(db, make_item("web:a", content_hash="sha256:dup",
+                              links=("https://example.org/web:x",)))
+    insert_item(db, make_item("web:x"))  # a's cluster; x is unique → dropped
+    insert_item(db, make_item("web:b", content_hash="sha256:dup",
+                              links=("https://example.org/web:y",)))
+    insert_item(db, make_item("web:y"))  # b's cluster; y is unique → dropped
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [n["id"] for n in payload["nodes"]] == ["web:a", "web:b"]
+    assert payload["edges"] == []  # both edges pointed at dropped unique nodes
+    nodes = {n["id"]: n for n in payload["nodes"]}
+    assert nodes["web:a"]["content_duplicate_ids"] == ["web:b"]
+    assert nodes["web:b"]["content_duplicate_ids"] == ["web:a"]
+
+
+def test_graph_content_duplicate_stats_describe_the_scoped_set(db, capsys):
+    # `stats.items`/`stats.custody` describe the content-duplicate scope (the
+    # filter-before-to_payload precedent), not the whole library: only the two
+    # duplicate items are counted, the unique hub and the NULL-hash reference fall
+    # out of both the node set and the scope.
+    insert_item(db, make_item("web:a", content_hash="sha256:dup",
+                              links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b", content_hash="sha256:dup"))
+    insert_item(db, make_item("web:hub", content_hash="sha256:unique"))
+    insert_item(db, make_item("web:ref"))  # NULL hash
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    assert stats["items"] == 2  # only the duplicate pair, not all four
+    assert stats["custody"]["tiers"] == {"full": 0, "partial": 0, "reference": 2}
+    assert list(stats["custody"]["by_source"]) == ["web"]
+
+
+def test_graph_content_duplicate_clean_library_is_empty(db, capsys):
+    # a library with no byte-identical holdings yields the honest empty subgraph,
+    # exit 0 — the filter is report-only and an empty result is not an error
+    insert_item(db, make_item("web:a", content_hash="sha256:one",
+                              links=("https://example.org/web:b",)))
+    insert_item(db, make_item("web:b", content_hash="sha256:two"))
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["nodes"] == []
+    assert payload["edges"] == []
+    assert payload["stats"]["items"] == 0
+
+
+def test_graph_content_duplicate_excludes_null_hash_items(db, capsys):
+    # the H325 NULL-skip rides the filter: a reference-only item holding no content
+    # is never a content duplicate even of another reference-only item
+    insert_item(db, make_item("web:ref1"))  # NULL hash
+    insert_item(db, make_item("web:ref2"))  # NULL hash
+    capsys.readouterr()
+
+    assert main(["graph", "--content-duplicate", "--all"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["nodes"] == []  # NULL hashes are not "byte-identical" to each other

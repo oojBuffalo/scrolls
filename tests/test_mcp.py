@@ -1628,6 +1628,60 @@ def test_get_link_graph_nodes_carry_content_duplicate_ids_at_parity_with_cli(scr
     }
 
 
+def test_get_link_graph_filters_by_content_duplicate(scrolls_home):
+    # roadmap H352: `content_duplicate=True` scopes the graph to nodes the library
+    # holds a byte-identical copy of under another id, with edges induced among
+    # them — the MCP twin of `graph --content-duplicate`. A duplicate pair (linked
+    # to each other) plus a unique hub: the filter keeps the pair, drops the hub,
+    # and induces the a → b edge.
+    from scrolls.cli import main
+    from scrolls.items import ScrollItem, insert_item
+
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A copy",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:dup",
+        stage="rendered", links=("https://ex.com/b", "https://ex.com/hub")))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="A byte-identical copy",
+        extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:dup",
+        stage="rendered"))
+    insert_item(db, ScrollItem(
+        id="web:hub", source="web", url="https://ex.com/hub",
+        saved_at="2026-06-12T02:00:00+00:00", title="Hub",
+        extracted_text="other", raw_text="<raw>other</raw>", content_hash="sha256:hub",
+        stage="rendered"))
+
+    scoped = mcp_server.get_link_graph(content_duplicate=True)
+    assert [n["id"] for n in scoped["nodes"]] == ["web:a", "web:b"]  # hub dropped
+    # a → b induced (both kept); a → hub dropped (hub removed) — well-formed
+    assert [(e["from"], e["to"]) for e in scoped["edges"]] == [("web:a", "web:b")]
+    assert scoped["stats"]["items"] == 2  # stats describe the scoped set
+
+
+def test_get_link_graph_content_duplicate_is_cli_mcp_parity(scrolls_home, capsys):
+    # the MCP filter result is byte-for-byte the CLI `graph --content-duplicate`
+    # payload (CLI + MCP share `content_duplicate_subgraph` + `graph.to_payload`)
+    import json
+
+    from scrolls.cli import main
+
+    main(["init"])
+    db = get_paths().db_path
+    _seed_content_duplicate_mix(db)
+
+    mcp_scoped = mcp_server.get_link_graph(include_isolated=True, content_duplicate=True)
+    capsys.readouterr()
+    assert main(["graph", "--all", "--content-duplicate"]) == 0
+    cli_scoped = json.loads(capsys.readouterr().out)
+    assert mcp_scoped == cli_scoped
+    # the two byte-identical groups in the mix → four content-duplicate nodes
+    assert {n["id"] for n in mcp_scoped["nodes"]} == {"web:a", "arxiv:1", "web:p", "web:q"}
+
+
 def test_get_link_graph_custody_carries_the_weakest_source_flag(scrolls_home):
     # roadmap H164: the weakest-source `attention` flag rides MCP `get_link_graph`
     # for free (CLI + MCP share `graph.to_payload`), and names the same source the

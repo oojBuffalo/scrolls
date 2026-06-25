@@ -50,7 +50,7 @@ from scrolls.maintain import (
 from scrolls.generated import generated_body
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import compute_facets
-from scrolls.graph import build_graph
+from scrolls.graph import build_graph, content_duplicate_subgraph
 from scrolls.graph import to_payload as graph_payload
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS
 from scrolls.works import filter_works, membership_payload, work_membership
@@ -500,7 +500,9 @@ def get_related_scrolls(
     return hits
 
 
-def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
+def get_link_graph(
+    include_isolated: bool = False, content_duplicate: bool = False
+) -> dict[str, Any]:
     """The library's cross-item link graph: directed edges between saved items.
 
     An edge `from → to` means a link inside one saved item resolves to
@@ -523,9 +525,21 @@ def get_link_graph(include_isolated: bool = False) -> dict[str, Any]:
     drift, coverage}}` map (sorted keys), the graph-surface counterpart of the
     per-source `by_source` on `scrolls status`/`doctor` — so a reader sees which
     source's custody is weakest; it sums to the whole `stats.custody` block.
+
+    `content_duplicate=True` (roadmap H352) scopes the graph to nodes the library
+    holds a **byte-identical copy of under another id** — those whose
+    `content_duplicate_ids` is non-empty — with the edges induced among them (an
+    edge survives only when both endpoints do, so the subgraph stays well-formed).
+    The node-set analogue of `list_scrolls(content_duplicate=True)` lifted to the
+    relationship graph, whole-library sibling scope (a content group spanning two
+    components keeps both ends) and report-only — it names the redundant nodes,
+    never a merge. It ANDs with `include_isolated`. `stats` then describes the
+    scoped subgraph (`items`/`custody` over the content-duplicate set).
     """
     paths = get_paths()
     graph = build_graph(paths.db_path, include_isolated=include_isolated)
+    if content_duplicate:
+        graph = content_duplicate_subgraph(graph)
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
     return graph_payload(graph, verdicts)
 

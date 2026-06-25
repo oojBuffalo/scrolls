@@ -209,6 +209,59 @@ def graph_over(items: list[ScrollItem], *, include_isolated: bool = False) -> Gr
     )
 
 
+def induced_subgraph(graph: Graph, keep: set[str]) -> Graph:
+    """The subgraph of `graph` induced by the node ids in `keep` (roadmap H352).
+
+    A node filter on a graph cannot drop nodes alone: `connected_components`
+    indexes its union-find `parent` by node id, so an edge pointing at a dropped
+    node would dangle (a `KeyError`, or a phantom endpoint in some other reader).
+    Inducing is the only edge rule that keeps the result well-formed — keep an
+    edge iff **both** its endpoints survive, so every reported edge still connects
+    two reported nodes. Crucially this drops edges from the *already-resolved* full
+    graph rather than re-resolving links over the kept subset: a node keeps exactly
+    the edges it had to other kept nodes, never a re-resolved edge to a different
+    target the smaller identity index would have matched (the edge-integrity
+    question a node-set graph filter raises that the per-hit `related` sieve does
+    not — `graph_over([subset])` re-resolves, `induced_subgraph` does not). `items`
+    narrows to the kept items too, so `item_count` and the `stats.custody` block
+    `to_payload` folds describe the scoped set — the `filter_works`-before-
+    `to_payload` precedent (roadmap H262/H344). Node and edge order are preserved
+    (both were already sorted by `build_graph`), so the output stays stable.
+    """
+    nodes = tuple(node for node in graph.nodes if node.id in keep)
+    edges = tuple(
+        edge
+        for edge in graph.edges
+        if edge.from_id in keep and edge.to_id in keep
+    )
+    items = tuple(item for item in graph.items if item.id in keep)
+    return Graph(
+        nodes=nodes,
+        edges=edges,
+        item_count=len(items),
+        items=items,
+    )
+
+
+def content_duplicate_subgraph(graph: Graph) -> Graph:
+    """Scope `graph` to nodes held byte-identically under another id (roadmap H352).
+
+    The node-set analogue of `list --content-duplicate`: keeps the nodes whose
+    `content_duplicate_ids` is non-empty — those whose id keys the whole-library
+    `content_duplicate_index` folded over `graph.items` (the same H325 groups
+    `doctor`'s `custody.content_duplicates` counts and the per-node
+    `content_duplicate_ids` reads) — plus the edges induced among them. Whole-
+    library sibling scope (roadmap H328): a node is kept by its library-wide
+    redundancy, so a content group spanning two graph components keeps both ends
+    (the twins need not be linked). Report-only — it names the redundant nodes,
+    never a merge (raw is sacred). Composes with the build-time `include_isolated`:
+    applied *after* the full graph is built, so it ANDs with `--all` (every
+    content-duplicate item) or the default view (only the connected ones).
+    """
+    keep = set(content_duplicate_index(graph.items))
+    return induced_subgraph(graph, keep)
+
+
 def to_payload(
     graph: Graph, verdicts: dict[str, CustodyEvent] | None = None
 ) -> dict:

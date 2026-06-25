@@ -79,7 +79,11 @@ from scrolls.feeds import (
 )
 from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
 from scrolls.fieldtheory import ImportSourceError, load_bookmarks
-from scrolls.graph import build_graph, to_payload as graph_payload
+from scrolls.graph import (
+    build_graph,
+    content_duplicate_subgraph,
+    to_payload as graph_payload,
+)
 from scrolls.works import DEFAULT_MIN_REPRESENTATIONS as DEFAULT_WORK_MIN
 from scrolls.works import (
     filter_works,
@@ -414,6 +418,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="include_all",
         action="store_true",
         help="Include isolated items (those in no edge) as nodes too",
+    )
+    graph_parser.add_argument(
+        "--content-duplicate",
+        dest="content_duplicate",
+        action="store_true",
+        help="Only nodes the library holds a byte-identical copy of under "
+        "another id (their content_duplicate_ids is non-empty), with the "
+        "edges induced among them; ANDs with --all",
     )
 
     works_parser = subparsers.add_parser(
@@ -1617,7 +1629,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fetch":
         return _cmd_fetch(args.id, args.limit)
     if args.command == "graph":
-        return _cmd_graph(args.include_all)
+        return _cmd_graph(args.include_all, args.content_duplicate)
     if args.command == "works":
         return _cmd_works(
             args.min_representations,
@@ -4057,9 +4069,15 @@ def _related_rows(hits: list) -> list[dict]:
     return payload
 
 
-def _cmd_graph(include_all: bool) -> int:
+def _cmd_graph(include_all: bool, content_duplicate: bool = False) -> int:
     paths = get_paths()
     graph = build_graph(paths.db_path, include_isolated=include_all)
+    # The content-identity node-set filter (roadmap H352): scope to nodes the
+    # library holds a byte-identical copy of under another id, with the edges
+    # induced among them — applied after the full graph is built so resolution is
+    # intact (induced, not re-resolved over the subset) and it ANDs with --all.
+    if content_duplicate:
+        graph = content_duplicate_subgraph(graph)
     verdicts = latest_events(paths.db_path) if paths.db_path.exists() else {}
     print(json.dumps(graph_payload(graph, verdicts)))
     return 0
