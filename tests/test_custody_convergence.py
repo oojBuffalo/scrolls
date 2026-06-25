@@ -7185,6 +7185,122 @@ def test_content_duplicate_browse_filter_converges_with_doctor_groups(scrolls_ho
     assert {r["id"] for r in json.loads(capsys.readouterr().out)} == members
 
 
+def _context_match_count(bundle):
+    """The context surface's kept-count: the Coverage denominator.
+
+    `context --content-duplicate`'s `_Coverage: all N matching scrolls._` line
+    reports `count_matches` under the *same* `--content-duplicate` axis (the
+    uncollapsed matched total the H345 before-cap sieve scopes, the same
+    past-the-cap denominator `search --stats` uses). The work-collapse (ADR 0101)
+    folds the *Best Match* list — a within-work byte-identical pair shows once —
+    but never this denominator, so it is the Coverage count, not the best-match
+    count, that joins the browse/aggregate tie at the held-item granularity.
+    """
+    match = re.search(r"_Coverage: all (\d+) matching scrolls\._", bundle)
+    assert match is not None, f"expected an uncapped Coverage line in:\n{bundle}"
+    return int(match.group(1))
+
+
+def test_content_duplicate_browse_aggregate_surfaces_agree_on_one_count(scrolls_home, capsys):
+    # roadmap H346: the count-side analogue of H332's per-item *read* convergence —
+    # one pinned tie that the redundant-holding *count* reads IDENTICALLY across every
+    # browse and aggregate surface the content-identity theme spread the filter onto:
+    # `list`/`search --content-duplicate` (H338), `context --content-duplicate`'s
+    # Coverage denominator (H345), and `facets content-duplicate`'s `duplicate` bucket
+    # (H342), all equal to the union of `doctor`'s content-duplicate group members held
+    # in scope (the truth source) — with `works --content-duplicate` (H344) the honest
+    # WITHIN-WORK subset (a cross-source group forms no work, so it is counted on every
+    # other surface but never flagged on the works one). Each leg pins its OWN convergence
+    # beside H332/H338, but no single test asserts they all agree on one count at once, so
+    # a future edit to one filter's scope (e.g. `context`'s before-cap sieve diverging from
+    # `list`'s post-SQL fold) could pass every per-surface test yet desync the family. This
+    # is that guard — the browse/aggregate completion of the H332 cross-surface picture.
+    from scrolls.context import build_context
+
+    main(["init"])
+    db = get_paths().db_path
+    _expected_groups, total_groups, total_items = _seed_content_identity(db)
+    capsys.readouterr()
+
+    # the divergence-truth source: the union of `doctor`'s content-duplicate group members
+    # (the 4 redundant holdings — both shapes; web:uniq + web:ref are held but in no group)
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    doctor_members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert len(doctor_members) == total_items == 4
+    assert len(list_items(db)) == 6  # non-vacuous: 2 held items (unique + NULL) are NOT counted
+
+    # 1. `list --content-duplicate` — the whole-library browse (H338)
+    assert main(["list", "--content-duplicate"]) == 0
+    list_count = len(json.loads(capsys.readouterr().out))
+
+    # 2. `search topic --content-duplicate` — the ranked browse (every member carries "topic")
+    assert main(["search", "topic", "--content-duplicate", "--limit", "50"]) == 0
+    search_count = len(json.loads(capsys.readouterr().out))
+
+    # 3. `context --content-duplicate` — the assembly surface's Coverage denominator (H345)
+    context_count = _context_match_count(build_context(db, "topic", content_duplicate=True))
+
+    # 4. `facets content-duplicate` — the aggregate's `duplicate` bucket (H342)
+    assert main(["facets", "content-duplicate"]) == 0
+    facet = _facet_map(json.loads(capsys.readouterr().out)["facets"]["content-duplicate"])
+
+    # the all-equal tie: every browse/aggregate surface counts exactly `doctor`'s 4 members
+    assert (
+        list_count
+        == search_count
+        == context_count
+        == facet.get("duplicate", 0)
+        == len(doctor_members)
+        == 4
+    )
+
+    # `works --content-duplicate` is the honest WITHIN-WORK subset, never the whole-library
+    # count: only the within-work group (the DOI 10.1000/x reps) forms a work; the
+    # cross-source group (web:m1/web:m2) forms none, so it is counted above but not here.
+    assert main(["works", "--content-duplicate"]) == 0
+    works_filtered = len(json.loads(capsys.readouterr().out)["works"])
+    assert works_filtered == 1 < total_groups  # group A only, a strict subset of the 2 groups
+
+    # --- sabotage (roadmap H346): re-hash one within-work member so group A dissolves;
+    # every browse/aggregate surface falls to the lone cross-source group (4 → 2 members)
+    # in lockstep with `doctor`, and the works filter flips that work out (1 → 0). A
+    # constant hard-coded into any one assertion above would survive the all-equal tie at
+    # rest but break here — the count tracks the data, not a shared literal (the H332
+    # non-vacuity discipline).
+    import dataclasses
+
+    crossref = next(it for it in list_items(db) if it.id == "crossref:10.1000/x")
+    assert update_item(db, dataclasses.replace(crossref, content_hash="sha256:distinct"))
+    capsys.readouterr()
+
+    dup = run_doctor(get_paths())["custody"]["content_duplicates"]
+    doctor_members = {item_id for group in dup["groups"] for item_id in group["ids"]}
+    assert doctor_members == {"web:m1", "web:m2"}
+
+    assert main(["list", "--content-duplicate"]) == 0
+    list_count = len(json.loads(capsys.readouterr().out))
+    assert main(["search", "topic", "--content-duplicate", "--limit", "50"]) == 0
+    search_count = len(json.loads(capsys.readouterr().out))
+    context_count = _context_match_count(build_context(db, "topic", content_duplicate=True))
+    assert main(["facets", "content-duplicate"]) == 0
+    facet = _facet_map(json.loads(capsys.readouterr().out)["facets"]["content-duplicate"])
+
+    # all four fall to the cross-source group's 2 members, still equal to `doctor`
+    assert (
+        list_count
+        == search_count
+        == context_count
+        == facet.get("duplicate", 0)
+        == len(doctor_members)
+        == 2
+    )
+
+    # the work still forms (DOI clustering is independent of content) but its flag flipped
+    # False, so the within-work filter now keeps zero works — the honest within-work scope
+    assert main(["works", "--content-duplicate"]) == 0
+    assert len(json.loads(capsys.readouterr().out)["works"]) == 0
+
+
 def _seed_rendered_content_identity(db):
     """A *rendered* library with a known byte-identical structure, for the compiled
     `library/` "also held as" marker (H333) to be parsed back off the pages.
