@@ -1819,6 +1819,133 @@ def test_skipping_the_prune_leaves_the_content_duplicate_flagged_everywhere(
     )
 
 
+# --- the suggested-prune dogfood leg (H357) -------------------------------
+#
+# H356 turned the content-identity finding into *actionable* guidance: a per-group
+# `duplicate_prunes` block naming the keep copy + the `scrolls rm` that prunes the
+# rest (the content-identity counterpart of the `suggest_repairs` by-finding repair
+# blocks, H40). `suggest_repairs`' guarantee is that it "never points at a command
+# that would not close the gap"; the new prune guidance owes the same proof on the
+# content-identity axis — run *exactly* the named `scrolls rm` and the byte-identical
+# group clears, the suggestion's own keep left standing. The H340 loop pruned a copy
+# the *test* chose; this one prunes the copy the *suggestion* names and asserts the
+# suggestion told the truth (the named keep is the survivor) — the suggested → act →
+# clear loop (H40's "the command closes the gap", H340's *act-where-the-loss-is*
+# discipline) over the prune guidance, the H340/H351/H355 dogfood family's prune leg.
+
+
+def test_the_suggested_prune_command_clears_the_content_duplicate(home, capsys):
+    """*suggested → act → clear* (H357): `maintain` names the keep copy + the
+    `scrolls rm` prune command, the operator runs *exactly that command*, and the
+    byte-identical group clears with the named keep left standing.
+
+    The `suggest_repairs` "never points at a command that would not close the gap"
+    guarantee (H40) proven on the content-identity prune guidance (H356): the test
+    never picks which copy to drop — it reads the suggestion's `keep`/`prune`/`command`,
+    runs the command verbatim (`scrolls rm <prune ids>`), and asserts the suggestion
+    told the truth — the named keep survives held, the named prune is gone, and every
+    duplicates surface (`doctor`, the `_Duplicates:_` headline, the prune block itself)
+    falls to clean. Report-only until the operator acts: the pass *names* the `rm`,
+    never runs it (the H325 raw-is-sacred discipline — a prune is an operator choice,
+    never an auto-merge).
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()  # drain the kb report
+
+    def maintain_report() -> dict:
+        assert main(["maintain", "--no-recheck"]) == 0
+        return json.loads(capsys.readouterr().out)
+
+    def doctor_dups() -> dict:
+        assert main(["doctor"]) == 0
+        return json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+
+    # --- suggested: `maintain` names one keep + the `scrolls rm` for the rest ----
+    report = maintain_report()
+    [prune_block] = report["duplicate_prunes"]
+    assert prune_block["content_hash"] == _MIRROR_HASH
+    # the suggestion partitions the group into one keep + the redundant rest, and the
+    # union is exactly the held pair (converges with `doctor`'s authoritative group by
+    # construction, H356) — a pair yields one keep, one prune
+    assert prune_block["keep"] in (mirror_a.id, mirror_b.id)
+    assert len(prune_block["prune"]) == 1
+    assert sorted([prune_block["keep"], *prune_block["prune"]]) == sorted(
+        [mirror_a.id, mirror_b.id]
+    )
+    # the headline names the same group the suggestion sits beside (H327)
+    assert report["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+    # non-vacuous: a unique topic scroll is named by no prune block (a genuine
+    # narrowing, not a one-pair library)
+    assert all(
+        items[0].id not in [b["keep"], *b["prune"]]
+        for b in report["duplicate_prunes"]
+    )
+
+    keep = prune_block["keep"]
+    [pruned] = prune_block["prune"]
+
+    # --- act: run *exactly* the suggested command, token for token ---------------
+    command = prune_block["command"].split()
+    assert command[:2] == ["scrolls", "rm"]  # the named act is a `scrolls rm`
+    assert command[2:] == prune_block["prune"]  # listing every redundant copy
+    assert main(command[1:]) == 0  # `scrolls <argv>` → run `rm <prune ids>` verbatim
+    rm_out = json.loads(capsys.readouterr().out)
+    assert rm_out["removed"] == 1 and rm_out["failed"] == 0
+
+    # --- clears: the named keep stood, the named prune is gone, all surfaces clean -
+    assert get_item(src.db_path, keep) is not None  # the suggestion's keep survived
+    assert get_item(src.db_path, pruned) is None  # the suggestion's prune is gone
+    cleared = doctor_dups()
+    assert cleared["total_groups"] == 0 and cleared["total_items"] == 0
+    after = maintain_report()
+    assert after["duplicate_prunes"] == []  # nothing left to prune
+    # H330's unconditional omit-when-clean: a fall *to* zero is a pruned copy, not a
+    # defect repaired — the line is dropped (no `▼1 / repaired` clause), even though
+    # this `maintain` run *does* see a delta (1 → 0 groups since the prior pass)
+    assert after["duplicates_headline"] is None
+
+
+def test_skipping_the_suggested_prune_leaves_the_block_and_the_finding(home, capsys):
+    """*the prune is what clears it* (H357, the mutation guard): re-auditing with
+    `maintain` **without** running the suggested `rm` leaves the same prune block —
+    same keep, same `scrolls rm` command — and `doctor` still flagging the pair, both
+    copies still held. So the clean reads above are driven by the operator running the
+    named command, not by the re-audit. The pass is report-only: it *names* the `rm`,
+    never executes it (H325/H356), so the redundancy and its guidance persist until
+    the operator chooses to prune.
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()
+
+    # re-audit with no `rm` — the only change from the loop above
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    [block] = report["duplicate_prunes"]
+    assert block["content_hash"] == _MIRROR_HASH
+    assert sorted([block["keep"], *block["prune"]]) == sorted(
+        [mirror_a.id, mirror_b.id]
+    )
+    assert block["command"] == "scrolls rm " + " ".join(block["prune"])
+    assert report["duplicates_headline"] == (
+        "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+    )
+
+    # `doctor` still flags the pair, and BOTH copies are still held — the pass named
+    # the `rm` but never ran it
+    assert main(["doctor"]) == 0
+    dupes = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert dupes["total_groups"] == 1 and dupes["total_items"] == 2
+    assert get_item(src.db_path, mirror_a.id) is not None
+    assert get_item(src.db_path, mirror_b.id) is not None
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
