@@ -1946,6 +1946,110 @@ def test_skipping_the_suggested_prune_leaves_the_block_and_the_finding(home, cap
     assert get_item(src.db_path, mirror_b.id) is not None
 
 
+# --- the compiled-surface dogfood leg (H351, rescoped) --------------------
+#
+# H340 ran the *spot → prune → clear* loop over the live read surfaces
+# (`doctor`/`show` JSON, the `maintain` JSON headline) and a category page's
+# `· also held as` marker. The one content-identity surface that loop never
+# opened is the **compiled `library/index.md` file itself** — the static landing
+# artifact a human or an agent actually opens — and its whole-library
+# `_Duplicates:_` line (H334, the compiled counterpart of the `maintain` headline,
+# folded by the *same* `render_content_duplicates`). This leg runs the same loop
+# over that compiled artifact: the landing line + the H333 per-row markers name the
+# redundancy after `kb`, a real `rm` + recompile clears both in lockstep, and a
+# recompile *without* the `rm` leaves both flagged (the prune, not the recompile,
+# drives the clear). RESCOPE (2026-06-25): the queued group-page `_Duplicates:_`
+# headline (H349) was declined, so this reads the landing line (H334) + the per-row
+# markers (H333) on a compiled list page, never a group-page headline.
+
+# The exact landing/`maintain` line for the one mirror group of two (rendered by
+# the shared `render_content_duplicates`, so it reads byte-identical on every
+# surface — `doctor`, `maintain`, the bundle/context briefings, and `index.md`).
+_DUP_LINE = "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._"
+
+
+def test_the_compiled_landing_page_names_then_drops_the_content_duplicate(
+    home, capsys
+):
+    """*compile → the landing `index.md` names the redundancy → prune → recompile
+    → it clears* (H351): the content-identity dogfood loop over the **compiled
+    `library/` artifact a human or agent actually opens**, the compile-surface
+    analogue of the H340 read/render/maintain loop.
+
+    Where H340 read the live `doctor`/`maintain` JSON and a category page, this
+    reads the *static compiled* landing surface — the whole-library `_Duplicates:_`
+    line on `library/index.md` (H334) and the per-row `· also held as` marker (H333)
+    on a compiled list page (`concepts/transformer.md`, which also carries the three
+    unique topic scrolls, so the markers are a genuine narrowing — they name *only*
+    the mirror pair). A real `rm` of one copy + a `kb` recompile then clears **both
+    the landing line and the markers in one step** (H330's unconditional
+    omit-when-clean: a count fallen *to* zero is a pruned copy, not a defect
+    repaired — no `▼1 / repaired` clause).
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()  # drain the kb report
+
+    index_md = src.root / "library" / "index.md"
+    # the concept page heads every Transformer scroll (the 3 unique topic holds +
+    # the mirror pair), so the markers must single out *only* the redundant pair
+    concept_md = src.root / "library" / "concepts" / "transformer.md"
+
+    # --- compile: the landing page + the compiled rows name the redundancy ----
+    index = index_md.read_text(encoding="utf-8")
+    assert _DUP_LINE in index  # the whole-library landing line (H334)
+    concept = concept_md.read_text(encoding="utf-8")
+    assert f"also held as `{mirror_b.id}`" in concept  # the mirror A row names B
+    assert f"also held as `{mirror_a.id}`" in concept  # the mirror B row names A
+    # non-vacuous: a unique topic scroll on the *same* page is never named a sibling
+    assert f"also held as `{items[0].id}`" not in concept
+    assert items[0].title in concept  # …but it is on the page, just unmarked
+
+    # --- prune: a real `rm` the operator chooses, then recompile the views ----
+    assert main(["rm", mirror_a.id]) == 0
+    rm_out = json.loads(capsys.readouterr().out)
+    assert rm_out["removed"] == 1 and rm_out["failed"] == 0
+    assert main(["kb"]) == 0  # the compiled pages refresh on the next `kb`
+    capsys.readouterr()
+
+    # --- clears: the landing line and the markers fall to clean in lockstep ---
+    index = index_md.read_text(encoding="utf-8")
+    assert "_Duplicates:" not in index  # omitted entirely (H330) — no `0 group(s)`
+    concept = concept_md.read_text(encoding="utf-8")
+    assert mirror_b.title in concept  # the survivor stayed held + rendered
+    assert "also held as" not in concept  # the marker dropped with the redundancy
+
+
+def test_skipping_the_prune_leaves_the_compiled_landing_line_and_markers(
+    home, capsys
+):
+    """*the prune is what clears it* (H351, the mutation guard): recompiling with
+    `kb` **without** the `rm` leaves the landing `_Duplicates:_` line and the
+    per-row markers both still flagging the pair — so the clean compiled reads above
+    are driven by the operator's chosen `rm`, not by the recompile. `kb` is
+    deterministic and report-only; it never collapses a content duplicate (H325 —
+    only an explicit `rm` removes a held copy), so the redundancy persists on the
+    compiled artifact until the operator acts.
+    """
+    src = home("library")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()
+
+    # recompile with no `rm` — the only change from the loop above
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    index = (src.root / "library" / "index.md").read_text(encoding="utf-8")
+    assert _DUP_LINE in index  # the landing line still flags the pair
+    concept = (src.root / "library" / "concepts" / "transformer.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"also held as `{mirror_b.id}`" in concept
+    assert f"also held as `{mirror_a.id}`" in concept
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
