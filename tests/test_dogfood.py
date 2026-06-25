@@ -2050,6 +2050,160 @@ def test_skipping_the_prune_leaves_the_compiled_landing_line_and_markers(
     assert f"also held as `{mirror_a.id}`" in concept
 
 
+# --- the import-axis dogfood leg (H359) -----------------------------------
+#
+# H340/H351/H357 ran the content-identity *spot → prune → clear* loop over the
+# read/render/compile/maintain surfaces; the one surface that loop never opened
+# is the **import** path — yet a re-import re-introducing pruned duplicates is
+# exactly the custody hazard the H353 content-duplicate-on-import notice exists to
+# surface ("you pruned these, this re-import added them back"). This leg runs the
+# loop over that surface: a re-importable source (an `export items` JSONL backup,
+# the model-complete artifact) carries a byte-identical pair → `import items` of it
+# reports `content_duplicates` and `doctor` flags the group → the operator prunes
+# the redundant copy with a real `scrolls rm` → `doctor` clears → re-importing the
+# *same source* re-adds the pruned copy (INSERT OR IGNORE re-inserts the absent id —
+# raw is sacred, re-holding not overwriting), the notice flags it again, and
+# `doctor` re-flags the group. The notice is *point-in-time*, scoped to the rows
+# *this* import freshly inserts (H353), so it tracks what each import re-introduced:
+# the first import inserts both members fresh (`content_duplicates == 2`), the
+# re-import re-inserts only the pruned member onto its surviving sibling
+# (`content_duplicates == 1`) — both non-zero, both the standing "this import added
+# redundant copies" signal. The mutation guard (re-import *without* the prune →
+# `content_duplicates == 0`, every row `unchanged`) proves the re-add is driven by
+# the operator's prune, not by the re-import — the H340/H357 *the-prune-is-what-
+# clears-it* discipline inverted onto the import axis (here, the prune is what makes
+# the re-import re-introduce anything at all).
+
+
+def test_import_then_prune_then_reimport_re_introduces_the_content_duplicate(
+    home, capsys
+):
+    """*import flags the redundancy → prune → re-import re-adds it* (H359): the
+    content-identity dogfood loop over the **import** surface, the import-axis
+    analogue of the H340 read/render and H351 compiled loops.
+
+    A held source library (the topic + a byte-identical mirror pair) is exported to a
+    re-importable `export items` JSONL — the "same source" an operator re-imports.
+    Imported into a fresh library, the H353 notice reports the redundancy
+    (`content_duplicates == 2`: both members freshly inserted) and `doctor` flags the
+    one group of two. The operator prunes one copy with a real `scrolls rm` (the
+    chosen act — never an auto-merge; raw is sacred, H325/H337) and `doctor` falls to
+    clean. Re-importing the *same source* re-adds the pruned copy (INSERT OR IGNORE
+    re-inserts the now-absent id — re-holding, not overwriting), the notice re-flags
+    the redundancy (`content_duplicates == 1`: only the pruned member is freshly
+    re-inserted, landing byte-identical on its surviving sibling), and `doctor`
+    re-flags the group. The three unique topic scrolls are flagged by none of this
+    throughout, so the loop is a genuine narrowing, not a one-pair library.
+    """
+    # --- source: a held library exported to a re-importable JSONL backup ------
+    src = home("source")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()  # drain the kb report
+    assert main(["export", "items"]) == 0
+    source_path = src.root.parent / "library.jsonl"
+    source_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # --- import: the H353 notice flags the redundancy in a fresh library ------
+    dst = home("target")
+    assert main(["init"]) == 0
+    capsys.readouterr()
+
+    def doctor_dups() -> dict:
+        # `import items` inserts DB rows but does not render scroll files (the
+        # recovery family materializes those with `doctor --fix`), so read-only
+        # `doctor` exits non-zero on `missing_scrolls` here. The content-identity
+        # group is folded from the DB `content_hash`, independent of scroll-file
+        # presence, so the exit code is orthogonal to the axis under test — read
+        # the block directly, the test_cli.py H353 precedent.
+        main(["doctor"])
+        return json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+
+    assert main(["import", "items", str(source_path)]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["imported"] == len(items)  # the whole source landed in the empty lib
+    # both mirror members are freshly inserted byte-identical to each other (H353's
+    # "or to another row in the same import" leg) — the import added 2 redundant rows
+    assert first["content_duplicates"] == 2
+    # `doctor` names the standing group of two (the cross-source pair, whole-library)
+    flagged = doctor_dups()
+    assert flagged["total_groups"] == 1 and flagged["total_items"] == 2
+    assert flagged["groups"] == [
+        {"content_hash": _MIRROR_HASH, "ids": sorted([mirror_a.id, mirror_b.id])}
+    ]
+
+    # --- prune: a real `rm` the operator chooses; `doctor` clears -------------
+    assert main(["rm", mirror_a.id]) == 0
+    rm_out = json.loads(capsys.readouterr().out)
+    assert rm_out["removed"] == 1 and rm_out["failed"] == 0
+    cleared = doctor_dups()
+    assert cleared["total_groups"] == 0 and cleared["total_items"] == 0
+    assert get_item(dst.db_path, mirror_a.id) is None  # the pruned copy is gone
+    assert get_item(dst.db_path, mirror_b.id) is not None  # the survivor stays held
+
+    # --- re-import the same source: the pruned copy is re-added, re-flagged ----
+    assert main(["import", "items", str(source_path)]) == 0
+    second = json.loads(capsys.readouterr().out)
+    # only the pruned id was absent — re-inserted; every other row is `unchanged`
+    assert second["imported"] == 1
+    assert second["unchanged"] == len(items) - 1
+    # the re-added copy landed byte-identical on its still-held sibling (H353): the
+    # standing "this re-import re-introduced redundancy you pruned" signal
+    assert second["content_duplicates"] == 1
+    # `doctor` re-flags the group — both copies held again (re-holding is custody-safe)
+    reflagged = doctor_dups()
+    assert reflagged["total_groups"] == 1 and reflagged["total_items"] == 2
+    assert reflagged["groups"] == [
+        {"content_hash": _MIRROR_HASH, "ids": sorted([mirror_a.id, mirror_b.id])}
+    ]
+    assert get_item(dst.db_path, mirror_a.id) is not None  # the pruned copy is back
+
+
+def test_reimport_without_a_prune_re_introduces_no_content_duplicate(home, capsys):
+    """*the prune is what makes the re-import re-introduce anything* (H359, the
+    mutation guard): re-importing the *same source* **without** the intervening `rm`
+    reports `content_duplicates == 0` — every row is `unchanged` (the held library
+    already holds the whole source), so the import freshly inserts nothing and
+    re-introduces no redundancy.
+
+    This is the H340/H357 *the-prune-is-what-clears-it* discipline inverted onto the
+    import axis: the re-add in the loop above is driven by the operator's prune (it
+    left an id absent for INSERT OR IGNORE to re-insert), not by the re-import itself.
+    The standing whole-library redundancy is unchanged — still one group — because the
+    notice is point-in-time (what *this* import added, H353) while the standing group
+    is `doctor`'s job; a clean re-import is honest about adding nothing.
+    """
+    src = home("source")
+    items, mirror_a, mirror_b = _held_topic_with_a_mirror()
+    _build(items)
+    capsys.readouterr()
+    assert main(["export", "items"]) == 0
+    source_path = src.root.parent / "library.jsonl"
+    source_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    dst = home("target")
+    assert main(["init"]) == 0
+    capsys.readouterr()
+    assert main(["import", "items", str(source_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["content_duplicates"] == 2
+
+    # re-import with no `rm` — the only change from the loop above
+    assert main(["import", "items", str(source_path)]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["imported"] == 0 and second["unchanged"] == len(items)
+    assert second["content_duplicates"] == 0  # nothing freshly inserted → nothing re-added
+
+    # the standing redundancy is unchanged — still one group, both copies held.
+    # (`doctor`'s exit code is orthogonal here — `import items` leaves scrolls
+    # unrendered; the content-identity group folds the DB `content_hash`, the
+    # test_cli.py H353 precedent.)
+    main(["doctor"])
+    flagged = json.loads(capsys.readouterr().out)["custody"]["content_duplicates"]
+    assert flagged["total_groups"] == 1 and flagged["total_items"] == 2
+    assert get_item(dst.db_path, mirror_a.id) is not None
+    assert get_item(dst.db_path, mirror_b.id) is not None
+
+
 # --- the whole flow, unattended, in order ---------------------------------
 
 
