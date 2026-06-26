@@ -4790,6 +4790,81 @@ def test_archive_show_all_unknown_id_is_a_could_not_recover(scrolls_home, capsys
     assert "no archived prior" in err["error"]
 
 
+def test_archive_show_is_a_reproducible_recovery_artifact(
+    scrolls_home, tmp_path, capsys
+):
+    """`archive show` is the archive-recovery transport (the superseded prior the
+    un-launderable integrity alarm preserves, ADR 0106/H278/H285), and a recovery
+    read must be a *reproducible artifact* (H385):
+
+    1. `archive show <id>` of the same unchanged archived snapshot twice yields a
+       **byte-identical** JSONL — both the single-prior default *and* the `--all`
+       multi-prior fold (the order-sensitive `archived_snapshots` path the default
+       never hits): an operator restoring from `archive show` on two machines must
+       get byte-identical JSONL, and
+    2. a real `archive show <id>` → `import items --accept-incoming` re-adopts the
+       archived prior (the documented restore, _cmd_archive_show docstring) — the
+       recovery round-trip a single-read identity check misses.
+
+    The archive-recovery-transport sibling of
+    `test_export_items_is_a_reproducible_artifact` (H379, the held-set backup): both
+    fold `dump_items_export`, but this folds it over `item_archive` rows
+    (`archived_snapshots`, `ORDER BY id DESC`) — a **distinct code path** from
+    `list_items` no determinism test pins. H278/H285 pin the *adopted* disposition of
+    the restore round-trip, not the JSONL *bytes*: a set-iteration leak in the
+    multi-prior `archived_snapshots` fold (or an unsorted `item_archive` read) would
+    pass those restore-outcome tests yet make two recovery reads disagree, breaking an
+    operator who `diff`s two machines' recovery backups.
+
+    **Decisive choices:** compare the *whole JSONL document* (not one row), exercise
+    the `--all` multi-prior fold (the order-sensitive path the single-prior default
+    never hits), and include the restore round-trip. Not cross-seed —
+    `archived_snapshots` is an `ORDER BY id DESC` fold with no set to scramble across
+    `PYTHONHASHSEED`s, so a same-process two-read check suffices (the H384 guidance).
+    """
+    # three adoptions → the archive holds three priors, newest first (v2, v1, abc),
+    # so the `--all` fold is a real multi-line document, not a single row.
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    capsys.readouterr()
+
+    # 1a. the single-prior default: two reads, no DB change between them, are
+    #     byte-identical (the latest archived prior — v2 — the restore default uses).
+    assert main(["archive", "show", item_id]) == 0
+    first_default = capsys.readouterr().out
+    assert main(["archive", "show", item_id]) == 0
+    second_default = capsys.readouterr().out
+    assert second_default == first_default
+    assert first_default.count("\n") == 1  # non-vacuous: a real one-prior recovery line
+
+    # 1b. the `--all` multi-prior fold: two reads of the *whole recoverable history*
+    #     are byte-identical whole-document — the order-sensitive `archived_snapshots`
+    #     path (three priors folded newest-first) the single-prior default never hits.
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    first_all = capsys.readouterr().out
+    assert main(["archive", "show", item_id, "--all"]) == 0
+    second_all = capsys.readouterr().out
+    assert second_all == first_all
+    assert first_all.count("\n") == 3  # non-vacuous: the whole three-prior history
+    # the default read is byte-identical to the --all stream's head (convergence by
+    # construction — `latest_archived` is exactly `archived_snapshots`' head)
+    assert first_all.splitlines(keepends=True)[0] == first_default
+
+    # 2. the recovery round-trip: pipe `archive show <id>` (the latest archived prior,
+    #    v2) through `import items --accept-incoming` and assert the prior is
+    #    re-adopted — the held copy becomes the recovered prior (the displaced v3 is
+    #    itself archived, fully reversible). H278/H285's outcome leg on this guard.
+    recovered = json.loads(first_default)["content_hash"]
+    assert recovered == "sha256:v2"  # the latest archived prior, what restore adopts
+    db = get_paths().db_path
+    assert get_item(db, item_id).content_hash == "sha256:v3"  # held before restore
+    restore_path = tmp_path / "restore.jsonl"
+    restore_path.write_text(first_default, encoding="utf-8")
+    assert main(["import", "items", str(restore_path), "--accept-incoming"]) == 0
+    capsys.readouterr()
+    # the archived prior was re-adopted: the held copy is the recovered prior now
+    assert get_item(db, item_id).content_hash == "sha256:v2"
+
+
 # --- archive restore (H286): restore a *specific* archived prior in place via the
 # accept-incoming adoption (the displaced copy itself archived — fully reversible).
 # --hash / --at select the version; default the latest; idempotent; --dry-run
