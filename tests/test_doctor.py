@@ -2713,3 +2713,147 @@ def test_fix_converges_second_pass_is_a_total_no_op(paths):
     assert second["custody"]["content_duplicates"]["groups"] == [
         {"content_hash": "sha256:dup", "ids": dup_ids}
     ]
+
+
+# --- `doctor` whole-report determinism (roadmap H375) ----------------------
+#
+# `run_doctor` is the custody/structural **trust root**: `scrolls status`,
+# `scrolls maintain`, and MCP `get_library_health` all fold the report it produces
+# (H367 pinned `status.custody` ≡ `doctor.custody` field-for-field). So its
+# *reproducibility* is load-bearing — an operator runs `scrolls doctor` across two
+# machines (or two runs on one machine) and `diff`s the JSON to read custody
+# movement — yet that property is only *implied*. A set/dict-iteration leak (an
+# unsorted `custody.by_source` map, a `content_duplicates.groups` list ordered by
+# dict iteration, an unsorted `archive`/`conflicts`/`drift` event list, a
+# `works.at_risk` fold over a `set`) would pass every per-block doctor test yet make
+# two audits of one *unchanged* library disagree byte-for-byte, breaking that diff.
+#
+# This is the eighth forward-hardening cell (after H363's `kb` compile determinism,
+# H364's MCP immutability, H365's repair convergence, H366's read-budget nesting,
+# H367's status↔doctor convergence, H368's bundle determinism, H374's import
+# idempotency) — a distinct reproducibility axis (the audit trust root), and
+# deliberately *not* another content-identity guard. The decisive choice is to hash
+# the *whole* report (every sub-block, not one) and include the
+# cross-`PYTHONHASHSEED` subprocess pair: a same-process pass alone misses a
+# set-iteration leak (a `set` iterates the same way twice under one fixed seed), the
+# leak only surfaces across two processes seeded differently — the `kb` H363
+# precedent (`test_kb.py::test_kb_compile_is_deterministic_across_hash_seeds`)
+# lifted to the audit axis.
+
+
+def _seed_doctor_determinism_mix(paths):
+    """A held mix where every order-sensitive doctor sub-block is non-vacuous, so the
+    byte-identity guards below are real claims (an all-empty report would pass a leak
+    too):
+
+    - **three sources** (web, arxiv, crossref) → a multi-key `custody.by_source` map;
+    - a **byte-identical content pair** under two ids → `content_duplicates.groups`;
+    - a **drifted** full item that *also* carries an unresolved import **conflict**
+      (disjoint ledger axes) → `drift.events` + `conflicts.events`;
+    - a **tampered archived prior** → `archive.events` (one mismatched recovery row);
+    - an **all-reference work** (two reference reps of one DOI) → `works.most_at_risk`.
+
+    Every one of those is a list or map a set/dict-iteration leak would re-order
+    between two reads — exactly what the cross-`PYTHONHASHSEED` pair catches. The
+    fixture is structurally clean (`issues == 0`, FTS in sync, no missing/orphan
+    scrolls, no URL-spelling duplicates), so `scrolls doctor` exits 0.
+    """
+    # a multi-source all-reference at-risk work (custody.works.most_at_risk) — also
+    # the second and third sources that make `by_source` a multi-key map
+    insert_item(paths.db_path, _rep("arxiv:z", "10.3000/z", "reference"))
+    insert_item(paths.db_path, _rep("crossref:cz", "10.3000/z", "reference"))
+    # a byte-identical content pair under two ids (content_duplicates.groups)
+    _content_pair(paths)
+    # a drifted full item that also carries an unresolved import conflict (the two
+    # disjoint ledger axes — drift.events and conflicts.events both non-empty)
+    drift = _web_item(
+        "https://example.com/drift", fetched=True, content_hash="sha256:wd"
+    )
+    insert_item(paths.db_path, drift)
+    record_events(paths.db_path, [
+        CustodyEvent(item_id=drift.id, checked_at="2026-06-14T00:00:00+00:00",
+                     status="drifted", prior_hash="sha256:wd",
+                     observed_hash="sha256:changed"),
+        conflict_event(drift.id, held_hash="sha256:wd",
+                       incoming_hash="sha256:incoming",
+                       now="2026-06-15T00:00:00+00:00"),
+    ])
+    # a tampered archived prior (archive.events: one mismatched recovery row)
+    archived = _seed_archived_prior(
+        paths, "https://example.com/archived", held_hash="sha256:held"
+    )
+    _tamper_archive(paths.db_path, archived, prior_hash="sha256:tampered")
+
+
+def test_doctor_report_is_byte_identical_across_two_same_process_reads(paths):
+    # roadmap H375: two `run_doctor` reads of one unchanged library serialize to
+    # byte-identical JSON — the audit is a reproducible artifact, not a per-run
+    # snapshot (no wall-clock / run-counter leaks into the report). This is the
+    # same-process face; the cross-seed pair below catches the set-iteration leak
+    # this one — under a single fixed hash seed — structurally cannot.
+    _seed_doctor_determinism_mix(paths)
+
+    first = run_doctor(paths)
+    second = run_doctor(paths)
+
+    custody = first["custody"]
+    # non-vacuity: every order-sensitive sub-block is populated, so the identity
+    # below is a real claim (an all-empty report would pass a mis-ordered fold too).
+    assert sorted(custody["by_source"]) == ["arxiv", "crossref", "web"]
+    assert custody["content_duplicates"]["groups"]      # the byte-identical pair
+    assert custody["drift"]["events"]                   # the drifted item
+    assert custody["conflicts"]["events"]               # the unresolved conflict
+    assert custody["archive"]["events"]                 # the tampered prior
+    assert custody["works"]["most_at_risk"] is not None  # the all-reference work
+    # the audit carries no structural drift — it exits 0, so the cross-seed
+    # subprocess pair below can assert a clean return code.
+    assert first["issues"] == 0
+
+    assert json.dumps(first) == json.dumps(second)
+
+
+def test_doctor_report_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H375: `scrolls doctor` emits byte-identical JSON across two processes
+    # with *different* `PYTHONHASHSEED`s — the cross-process face the same-process
+    # pair structurally cannot see. This is the decisive half of the guard: a `set`
+    # leaking into any sub-block fold (an unsorted by_source / conflicts / archive /
+    # drift / works ordering) iterates the *same* way twice under one fixed seed, so
+    # the same-process read above stays green over it; only two processes seeded
+    # differently surface the divergence (verified by the sabotage check on the
+    # by-source fold — it fails *here* while the same-process read passes). The `kb`
+    # H363 cross-seed precedent lifted to the audit trust-root axis.
+    import os
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_doctor_determinism_mix(get_paths())
+
+    # two homes with the same seeded DB — each subprocess audits its own copy under
+    # its own hash seed (the H363 `kb` copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _doctor(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; from scrolls.cli import main; sys.exit(main(['doctor']))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _doctor(home_a, "0")  # hash randomization off
+    out_b = _doctor(home_b, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the populated audit (not an early
+    # skipped/empty return), so the byte-identity is a real claim.
+    report = json.loads(out_a)
+    assert sorted(report["custody"]["by_source"]) == ["arxiv", "crossref", "web"]
+    assert report["custody"]["works"]["most_at_risk"] is not None
+    assert report["custody"]["archive"]["events"]
+
+    assert out_a == out_b
