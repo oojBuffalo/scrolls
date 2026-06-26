@@ -33,6 +33,7 @@ from scrolls.items import (
     ScrollItem,
     adopt_incoming,
     archived_records,
+    archived_snapshots,
     delete_item,
     get_item,
     insert_item,
@@ -4863,6 +4864,79 @@ def test_archive_show_is_a_reproducible_recovery_artifact(
     capsys.readouterr()
     # the archived prior was re-adopted: the held copy is the recovered prior now
     assert get_item(db, item_id).content_hash == "sha256:v2"
+
+
+def test_reimport_archive_is_whole_store_idempotent(
+    scrolls_home, tmp_path, monkeypatch, capsys
+):
+    """`import archive` is the prior-content recovery transport (ADR 0106/H280), and
+    re-importing the *same* archive backup into a library that already holds those
+    priors must be a true **whole-store** no-op (H386) on three axes:
+
+    1. the second pass reports ``imported == 0`` / ``skipped == N`` — the report axis,
+    2. the raw ``item_archive`` row count is unchanged across the two passes — the
+       *store* axis a "reports skipped" check is blind to (a re-keyed dedup that both
+       skips *and* re-inserts would pass the report axis yet double the store), and
+    3. every item's ``archived_snapshots(id)`` recovery read is identical list-for-list
+       across the two passes — the *recovery-read* axis a scalar count is blind to.
+
+    The third member of the ingest-idempotency triptych — after `import bundle`
+    (H374, items transport, `merge_item`'s ``INSERT OR IGNORE``) and `import events`
+    (H380, the `_EVENT_IDENTITY` 5-tuple) — on the **archive** transport:
+    `import_archive` content-dedups on ``_ARCHIVE_IDENTITY = (item_id, prior_hash)``,
+    a **distinct code path** from both siblings; deliberately *not* a content-identity
+    guard. The pre-existing `test_import_archive_is_idempotent` already pins the
+    *single-prior, scalar-count* same-library re-import; this is its **multi-prior**
+    sharpening: a three-prior recovery history (so the order-sensitive
+    `archived_snapshots` fold is non-vacuous) re-imported into a **fresh home**, so
+    a dedup keyed on ``item_id`` alone (dropping ``prior_hash``) — which a one-prior
+    archive cannot distinguish from the full key — collapses the history to a single
+    row and is caught here, where the scalar-count single-prior test stays green.
+
+    **Decisive choice:** assert *both* the raw `item_archive` row count (catches a
+    silent double-insert) and the per-item `archived_snapshots` list identity over a
+    multi-prior history (catches a dedup that drops the wrong prior) — the H380
+    both-axes precedent (a "reports skipped" check is blind to a re-keyed dedup that
+    both skips *and* re-inserts).
+    """
+    # seed a non-vacuous recovery store: one item with three superseded priors, so the
+    # archive holds [abc, v1, v2] (newest-archived v2) and the order-sensitive
+    # `archived_snapshots` fold reads newest-first [v2, v1, abc] — a real multi-prior
+    # history, not the single row the pre-existing idempotency test exercises.
+    item_id = _seed_with_archived_priors(scrolls_home, tmp_path, 3)
+    capsys.readouterr()
+
+    # export the whole-library recovery store to a portable backup (raw JSONL on stdout)
+    assert main(["export", "archive"]) == 0
+    backup = tmp_path / "archive-backup.jsonl"
+    backup.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert backup.read_text(encoding="utf-8").count("\n") == 3  # non-vacuous, 3 priors
+
+    # restore into a *fresh* home (an empty recovery store the backup populates) — the
+    # recipient operator restoring a backup, not the source library that minted it.
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "fresh-home"))
+    assert main(["init"]) == 0
+    db = get_paths().db_path
+    capsys.readouterr()
+
+    # first pass: every prior is new — the backup populates the empty archive
+    assert main(["import", "archive", str(backup)]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["imported"] == 3 and first["skipped"] == 0
+    first_count = len(archived_records(db))
+    first_history = [s.content_hash for s in archived_snapshots(db, item_id)]
+    assert first_count == 3
+    assert first_history == ["sha256:v2", "sha256:v1", "sha256:abc"]  # newest-first
+
+    # second pass: the *same* backup into the now-populated archive is a true no-op
+    assert main(["import", "archive", str(backup)]) == 0
+    second = json.loads(capsys.readouterr().out)
+    # report axis: nothing imported, every prior skipped
+    assert second["imported"] == 0 and second["skipped"] == 3
+    # store axis: not one row silently re-inserted (the count is byte-for-byte stable)
+    assert len(archived_records(db)) == first_count
+    # recovery axis: every item's whole recoverable history is identical list-for-list
+    assert [s.content_hash for s in archived_snapshots(db, item_id)] == first_history
 
 
 # --- archive restore (H286): restore a *specific* archived prior in place via the
