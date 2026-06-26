@@ -28,10 +28,18 @@ reports the missing file rather than pretending it is held, exactly the
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
 from scrolls.cli import main
+from scrolls.custody import (
+    CONFLICT_STATUS,
+    CustodyEvent,
+    conflict_event,
+    item_history,
+    record_events,
+)
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, insert_item, item_to_dict, list_items, make_item_id
 from scrolls.paths import get_paths
@@ -295,6 +303,105 @@ def test_reimport_is_idempotent(home, capsys):
 
     assert first["imported"] == len(_seed_items()) and first["skipped"] == 0
     assert second["imported"] == 0 and second["skipped"] == len(_seed_items())
+
+
+def _event_count(db_path) -> int:
+    """The raw `custody_events` row count — the whole-ledger size a silent
+    double-insert would inflate, read straight from the table (not folded through
+    any reader) so the assertion sees the ledger SQLite actually holds."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM custody_events").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_reimport_events_is_whole_ledger_idempotent(home, capsys):
+    """`import events` re-import is whole-ledger idempotent — the events-transport
+    sibling of `test_reimport_is_idempotent` (which pins the *items* transport).
+
+    The custody-events backup (`scrolls export events`, ADR 0082/H72) is restored
+    through `import_events`, which content-dedups on the `_EVENT_IDENTITY` 5-tuple
+    (a *distinct* code path from `merge_item`'s `INSERT OR IGNORE` — the items
+    transport): importing the *same* ledger a second time into a library that
+    already holds those events must be a true no-op. H72/H73 pin the events
+    export→import *round-trip* preserves the posture, but the whole-*ledger*
+    idempotency of a re-import into a populated ledger is only *implied*: a
+    regression that dropped the `_EVENT_IDENTITY` dedup (or keyed it on the
+    per-library autoincrement `id`, which is never exported) would pass the
+    single-import round-trip tests yet double every event row on the second pass,
+    inflating the per-item `history` and any count that folds the raw ledger.
+
+    The **decisive choice** is asserting *both* axes: the raw `custody_events`
+    row count (catches a silent double-insert) **and** the per-item `history`
+    list identity (catches a dedup that drops the wrong row) — a naïve "import
+    reports skipped" check misses a re-keyed dedup that both skips *and*
+    re-inserts. A recorded *conflict* event rides the ledger so the non-verify
+    axis travels and dedups too.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    capsys.readouterr()  # drain the kb report
+
+    # seed a realistic ledger on real held items: a verify history (unchanged →
+    # drifted) plus an import-time conflict on the first item, a single verify on
+    # the second — so the backup spans ≥2 items, ≥2 statuses, and the conflict
+    # axis, not a single trivial row.
+    ids = [item.id for item in list_items(src.db_path)]
+    first_id, second_id = ids[0], ids[1]
+    record_events(src.db_path, [
+        CustodyEvent(first_id, "2026-06-11T00:00:00+00:00", "unchanged", "h0", "h0"),
+        CustodyEvent(first_id, "2026-06-12T00:00:00+00:00", "drifted", "h0", "h0b"),
+        conflict_event(
+            first_id, held_hash="h0b", incoming_hash="hX",
+            now="2026-06-13T00:00:00+00:00",
+        ),
+        CustodyEvent(second_id, "2026-06-11T00:00:00+00:00", "unchanged", "h1", "h1"),
+    ])
+    seeded = _event_count(src.db_path)
+    assert seeded == 4  # non-vacuous: a real multi-event ledger to round-trip
+
+    assert main(["export", "events"]) == 0
+    backup = src.root.parent / "events.jsonl"
+    backup.write_text(capsys.readouterr().out, encoding="utf-8")
+    assert backup.read_text().count("\n") == seeded  # the whole ledger travels
+
+    # restore the ledger into a *fresh* home, twice, with no intervening mutation
+    dst = home("rebuilt")
+    assert main(["import", "events", str(backup)]) == 0
+    first = json.loads(capsys.readouterr().out)
+    after_first_count = _event_count(dst.db_path)
+    after_first_history = {
+        first_id: item_history(dst.db_path, first_id),
+        second_id: item_history(dst.db_path, second_id),
+    }
+
+    assert main(["import", "events", str(backup)]) == 0
+    second = json.loads(capsys.readouterr().out)
+    after_second_count = _event_count(dst.db_path)
+    after_second_history = {
+        first_id: item_history(dst.db_path, first_id),
+        second_id: item_history(dst.db_path, second_id),
+    }
+
+    # the first pass restores the whole ledger; the second is a true no-op
+    assert first["imported"] == seeded and first["skipped"] == 0
+    assert second["imported"] == 0 and second["skipped"] == seeded
+
+    # axis 1 — the raw ledger did not grow: a dropped `_EVENT_IDENTITY` dedup (or
+    # one keyed on the per-library autoincrement id) would double it to 8 here
+    assert after_first_count == seeded
+    assert after_second_count == seeded
+
+    # axis 2 — every item's `history` timeline is byte-identical list-for-list
+    # across the two passes: a dedup that both skips *and* re-inserts (wrong row)
+    # would leave the count equal yet perturb the per-item timeline
+    assert after_second_history == after_first_history
+    # non-vacuous: the timeline really carries the multi-status + conflict ledger
+    assert [e["status"] for e in after_first_history[first_id]] == [
+        CONFLICT_STATUS, "drifted", "unchanged",  # item_history is newest-first
+    ]
+    assert len(after_first_history[second_id]) == 1
 
 
 def test_media_blob_degrades_honestly_on_rebuild(home, capsys):
