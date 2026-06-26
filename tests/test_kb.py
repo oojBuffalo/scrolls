@@ -1,6 +1,8 @@
 """Tests for the compiled library (IDEAS.md §9, §14 Pass 5)."""
 
+import hashlib
 import json
+import os
 
 import pytest
 
@@ -3048,3 +3050,136 @@ def test_kb_stale_source_composes_with_batch(
         {"slug": "graphs", "concept": "Graphs", "status": "generated"}
     ]
     assert len(fake_summary_llm_batch) == 1  # one submission for the one scoped concept
+
+
+# --- in-place recompile-determinism guard (roadmap H363) ----------------------
+#
+# Pins that recompiling an *unchanged* library is a byte-identical no-op: two
+# consecutive `scrolls kb` runs over the same DB produce a byte-identical
+# `library/` tree, and the second pass's ADR-0102 `_reconcile_generated`
+# removes/rewrites nothing (the steady-state reconcile is a true no-op). Every
+# compiled-surface dogfood/convergence guard (the landing line, the group pages,
+# the content-duplicate loop) reads compiled files and silently assumes `kb` is
+# deterministic given fixed inputs — but that contract was only *implied*
+# (`test_roundtrip` proves rebuild-from-re-imported-rows; the H351 mutation guard
+# asserts only that a marker persists), never the whole-tree byte-identity + the
+# reconcile no-op directly. A regression that made `kb` non-deterministic (a
+# timestamp leak, a reconcile that rewrites unchanged pages, an unsorted page fold)
+# would pass every existing test yet break the dogfood loops' reproducibility.
+#
+# Decisive choice: hash the *whole tree* (not just `index.md`), so a
+# non-determinism anywhere — a group page, `graph.md`, `works.md`, a concept/tag
+# page — is caught, not just the landing surface. Test-only, no production change
+# (the determinism already holds — `write_generated`/the folds are field-ordered
+# and carry no wall-clock; this makes it regression-proof).
+
+
+def _seed_recompile_library(db):
+    """A small but multi-page library: every compiled page kind is non-trivial.
+
+    Exercises all the surfaces the whole-tree hash must cover so a fold-order
+    regression on *any* of them fails the guard, not just `index.md`:
+    - two scholarly representations sharing a DOI → a multi-rep `works.md` entry
+      and a consolidated `categories/ml.md` work block (ADR 0069/0071);
+    - a byte-identical mirror pair under different ids/sources → the "also held
+      as" marker on the `notes` pages (H333);
+    - a linked note → a non-trivial `graph.md` component (the edge resolves);
+    - concept/tag co-occurrence → `concepts/`/`tags/` pages with Related sections;
+    - a drift + an unchanged verdict → varied per-row custody markers.
+    """
+    doi = "https://doi.org/10.1234/abc"
+    insert_item(db, make_rendered(
+        "arxiv:1", "arxiv", "A Paper (preprint)", category="ml",
+        links=(doi,), concepts=("BM25", "Ranking"), tags=("cs.IR",),
+        raw_text="paper", content_hash="h-arxiv"))
+    insert_item(db, make_rendered(
+        "crossref:1", "crossref", "A Paper", category="ml",
+        links=(doi,), concepts=("BM25",), tags=("cs.IR",),
+        raw_text="paper", content_hash="h-crossref"))
+    # a byte-identical mirror pair (one content_hash, two ids/sources)
+    insert_item(db, make_rendered(
+        "web:a", "web", "Mirror One", category="notes",
+        concepts=("Search",), tags=("search",), raw_text="same", content_hash="dup"))
+    insert_item(db, make_rendered(
+        "blog:b", "blog", "Mirror Two", category="notes",
+        concepts=("Search",), tags=("search",), raw_text="same", content_hash="dup"))
+    # a third web note that links to web:a → a resolvable graph edge
+    insert_item(db, make_rendered(
+        "web:c", "web", "Linked Note", category="notes",
+        links=("https://example.org/web:a",), concepts=("Search", "BM25"),
+        tags=("cli",), raw_text="c", content_hash="h-c"))
+    _drift(db, "arxiv:1", "drifted")
+    _drift(db, "web:a", "unchanged")  # reads as `verified`
+
+
+def _tree_hashes(root):
+    """Map every file under `root` to its sha256, keyed by POSIX relpath."""
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(
+            path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_kb_recompile_is_a_byte_identical_noop(scrolls_home, capsys):
+    """A second `scrolls kb` over an unchanged DB rewrites nothing and removes
+    nothing — the `library/` tree is byte-identical pass to pass (H363)."""
+    main(["init"])
+    _seed_recompile_library(get_paths().db_path)
+    capsys.readouterr()
+
+    run_kb(capsys)  # first compile
+    library = scrolls_home / "library"
+    first = _tree_hashes(library)
+    # the seed is genuinely multi-page, so the whole-tree claim is non-vacuous:
+    # the always-written rollups, a multi-source group page, and the leaf dirs
+    assert {"index.md", "graph.md", "works.md"} <= set(first)
+    assert any(rel.startswith("sources/") for rel in first)
+    assert any(rel.startswith("categories/") for rel in first)
+    assert any(rel.startswith("concepts/") for rel in first)
+    assert any(rel.startswith("tags/") for rel in first)
+
+    run_kb(capsys)  # recompile, no DB change
+    second = _tree_hashes(library)
+
+    # same file set → the reconcile removed nothing (no page disappeared);
+    # same bytes per file → nothing was rewritten (splice is idempotent, no
+    # wall-clock or run-counter leaked into any page)
+    assert set(second) == set(first)
+    assert second == first
+
+
+def test_kb_compile_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    """`scrolls kb` is byte-identical across two processes with *different*
+    `PYTHONHASHSEED`s — the cross-process face of the recompile no-op the
+    same-process two-pass cannot see (one process fixes the seed). This is what
+    actually backs the "unsorted page fold" sabotage check: any set-iteration
+    order leaking into a page would diverge between seeds and fail here (H363)."""
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_recompile_library(get_paths().db_path)
+
+    # two homes with the same DB but no `library/` yet — each subprocess builds
+    # the tree from scratch under its own hash seed
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _compile(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; from scrolls.cli import main; sys.exit(main(['kb']))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+    _compile(home_a, "0")  # hash randomization off
+    _compile(home_b, "1")  # a different fixed seed
+
+    assert _tree_hashes(home_a / "library") == _tree_hashes(home_b / "library")
