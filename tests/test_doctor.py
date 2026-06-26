@@ -10,6 +10,7 @@ the index, rebuilds the FTS index. Missing media (network) and orphan
 files (not provably tool-owned) are report-only.
 """
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -2654,3 +2655,61 @@ def test_scoped_posture_reflects_only_source_attributable_axes(paths):
     scoped = run_doctor(paths, source="arxiv")["custody"]
     assert scoped["archive"]["status"] == "skipped"  # whole-library store not in scope
     assert scoped["posture"] == {"verdict": "sound", "reasons": []}
+
+
+# --- repair convergence: a second `--fix` is a total no-op (roadmap H365) ---
+
+
+def _hash_scrolls_tree(paths):
+    """Map every scroll file under `scrolls/` to its sha256 — a whole-tree
+    fingerprint so a `--fix` that silently re-rendered a byte-identical scroll is
+    caught, not just one that re-reports a finding (the H363 whole-tree-hash
+    precedent on the repair axis)."""
+    tree = {}
+    for file in sorted(paths.scrolls_dir.rglob("*.md")):
+        relpath = str(file.relative_to(paths.root))
+        tree[relpath] = hashlib.sha256(file.read_bytes()).hexdigest()
+    return tree
+
+
+def test_fix_converges_second_pass_is_a_total_no_op(paths):
+    # `doctor --fix` must *settle*: once a library is repaired, re-running `--fix`
+    # over it with no intervening mutation finds nothing more (the report no-op) and
+    # rewrites nothing on disk (the byte no-op). Every dogfood/round-trip restore step
+    # (H336/H360) leans on this convergence, but the single-pass `--fix` tests only
+    # *imply* it — a regression that re-rewrote an unchanged scroll (a render-
+    # nondeterminism leak), re-reported a cleared finding, or oscillated would pass
+    # them yet break the settle assumption. Pin both axes. A held byte-identical
+    # content pair rides along: `--fix` never merges it (H337), so it stays a
+    # non-finding on both passes, left held by both.
+    rendered = _rendered(paths, _web_item("https://example.com/post", fetched=True))
+    (paths.root / rendered.markdown_path).unlink()   # → missing_scrolls (rewritable)
+    _corrupt_fts(paths.db_path)                       # → fts desync (rebuildable)
+    dup_ids = _content_pair(paths)                    # held byte-identical, never merged
+
+    first = run_doctor(paths, fix=True)
+    assert first["fixed"] == 2                        # scroll rewritten + fts rebuilt
+    assert first["missing_scrolls"][0]["status"] == "rewritten"
+    assert first["fts"] == {"in_sync": True, "status": "rebuilt"}
+    assert first["custody"]["content_duplicates"]["groups"] == [
+        {"content_hash": "sha256:dup", "ids": dup_ids}
+    ]
+
+    settled = _hash_scrolls_tree(paths)               # the repaired, settled file tree
+
+    second = run_doctor(paths, fix=True)              # no intervening mutation
+
+    # report-level no-op: nothing re-found, nothing re-fixed, every finding list empty
+    assert second["issues"] == 0
+    assert second["fixed"] == 0
+    assert second["missing_scrolls"] == []
+    assert second["missing_media"] == []
+    assert second["orphan_scrolls"] == []
+    assert second["duplicates"] == []
+    assert second["fts"] == {"in_sync": True, "status": "ok"}
+    # disk-level no-op: not one scroll silently re-rendered between passes
+    assert _hash_scrolls_tree(paths) == settled
+    # the content pair stays held by both passes — `--fix` never merges it (H337)
+    assert second["custody"]["content_duplicates"]["groups"] == [
+        {"content_hash": "sha256:dup", "ids": dup_ids}
+    ]
