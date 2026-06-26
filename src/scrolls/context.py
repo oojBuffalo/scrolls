@@ -88,7 +88,11 @@ from scrolls.items import (
 )
 from scrolls.kb import load_concept_summaries
 from scrolls.kb_llm import stale_summary_counts_by_source
-from scrolls.maintain import render_archive_integrity, render_content_duplicates
+from scrolls.maintain import (
+    render_archive_integrity,
+    render_content_duplicates,
+    render_posture,
+)
 from scrolls.search import (
     SearchHit,
     count_matches,
@@ -408,6 +412,22 @@ def build_context(
         # lines. Report-only — names no command (raw is sacred, H325); honest no-op on a
         # clean/unique/empty scope ([] lines).
         lines += render_content_duplicates(scope_items)
+        # the readable whole-library custody-posture pointer (roadmap H371): one
+        # `_Posture:_` line naming `doctor`'s `custody.posture` verdict (sound/attention/
+        # at_risk + its contributing reasons, H369) — the H370 `maintain` surface and the
+        # H371 shareable-`export bundle` line lifted to the agent context briefing.
+        # **Unlike the in-scope `_Conflicts:_`/`_Archive:_`/`_Duplicates:_` lines above,
+        # this is the *whole-library* verdict** (posture is a library-level fact, H369 —
+        # the briefing analogue of the compiled `index.md` whole-library `_Archive:_`
+        # line, H321), carried as custody provenance and **rendered always** (even the
+        # clean `sound` verdict, the H370 resolve) via the *same* `render_posture` fold
+        # (`_assess_custody_posture` + `posture_headline`) the bundle line and
+        # `doctor`/`status`/`maintain` use — so the context line, the bundle line, the
+        # maintenance summary, and the JSON audit converge by construction. Gated to
+        # `connected`+ with the headline (the leanest `index` tier reads no ledger and
+        # makes no custody claim, the M2 anti-fabrication gate — and the posture audit
+        # reads the very ledger that tier skips); report-only, names no command.
+        lines += render_posture(db_path)
         # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_`
         # line naming the source(s) whose classifications/summaries are stale and
         # the exact `classify --stale`/`kb --stale --source <S>` refresh — the

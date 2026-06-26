@@ -1239,6 +1239,125 @@ def test_bundle_html_duplicates_line_omitted_when_unique(scrolls_home):
     )
 
 
+# --- readable whole-library `_Posture:_` line (roadmap H371) ------------------
+# The shareable-briefing leg of the custody-posture theme (custody-vision §3.1,
+# ADR 0107): `doctor`'s `custody.posture` verdict (sound/attention/at_risk + its
+# contributing reasons, H369) travels with a shared bundle, so a recipient reads
+# "is the library this slice came from in good custody?" in one line. **Unlike the
+# in-scope `_Conflicts:_`/`_Archive:_`/`_Duplicates:_` siblings above, this is the
+# *whole-library* verdict** (posture is a library-level fact, H369 — the same
+# divergence the compiled `index.md` whole-library `_Archive:_` line, H321, set),
+# carried as exporter-side custody provenance, and **rendered always** (even the
+# clean `sound` verdict, the H370 resolve) from the *same* `_assess_custody_posture`
+# fold + `posture_headline` `doctor`/`status`/`maintain` use — so it converges with
+# every other posture surface by construction.
+
+
+def _drift_item(db, item_id, title):
+    """Hold a matchable item and record a `drifted` custody event on it — the soft
+    source-drift concern that moves the whole-library posture to `attention`.
+    ``markdown_path=None`` so the audit finds no `missing_scroll` integrity issue (no
+    scroll file is written in this harness), keeping drift the *only* posture mover."""
+    insert_item(db, make_item(item_id, title, "Body.", content_hash="deadbeef",
+                              markdown_path=None))
+    record_events(db, [CustodyEvent(
+        item_id=item_id, checked_at="2026-06-20T00:00:00+00:00",
+        status="drifted", prior_hash="deadbeef", observed_hash="moved")])
+
+
+def test_bundle_carries_a_posture_line(scrolls_home):
+    # roadmap H371: a library with a soft custody concern (source drift) surfaces one
+    # `_Posture:_` line naming the verdict and its reason — the readable completion of
+    # `doctor`'s `custody.posture` on the shareable briefing.
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    bundle = build_bundle(db, "database")
+    assert "_Posture: attention (source_drift)._" in bundle
+    # grouped with the divergence lines, below the scope custody headline
+    assert bundle.index("_Posture:") > bundle.index("_Custody:")
+
+
+def test_posture_line_renders_even_on_a_sound_library(scrolls_home):
+    # the H370 divergence from the omit-when-clean `_Conflicts:_`/`_Archive:_`/
+    # `_Duplicates:_` siblings: the posture line names the *whole-library* verdict, so
+    # the clean `sound` "all clear" line still renders (it has briefing value — a
+    # recipient sees custody is sound, not infers it from the other lines' absence).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              markdown_path=None))
+    bundle = build_bundle(db, "database")
+    assert "_Posture: sound._" in bundle  # rendered though no reasons, no defect
+    assert "_Conflicts:" not in bundle  # the omit-when-clean siblings stay absent
+    assert "_Archive:" not in bundle
+
+
+def test_posture_line_is_whole_library_not_in_scope(scrolls_home):
+    # the documented divergence from the in-scope siblings: posture is a *library-level*
+    # fact (H369), so a drift on an item OUTSIDE the bundle's query scope still moves
+    # the verdict — the line carries the custody posture of the library the slice was
+    # shared *from*, not an in-scope tally (the briefing analogue of the whole-library
+    # `index.md` `_Archive:_` line, H321).
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              markdown_path=None))
+    _drift_item(db, "wikipedia:en:Tarragon", "Tarragon herb")  # off-scope drift
+    bundle = build_bundle(db, "database")  # matches SQLite only
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+    assert "_Posture: attention (source_drift)._" in bundle  # off-scope drift counts
+
+
+def test_posture_line_converges_with_doctor(scrolls_home):
+    # the verdict is the *same* `_assess_custody_posture` fold `doctor`'s
+    # `custody.posture` reads — so the readable line and the JSON audit name the same
+    # whole-library verdict + reasons by construction (the H373 convergence).
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    posture = run_doctor(get_paths())["custody"]["posture"]
+    reasons = f" ({', '.join(posture['reasons'])})" if posture["reasons"] else ""
+    bundle = build_bundle(db, "database")
+    assert f"_Posture: {posture['verdict']}{reasons}._" in bundle
+
+
+def test_posture_line_preserves_the_round_trip(scrolls_home):
+    # the line is a derived read view *outside* the @generated JSONL fence, so the
+    # lossless round-trip is untouched (the H264/H277/H319 derived-view invariant)
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    bundle = build_bundle(db, "database")
+    assert "_Posture:" in bundle
+    assert [i.id for i in parse_bundle(bundle)] == ["wikipedia:en:SQLite"]
+
+
+def test_bundle_html_carries_a_posture_line(scrolls_home):
+    # roadmap H371: the HTML briefing carries the same whole-library posture verdict as
+    # the Markdown `_Posture:_` line, from the *same* `render_posture` fold — so the two
+    # readable forms (and `doctor`'s JSON) cannot desync
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    doc = build_bundle_html(db, "database")
+    assert (
+        '<p class="custody-posture">Posture: attention (source_drift).</p>' in doc
+    )
+
+
+def test_bundle_html_posture_line_renders_even_on_a_sound_library(scrolls_home):
+    # the H370 always-render divergence holds for the HTML twin too: the clean `sound`
+    # verdict still renders (unlike the omit-when-clean `_archive`/`_duplicates` twins)
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database", "Body.",
+                              markdown_path=None))
+    doc = build_bundle_html(db, "database")
+    assert '<p class="custody-posture">Posture: sound.</p>' in doc
+    assert '<p class="custody-conflicts">' not in doc  # omit-when-clean siblings absent
+
+
 # --- the `_Duplicates:_` line travels the bundle round-trip (roadmap H336) ---
 # H331 put the `_Duplicates:_` line on the shareable `export bundle`; the untested
 # guarantee is that a recipient who rebuilds a library *from the bundle alone* and

@@ -64,7 +64,7 @@ from scrolls.items import (
     list_items,
 )
 from scrolls.kb import compile_kb
-from scrolls.paths import LibraryPaths
+from scrolls.paths import LibraryPaths, get_paths
 
 # The axes a snapshot carries from a doctor report. `score`/`enrichment_stale`/
 # `summaries_stale` are scalar; `tiers`/`drift` are count mappings.
@@ -577,6 +577,48 @@ def posture_headline(verdict: str, reasons: list[str]) -> str:
     if not reasons:
         return f"{base}._"
     return f"{base} ({', '.join(reasons)})._"
+
+
+def render_posture(db_path: Path) -> list[str]:
+    """The readable whole-library ``_Posture:_`` line for a shareable briefing —
+    the shared fold every briefing surface reads (roadmap H371).
+
+    Audits the library once (`run_doctor`, read-only — the briefing never repairs)
+    and renders its `custody.posture` verdict (H369) via the *same*
+    `posture_headline` the scheduled `maintain` summary uses (H370) — so the
+    shareable `export bundle`, the agent `context` briefing, the `maintain` line,
+    `scrolls status`, and `doctor`'s `custody.posture` JSON audit all name the same
+    verdict by construction (the H373 cross-surface convergence, extended to the
+    briefings). One fold, one renderer — a recipient skimming the bundle reads the
+    same custody verdict the exporter's `doctor` does.
+
+    **The deliberate divergence from the in-scope `_Conflicts:_`/`_Archive:_`/
+    `_Duplicates:_` siblings** (H277/H319/H331, which fold over the briefing's own
+    item scope): this line names the **whole-library** verdict, not an in-scope one.
+    Posture is a *library-level* fact (H369: the seven custody blocks distilled into
+    one "is the library in good custody?" read; there is no per-arbitrary-scope
+    posture fold), so the line carries the custody verdict of the library the slice
+    was shared *from* — exporter-side provenance, like the briefing prose's "how this
+    slice looked when shared" and the export timestamp. It is the briefing analogue
+    of the whole-library `_Archive:_`/`_Duplicates:_` lines the compiled landing
+    `library/index.md` carries (H321/H334), not of the in-scope bundle lines.
+
+    **Rendered always** — including the clean ``sound`` verdict (the H370 resolve):
+    unlike the omit-when-clean siblings this names the whole-library verdict, and the
+    one line that says "all clear" has briefing value (a recipient wants to see
+    custody is sound, not infer it from the absence of the other lines). So this
+    returns ``[line, ""]`` unconditionally, never ``[]`` — the documented divergence
+    from `render_archive_integrity`/`render_content_duplicates`.
+
+    The audit is whole-library (`run_doctor` with no `--source`), so the briefing's
+    own scope facets do not narrow it — the verdict converges with unscoped `doctor`/
+    `status`/`maintain`. A missing/uninitialized library audits to the honest
+    skeleton ``sound`` (the `run_doctor`/`_assess_custody_posture` contract); the
+    library root is `db_path.parent` (`get_paths`'s single layout source).
+    """
+    report = run_doctor(get_paths(db_path.parent))
+    posture = report["custody"].get("posture", {"verdict": "sound", "reasons": []})
+    return [posture_headline(posture.get("verdict", "sound"), posture.get("reasons", [])), ""]
 
 
 def render_archive_integrity(

@@ -1927,6 +1927,117 @@ def test_context_duplicates_line_mcp_parity(scrolls_home):
     assert "_Duplicates: 1 group(s) of byte-identical content (2 item(s))._" in bundle
 
 
+# --- readable whole-library `_Posture:_` line (roadmap H371) ------------------
+#
+# The shareable-briefing leg of the custody-posture theme (custody-vision §3.1,
+# ADR 0107) on the agent context bundle: `doctor`'s `custody.posture` verdict
+# (sound/attention/at_risk + reasons, H369) travels with the briefing. Unlike the
+# in-scope `_Conflicts:_`/`_Archive:_`/`_Duplicates:_` siblings, this is the
+# *whole-library* verdict (posture is a library-level fact, H369) and is **rendered
+# always** (even the clean `sound` verdict, the H370 resolve), from the shared
+# `render_posture`. Gated to `connected`+ like the headline (the `index` tier makes
+# no custody claim — and the posture audit reads the ledger the lean tier skips).
+
+
+def _drift_item(db, item_id, title):
+    """Hold a matchable item and record a `drifted` event — the soft source-drift
+    concern that moves the whole-library posture to `attention`. `markdown_path=None`
+    so no `missing_scroll` integrity issue fires (no scroll file written here). The
+    body is non-matching ("Body.") so query scope is driven by the title alone — an
+    off-scope title genuinely stays out of the bundle."""
+    insert_item(db, make_item(item_id, title, "Body.",
+                              content_hash="deadbeef", markdown_path=None))
+    record_events(db, [CustodyEvent(
+        item_id=item_id, checked_at="2026-06-20T00:00:00+00:00",
+        status="drifted", prior_hash="deadbeef", observed_hash="moved")])
+
+
+def test_context_carries_a_posture_line(scrolls_home, capsys):
+    # roadmap H371: a library with a soft custody concern (source drift) surfaces one
+    # `_Posture:_` line — the H370 maintain surface lifted to the context briefing.
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Posture: attention (source_drift)._" in out
+    # grouped with the divergence lines, below the scope custody headline
+    assert out.index("_Posture:") > out.index("_Custody:")
+
+
+def test_context_posture_line_renders_even_on_a_sound_library(scrolls_home, capsys):
+    # the H370 always-render divergence: the clean `sound` verdict still renders,
+    # unlike the omit-when-clean `_Conflicts:_`/`_Archive:_`/`_Duplicates:_` siblings.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database",
+                              "A database body.", markdown_path=None))
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    assert "_Posture: sound._" in out
+    assert "_Conflicts:" not in out
+
+
+def test_context_posture_line_is_whole_library_not_in_scope(scrolls_home, capsys):
+    # the documented divergence from the in-scope siblings: posture is a library-level
+    # fact (H369), so a drift on an item OUTSIDE the query scope still moves the verdict.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_item("wikipedia:en:SQLite", "SQLite database",
+                              "A database body.", markdown_path=None))
+    _drift_item(db, "wikipedia:en:Tarragon", "Tarragon herb")  # off-scope drift
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")  # matches SQLite only
+    assert "Tarragon" not in out
+    assert "_Posture: attention (source_drift)._" in out  # off-scope drift counts
+
+
+def test_context_posture_line_converges_with_doctor(scrolls_home, capsys):
+    # the verdict is the *same* `_assess_custody_posture` fold `doctor`'s
+    # `custody.posture` reads — the readable line and the JSON audit name the same
+    # whole-library verdict + reasons by construction (the H373 convergence).
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database")
+    posture = run_doctor(get_paths())["custody"]["posture"]
+    reasons = f" ({', '.join(posture['reasons'])})" if posture["reasons"] else ""
+    assert f"_Posture: {posture['verdict']}{reasons}._" in out
+
+
+def test_context_posture_line_gated_off_index(scrolls_home, capsys):
+    # the `index` tier makes no custody claim (the H47 gate), exactly like the
+    # headline/`_Conflicts:_`/`_At-risk work:_`/`_Archive:_`/`_Duplicates:_`
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+    capsys.readouterr()
+
+    out = run_context(capsys, "database", "--budget", "index")
+    assert "_Posture:" not in out
+    assert "## Best Matches" in out
+
+
+def test_context_posture_line_mcp_parity(scrolls_home):
+    # the MCP twin routes through the same build_context, so the posture line rides
+    # MCP identically (CLI ≡ MCP)
+    from scrolls.mcp_server import get_context_bundle
+
+    main(["init"])
+    db = get_paths().db_path
+    _drift_item(db, "wikipedia:en:SQLite", "SQLite database")
+
+    bundle = get_context_bundle("database")
+    assert "_Posture: attention (source_drift)._" in bundle
+
+
 # --- readable per-source `_Refresh:_` line (roadmap H178) --------------------
 #
 # The enrichment/summary-axis counterpart of `_Attention:_` on the model-facing

@@ -124,6 +124,7 @@ from scrolls.maintain import (
     duplicates_headline,
     render_archive_integrity,
     render_content_duplicates,
+    render_posture,
 )
 from scrolls.kb import ConceptSummary, group_concepts, load_concept_summaries
 from scrolls.kb_llm import (
@@ -516,6 +517,19 @@ def build_bundle(
     # names no command (raw is sacred; two faithful copies are a redundancy fact, never a
     # `--fix` merge, H325). Honest no-op on a clean/unique/empty scope ([] lines).
     lines += render_content_duplicates(items)
+    # the readable whole-library custody-posture pointer (roadmap H371): one
+    # `_Posture:_` line naming `doctor`'s `custody.posture` verdict (sound/attention/
+    # at_risk + its contributing reasons, H369) — the shareable-briefing leg of the
+    # custody-posture theme (custody-vision §3.1, ADR 0107), so a custody verdict
+    # travels with the shared bundle. **Unlike the in-scope `_Conflicts:_`/`_Archive:_`/
+    # `_Duplicates:_` lines above, this is the *whole-library* verdict** (posture is a
+    # library-level fact, H369 — the briefing analogue of the compiled `index.md`
+    # whole-library `_Archive:_` line, H321), carried as exporter-side custody
+    # provenance, and **rendered always** (even the clean `sound` verdict, the H370
+    # resolve) via the *same* `_assess_custody_posture` fold + `posture_headline`
+    # `doctor`/`status`/`maintain` use — so it converges with every other posture
+    # surface by construction (the shared `render_posture`, one fold/one renderer).
+    lines += render_posture(db_path)
     # the readable per-source refresh pointer (roadmap H178): one `_Refresh:_` line
     # naming the source(s) whose classifications/summaries are stale and the exact
     # `classify --stale`/`kb --stale --source <S>` refresh — the enrichment/summary-
@@ -704,6 +718,13 @@ def build_bundle_html(
     # `custody.content_duplicates`) report the same byte-identical-holding count; grouped
     # with the divergence lines above; report-only, honest no-op on a clean/unique scope
     body += _content_duplicates_html(items)
+    # the readable whole-library custody-posture pointer (roadmap H371), the HTML twin
+    # of the Markdown `_Posture:_` line — the *same* `render_posture` whole-library fold,
+    # sans the markdown `_` emphasis, so the two forms (and `doctor`/`status`/`maintain`'s
+    # posture verdict) name the same verdict; grouped with the divergence lines above and
+    # **rendered always** (even the clean `sound` verdict, the H370 resolve), unlike the
+    # omit-when-clean siblings.
+    body += _posture_html(db_path)
     # the readable per-source refresh pointer (roadmap H178), the HTML twin of the
     # Markdown `_Refresh:_` line — over the *same* `_refresh_debt_by_source` maps, so
     # the two forms name the same sources; honest no-op when no source carries
@@ -907,6 +928,21 @@ def _content_duplicates_html(items: list[ScrollItem]) -> list[str]:
     if not line:
         return []
     return [f'<p class="custody-duplicates">{html.escape(line.strip("_"))}</p>']
+
+
+def _posture_html(db_path: Path) -> list[str]:
+    """The HTML twin of the Markdown `_Posture:_` line (roadmap H371).
+
+    The *same* `render_posture` whole-library fold the Markdown form reads, sans the
+    markdown `_` emphasis, so the two readable forms (and `doctor`'s/`status`'s/
+    `maintain`'s posture verdict) name the same whole-library verdict + reasons by
+    construction. **Rendered always** — including the clean `sound` verdict (the H370
+    resolve) — so this never returns [], unlike the omit-when-clean
+    `_archive_integrity_html`/`_content_duplicates_html` siblings. The line is
+    controlled text but escaped for safety regardless, like `_conflicts_html`.
+    """
+    line = render_posture(db_path)[0]
+    return [f'<p class="custody-posture">{html.escape(line.strip("_"))}</p>']
 
 
 def _refresh_html(db_path: Path, items: list[ScrollItem]) -> list[str]:
