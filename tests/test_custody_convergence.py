@@ -602,6 +602,134 @@ def test_convergence_holds_under_a_scope_filter(scrolls_home, capsys):
     assert custody_headline(web_items, verdicts) in capsys.readouterr().out
 
 
+# --- boot ↔ audit custody-scalar convergence (roadmap H367) ----------------
+#
+# `scrolls status` projects a *flat* custody summary (the boot-tier read an agent
+# skims first) via `custody_snapshot(run_doctor(...))`, while `doctor --json`
+# carries the authoritative *nested* audit. Both fold the same custody primitives
+# by construction, but no test pins the scalar-to-nested mapping field-for-field,
+# so a future change to either projection (a `status` scalar re-read off the wrong
+# nested field) would pass each surface's own tests yet desync the two readings an
+# agent trusts to mean the same thing — the M2 "identical semantics across
+# surfaces" contract (custody-vision §2.6) on the boot-vs-audit axis. This is the
+# fifth forward-hardening cell (after H363's compile determinism, H364's MCP
+# immutability, H365's repair convergence, H366's read-budget nesting) and is
+# deliberately *not* another content-identity guard.
+
+
+def _seed_boot_audit_nonvacuous(db):
+    """A held mix where every load-bearing custody scalar is non-zero.
+
+    So the boot↔audit equality below is non-vacuous (an all-zeros library would
+    pass a mis-projection too):
+
+    - a **byte-identical content pair** (two `full` ids sharing one `content_hash`)
+      → `content_duplicate_groups == 1`, `content_duplicate_items == 2` (the
+      decisive distinction a `groups`/`items` mis-projection collapses);
+    - one of the pair classified against a **stale ruleset** → `enrichment_stale`;
+    - a **drifted** `full` item that *also* carries an unresolved **import
+      conflict** (disjoint ledger axes) → `drift.drifted` + `conflicts`;
+    - a `verified` `full` item (the pair's classified member) → `drift.unchanged`
+      and non-trivial recheck `coverage`;
+    - a `partial` item → the `partial` tier;
+    - an **all-reference work** (two reference reps sharing a DOI) → `works.at_risk`
+      and the `reference` tier.
+
+    `archive_mismatched` and `summaries_stale` stay 0 (no archived prior, no
+    concept summary) — still pinned field-for-field below, the equality just reads
+    0 == 0 there; the sabotage check leans on the non-zero scalars.
+    """
+    from scrolls.classify import RULESET_FINGERPRINT  # noqa: F401 (parity import)
+    from scrolls.custody import conflict_event
+
+    # byte-identical content pair; dup1 is also stale-classified (enrichment_stale)
+    insert_item(db, _item(
+        "web:dup1", "Topic full one", category="tutorial",
+        extracted_text="topic one body", raw_text="<raw>topic one</raw>",
+        content_hash="sha256:dup",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))  # stale ruleset
+    insert_item(db, _item(
+        "web:dup2", "Topic full two",
+        extracted_text="topic two body", raw_text="<raw>topic two</raw>",
+        content_hash="sha256:dup"))
+    # a drifted full item that also carries an unresolved import conflict
+    insert_item(db, _item(
+        "web:drift", "Topic drift",
+        extracted_text="topic drift body", raw_text="<raw>topic drift</raw>",
+        content_hash="sha256:wd"))
+    insert_item(db, _item(
+        "web:partial", "Topic partial", extracted_text="topic partial body"))  # partial
+    # an all-reference work: two reference reps of the same DOI, no full copy
+    insert_item(db, _item(
+        "arxiv:workz", "Topic arxiv z", source="arxiv",
+        url="https://arxiv.org/abs/workz", links=("https://doi.org/10.3000/z",),
+        stage="rendered"))
+    insert_item(db, _item(
+        "crossref:workz", "Topic crossref z", source="crossref",
+        url="https://example.org/crossref-workz",
+        links=("https://doi.org/10.3000/z",), stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:dup1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:dup", "sha256:dup", None),
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wd", "sha256:changed", None),
+        # disjoint conflict axis: an import disagreed with the held copy, unresolved
+        conflict_event("web:drift", held_hash="sha256:wd",
+                       incoming_hash="sha256:incoming", now="2026-06-15T00:00:00+00:00"),
+    ])
+
+
+def test_status_custody_scalars_converge_with_doctor_nested_audit(scrolls_home, capsys):
+    # roadmap H367: the lean `scrolls status` custody block (boot tier) equals the
+    # full `doctor --json` `custody` nested audit on the same library, scalar-to-
+    # nested, field-for-field. Both are reads of one `run_doctor` report (`status`
+    # is `custody_snapshot(run_doctor(...))`), so they converge by construction —
+    # this pins *which* nested field each flat scalar reads, the regression a
+    # mis-projection (e.g. `content_duplicate_items` off the group *count*) sneaks
+    # past each surface's own tests.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_boot_audit_nonvacuous(db)
+    capsys.readouterr()
+
+    doctor = run_doctor(get_paths())["custody"]
+    assert main(["status"]) == 0
+    status = json.loads(capsys.readouterr().out)["custody"]
+
+    # sanity: the fixture is non-vacuous — every load-bearing scalar is non-zero,
+    # so a mis-projection has a wrong value to land on (not 0 == 0).
+    assert doctor["score"] is not None
+    assert _nonzero(doctor["tiers"]) == {"full": 3, "partial": 1, "reference": 2}
+    assert doctor["drift"]["drifted"] == 1
+    assert doctor["drift"]["unchanged"] == 1
+    assert doctor["enrichment"]["stale"] >= 1
+    assert doctor["works"]["at_risk"] >= 1
+    assert doctor["conflicts"]["items"] == 1
+    assert doctor["content_duplicates"]["total_groups"] == 1
+    assert doctor["content_duplicates"]["total_items"] == 2
+
+    # the whole scalar-to-nested mapping, field-for-field (the decisive choice: a
+    # single mis-projected scalar — not just `score` — is the regression caught).
+    assert status["score"] == doctor["score"]
+    assert status["tiers"] == doctor["tiers"]
+    assert status["drift"] == {
+        axis: doctor["drift"][axis]
+        for axis in ("checked", "unverified", "unchanged", "drifted", "rotted", "error")
+    }
+    assert status["coverage"] == doctor["drift"]["coverage"]
+    assert status["enrichment_stale"] == doctor["enrichment"]["stale"]
+    assert status["summaries_stale"] == doctor["summaries"]["stale"]
+    assert status["at_risk"] == doctor["works"]["at_risk"]
+    assert status["conflicts"] == doctor["conflicts"]["items"]
+    assert status["archive_mismatched"] == doctor["archive"]["mismatched"]
+    assert status["content_duplicate_groups"] == doctor["content_duplicates"]["total_groups"]
+    assert status["content_duplicate_items"] == doctor["content_duplicates"]["total_items"]
+    # posture is carried *whole* ({verdict, reasons}), not a bare scalar (H369/H370)
+    assert status["posture"] == doctor["posture"]
+    assert status["posture"]["verdict"] in {"sound", "attention", "at_risk"}
+
+
 # --- cross-tier fidelity convergence (roadmap H213) ------------------------
 #
 # The budget/tier-honesty sibling of this module's spine. `scrolls context`
