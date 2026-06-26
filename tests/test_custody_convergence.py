@@ -381,6 +381,7 @@ import scrolls.cli as cli
 from scrolls.cli import main
 from scrolls.custody import (
     CustodyEvent,
+    conflict_event,
     custody_counts,
     custody_counts_by_source,
     custody_headline,
@@ -416,6 +417,7 @@ from scrolls.maintain import (
     last_run_boundary,
     load_snapshot,
     log_path,
+    posture_headline,
     read_log,
     report_by_source,
     report_enrichment_by_source,
@@ -6763,6 +6765,126 @@ def test_a_sub_two_run_window_has_no_trajectory_to_telescope():
         # no adjacent pairs → no per-run deltas to sum (the empty telescope)
         _, _, _, _, _, _, _, deltas = _telescoped(snapshots)
         assert deltas == []
+
+
+# --- the whole-library custody-posture verdict converges across every surface
+#     (roadmap H373) -------------------------------------------------------------
+#
+# The custody-posture theme (custody-vision §3.1, ADR 0107) distils the seven
+# custody audit blocks into one whole-library verdict (`{verdict, reasons}`).
+# H369–H372 surfaced it on `doctor`, MCP `get_library_health`, `status`, the
+# `maintain` report, the `export bundle`/`context` briefings, the cross-run
+# movement clause, and the windowed trend. Each leg is pinned per-surface; this
+# guard pins they all *agree* on one non-vacuous library — the H367 boot↔audit
+# precedent lifted to the posture axis, plus (H372) the cross-run *movement* axis
+# at CLI↔MCP parity. A regression that re-projected any one surface (a `status`
+# scalar reading a stale band, a briefing dropping a reason, the report headline
+# mis-reading `delta.posture.before`) would pass that surface's own test yet
+# desync the verdict an agent trusts to mean the same thing across reads — the
+# custody-vision §2.6 "identical semantics across surfaces" contract, on posture.
+#
+# Non-vacuous by construction: an open import conflict + source drift move the
+# verdict to `attention` with two reasons in `doctor`'s fixed severity order, and
+# the band *moves* `sound → attention` across two recorded runs — so a surface that
+# silently rendered `sound`/`[]`, dropped a reason, or lost the movement clause
+# fails the guard while its own single-surface test stays green.
+
+
+def _hold_clean_posture_item(db, item_id, content_hash):
+    """Hold one clean rendered web capture matching the query ``database`` — the
+    `sound`-baseline fixture (the H372 MCP precedent: a rendered capture with a
+    hash and no scroll file on disk audits `sound`)."""
+    insert_item(db, ScrollItem(
+        id=item_id, source="web", url=f"https://ex.com/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=f"Database {item_id}",
+        extracted_text="database engine body", raw_text="<raw>database</raw>",
+        content_hash=content_hash, stage="rendered"))
+
+
+def test_every_surface_agrees_on_the_custody_posture_verdict(scrolls_home, capsys):
+    from scrolls import mcp_server
+
+    main(["init"])
+    db = get_paths().db_path
+    _hold_clean_posture_item(db, "web:alpha", "sha256:held")
+    _hold_clean_posture_item(db, "web:beta", "sha256:beta")
+    capsys.readouterr()
+
+    # pass 1 — a clean library → the `sound` baseline, recorded so pass 2 differences
+    # against it (a whole-library `maintain` records the snapshot/log; ADR 0082).
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["custody"]["posture"] == {"verdict": "sound", "reasons": []}
+    assert first["posture_headline"] == "_Posture: sound._"  # first run → no clause
+
+    # introduce two *soft* concerns: an open import conflict (a peer's capture
+    # disagreed — raw is sacred, never overwritten) + source drift (the live source
+    # moved). The verdict moves to `attention`, reasons in `doctor`'s severity order.
+    record_events(db, [
+        conflict_event("web:alpha", held_hash="sha256:held",
+                       incoming_hash="sha256:peer",
+                       now="2026-06-15T00:00:00+00:00"),
+        CustodyEvent("web:beta", "2026-06-15T00:00:00+00:00", "drifted",
+                     "sha256:beta", "sha256:changed", None),
+    ])
+
+    # the canonical point-in-time verdict: `doctor`'s `_assess_custody_posture` fold,
+    # the audit every other surface is measured against.
+    canonical = run_doctor(get_paths())["custody"]["posture"]
+    assert canonical == {"verdict": "attention",
+                         "reasons": ["open_conflicts", "source_drift"]}
+    # the bare readable line every *point-in-time* briefing renders (no movement clause)
+    bare = posture_headline(canonical["verdict"], canonical["reasons"])
+    assert bare == "_Posture: attention (open_conflicts, source_drift)._"
+
+    # 1. status ≡ doctor — the lean boot read an agent skims first (the H367 boot↔audit
+    #    precedent on the posture axis): the flat `status.custody.posture` is field-for-
+    #    field the nested `doctor.custody.posture`.
+    assert main(["status"]) == 0
+    status_posture = json.loads(capsys.readouterr().out)["custody"]["posture"]
+    assert status_posture == canonical
+
+    # 2. get_library_health (MCP) ≡ doctor — the audit twin over the agent transport.
+    assert mcp_server.get_library_health()["posture"] == canonical
+
+    # 3. the shareable `export bundle` briefing renders the *same* verdict as its bare
+    #    `_Posture:_` line (H371: whole-library, always rendered, no movement clause).
+    assert main(["export", "bundle", "database"]) == 0
+    assert bare in capsys.readouterr().out
+
+    # 4. the agent `context` briefing too (default `full` budget renders the line).
+    assert main(["context", "database"]) == 0
+    assert bare in capsys.readouterr().out
+
+    # pass 2 over MCP — the band moves `sound → attention`; the report headline carries
+    # the cross-run movement clause read off `delta.posture.before` (H372), and the
+    # point-in-time verdict still equals doctor's (the report ≡ audit twin).
+    second = mcp_server.run_maintenance()
+    assert second["custody"]["posture"] == canonical
+    assert second["delta"]["posture"] == {
+        "before": "sound", "after": "attention", "changed": True}
+    assert second["posture_headline"] == posture_headline(
+        canonical["verdict"], canonical["reasons"], "sound")
+    assert second["posture_headline"] == (
+        "_Posture: attention (open_conflicts, source_drift) "
+        "(sound → attention since last run)._"
+    )
+
+    # 5. the trend twin — the windowed verdict movement reads *identically* off the
+    #    recorded 2-run log on both transports. The report headline is run-position-
+    #    dependent (the `_audit_fields` family excludes it), so the CLI↔MCP equality is
+    #    pinned on the position-independent trend: CLI `maintain --history --trend` ≡
+    #    MCP `get_maintenance_history(trend=True)`.
+    mcp_trend = mcp_server.get_maintenance_history(trend=True)["trend"]
+    assert mcp_trend["posture_change"] == {
+        "first": "sound", "last": "attention", "changed": True}
+    assert mcp_trend["posture_headline"] == posture_headline(
+        canonical["verdict"], canonical["reasons"], "sound", span="over 2 runs")
+    capsys.readouterr()
+    assert main(["maintain", "--history", "--trend"]) == 0
+    cli_trend = json.loads(capsys.readouterr().out)["trend"]
+    assert cli_trend["posture_change"] == mcp_trend["posture_change"]
+    assert cli_trend["posture_headline"] == mcp_trend["posture_headline"]
 
 
 # --- the context custody filter partitions the unfiltered bundle (roadmap H257)
