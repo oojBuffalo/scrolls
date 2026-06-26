@@ -404,6 +404,89 @@ def test_reimport_events_is_whole_ledger_idempotent(home, capsys):
     assert len(after_first_history[second_id]) == 1
 
 
+def test_export_events_is_a_reproducible_artifact(home, capsys):
+    """`export events` is the whole-library *custody-events backup transport* (the
+    JSONL the bundle's custody-events block wraps, ADR 0082/H72), and a backup
+    must be a reproducible artifact:
+
+    1. exporting the *same unchanged library*'s events twice yields a
+       **byte-identical** JSONL (whole-file, not one row — an unsorted event fold
+       or a per-row non-determinism would make two custody backups of one library
+       disagree, breaking an operator who `diff`s two machines' ledgers), and
+    2. a real `export events` → restore into a *fresh* home → re-`export events`
+       reproduces the sender's bytes — the lossless-backup reproduction a
+       single-pass identity check misses.
+
+    The events-transport sibling of `test_export_items_is_a_reproducible_artifact`
+    (H379, the items transport) and the *export*-reproducibility complement of
+    `test_reimport_events_is_whole_ledger_idempotent` (H380, the *import* settle
+    axis): the same whole-library-backup shape on the `dump_events_export` fold
+    rather than `dump_items_export`. H72/H73/H78 pin the events round-trip
+    preserves the rebuilt *posture*, not the JSONL *bytes* — so an unsorted
+    `events_for_items` fold or a set-iteration leak in a per-row field would pass
+    those yet make two backups of one library disagree.
+
+    `export events` is **item-scoped** (it resolves `list_items` then their
+    events), so the round-trip's fresh home must hold the *items* too — the
+    realistic full restore (`import items` + `import events`), not events alone.
+    The seeded ledger is appended in **chronological** `checked_at` order (the
+    real-world shape `verify` writes, monotonic in append order across the whole
+    ledger), so `import_events`' stable sort-by-`checked_at` is a no-op and the
+    fresh home's `ORDER BY id` re-export reproduces the sender's row order.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    capsys.readouterr()  # drain the kb report so the export captures are clean
+
+    # seed a realistic ledger appended in chronological order on real held items:
+    # a verify history (unchanged → drifted) plus an import-time conflict on the
+    # first item, a single verify on the second — so the backup spans ≥2 items,
+    # ≥2 statuses, the conflict axis, and a non-None `detail` row, not one trivial
+    # row. Every `checked_at` is distinct and increasing in append order, so the
+    # importer's sort-by-`checked_at` reproduces the sender's `ORDER BY id` order.
+    ids = [item.id for item in list_items(src.db_path)]
+    first_id, second_id = ids[0], ids[1]
+    record_events(src.db_path, [
+        CustodyEvent(first_id, "2026-06-11T00:00:00+00:00", "unchanged", "h0", "h0"),
+        CustodyEvent(second_id, "2026-06-11T06:00:00+00:00", "unchanged", "h1", "h1"),
+        CustodyEvent(first_id, "2026-06-12T00:00:00+00:00", "drifted", "h0", "h0b"),
+        conflict_event(
+            first_id, held_hash="h0b", incoming_hash="hX",
+            now="2026-06-13T00:00:00+00:00",
+        ),
+    ])
+    seeded = _event_count(src.db_path)
+    assert seeded == 4  # non-vacuous: a real multi-event, multi-status ledger
+
+    # 1. same-library determinism: two exports, no DB change between them, are
+    #    byte-identical (the artifact a `diff` across two machines must match).
+    assert main(["export", "events"]) == 0
+    first_export = capsys.readouterr().out
+    assert main(["export", "events"]) == 0
+    second_export = capsys.readouterr().out
+    assert second_export == first_export
+    # non-vacuous: the whole ledger travels (one JSON line per event), not "" == ""
+    assert first_export.count("\n") == seeded
+
+    # 2. round-trip reproduction: restore into a *fresh* home from the backups
+    #    alone, then re-export the events and assert it reproduces the sender's
+    #    bytes. `export events` is item-scoped, so the items backup is restored
+    #    first (the realistic full restore) before the events backup.
+    assert main(["export", "items"]) == 0
+    items_backup = src.root.parent / "items.jsonl"
+    items_backup.write_text(capsys.readouterr().out, encoding="utf-8")
+    events_backup = src.root.parent / "events.jsonl"
+    events_backup.write_text(first_export, encoding="utf-8")
+
+    dst = home("rebuilt")
+    assert main(["import", "items", str(items_backup)]) == 0
+    assert main(["import", "events", str(events_backup)]) == 0
+    capsys.readouterr()  # drain the import reports before the re-export capture
+    assert main(["export", "events"]) == 0
+    assert capsys.readouterr().out == first_export
+    assert _event_count(dst.db_path) == seeded  # guard: the re-export read a real ledger
+
+
 def test_media_blob_degrades_honestly_on_rebuild(home, capsys):
     """A JSONL backup carries media *references*, not the captured *bytes*. On
     rebuild the scroll's media frontmatter round-trips intact, but the blob is
