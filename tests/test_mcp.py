@@ -4483,6 +4483,166 @@ def test_get_library_health_is_deterministic_across_hash_seeds(scrolls_home, tmp
     assert out_a == out_b
 
 
+# --- get_link_graph determinism over MCP (H387) ---
+#
+# H381 pinned the *audit* twin (`get_library_health`) and H382 the *bundle* twin
+# (`get_context_bundle`) as reproducible MCP artifacts. This is the *structural* twin:
+# an agent driving MCP over the H201/H204 dogfood loop caches `get_link_graph` — its
+# whole-link-structure view — and re-fetches to detect "did the library's structure
+# move?". `get_link_graph` folds the relatedness/link-graph engine (`build_graph` →
+# `graph_payload`), a *distinct code path* from the `run_doctor` audit those twins wrap,
+# so no existing determinism test pins it. If that fold leaks set-iteration order into
+# its node list, its edge list, or the `stats.custody.by_source` map (or the envelope
+# keys off a set-derived map), two calls of one unchanged library disagree byte-for-byte
+# and the agent cries structural drift where there is none. The twentieth
+# forward-hardening cell and the fourth MCP-surface determinism twin (after H381/H382/
+# H383); deliberately *not* another content-identity guard.
+
+
+def _seed_link_graph_determinism_mix(db):
+    """A library whose link graph is wide enough that every order-sensitive section of
+    the MCP `get_link_graph` payload is a multi-element fold, so the H387 byte-identity
+    guards below are real claims (a one-node / one-source graph would pass a mis-ordered
+    fold too). Built so:
+
+    - **four sources** (x, arxiv, crossref, web) → `stats.custody.by_source` is a
+      multi-key map (the per-source custody split, sorted keys);
+    - a **link chain across sources** — an `x` thread → an `arxiv` preprint → its
+      `crossref` published record (the arxiv item's `doi.org` link resolves to the
+      crossref `source_id`) — → a multi-edge `edges` list spanning three sources;
+    - a **byte-identical content pair** under two `web` ids, mutually linked → both are
+      *nodes*, each carries a non-empty `content_duplicate_ids` list (the per-node
+      content-identity fold, roadmap H343), and the pair adds two more edges;
+    - the arxiv preprint left **drifted** (one recorded event) → the per-source `drift`
+      tally is non-uniform across the four sources.
+
+    Five connected nodes, four edges, a four-key `by_source` map — every list/map a
+    set/dict-iteration leak would re-order between two reads, exactly what the
+    cross-`PYTHONHASHSEED` pair catches. The local link-graph sibling of
+    `_seed_health_determinism_mix` (`tests/` is not a package).
+    """
+    from scrolls.custody import CustodyEvent, record_events
+    from scrolls.items import ScrollItem, insert_item
+
+    # an x thread → arxiv preprint → crossref published record (a three-source chain)
+    insert_item(db, ScrollItem(
+        id="x:9001", source="x", url="https://x.com/u/status/9001",
+        saved_at="2026-06-12T00:00:00+00:00", title="a thread on the paper",
+        links=("https://arxiv.org/abs/2605.99",), stage="fetched"))
+    insert_item(db, ScrollItem(
+        id="arxiv:2605.99", source="arxiv", url="https://arxiv.org/abs/2605.99",
+        saved_at="2026-06-12T00:00:00+00:00", title="A Preprint",
+        raw_text="<r>preprint</r>", extracted_text="preprint body",
+        content_hash="sha256:pp", stage="rendered",
+        links=("https://doi.org/10.1234/lg",)))
+    insert_item(db, ScrollItem(
+        id="crossref:10.1234/lg", source="crossref",
+        url="https://doi.org/10.1234/lg", canonical_url="https://doi.org/10.1234/lg",
+        source_id="10.1234/lg", saved_at="2026-06-12T00:00:00+00:00",
+        title="The Published Record", raw_text="<r>published</r>",
+        extracted_text="published body", content_hash="sha256:pub", stage="rendered"))
+    # a byte-identical web pair, mutually linked so both become nodes (and each names
+    # the other in content_duplicate_ids — the per-node content-identity fold)
+    insert_item(db, ScrollItem(
+        id="web:a", source="web", url="https://ex.com/a",
+        saved_at="2026-06-12T00:00:00+00:00", title="A copy",
+        raw_text="<raw>body</raw>", extracted_text="body", content_hash="sha256:dup",
+        stage="rendered", links=("https://ex.com/b",)))
+    insert_item(db, ScrollItem(
+        id="web:b", source="web", url="https://ex.com/b",
+        saved_at="2026-06-12T01:00:00+00:00", title="A byte-identical copy",
+        raw_text="<raw>body</raw>", extracted_text="body", content_hash="sha256:dup",
+        stage="rendered", links=("https://ex.com/a",)))
+    # the arxiv preprint drifted out from under us → a non-uniform per-source drift tally
+    record_events(db, [CustodyEvent(
+        "arxiv:2605.99", "2026-06-14T00:00:00+00:00", "drifted",
+        "sha256:pp", "sha256:moved", None)])
+
+
+def _assert_link_graph_mix_is_non_vacuous(graph):
+    """Every order-sensitive section of the MCP `get_link_graph` payload is a
+    multi-element fold (a one-node / one-source graph would pass a mis-ordered fold
+    too), so the byte-identity claims below are real."""
+    assert len(graph["nodes"]) == 5            # the connected five-node structure
+    assert len(graph["edges"]) == 4            # the chain (×2) + the mutual web pair
+    by_source = graph["stats"]["custody"]["by_source"]
+    assert set(by_source) == {"arxiv", "crossref", "web", "x"}  # multi-key map
+    # the per-node content-identity fold is non-empty on the byte-identical web pair
+    dup_ids = {n["id"]: n["content_duplicate_ids"] for n in graph["nodes"]}
+    assert dup_ids["web:a"] == ["web:b"] and dup_ids["web:b"] == ["web:a"]
+    assert graph["stats"]["custody"]["drift"]["drifted"] == 1   # the drifted preprint
+
+
+def test_get_link_graph_is_byte_identical_across_two_same_process_reads(scrolls_home):
+    # roadmap H387: two `get_link_graph()` reads of one unchanged library serialize to
+    # byte-identical JSON — the *agent-facing* whole-link-structure view (the MCP twin
+    # of `scrolls graph`) is a reproducible artifact, not a per-run snapshot. The
+    # structural sibling of H381's `get_library_health` determinism: a *distinct code
+    # path* (it folds the relatedness/link-graph engine `build_graph` → `graph_payload`,
+    # not the `run_doctor` audit H381/H383 wrap), so no existing determinism test pins
+    # it. This is the same-process face; the cross-seed pair below catches the
+    # set-iteration leak this one — under a single fixed hash seed — structurally cannot.
+    main(["init"])
+    _seed_link_graph_determinism_mix(get_paths().db_path)
+
+    first = mcp_server.get_link_graph()
+    second = mcp_server.get_link_graph()
+
+    _assert_link_graph_mix_is_non_vacuous(first)
+    # the determinism guard rides the H186 MCP read-surface shape contract: the link
+    # graph is a class-B stats-object twin (it carries `stats.custody.by_source`) and a
+    # registered tool, so a future re-shaping that de-syncs it trips this too.
+    assert mcp_server.get_link_graph in mcp_server._TOOLS
+    assert set(first["stats"]["custody"]["by_source"]) == {"arxiv", "crossref", "web", "x"}
+
+    assert json.dumps(first) == json.dumps(second)
+
+
+def test_get_link_graph_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H387: `get_link_graph()` emits a byte-identical serialized payload across
+    # two processes with *different* `PYTHONHASHSEED`s — the cross-process face the
+    # same-process pair structurally cannot see. The decisive half of the guard: a `set`
+    # leaking into any fold in the link-graph path (the node list, the edge list, the
+    # `by_source` map, or an envelope keyed off a set-derived map) iterates the *same*
+    # way twice under one fixed seed, so the same-process read above stays green over it;
+    # only two processes seeded differently surface the divergence. The H381/H375
+    # cross-seed precedent lifted to the MCP structural-read twin.
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_link_graph_determinism_mix(get_paths().db_path)
+
+    # two homes with the same seeded DB — each subprocess folds its own copy under its
+    # own hash seed (the H381 / H375 / H363 copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _graph(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, json; from scrolls.mcp_server import get_link_graph; "
+             "sys.stdout.write(json.dumps(get_link_graph()))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _graph(home_a, "0")  # hash randomization off
+    out_b = _graph(home_b, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the populated graph (not an early empty
+    # return), so the byte-identity is a real claim.
+    _assert_link_graph_mix_is_non_vacuous(json.loads(out_a))
+
+    assert out_a == out_b
+
+
 def _seed_refresh_debt(paths):
     """A two-source library carrying both stale-classification and stale-summary debt.
 
