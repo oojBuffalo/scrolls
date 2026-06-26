@@ -1983,6 +1983,66 @@ def test_export_bundle_round_trips_to_byte_identical_bytes_in_a_fresh_library(
     assert recipient_bundle == sender_bundle
 
 
+# --- the WHOLE HTML bundle is a reproducible artifact (H378) ------------------
+#
+# The eleventh forward-hardening cell — the *HTML-render* sibling of H368's
+# Markdown-bundle determinism. H368 pins the Markdown briefing reproduces; the
+# browser-readable HTML form (`export bundle --format html`, roadmap H39) is a
+# *separate fold* — `build_bundle_html` walks the same scope but emits
+# `html.escape`d `<h1>`/`<h2>`/`<li>` markup and the `_html_document` wrapper the
+# Markdown form never runs. No test pins that whole document for byte-identity.
+#
+# The per-section HTML tests assert *substrings* (the per-source `<li>`, the
+# `<p class="custody-*">` lines), never the whole document, so a set-iteration
+# leak in the per-source/duplicates/at-risk HTML sections — or a timestamp
+# slipped into `_html_document`'s `<head>` — would pass them yet break the
+# artifact a recipient who re-exports to forward the HTML relies on (verified:
+# `bundle.py` carries no `now()`/`generated_at` in either form, and the `<head>`
+# embeds no wall-clock).
+#
+# Decisive choice: compare the **whole HTML document** (the H368 whole-artifact
+# precedent on the HTML axis), not one tag — non-determinism anywhere (a section,
+# the `<head>`) is caught. The fixture is the H368 multi-source + drift-event
+# `_seed_multi_source`, materialised the documented `doctor --fix` / `kb` way, so
+# the per-source `<ul>` is non-vacuous and the export reads a clean, network-free
+# library. HTML is export-only (no `import bundle --format html`; the import path
+# consumes the Markdown `@generated` fence), so — unlike H368 — there is no
+# round-trip leg, only the same-library two-export determinism. Sabotage check
+# (verified out of band): a `random.random()` injected into the HTML heading
+# fails the byte-identity while the per-section HTML substring tests stay green.
+# Test-only, no production change (the HTML bundle is already deterministic —
+# ordered folds, no wall-clock).
+
+
+def test_export_bundle_html_is_byte_identical_across_two_exports_of_one_library(
+    scrolls_home, capsys
+):
+    # determinism in place: the same unchanged library exported to HTML twice
+    # yields a byte-identical document — no set-iteration leak in any HTML
+    # section, no wall-clock in `_html_document`'s `<head>`.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)  # multi-source + drift events → the per-source <ul> is non-vacuous
+    # materialise so the export reads a clean, network-free library (the H368/H360
+    # restore discipline — no missing scrolls)
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database", "--format", "html"]) == 0
+    first = capsys.readouterr().out
+    # no DB mutation between the two reads (export is read-only)
+    assert main(["export", "bundle", "database", "--format", "html"]) == 0
+    second = capsys.readouterr().out
+
+    # non-vacuous: the document really is the HTML briefing spanning the
+    # order-sensitive per-source fold (the <h1> heading + a per-source <li>)
+    assert "<h1>" in first
+    assert "<ul class=\"custody-by-source\">" in first
+    assert "<code>web</code> — 2 scroll(s)" in first
+    assert first == second  # whole-document byte-identity, not just one tag
+
+
 # --- re-importing the same bundle is a true no-op (H374) ---------------------
 #
 # The seventh forward-hardening cell — the *import-axis* sibling of H363's
