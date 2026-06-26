@@ -1,6 +1,7 @@
 """Tests for shareable custody bundles (ADR 0103, MVP M4)."""
 
 import dataclasses
+import hashlib
 import json
 import sqlite3
 
@@ -36,6 +37,7 @@ from scrolls.items import (
     item_to_dict,
     latest_archived,
     list_archived,
+    list_items,
 )
 from scrolls.kb import ConceptSummary, save_concept_summary
 from scrolls.kb_llm import ENGINE as SUMMARY_ENGINE
@@ -1979,6 +1981,121 @@ def test_export_bundle_round_trips_to_byte_identical_bytes_in_a_fresh_library(
     # whole-text byte-identity across the transport boundary (the H354/H360
     # round-trips proved content-equality; H368 proves *artifact* reproducibility)
     assert recipient_bundle == sender_bundle
+
+
+# --- re-importing the same bundle is a true no-op (H374) ---------------------
+#
+# The seventh forward-hardening cell — the *import-axis* sibling of H363's
+# compile determinism and H365's repair convergence, on the ingest transport
+# (deliberately *not* another content-identity guard; the H358 pivot-signal
+# caution). Every round-trip/dogfood loop that materialises a received bundle
+# (M4/M5, H336/H360) leans on the re-import *settling* — re-running the restore
+# adds nothing and conflicts with nothing — but that contract is only *implied*
+# by the single-import round-trip tests: a regression that re-inserted rows,
+# re-rendered an unchanged scroll, or raised a false conflict on byte-identical
+# re-import would pass the single-import tests yet break the loops' settle
+# assumption and could fabricate a conflict event (violating ADR-0104's
+# "conflict = differing content for the same id").
+#
+# Decisive choice: assert *all three* no-ops — the item rows (count AND per-id
+# identity), the `scrolls/` disk bytes (a `{relpath -> sha256}` whole-tree map,
+# the H363 whole-tree-hash precedent on the import axis), and the conflict
+# ledger (zero conflict events) — over a *materialised* library, so the disk
+# map is non-empty and the claim has teeth. A re-import that re-rendered
+# identical bytes or logged a no-op conflict would pass a naïve row-count check;
+# the hash map + the conflict-event count catch it. Test-only, no production
+# change (re-import already settles — id-keyed `INSERT OR IGNORE` + content-equal
+# conflict suppression; this makes the ingest settle contract regression-proof).
+
+
+def _scroll_hashes(scrolls_dir):
+    """A `{relpath -> sha256}` map over the rendered scroll tree (the H363
+    whole-tree-hash idiom on the import axis) — byte-identity made comparable."""
+    if not scrolls_dir.exists():
+        return {}
+    return {
+        str(path.relative_to(scrolls_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(scrolls_dir.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _conflict_event_count(db_path):
+    """How many `conflict`-status custody events the ledger holds (ADR 0104).
+    A clean re-import of byte-identical content must record none."""
+    conn = sqlite3.connect(db_path)
+    try:
+        (count,) = conn.execute(
+            "SELECT COUNT(*) FROM custody_events WHERE status = 'conflict'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return count
+
+
+def test_reimport_bundle_is_a_true_no_op_on_rows_disk_and_conflict_ledger(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the ingest-axis settle contract: a fresh library that already holds the
+    # bundle re-imports the SAME bytes as a true no-op — no new/duplicated rows,
+    # no held scroll rewritten on disk, no spurious conflict event (the incoming
+    # content is byte-identical to what is held, so ADR-0104 conflict detection
+    # must stay silent).
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_multi_source(db_a)  # multi-source + drift events → a non-trivial scope
+    # the sender materialises (the documented restore) so its export is clean
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(capsys.readouterr().out, encoding="utf-8")
+
+    # a fresh, empty library B receives the bundle, then materialises it the
+    # documented way (`doctor --fix` / `kb`) so it genuinely *holds* the captures
+    # (rendered scrolls on disk) — the state a re-import must leave untouched
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 3
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    db_b = get_paths().db_path
+    rows_before = {item.id: item_to_dict(item) for item in list_items(db_b)}
+    scrolls_before = _scroll_hashes(get_paths().scrolls_dir)
+    conflicts_before = _conflict_event_count(db_b)
+    # non-vacuous: B really holds the captures — rows AND rendered scrolls on disk,
+    # so the disk-byte no-op is a real claim, not "an empty tree equals an empty tree"
+    assert len(rows_before) == 3
+    assert scrolls_before, "the materialise should have produced scroll files to re-hash"
+
+    # re-import the SAME bytes into the library that already holds them
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    # the machine-readable confirmation: nothing inserted, every row skipped, no
+    # divergence surfaced, no redundant copy introduced by this re-import
+    assert report["imported"] == 0
+    assert report["skipped"] == 3
+    assert report["conflicts"] == []
+    assert report["content_duplicates"] == 0
+
+    rows_after = {item.id: item_to_dict(item) for item in list_items(db_b)}
+    scrolls_after = _scroll_hashes(get_paths().scrolls_dir)
+    conflicts_after = _conflict_event_count(db_b)
+
+    # 1. the row set is unchanged — count AND per-id identity (no re-insert, no mutation)
+    assert rows_after == rows_before
+    # 2. the scroll-file hash map is byte-identical — nothing re-rendered on disk
+    assert scrolls_after == scrolls_before
+    # 3. the conflict ledger stays silent — zero conflict events before AND after,
+    #    so the byte-identical re-import recorded none (a peer's identical copy is
+    #    not a divergence; ADR-0104 conflict = differing content for the same id)
+    assert conflicts_after == conflicts_before == 0
 
 
 # --- portable custody: the verify ledger travels in the bundle (H67) --------
