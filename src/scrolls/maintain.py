@@ -539,8 +539,14 @@ def duplicates_headline(
     return f"{base} ({clause})._"
 
 
-def posture_headline(verdict: str, reasons: list[str]) -> str:
-    """The readable whole-library posture ``_Posture:_`` line (roadmap H370).
+def posture_headline(
+    verdict: str,
+    reasons: list[str],
+    before: str | None = None,
+    *,
+    span: str = "since last run",
+) -> str:
+    """The readable whole-library posture ``_Posture:_`` line (roadmap H370/H372).
 
     The readable surfacing of `doctor`'s `custody.posture` verdict (H369) for the
     scheduled `maintain` pass an operator skims: the one line distilling the custody
@@ -559,6 +565,24 @@ def posture_headline(verdict: str, reasons: list[str]) -> str:
     **no** reasons drops the clause entirely (the bare ``_Posture: <verdict>._``),
     never a fabricated empty ``(…)``.
 
+    **The cross-run movement clause (roadmap H372).** `before` is the prior
+    **verdict band** the run is differenced against — the last run's verdict for the
+    report's cross-run delta, the window's first verdict for the trend. When given, a
+    movement clause follows the reasons parenthetical naming the band transition, the
+    at_risk/conflicts trend precedent (H268/H283) on the categorical posture axis:
+
+        ``_Posture: at_risk (at_risk_works, source_drift) (sound → at_risk since last run)._``
+
+    The clause tracks the **band**, not the reasons set — a same-band reasons change is
+    not a posture movement (the count-scalar precedent moves only the headline figure);
+    a steady band reads the explicit ``(no change {span})``, and a recovery to ``sound``
+    reads ``(at_risk → sound {span})``. `span` names what the movement is measured
+    against — ``since last run`` for the report's cross-run delta, ``over N runs`` for
+    the trend's window (the at_risk/conflicts span precedent). ``before`` of ``None`` —
+    a first run, a scoped non-persisting pass (`delta` ``None``), a <2-run trend, or a
+    point-in-time briefing (H371) — drops the movement clause entirely, the bare H370
+    point-in-time line, *exactly* when there is no prior band to difference against.
+
     **The deliberate divergence from the omit-when-clean siblings**
     (`archive_integrity_headline` H298, `duplicates_headline` H327): this line is
     rendered **always**, including the clean ``sound`` verdict. Those siblings name a
@@ -569,14 +593,20 @@ def posture_headline(verdict: str, reasons: list[str]) -> str:
     every other `maintain` headline, `posture_headline` never returns ``None`` (the
     roadmap's resolved "render it always").
 
-    A pure renderer over the verdict + reasons (no audit, no ledger read) — the live
-    pass folds `doctor`'s `custody.posture` block once and threads its two fields here,
-    so the rendered line and the `doctor`/`status` JSON verdict can never disagree.
+    A pure renderer over the verdict + reasons + prior band (no audit, no ledger read) —
+    the live pass folds `doctor`'s `custody.posture` block once and threads its two
+    fields here, so the rendered line and the `doctor`/`status` JSON verdict can never
+    disagree.
     """
-    base = f"_Posture: {verdict}"
-    if not reasons:
-        return f"{base}._"
-    return f"{base} ({', '.join(reasons)})._"
+    line = f"_Posture: {verdict}"
+    if reasons:
+        line += f" ({', '.join(reasons)})"
+    if before is not None:
+        if before == verdict:
+            line += f" (no change {span})"
+        else:
+            line += f" ({before} → {verdict} {span})"
+    return f"{line}._"
 
 
 def render_posture(db_path: Path) -> list[str]:
@@ -1099,6 +1129,33 @@ def _mapping_delta(
     }
 
 
+def _posture_delta(
+    before: dict[str, Any] | None, after: dict[str, Any]
+) -> dict[str, Any]:
+    """before/after/changed for the categorical posture *verdict band* (roadmap H372).
+
+    The categorical twin of `_scalar_delta`: where a count delta carries a numeric
+    ``change``, the posture band carries a boolean ``changed`` (the band is ordinal, not
+    a quantity a subtraction would mean anything over). `before`/`after` are the
+    ``sound``/``attention``/``at_risk`` verdicts; `changed` is ``None`` on the first run
+    (`before` ``None`` — no baseline), else whether the band moved. The snapshot stores
+    the whole ``{verdict, reasons}`` block (H370), but only the verdict band is
+    differenced — a same-band reasons change is not a posture movement (the count-scalar
+    precedent differences only the headline figure). A present-but-empty/missing block
+    reads the skeleton ``sound`` (the `_assess_custody_posture` default), handled by the
+    caller so a pre-H369 baseline differences against ``sound``, not ``None``.
+    """
+    after_verdict = (after or {}).get("verdict", "sound")
+    if before is None:
+        return {"before": None, "after": after_verdict, "changed": None}
+    before_verdict = before.get("verdict", "sound")
+    return {
+        "before": before_verdict,
+        "after": after_verdict,
+        "changed": before_verdict != after_verdict,
+    }
+
+
 def compute_delta(
     previous: dict[str, Any] | None, current: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1120,6 +1177,18 @@ def compute_delta(
     def mapping(key: str) -> dict[str, dict[str, Any]]:
         before = None if first_run else previous.get(key, {})
         return _mapping_delta(before, current[key])
+
+    def posture() -> dict[str, Any]:
+        # the categorical posture-band axis (H372): a present baseline missing the block
+        # (a pre-H369 snapshot) reads the skeleton `sound`, never null — the run
+        # happened, the verdict was simply not yet tracked (the missing-axis-default
+        # posture, ADR 0082; `mapping`'s `{}` default on the categorical axis).
+        before = (
+            None
+            if first_run
+            else previous.get("posture", {"verdict": "sound", "reasons": []})
+        )
+        return _posture_delta(before, current["posture"])
 
     return {
         "first_run": first_run,
@@ -1159,6 +1228,13 @@ def compute_delta(
         # Reported, never a posture trigger: a duplicate is a redundancy fact an
         # operator may want, never a defect (there is no `--fix` merge, raw is sacred).
         "content_duplicate_groups": scalar("content_duplicate_groups"),
+        # the categorical posture-band axis (roadmap H372): the prior→current verdict
+        # band transition (`{before, after, changed}`), the at_risk/conflicts scalar
+        # precedent on the ordinal posture verdict. The point-in-time `_Posture:_` line
+        # reads `before` to render its cross-run movement clause (`sound → at_risk`). A
+        # *reported* axis, never a snapshot trigger — the snapshot already carries the
+        # verdict whole (H370); this differences its band so the readable line can move.
+        "posture": posture(),
     }
 
 
@@ -1299,6 +1375,11 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
     last_snap_for_dup = runs[-1].get("snapshot", {}) if runs else {}
     last_dup_groups = last_snap_for_dup.get("content_duplicate_groups", 0)
     last_dup_items = last_snap_for_dup.get("content_duplicate_items", 0)
+    # the current posture verdict band + its reasons (H372): the window's last snapshot,
+    # the skeleton `sound`/empty for an empty window or a pre-H369 endpoint (ADR 0082).
+    last_posture = last_snap_for_dup.get("posture", {"verdict": "sound", "reasons": []})
+    last_verdict = last_posture.get("verdict", "sound")
+    last_reasons = last_posture.get("reasons", [])
     if n < 2:
         return {
             "runs": n,
@@ -1311,6 +1392,13 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "conflicts_change": None,
             "archive_mismatched_change": None,
             "content_duplicates_change": None,
+            # a single point has no trajectory → the bare point-in-time `_Posture:_` line
+            # (no movement clause) + null `posture_change`, the same honest absence the
+            # null `at_risk_change`/`conflicts_change` carry (H372). Unlike the
+            # omit-when-clean archive/duplicate lines, the posture line is rendered always
+            # (the H370 resolve), so even the `sound` window carries its bare line.
+            "posture_change": None,
+            "posture_headline": posture_headline(last_verdict, last_reasons),
             # a single point has no trajectory → the bare readable lines (no clause),
             # the same honest-absence the null `at_risk_change`/`conflicts_change`
             # carry (H268/H283). The archive line keeps its omit-when-clean posture —
@@ -1402,6 +1490,21 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
         first_snap, "content_duplicate_groups"
     )
 
+    # the posture-band movement (H372): the first→last verdict-band transition across the
+    # window. A categorical axis like the at_risk/conflicts scalars but ordinal, so it
+    # carries a boolean `changed` not a numeric delta; a pre-H369 endpoint reads the
+    # skeleton `sound` (the missing-axis-default posture, ADR 0082). Reported, never a
+    # trajectory trigger — the integrity-first `posture` field below stays score+drift-
+    # driven; this re-views the very fidelity/drift/integrity facts it already moves on
+    # (the H115/H267 reported-not-posture discipline, on the verdict axis), so folding it
+    # in would double-count a verified finding as a fresh trajectory loss.
+    first_verdict = first_snap.get("posture", {}).get("verdict", "sound")
+    posture_change = {
+        "first": first_verdict,
+        "last": last_verdict,
+        "changed": first_verdict != last_verdict,
+    }
+
     if score_change is not None and score_change < 0:
         posture = "regressing"
     elif drift_change > 0:
@@ -1464,6 +1567,17 @@ def compute_trend(runs: list[dict[str, Any]]) -> dict[str, Any]:
             },
             content_duplicates_change,
             span=f"over {n} runs",
+        ),
+        "posture_change": posture_change,
+        # the readable posture-band trend line (roadmap H372): the last run's verdict +
+        # reasons + the band movement across the window, the trend twin of the report's
+        # point-in-time `_Posture:_` line (H370). The window span replaces the report's
+        # "since last run". Rendered always (the H370 resolve), even for a `sound`
+        # window — the "all clear" verdict has briefing value. The `posture` field below
+        # is the *integrity trajectory* (improving/holding/regressing, H46), a distinct
+        # axis from this verdict-band movement (H372).
+        "posture_headline": posture_headline(
+            last_verdict, last_reasons, first_verdict, span=f"over {n} runs"
         ),
         "posture": posture,
     }
@@ -1729,13 +1843,18 @@ def assemble_report(
         # the clean `sound` verdict — because it names the *whole-library* custody verdict,
         # and the one line that says "all clear" has briefing value (the H370 resolve, the
         # documented divergence from the omit-when-clean `_Archive:_`/`_Duplicates:_`
-        # siblings). The cross-run posture-movement clause (`sound → attention`) is the
-        # deferred H372 trend leg — this is the point-in-time line. Under `--source` the
-        # verdict reflects only the source-attributable axes (the whole-library alarms
-        # skip), exactly as the underlying `_assess_custody_posture` fold reports.
+        # siblings). The cross-run posture-movement clause (`sound → at_risk`, roadmap
+        # H372) is read off the delta's new `posture` axis: `delta["posture"]["before"]`
+        # is the prior verdict band, or `None` when there is no baseline (a first run, or
+        # a scoped non-persisting pass with `delta` None) → the bare point-in-time line,
+        # exactly when the delta has no baseline (the at_risk/conflicts movement
+        # precedent). Under `--source` the verdict reflects only the source-attributable
+        # axes (the whole-library alarms skip), exactly as the `_assess_custody_posture`
+        # fold reports.
         "posture_headline": posture_headline(
             report["custody"].get("posture", {}).get("verdict", "sound"),
             report["custody"].get("posture", {}).get("reasons", []),
+            None if delta is None else delta["posture"]["before"],
         ),
         "by_source": by_source,
         "attention": weakest_source(by_source),

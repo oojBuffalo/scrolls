@@ -4825,3 +4825,63 @@ def test_get_maintenance_history_content_identity_trend_moves_with_the_log(
     cli_after = json.loads(capsys.readouterr().out)["trend"]
     assert after["content_duplicates_change"] == cli_after["content_duplicates_change"]
     assert after["duplicates_headline"] == cli_after["duplicates_headline"]
+
+
+# --- the cross-run posture-movement clause over MCP (roadmap H372) ----------
+
+
+def _hold_clean_web_item(db, item_id, content_hash="sha256:held"):
+    """Hold one clean web capture (the H372 MCP fixture's `sound` baseline)."""
+    from scrolls.items import ScrollItem, insert_item
+
+    insert_item(db, ScrollItem(
+        id=item_id, source="web", url=f"https://ex.com/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=item_id,
+        extracted_text="body", raw_text="<raw>body</raw>",
+        content_hash=content_hash, stage="rendered"))
+
+
+def test_run_maintenance_posture_movement_clause_rides_the_mcp_report(
+    scrolls_home, capsys
+):
+    # H372: the cross-run posture-movement clause (`sound → attention`) rides the MCP
+    # `run_maintenance` report (H196 reuses `assemble_report`, so the clause flows for
+    # free), and the windowed verdict movement rides `get_maintenance_history(
+    # trend=True)` — both at CLI parity. Pass 1 holds a clean capture → `sound`; an
+    # unresolved import conflict (soft, `open_conflicts`) then moves the band on pass 2.
+    from scrolls.custody import conflict_event, record_events
+
+    main(["init"])
+    db = get_paths().db_path
+    _hold_clean_web_item(db, "web:demo")
+
+    first = mcp_server.run_maintenance()  # pass 1: a clean held capture → sound
+    assert first["custody"]["posture"]["verdict"] == "sound"
+    assert first["posture_headline"] == "_Posture: sound._"  # first run, no baseline
+
+    # a peer capture disagreed with the held copy (raw is sacred, never overwritten):
+    # the unresolved conflict is the soft `open_conflicts` axis → the band moves attention
+    record_events(db, [conflict_event(
+        "web:demo", held_hash="sha256:held", incoming_hash="sha256:peer",
+        now="2026-06-15T00:00:00+00:00")])
+    second = mcp_server.run_maintenance()  # pass 2: the band moved sound → attention
+    assert second["custody"]["posture"]["verdict"] == "attention"
+    assert second["delta"]["posture"] == {"before": "sound", "after": "attention",
+                                          "changed": True}
+    assert second["posture_headline"] == (
+        "_Posture: attention (open_conflicts) (sound → attention since last run)._"
+    )
+
+    # the windowed verdict movement rides the trend twin, at CLI parity (the H335
+    # content-identity-trend MCP precedent on the posture axis)
+    trend = mcp_server.get_maintenance_history(trend=True)["trend"]
+    assert trend["posture_change"] == {"first": "sound", "last": "attention",
+                                       "changed": True}
+    assert trend["posture_headline"] == (
+        "_Posture: attention (open_conflicts) (sound → attention over 2 runs)._"
+    )
+    capsys.readouterr()
+    assert main(["maintain", "--history", "--trend"]) == 0
+    cli_trend = json.loads(capsys.readouterr().out)["trend"]
+    assert trend["posture_change"] == cli_trend["posture_change"]
+    assert trend["posture_headline"] == cli_trend["posture_headline"]

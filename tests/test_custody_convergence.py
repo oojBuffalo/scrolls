@@ -2515,11 +2515,12 @@ def test_mcp_run_maintenance_scoped_suggestions_name_exactly_the_refresh_debt_so
         # Both surfaces compose `assemble_report` identically: only the trend-position
         # bookkeeping differs by run order — `recorded_at` (the timestamp), `delta`
         # (a whole-library pass records a snapshot, so the second run sees the first's
-        # as its baseline; ADR 0082), and the three delta-embedding readable lines
-        # `at_risk_headline` (H268), `conflicts_headline` (H283), and
-        # `archive_integrity_headline` (H299): each embeds the delta's signed change,
-        # so a first run reads the bare `_… : N._` and a later run the `(no change
-        # since last run)` clause — unlike the snapshot-only `headline`, which is
+        # as its baseline; ADR 0082), and the four delta-embedding readable lines
+        # `at_risk_headline` (H268), `conflicts_headline` (H283),
+        # `archive_integrity_headline` (H299), and `posture_headline` (H372): each
+        # embeds the delta's signed change / verdict-band movement, so a first run reads
+        # the bare `_… : N._` / point-in-time line and a later run the `(no change since
+        # last run)` clause — unlike the snapshot-only `headline`, which is
         # position-independent and stays compared. Everything else is the
         # deterministic audit.
         return {
@@ -2527,7 +2528,7 @@ def test_mcp_run_maintenance_scoped_suggestions_name_exactly_the_refresh_debt_so
             for k, v in report.items()
             if k not in (
                 "recorded_at", "delta", "at_risk_headline", "conflicts_headline",
-                "archive_integrity_headline",
+                "archive_integrity_headline", "posture_headline",
             )
         }
 
@@ -6515,7 +6516,8 @@ _DRIFT_KEYS = ("checked", "unverified", "unchanged", "drifted", "rotted", "error
 
 
 def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
-              at_risk=0, conflicts=0, archive_mismatched=0, dup_groups=0, dup_items=0):
+              at_risk=0, conflicts=0, archive_mismatched=0, dup_groups=0, dup_items=0,
+              posture=None):
     """A custody snapshot in the `custody_snapshot` shape the trend/delta read.
 
     Only the axes the trend and delta compare are populated meaningfully; `tiers`
@@ -6525,7 +6527,10 @@ def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
     staleness (roadmap H267); `conflicts` is the peer-divergence scalar it telescopes
     too (roadmap H279/H283); `archive_mismatched` is the archive-integrity scalar it
     telescopes too (roadmap H293/H298/H299); `dup_groups` is the content-duplicate
-    scalar it telescopes too (roadmap H325/H327/H330).
+    scalar it telescopes too (roadmap H325/H327/H330). `posture` is the categorical
+    verdict-band block the delta differences (roadmap H372) — defaults to the skeleton
+    `sound`; it does **not** telescope additively (a band is ordinal, not a count), so
+    these count-axis invariants leave it at the skeleton and assert the summable axes.
     """
     return {
         "score": score,
@@ -6539,6 +6544,7 @@ def _snapshot(*, score, drifted, rotted, verified, total, enrichment, summaries,
         "archive_mismatched": archive_mismatched,
         "content_duplicate_groups": dup_groups,
         "content_duplicate_items": dup_items,
+        "posture": posture or {"verdict": "sound", "reasons": []},
     }
 
 

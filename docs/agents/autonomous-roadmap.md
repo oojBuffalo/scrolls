@@ -67,12 +67,17 @@ me* (M5, `docs/dogfood.md`).
 (`{verdict: sound|attention|at_risk, reasons}`) — a deterministic fold over the report
 `run_doctor` already produces (drift is `attention` never `at_risk`; content duplicates
 contribute nothing). Shipped: **H369** (`doctor` + the `get_library_health` twin), **H370**
-(the readable `_Posture:_` line on `maintain` + the `status` posture twin), **H371** (this
-run — the `_Posture:_` briefing line on `export bundle` + `scrolls context`, whole-library
-and always-rendered, via the shared `render_posture`). Remaining: **H372** (the cross-run
-posture-movement trend clause) and **H373** (the cross-surface posture convergence guard) —
-both queued below. After the theme closes, the forward work is **hardening/integration**
-(the H363–H368 forward-hardening guard cells), not a new theme.
+(the readable `_Posture:_` line on `maintain` + the `status` posture twin), **H371** (the
+`_Posture:_` briefing line on `export bundle` + `scrolls context`, whole-library and
+always-rendered, via the shared `render_posture`), **H372** (this run — the cross-run
+posture-movement clause on the `maintain`/trend `_Posture:_` line: `compute_delta` gains a
+categorical `posture` axis `{before, after, changed}`, `compute_trend` a `posture_change`
+`{first, last, changed}` + a windowed `posture_headline`, and `posture_headline(verdict,
+reasons, before, *, span)` renders the `sound → attention` band transition — *reported,
+never a trajectory trigger*: the integrity-first trend `posture` stays score+drift-driven,
+the H115/H267 discipline on the verdict axis). Remaining: **H373** (the cross-surface
+posture convergence guard) — queued below. After the theme closes, the forward work is
+**hardening/integration** (the H363–H368 forward-hardening guard cells), not a new theme.
 
 ---
 
@@ -84,13 +89,12 @@ the PRD capability. Slices are justified against `docs/custody-vision.md` and th
 adapters are out unless they introduce a new custody shape (custody-vision §2.7). Anything
 not on the queue still loses to "finish the half-done slice from the previous run first."
 
-**The custody-posture theme's remaining legs** (preconditions H369/H370/H371; the
+**The custody-posture theme's remaining leg** (preconditions H369/H370/H371/H372; the
 `fidelity`/`drift` surface-propagation precedent):
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H372 | The cross-run posture-movement clause on the `maintain` `_Posture:_` line (`sound → attention`, etc.): `compute_delta`/`compute_trend` gain a posture axis (the `at_risk`/`conflicts` trend precedent), reported never a posture trigger — the point-in-time H370 line gains its trend clause. Precondition: H370 (the snapshot scalar to difference). | → cap 1, cap 7 |
-| H373 | The cross-surface posture convergence guard (test-only) — `status.custody.posture` ≡ `doctor.custody.posture` ≡ the `maintain` `_Posture:_` headline ≡ the `export bundle`/`context` briefing line (H371) ≡ MCP, the H367 boot↔audit precedent on the posture axis. Precondition: H370/H371. | → cap 1, cap 7 |
+| H373 | The cross-surface posture convergence guard (test-only) — `status.custody.posture` ≡ `doctor.custody.posture` ≡ the `maintain` `_Posture:_` headline ≡ the `export bundle`/`context` briefing line (H371) ≡ MCP, the H367 boot↔audit precedent on the posture axis. With H372 shipped, the guard also pins the cross-run *movement* axis: the `maintain` report's `posture_headline` movement clause (read off `delta.posture.before`) and the trend's `posture_change`/windowed `posture_headline` ≡ the MCP `run_maintenance`/`get_maintenance_history(trend=True)` twins (the `_audit_fields` run-position-dependent-headline exclusion already carries `posture_headline`). Precondition: H370/H371/H372. | → cap 1, cap 7 |
 
 **The forward-hardening guard cells** (test-only, correct-by-construction reproducibility /
 safety invariants — the H358 pivot-signal horizon; deliberately none a content-identity
@@ -444,7 +448,10 @@ status snapshot was folded back to one line each).
 | H360 | The content-duplicate *prune guidance travels the bundle round-trip* — one guard that the H356 `duplicate_prunes` block re-derives… | cap 9, cap 1 |
 | H361 | The `run_maintenance` MCP `duplicate_prunes` byte-parity with CLI `maintain` — one convergence guard that the MCP transport's prune… | cap 7, cap 1 |
 | H362 | The *relationship-graph* content-identity surface joins the convergence picture — `graph --content-duplicate` (+ MCP… | cap 1, cap 7 |
+| H369 | `doctor`'s whole-library `custody.posture` verdict (`{verdict: sound\|attention\|at_risk, reasons}`) — the seven custody blocks distilled by `_assess_custody_posture` into one fold (+ the `get_library_health` MCP twin) | cap 1, custody-vision §3.1 |
+| H370 | The readable `_Posture:_` line on the `maintain` report (`posture_headline`) + the `status.custody.posture` scalar twin — the verdict made human and machine-readable, always-rendered | cap 1, cap 2 |
 | H371 | The `_Posture:_` briefing line on `export bundle` + `scrolls context` — `doctor`'s whole-library `custody.posture` verdict travels with the shareable/agent briefings, always-rendered | cap 1, custody-vision §3.1 |
+| H372 | The cross-run posture-movement clause on the `maintain`/trend `_Posture:_` line — `compute_delta` gains a categorical `posture` axis, `compute_trend` a `posture_change` + windowed `posture_headline`, the renderer the `sound → attention` band transition; reported, never a trajectory trigger | cap 1, cap 7 |
 
 ---
 

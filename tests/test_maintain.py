@@ -656,6 +656,58 @@ def test_posture_headline_drops_the_parenthetical_when_reasons_are_empty():
     assert posture_headline("at_risk", []) == "_Posture: at_risk._"
 
 
+# --- the cross-run posture-movement clause (roadmap H372) ------------------
+#
+# The point-in-time `_Posture:_` line (H370) gains an optional movement clause naming
+# the *verdict-band* transition since the baseline (`sound → attention`): the
+# at_risk/conflicts trend precedent (H268/H283) on the categorical posture axis. The
+# clause tracks the band, not the reasons set (a same-band reasons change is not a
+# posture movement — the count-scalar precedent moves only the headline figure). With
+# no baseline (`before` None) the clause is dropped — the bare H370 point-in-time line.
+
+
+def test_posture_headline_renders_a_band_movement_since_the_baseline():
+    # the verdict moved sound → attention since last run: the point-in-time line gains
+    # the movement clause naming the prior band, beside the current reasons parenthetical
+    assert posture_headline("attention", ["source_drift"], "sound") == (
+        "_Posture: attention (source_drift) (sound → attention since last run)._"
+    )
+
+
+def test_posture_headline_renders_a_recovery_to_sound():
+    # the custody-recovery direction: at_risk → sound (a repair cleared the hard loss).
+    # sound carries no reasons parenthetical, so only the movement clause follows
+    assert posture_headline("sound", [], "at_risk") == (
+        "_Posture: sound (at_risk → sound since last run)._"
+    )
+
+
+def test_posture_headline_renders_no_band_movement_explicitly():
+    # a steady verdict over the window reads the explicit "no change" clause (a baseline
+    # exists, the band did not move) — never the bare line, the at_risk/conflicts precedent
+    assert posture_headline("attention", ["source_drift"], "attention") == (
+        "_Posture: attention (source_drift) (no change since last run)._"
+    )
+
+
+def test_posture_headline_on_no_baseline_drops_the_movement_clause():
+    # no baseline (first run, or a scoped non-persisting pass) → the bare H370
+    # point-in-time line, exactly when there is no prior band to difference against
+    assert posture_headline("attention", ["source_drift"], None) == (
+        "_Posture: attention (source_drift)._"
+    )
+    # the default keeps every pre-H372 caller (render_posture H371, status) point-in-time
+    assert posture_headline("sound", []) == "_Posture: sound._"
+
+
+def test_posture_headline_movement_span_is_parametrized_for_the_trend_twin():
+    # the trend twin replaces "since last run" with "over N runs" (the at_risk/conflicts
+    # span precedent), so the report line and the windowed trend line share one renderer
+    assert posture_headline(
+        "at_risk", ["custody_integrity"], "attention", span="over 4 runs"
+    ) == "_Posture: at_risk (custody_integrity) (attention → at_risk over 4 runs)._"
+
+
 # --- custody_snapshot carries the posture verdict (roadmap H370) -----------
 #
 # `custody_snapshot` gains the `posture` field — `doctor`'s whole-library
@@ -847,6 +899,74 @@ def test_delta_tolerates_a_baseline_lacking_conflicts():
     assert delta["conflicts"] == {"before": 0, "after": 1, "change": 1}
 
 
+# --- the cross-run posture axis on the delta (roadmap H372) -----------------
+#
+# `compute_delta` gains a categorical `posture` axis (the at_risk/conflicts scalar
+# precedent on the verdict band): `{before, after, changed}` — the prior verdict, the
+# current verdict, and whether the band moved. The point-in-time `_Posture:_` line reads
+# `before` to render its movement clause. `changed` is null on the first run (no
+# baseline), and a present baseline missing the axis reads the skeleton `sound`.
+
+
+def test_delta_reports_posture_change_against_a_baseline():
+    """The verdict band is a categorical axis the delta differences (H372), so a worker
+    reads whether whole-library custody posture moved since last run."""
+    previous = {
+        "recorded_at": "2026-06-20T09:00:00+00:00",
+        "score": 90, "tiers": {"full": 2}, "drift": {"checked": 0},
+        "posture": {"verdict": "attention", "reasons": ["source_drift"]},
+    }
+    current = custody_snapshot(
+        _doctor_report(80, {"full": 2}, {}, posture={"verdict": "at_risk",
+                                                     "reasons": ["at_risk_works"]})
+    )
+    delta = compute_delta(previous, current)
+    # the band moved attention → at_risk: a hard loss appeared since last run
+    assert delta["posture"] == {"before": "attention", "after": "at_risk",
+                                "changed": True}
+
+
+def test_delta_posture_steady_band_reads_changed_false():
+    # the same band over both runs (the reasons may differ, but the band held): changed
+    # is False, not None — a baseline exists, the verdict simply did not move
+    previous = {
+        "recorded_at": "t", "score": 100, "tiers": {"full": 2}, "drift": {"checked": 0},
+        "posture": {"verdict": "attention", "reasons": ["open_conflicts"]},
+    }
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 2}, {}, posture={"verdict": "attention",
+                                                      "reasons": ["source_drift"]})
+    )
+    delta = compute_delta(previous, current)
+    assert delta["posture"] == {"before": "attention", "after": "attention",
+                                "changed": False}
+
+
+def test_delta_posture_on_first_run_is_null():
+    # no baseline → the posture before/changed is null, never a fabricated "no change"
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 2}, {}, posture={"verdict": "attention",
+                                                      "reasons": ["source_drift"]})
+    )
+    delta = compute_delta(None, current)
+    assert delta["posture"] == {"before": None, "after": "attention", "changed": None}
+
+
+def test_delta_tolerates_a_baseline_lacking_posture():
+    """A pre-H369 baseline (no `posture` axis) reads the skeleton `sound` for that axis,
+    never null — the run happened, the verdict was simply not yet tracked (ADR 0082),
+    exactly as the count scalars read 0."""
+    previous = {"recorded_at": "t", "score": 100, "tiers": {"full": 2},
+                "drift": {"checked": 2}}  # no `posture` key
+    current = custody_snapshot(
+        _doctor_report(100, {"full": 2}, {}, posture={"verdict": "attention",
+                                                      "reasons": ["source_drift"]})
+    )
+    delta = compute_delta(previous, current)
+    assert delta["posture"] == {"before": "sound", "after": "attention",
+                                "changed": True}
+
+
 def test_delta_reports_archive_mismatched_change_against_a_baseline():
     """H299: the archive-integrity mismatch count is a scalar the delta subtracts, so
     a worker reads whether the recovery store gained/lost corrupt priors since last
@@ -1032,6 +1152,7 @@ def _run(
     archive_mismatched=0,
     dup_groups=0,
     dup_items=0,
+    posture=None,
 ):
     return {
         "recorded_at": recorded_at,
@@ -1046,6 +1167,7 @@ def _run(
             "archive_mismatched": archive_mismatched,
             "content_duplicate_groups": dup_groups,
             "content_duplicate_items": dup_items,
+            "posture": posture or {"verdict": "sound", "reasons": []},
         },
         "delta": {},
     }
@@ -1063,6 +1185,7 @@ def test_trend_under_two_runs_is_not_a_trajectory():
         assert trend["conflicts_change"] is None  # nor a peer-divergence direction
         assert trend["archive_mismatched_change"] is None  # nor an archive-integrity direction
         assert trend["content_duplicates_change"] is None  # nor a content-redundancy direction
+        assert trend["posture_change"] is None  # nor a verdict-band movement (H372)
         assert trend["runs"] == len(window)
 
 
@@ -1280,6 +1403,103 @@ def test_trend_at_risk_line_is_bare_under_two_runs():
     assert one["at_risk_headline"] == "_At-risk works: 3._"
     empty = compute_trend([])
     assert empty["at_risk_headline"] == "_At-risk works: 0._"
+
+
+# --- the posture-over-time trend axis (roadmap H372) -----------------------
+#
+# The categorical twin of the at_risk/conflicts trend lines: `compute_trend` gains a
+# `posture_change` axis ({first, last, changed} — the first→last verdict-band movement
+# across the window) and a readable `posture_headline` (span "over N runs"), the trend
+# twin of the report's point-in-time `_Posture:_` line (H370). Reported, never a
+# trajectory trigger: the integrity-first `posture` field stays score+drift-driven.
+
+
+def _posture(verdict, *reasons):
+    return {"verdict": verdict, "reasons": list(reasons)}
+
+
+def test_trend_reports_posture_change_first_to_last():
+    """The verdict-band trajectory (H372): the first→last band movement across the
+    window, so a worker reading `--trend` sees the custody verdict move (sound →
+    at_risk) without diffing each run's posture itself."""
+    trend = compute_trend([
+        _run("t1", 100, posture=_posture("sound")),
+        _run("t3", 80, posture=_posture("at_risk", "at_risk_works")),
+    ])
+    assert trend["posture_change"] == {"first": "sound", "last": "at_risk",
+                                       "changed": True}
+
+
+def test_trend_posture_change_is_independent_of_the_trajectory():
+    """A moving verdict band re-views the very fidelity/drift/integrity facts the
+    score/drift already move the trajectory on, so folding it into `posture` would
+    double-count: a steady score with no drift movement is still `holding` even as the
+    verdict moves (the H115/H267 reported-not-posture discipline, on the verdict axis)."""
+    trend = compute_trend([
+        _run("t1", 100, drifted=0, posture=_posture("sound")),
+        _run("t2", 100, drifted=0, posture=_posture("attention", "open_conflicts")),
+    ])
+    assert trend["posture_change"]["changed"] is True
+    assert trend["posture"] == "holding"
+
+
+def test_trend_posture_steady_band_reads_changed_false():
+    # the band held across the window: changed False (a baseline exists), not None
+    trend = compute_trend([
+        _run("t1", 100, posture=_posture("attention", "source_drift")),
+        _run("t2", 100, posture=_posture("attention", "open_conflicts")),
+    ])
+    assert trend["posture_change"] == {"first": "attention", "last": "attention",
+                                       "changed": False}
+
+
+def test_trend_posture_reads_skeleton_for_a_pre_h369_endpoint():
+    """A window endpoint recorded before the snapshot tracked `posture` (a pre-H369
+    schema) reads the skeleton `sound` for the missing axis, so the movement is still
+    computed, never a crash (the missing-axis-default posture, ADR 0082)."""
+    pre = {"recorded_at": "t1", "snapshot": {"score": 100, "drift": {}}, "delta": {}}
+    trend = compute_trend([pre, _run("t2", 100, posture=_posture("attention",
+                                                                 "source_drift"))])
+    assert trend["posture_change"] == {"first": "sound", "last": "attention",
+                                       "changed": True}
+
+
+def test_trend_carries_the_readable_posture_line_over_the_window():
+    """H372: the trend distils the verdict-band trajectory into one readable line — the
+    last run's verdict + reasons + the band movement across the window — so a human reads
+    the posture trend without parsing `posture_change`. The span is the window."""
+    trend = compute_trend([
+        _run("t1", 100, posture=_posture("sound")),
+        _run("t3", 80, posture=_posture("at_risk", "at_risk_works", "source_drift")),
+    ])
+    assert trend["posture_headline"] == (
+        "_Posture: at_risk (at_risk_works, source_drift) "
+        "(sound → at_risk over 2 runs)._"
+    )
+
+
+def test_trend_posture_line_reads_no_change_when_the_band_holds():
+    """A steady verdict band over the window reads the explicit "no change" clause (a
+    baseline exists), not the bare line — the at_risk/conflicts precedent."""
+    trend = compute_trend([
+        _run("t1", 100, posture=_posture("attention", "source_drift")),
+        _run("t2", 100, posture=_posture("attention", "source_drift")),
+    ])
+    assert trend["posture_headline"] == (
+        "_Posture: attention (source_drift) (no change over 2 runs)._"
+    )
+
+
+def test_trend_posture_line_is_bare_under_two_runs():
+    """A <2-run window has no trajectory: the line carries the current verdict with no
+    movement clause — the bare point-in-time `_Posture:_` line, the same honest absence
+    the null `posture_change` takes. An empty window reads the honest `sound`."""
+    one = compute_trend([_run("t1", 100, posture=_posture("attention", "source_drift"))])
+    assert one["posture_change"] is None
+    assert one["posture_headline"] == "_Posture: attention (source_drift)._"
+    empty = compute_trend([])
+    assert empty["posture_change"] is None
+    assert empty["posture_headline"] == "_Posture: sound._"
 
 
 # --- the conflict-over-time trend axis (roadmap H283) ----------------------
@@ -4365,6 +4585,101 @@ def test_maintain_report_at_risk_line_is_bare_under_a_scope(home, capsys):
     assert fid["delta"] is None  # still non-persisting (a fidelity triage, H255)
     assert fid["custody"]["at_risk"] == 2  # but the audit stayed whole-library
     assert fid["at_risk_headline"] == "_At-risk works: 2._"  # bare: no baseline
+
+
+# --- the posture-movement clause on the maintain report (roadmap H372) ----------
+#
+# The verdict-band twin of the at-risk-works lines above: H370 put the point-in-time
+# `_Posture:_` verdict on the report; H372 adds the cross-run movement clause (`sound →
+# at_risk`) read off the delta's new `posture` axis — the clean H267/H268 analogue on
+# the categorical verdict axis.
+
+
+def test_maintain_report_posture_line_is_point_in_time_on_first_run(home, capsys):
+    """H372: the first run has no baseline, so the report's `_Posture:_` line is the bare
+    point-in-time H370 line (no movement clause) — and it converges with the JSON verdict
+    and the delta's null `posture.before` by construction."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    # one 2-rep work, a full+unverified copy → safely held → sound
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),
+        _rep("crossref:ca", "10.1000/a", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["custody"]["posture"]["verdict"] == "sound"
+    assert report["delta"]["posture"] == {"before": None, "after": "sound",
+                                          "changed": None}
+    # first run, no baseline → the bare point-in-time line, no movement clause
+    assert report["posture_headline"] == "_Posture: sound._"
+
+
+def test_maintain_report_posture_line_shows_the_band_movement_since_last_run(home, capsys):
+    """A hard custody loss appearing between two persisting passes moves the verdict band
+    (sound → at_risk) — the readable counterpart of the delta's new `posture` axis
+    (H370→H372). The full copy drifting makes its work at-risk (hard) and is itself
+    source_drift (soft), so the verdict moves and both reasons render."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),
+        _rep("crossref:ca", "10.1000/a", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["posture_headline"] == "_Posture: sound._"  # first run, no baseline
+
+    # the full copy drifts → no representation is both full and unmoved → the work is
+    # at risk (hard) and the drift is source_drift (soft): the band moves sound → at_risk
+    record_events(home.db_path, [
+        CustodyEvent("arxiv:a", "2026-06-15T00:00:00+00:00", "drifted", "h:a", "h:b"),
+    ])
+    capsys.readouterr()
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["custody"]["posture"]["verdict"] == "at_risk"
+    assert second["delta"]["posture"] == {"before": "sound", "after": "at_risk",
+                                          "changed": True}
+    # the movement clause names the prior band beside the current reasons
+    assert second["posture_headline"] == (
+        "_Posture: at_risk (at_risk_works, source_drift) "
+        "(sound → at_risk since last run)._"
+    )
+    # converges with the rendered helper read off the JSON verdict/reasons + delta.before
+    assert second["posture_headline"] == posture_headline(
+        second["custody"]["posture"]["verdict"],
+        second["custody"]["posture"]["reasons"],
+        second["delta"]["posture"]["before"],
+    )
+
+
+def test_maintain_report_posture_line_is_bare_under_a_scope(home, capsys):
+    """A scoped pass is non-persisting (delta None → no baseline), so its `_Posture:_`
+    line drops the movement clause — the bare point-in-time line, exactly when the delta
+    has no baseline (the at-risk-line-under-a-scope precedent)."""
+    home.root.mkdir(parents=True, exist_ok=True)
+    init_db(home.db_path)
+    for item in [
+        _rep("arxiv:a", "10.1000/a", "full"),
+        _rep("crossref:ca", "10.1000/a", "reference"),
+    ]:
+        insert_item(home.db_path, item)
+    capsys.readouterr()
+    assert main(["maintain", "--source", "arxiv", "--no-recheck"]) == 0
+    scoped = json.loads(capsys.readouterr().out)
+    assert scoped["delta"] is None  # non-persisting focused triage
+    # the verdict is rendered point-in-time (no movement clause), whatever its band
+    assert " → " not in scoped["posture_headline"]
+    assert scoped["posture_headline"] == posture_headline(
+        scoped["custody"]["posture"]["verdict"],
+        scoped["custody"]["posture"]["reasons"],
+    )
 
 
 # --- the conflict-over-time leg on the maintain report (roadmap H283) -----------
