@@ -4826,6 +4826,261 @@ def test_run_maintenance_converges_with_cli_maintain_no_recheck(scrolls_home, ca
         assert report_mcp[key] == report_cli[key], f"diverged on {key}"
 
 
+# --- run_maintenance determinism + no-movement settle over MCP (H383) ---
+#
+# H377 pinned the CLI `scrolls maintain --no-recheck` path both settles (two passes
+# over an unchanged library record byte-equal scalars, the second's delta is
+# no-movement) and reproduces across `PYTHONHASHSEED`. But an agent driving MCP never
+# calls the CLI — it calls `run_maintenance`, which passes a `skipped_recheck_report`
+# (no live edge, H196) and returns the same `assemble_report` through the MCP tool
+# envelope (a *distinct entry point* + serialization no determinism/settle test pins).
+# An MCP-driven dogfood loop (H201/H204) that re-fetches `run_maintenance` to detect
+# custody movement reads the *MCP* payload: if that twin re-folds a snapshot/headline
+# section over a `set`, or its envelope phantom-moves a delta, two calls of one
+# unchanged library disagree and the agent cries drift where there is none. The
+# sixteenth forward-hardening cell — the MCP-surface twin of H377's CLI settle/
+# determinism; deliberately *not* another content-identity guard.
+#
+# These helpers replicate tests/test_maintain.py's H377 fixture + assertions locally
+# (`tests/` is not a package), the same way `_seed_health_determinism_mix` (H381)
+# replicates the doctor determinism mix.
+
+
+def _maintain_determinism_item(item_id, title, **overrides):
+    """One held scroll for `_seed_maintain_determinism_mix` — `web`/`fetched` by
+    default, every field overridable (the H377 `_maintain_determinism_item` shape)."""
+    from scrolls.items import ScrollItem
+
+    base = dict(
+        id=item_id, source="web", url=f"https://example.com/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=title, stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def _seed_maintain_determinism_mix(db):
+    """The H377 non-vacuous custody mix, seeded for a `run_maintenance` pass: every
+    load-bearing snapshot scalar is non-zero, so the settle / determinism guards below
+    are real claims (an all-zeros library would pass a phantom-delta or a mis-ordered
+    fold too). A local replica of tests/test_maintain.py's `_seed_maintain_determinism_mix`
+    (`tests/` is not a package), the CLI fixture this MCP-surface twin is the sibling of:
+
+    - a **byte-identical content pair** (two `full` ids sharing one `content_hash`)
+      → `content_duplicate_groups == 1`, `content_duplicate_items == 2`;
+    - the pair's first member classified against a **stale ruleset** → `enrichment_stale`;
+    - a **drifted** `full` item that *also* carries an unresolved import **conflict**
+      (disjoint ledger axes) → `drift.drifted` + `conflicts`;
+    - the pair's other member re-checked clean → `drift.unchanged` + recheck `coverage`;
+    - a `partial` item → the `partial` tier;
+    - an **all-reference work** (two reference reps of one DOI) → `works.at_risk` and
+      the `reference` tier;
+    - the worst custody band any axis fires → a `posture` verdict of `at_risk` with
+      multiple `reasons` (the comma-joined render a reasons set-leak would re-order).
+    """
+    from scrolls.custody import CustodyEvent, conflict_event, record_events
+    from scrolls.items import insert_item
+
+    # byte-identical content pair; dup1 is also stale-classified (enrichment_stale)
+    insert_item(db, _maintain_determinism_item(
+        "web:dup1", "Topic full one", category="tutorial",
+        extracted_text="topic one body", raw_text="<raw>topic one</raw>",
+        content_hash="sha256:dup",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))  # stale ruleset
+    insert_item(db, _maintain_determinism_item(
+        "web:dup2", "Topic full two",
+        extracted_text="topic two body", raw_text="<raw>topic two</raw>",
+        content_hash="sha256:dup"))
+    # a drifted full item that also carries an unresolved import conflict
+    insert_item(db, _maintain_determinism_item(
+        "web:drift", "Topic drift",
+        extracted_text="topic drift body", raw_text="<raw>topic drift</raw>",
+        content_hash="sha256:wd"))
+    insert_item(db, _maintain_determinism_item(
+        "web:partial", "Topic partial", extracted_text="topic partial body"))  # partial
+    # an all-reference work: two reference reps of the same DOI, no full copy
+    insert_item(db, _maintain_determinism_item(
+        "arxiv:workz", "Topic arxiv z", source="arxiv",
+        url="https://arxiv.org/abs/workz", links=("https://doi.org/10.3000/z",),
+        stage="rendered"))
+    insert_item(db, _maintain_determinism_item(
+        "crossref:workz", "Topic crossref z", source="crossref",
+        url="https://example.org/crossref-workz",
+        links=("https://doi.org/10.3000/z",), stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:dup1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:dup", "sha256:dup", None),
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wd", "sha256:changed", None),
+        # disjoint conflict axis: an import disagreed with the held copy, unresolved
+        conflict_event("web:drift", held_hash="sha256:wd",
+                       incoming_hash="sha256:incoming", now="2026-06-15T00:00:00+00:00"),
+    ])
+
+
+def _no_movement_delta(delta):
+    """Assert a `compute_delta` result is the all-zero / no-movement shape every axis:
+    a present baseline (`first_run` False), every numeric `change` zero, the categorical
+    posture band steady (`changed` False). Walks *every* axis (scalar and per-key
+    mapping), so a phantom `+1` injected anywhere is caught, not just `score` (the H377
+    `_no_movement_delta`)."""
+    assert delta["first_run"] is False
+    assert delta["posture"]["changed"] is False
+    for axis, value in delta.items():
+        if axis in ("first_run", "since", "posture"):
+            continue
+        changes = (
+            [value["change"]] if "change" in value
+            else [sub["change"] for sub in value.values()]
+        )
+        assert all(change == 0 for change in changes), (axis, changes)
+
+
+def _comparable_snapshot(snapshot):
+    """A recorded snapshot minus its wall-clock `recorded_at` — the comparable custody
+    scalars two passes of one unchanged library must reproduce exactly (the H377 helper)."""
+    return {key: value for key, value in snapshot.items() if key != "recorded_at"}
+
+
+_RUN_MAINTENANCE_SHAPE = {
+    "recorded_at", "source", "fidelity", "recheck", "compiled", "custody",
+    "headline", "at_risk_headline", "conflicts_headline",
+    "archive_integrity_headline", "duplicates_headline", "posture_headline",
+    "by_source", "attention", "at_risk_works", "enrichment_by_source",
+    "summary_by_source", "delta", "issues", "suggested", "duplicate_prunes",
+}
+
+
+def _assert_run_maintenance_mix_is_non_vacuous(report):
+    """Every order-sensitive / movement-bearing snapshot scalar is non-zero (an
+    all-zeros pass would settle past a phantom delta and mis-order a fold the same),
+    so the settle / byte-identity claims below are real."""
+    custody = report["custody"]
+    assert custody["score"] == 100
+    assert custody["tiers"] == {"full": 3, "partial": 1, "reference": 2}
+    assert custody["drift"]["drifted"] == 1
+    assert custody["drift"]["unchanged"] == 1
+    assert custody["enrichment_stale"] == 1
+    assert custody["at_risk"] == 1
+    assert custody["conflicts"] == 1
+    assert custody["content_duplicate_groups"] == 1
+    assert custody["content_duplicate_items"] == 2
+    assert custody["posture"]["verdict"] == "at_risk"
+    assert len(custody["posture"]["reasons"]) >= 2  # the comma-joined render axis
+    assert report["at_risk_works"]["at_risk"] == 1
+    assert report["issues"] == 0
+
+
+def test_run_maintenance_settles_to_a_no_movement_delta(scrolls_home):
+    # roadmap H383 (the settle face): two `run_maintenance()` passes over one unchanged
+    # library record the *same* comparable custody scalars, and the second pass's delta
+    # vs the first's baseline is the all-zero / no-movement shape on every axis — so an
+    # MCP-driven worker reads "nothing moved", never a phantom drift. Every MCP pass is
+    # offline (`--no-recheck`, H196), so it never mutates the ledger; the only thing
+    # varying between passes is the wall-clock `recorded_at`. The value-based face a
+    # single fixed hash seed catches; the cross-seed pair below catches the
+    # iteration-order leak this one structurally cannot (a `set` iterates the same way
+    # twice under one fixed seed). The MCP-surface twin of H377's CLI `scrolls maintain`
+    # settle.
+    from scrolls.maintain import compute_delta, load_snapshot, snapshot_path
+
+    main(["init"])
+    _seed_maintain_determinism_mix(get_paths().db_path)
+
+    first = mcp_server.run_maintenance()
+    snapshot_one = load_snapshot(snapshot_path(get_paths()))
+
+    second = mcp_server.run_maintenance()
+    snapshot_two = load_snapshot(snapshot_path(get_paths()))
+
+    # non-vacuity: every order-sensitive / movement-bearing scalar is non-zero, so the
+    # settle below is a real claim (an all-zeros snapshot would settle past a phantom
+    # delta too).
+    _assert_run_maintenance_mix_is_non_vacuous(first)
+    # the first pass has no baseline; the second sees the first as its baseline — so a
+    # no-movement second delta is a real settle, not a vacuous first run.
+    assert first["delta"]["first_run"] is True
+    assert second["delta"]["first_run"] is False
+
+    # the recorded snapshot settles: two passes over the unchanged library record
+    # byte-equal comparable scalars (only `recorded_at` may differ) …
+    assert _comparable_snapshot(snapshot_one) == _comparable_snapshot(snapshot_two)
+    # … and so does the report's distilled `custody` block (the snapshot the MCP
+    # envelope carries — a phantom move in the MCP path would diverge here).
+    assert first["custody"] == second["custody"]
+
+    # the delta between the two recorded snapshots is the no-movement shape …
+    _no_movement_delta(compute_delta(snapshot_one, snapshot_two))
+    # … as is the *production* delta the second MCP pass reported vs the first's
+    # baseline (the very figure the agent reads — a stray `+1` in the MCP delta fails
+    # here while the same-process determinism stays green).
+    _no_movement_delta(second["delta"])
+
+    # the guard rides the H186/H180 registered-twin shape contract: the MCP pass is a
+    # registered tool returning the documented report shape, so the settle is pinned to
+    # the same surface the per-tool shape tests lock.
+    assert mcp_server.run_maintenance in mcp_server._TOOLS
+    assert set(first) == _RUN_MAINTENANCE_SHAPE
+
+
+def test_run_maintenance_payload_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H383 (the determinism face): `run_maintenance()` emits a byte-identical
+    # serialized payload (minus the wall-clock `recorded_at`) across two processes
+    # seeded with *different* `PYTHONHASHSEED`s — the decisive half the same-process
+    # settle structurally cannot see. A `set` leaking into any snapshot/headline fold in
+    # the MCP path (the posture `reasons` order, `by_source`, the `at_risk_works`/
+    # `duplicate_prunes` lists) iterates the *same* way twice under one fixed seed, so
+    # the settle above stays green over it; only two differently-seeded processes
+    # surface the re-ordering. The H377 CLI cross-seed precedent lifted to the MCP
+    # scheduled-maintenance twin (the MCP envelope + serialization the CLI test never
+    # exercises). Each subprocess runs one pass on its own fresh copy (a `first_run`,
+    # the same delta shape on both), so the whole payload bar `recorded_at` is identical.
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_maintain_determinism_mix(get_paths().db_path)
+
+    # two homes with the same seeded DB — each subprocess runs its own pass under its
+    # own hash seed (the H381 / H375 / H363 copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _maintain(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, json; from scrolls.mcp_server import run_maintenance; "
+             "sys.stdout.write(json.dumps(run_maintenance()))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _maintain(home_a, "0")  # hash randomization off
+    out_b = _maintain(home_b, "1")  # a different fixed seed
+
+    report_a = json.loads(out_a)
+    report_b = json.loads(out_b)
+
+    # non-vacuity: the subprocess really produced the populated maintenance report (not
+    # an early skipped/empty return), so the byte-identity is a real claim.
+    _assert_run_maintenance_mix_is_non_vacuous(report_a)
+    assert len(report_a["custody"]["posture"]["reasons"]) >= 2
+
+    # the whole MCP payload is reproducible bar the one wall-clock field — a set/dict
+    # leak anywhere (snapshot scalar, readable headline, by-source map, prune guidance,
+    # or the envelope itself) would diverge across the two seeds.
+    report_a.pop("recorded_at")
+    report_b.pop("recorded_at")
+    assert json.dumps(report_a) == json.dumps(report_b)
+
+
 # --- run_maintenance(source=): the source-scoped custody pass over MCP (H203) ---
 
 
