@@ -200,6 +200,54 @@ def test_export_rebuild_is_byte_identical(home, capsys):
     assert src_hits  # guard: the query actually matched something to compare
 
 
+def test_export_items_is_a_reproducible_artifact(home, capsys):
+    """`export items` is the whole-library *backup transport* (the JSONL the
+    bundle's item block wraps), and a backup must be a reproducible artifact:
+
+    1. exporting the *same unchanged library* twice yields a **byte-identical**
+       JSONL (whole-file, not one row — an unsorted `list_items` fold or a
+       per-row non-determinism would make two backups of one library disagree,
+       breaking an operator who `diff`s the same library across two machines), and
+    2. a real `export items` → `import items` into a *fresh* home → re-`export
+       items` reproduces the sender's bytes — the lossless-backup reproduction a
+       single-pass identity check misses.
+
+    The whole-library-backup sibling of the scoped-bundle determinism guard
+    (H368): the same `dump_items_export` fold over the *entire* holdings, no
+    query scope. The existing `test_export_rebuild_is_byte_identical` pins the
+    round-trip leg amid a five-surface rebuild check; this isolates the
+    transport's own reproducibility — the same-library two-export determinism it
+    does not pin — and compares the *whole JSONL file*, not one row.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    capsys.readouterr()  # drain the kb report so the export captures are clean
+
+    # 1. same-library determinism: two exports, no DB change between them,
+    #    are byte-identical (the artifact a `diff` across machines must match).
+    assert main(["export", "items"]) == 0
+    first_export = capsys.readouterr().out
+    assert main(["export", "items"]) == 0
+    second_export = capsys.readouterr().out
+    assert second_export == first_export
+    # non-vacuous: a real multi-row backup, not two empty strings comparing equal
+    assert first_export.count("\n") == len(_seed_items())
+
+    # 2. round-trip reproduction: rebuild the index in a fresh home from the
+    #    backup alone, re-export, and assert it reproduces the sender's bytes.
+    #    `export items` reads the index rows, so `import items` is sufficient —
+    #    no `doctor --fix`/`kb` rebuild needed to reproduce the JSONL transport.
+    backup = src.root.parent / "backup.jsonl"
+    backup.write_text(first_export, encoding="utf-8")
+
+    dst = home("rebuilt")
+    assert main(["import", "items", str(backup)]) == 0
+    capsys.readouterr()  # drain the import report before the re-export capture
+    assert main(["export", "items"]) == 0
+    assert capsys.readouterr().out == first_export
+    assert dst.db_path.exists()  # guard: the re-export read a real rebuilt store
+
+
 def test_rebuilt_library_passes_its_own_custody_audit(home, capsys):
     """After the rebuild, the fresh library is not just equal — it is *clean*:
     doctor finds no structural drift and the custody score is a perfect 100."""
