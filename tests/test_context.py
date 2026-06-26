@@ -2966,3 +2966,174 @@ def test_context_content_duplicate_converges_with_search(scrolls_home, capsys):
     assert set(_best_match_ids(out)) == search_ids == {
         "wikipedia:en:A", "wikipedia:en:B"
     }
+
+
+# --- `scrolls context` bundle determinism (roadmap H376) --------------------
+#
+# The context bundle is an agent's *primary read* — the document it boots its
+# working context from. So its **reproducibility** is load-bearing: an agent
+# caches a bundle and re-fetches it to detect custody movement (the H201/H204
+# MCP-driven dogfood loop), and any spurious run-to-run churn reads as drift
+# where there is none. H366 pinned the budget tiers are *nested* (the Best-Match
+# set is identical across tiers, the Connected block byte-identical between
+# `connected`/`full`) but never that one tier is *reproducible run-to-run*: a
+# set-iteration leak in the connected-neighbours fold (or the excerpt-selection
+# fold) would pass every per-tier presence/nesting test yet make two
+# `scrolls context db --budget full` reads of one *unchanged* library disagree
+# byte-for-byte.
+#
+# This is the ninth forward-hardening cell (after H363's `kb` compile
+# determinism, H364's MCP immutability, H365's repair convergence, H366's
+# read-budget nesting, H367's status↔doctor convergence, H368's `export bundle`
+# determinism, H374's import idempotency, H375's `doctor` whole-report
+# determinism) — the *agent-read-surface* sibling of H368's `export bundle`
+# determinism, and a genuinely distinct code path: `context.py` builds the
+# Connected / Excerpts sections from search + relatedness folds the export
+# bundle never runs. Deliberately *not* another content-identity guard.
+#
+# The decisive choices are (a) test at `--budget full`, so every order-sensitive
+# section — Best Matches, the Connected link-graph, the deep-body Excerpts — is
+# exercised, and (b) include the cross-`PYTHONHASHSEED` subprocess pair: a
+# same-process pass alone cannot see a set-iteration leak (a `set` iterates the
+# same way twice under one fixed seed), the leak only surfaces across two
+# processes seeded differently — the `kb` H363 / `doctor` H375 cross-seed
+# precedent lifted to the agent-read-surface axis.
+
+
+# Eight "database" keyword matches, each linking to one unique paper — a wide
+# fold on every order-sensitive section (Best Matches, Excerpts, the Connected
+# link-graph). Eight is deliberate: the connected fold is capped at the match
+# count (`DEFAULT_LIMIT = 8`), and a *small* set (the H366 fixture's single
+# neighbour, or even four) can iterate identically under two different hash seeds
+# by chance — a vacuous sabotage. Eight neighbours make a set-iteration leak
+# diverge across two seeds with near-certainty (verified: the documented
+# connected-fold sabotage fails the cross-seed guard at this width).
+_DB_MATCHES = [
+    ("wikipedia:en:SQLite", "SQLite", "1706.03762"),
+    ("wikipedia:en:PostgreSQL", "PostgreSQL", "2005.14165"),
+    ("wikipedia:en:Redis", "Redis", "1810.04805"),
+    ("wikipedia:en:MongoDB", "MongoDB", "1409.0473"),
+    ("wikipedia:en:MySQL", "MySQL", "1512.03385"),
+    ("wikipedia:en:Cassandra", "Cassandra", "1412.6980"),
+    ("wikipedia:en:DuckDB", "DuckDB", "1301.3781"),
+    ("wikipedia:en:MariaDB", "MariaDB", "1606.05250"),
+]
+_NEIGHBOUR_TITLES = [
+    "Attention Is All You Need", "Few-Shot Learners", "Bidirectional Transformers",
+    "Neural Machine Translation", "Deep Residual Learning", "Stochastic Optimization",
+    "Efficient Word Representations", "Reading Comprehension",
+]
+
+
+def _seed_context_determinism_mix(db):
+    """The H366 nested-library shape, widened so every order-sensitive bundle
+    section is a *multi-element* fold — the precondition that gives the cross-seed
+    guard teeth.
+
+    The H366 `_seed_nested_library` seeds a single Connected neighbour, so a
+    set-fold of that section iterates one element identically under any hash seed
+    (a vacuous sabotage). This fixture seeds **eight** "database" keyword matches
+    (an eight-item Best-Match set + eight Excerpts at full) and **eight**
+    linked-but-unmatched papers (an eight-bullet Connected link-graph, the
+    `DEFAULT_LIMIT` cap), so the Best-Match list, the Connected fold, and the
+    Excerpts are each a wide fold whose order a `set` leak would scramble between
+    two differently-seeded processes — exactly what the cross-seed pair catches.
+    """
+    # eight "database" keyword matches, each linking to one unique paper
+    for item_id, title, arxiv_id in _DB_MATCHES:
+        insert_item(db, make_item(
+            item_id, title,
+            f"{title} is a database engine with full-text search.",
+            links=(f"https://arxiv.org/abs/{arxiv_id}",),
+        ))
+    # eight linked-but-unmatched papers — none holds the "database" keyword, so
+    # each surfaces only as a Connected neighbour, never a Best Match. Eight
+    # neighbours make the Connected fold's order load-bearing across hash seeds.
+    for (_, _, arxiv_id), title in zip(_DB_MATCHES, _NEIGHBOUR_TITLES):
+        insert_item(db, make_item(
+            f"arxiv:{arxiv_id}", title,
+            "An attention-based sequence model for language tasks.",
+            source="arxiv", url=f"https://arxiv.org/abs/{arxiv_id}",
+        ))
+
+
+def _connected_neighbour_lines(bundle):
+    """The bullet lines of the Connected scrolls section (excludes the Links block,
+    whose bullets start with `- [`)."""
+    return [
+        line for line in _connected_block(bundle).splitlines()
+        if line.startswith("- ")
+    ]
+
+
+def _assert_context_bundle_non_vacuous(bundle):
+    # every order-sensitive section is a wide fold, so byte-identity below is a
+    # real claim (an all-empty bundle would pass a mis-ordered fold too).
+    assert len(_best_match_ids(bundle)) >= 6         # the database matches
+    assert len(_connected_neighbour_lines(bundle)) >= 6  # the link-graph fold
+    assert "## Excerpts" in bundle                   # deep bodies at full
+
+
+def test_context_bundle_is_byte_identical_across_two_same_process_reads(
+    scrolls_home, capsys
+):
+    # roadmap H376: two `scrolls context db --budget full` reads of one unchanged
+    # library are byte-identical — the agent's primary read is a reproducible
+    # artifact, not a per-run snapshot (no wall-clock leaks into the bundle). This
+    # is the same-process face; the cross-seed pair below catches the
+    # set-iteration leak this one — under a single fixed hash seed — cannot.
+    main(["init"])
+    _seed_context_determinism_mix(get_paths().db_path)
+    capsys.readouterr()
+
+    first = run_context(capsys, "database", "--budget", "full")
+    second = run_context(capsys, "database", "--budget", "full")
+
+    _assert_context_bundle_non_vacuous(first)
+    assert first == second
+
+
+def test_context_bundle_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H376: `scrolls context db --budget full` emits byte-identical stdout
+    # across two processes with *different* `PYTHONHASHSEED`s — the cross-process
+    # face the same-process pair structurally cannot see. This is the decisive half
+    # of the guard: a `set` leaking into the connected-neighbours (or excerpt)
+    # fold iterates the *same* way twice under one fixed seed, so the same-process
+    # read above stays green over it; only two processes seeded differently surface
+    # the divergence (verified by the sabotage check on the connected fold — it
+    # fails *here* while the same-process read and H366's nesting tests stay
+    # green). The `kb` H363 / `doctor` H375 cross-seed precedent lifted to the
+    # agent-read-surface axis.
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_context_determinism_mix(get_paths().db_path)
+
+    # two homes with the same seeded DB — each subprocess reads its own copy under
+    # its own hash seed (the H363 `kb` / H375 `doctor` copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _context(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; from scrolls.cli import main; "
+             "sys.exit(main(['context', 'database', '--budget', 'full']))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _context(home_a, "0")  # hash randomization off
+    out_b = _context(home_b, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the full multi-element bundle
+    # (not an early empty return), so the byte-identity is a real claim.
+    _assert_context_bundle_non_vacuous(out_a)
+    assert out_a == out_b
