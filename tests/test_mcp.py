@@ -5562,3 +5562,331 @@ def test_run_maintenance_posture_movement_clause_rides_the_mcp_report(
     cli_trend = json.loads(capsys.readouterr().out)["trend"]
     assert trend["posture_change"] == cli_trend["posture_change"]
     assert trend["posture_headline"] == cli_trend["posture_headline"]
+
+
+# ---------------------------------------------------------------------------
+# The MCP read-surface determinism contract (roadmap H388)
+#
+# One guard over the *whole* registered read surface, superseding the per-tool
+# determinism-twin treadmill (the shipped H381/H382/H383/H387 cells and the
+# queued per-tool H389–H393 cells). Every read tool an agent caches over the
+# H201/H204 dogfood loop must be a *reproducible artifact*: two reads of one
+# unchanged library agree byte-for-byte, same-process AND across a
+# `PYTHONHASHSEED` subprocess pair (the set-iteration leak a single fixed seed
+# cannot surface — a `set` iterates the same way twice in one process, so only
+# two differently-seeded processes reveal a leaked fold).
+#
+# Rather than hand-write one determinism cell per tool forever, this pins the
+# invariant once over `_MCP_READ_TOOLS` and carries a *completeness* assertion:
+# a new read tool added to the registry fails the contract until it is given a
+# call here, forcing determinism coverage by construction. That is the M2
+# search-completeness / H364 registry-completeness contract lifted to the
+# determinism axis — the mechanism that retires the treadmill.
+# ---------------------------------------------------------------------------
+
+
+# (tool name, positional args, kwargs) for every registered read tool, args
+# resolved from `_seed_read_surface_determinism_mix`. The chosen args drive each
+# tool's heaviest order-sensitive fold (the trend envelope, a multi-hit query,
+# the full-budget bundle). The name set MUST equal `_MCP_READ_TOOLS` — the
+# completeness keystone asserted below.
+_READ_SURFACE_CALLS = (
+    ("search_scrolls", ("database",), {}),
+    ("list_scrolls", (), {}),
+    ("list_facets", (), {}),
+    ("get_scroll", ("arxiv:dba",), {}),
+    ("get_scroll_history", ("web:hub",), {}),
+    ("get_related_scrolls", ("arxiv:dba",), {}),
+    ("get_link_graph", (), {}),
+    ("get_works", (), {}),
+    ("get_context_bundle", ("database",), {"budget": "full"}),
+    ("get_concept_page", ("Database",), {}),
+    ("get_tag_page", ("efficient",), {}),
+    ("list_sources", (), {}),
+    ("list_archived", (), {}),
+    ("get_archived", ("web:archived",), {}),
+    ("get_library_health", (), {}),
+    ("get_maintenance_history", (), {"trend": True}),
+    ("list_feed_subscriptions", (), {}),
+)
+
+
+def _seed_read_surface_determinism_mix(paths):
+    """One wide library where every order-sensitive read-tool fold is non-vacuous.
+
+    A single fixture that drives the *whole* read surface, so the byte-identity
+    claims below are real (an all-empty payload passes a mis-ordered fold too):
+
+    - **four sources** (arxiv, crossref, web, x) → a multi-key `by_source` map
+      on `get_library_health`/`get_link_graph`/`list_sources`;
+    - **three DOI-clustered works** (`get_works`): two with a full preprint + a
+      reference DOI record, and a third all-reference work so `works.most_at_risk`
+      is non-null;
+    - **link edges** (`web:hub`, `arxiv:dbb`, `crossref:dba` all link to
+      `arxiv:dba`'s URL) → a ≥3-node, ≥2-edge graph;
+    - a **"Database" concept** with ≥3 members and an **"efficient" tag** with ≥3
+      members → multi-element `get_concept_page`/`get_tag_page` renders;
+    - a **byte-identical content pair** → `content_duplicates.groups`;
+    - a **drifted** item carrying an unresolved **conflict** → `drift.events` +
+      `conflicts.events` + a non-empty `get_scroll_history`;
+    - a **tampered archived prior** → `archive.events` + `list_archived`/
+      `get_archived` recovery reads.
+    """
+    import sqlite3
+
+    from scrolls.custody import CustodyEvent, conflict_event, record_events
+    from scrolls.items import ScrollItem, adopt_incoming, insert_item
+    from scrolls.render import write_scroll
+
+    db = paths.db_path
+
+    def _item(ident, source, **overrides):
+        sid = ident.split(":", 1)[1]
+        fields = dict(
+            id=ident, source=source, source_id=sid,
+            url=f"https://{source}.example/{sid}",
+            saved_at="2026-06-12T08:00:00+00:00", stage="rendered",
+        )
+        fields.update(overrides)
+        return ScrollItem(**fields)
+
+    def _render(item):
+        # a rendered scroll file (markdown_path set) so the KB compiler folds it
+        # into the concept/tag pages get_concept_page/get_tag_page read
+        insert_item(db, write_scroll(paths, item))
+
+    # --- three DOI-clustered works (get_works) -------------------------------
+    # work A: a full preprint (the link-graph hub target, a Database/Indexing member)
+    #         + a reference DOI record
+    _render(_item(
+        "arxiv:dba", "arxiv", title="Indexing in a database",
+        raw_text="A database index keeps lookups fast.",
+        extracted_text="A database index keeps lookups fast.",
+        content_hash="sha256:dba", concepts=("Database", "Indexing"),
+        tags=("efficient",), links=("https://doi.org/10.1000/db",)))
+    insert_item(db, _item(
+        "crossref:dba", "crossref",
+        links=("https://doi.org/10.1000/db", "https://arxiv.example/dba")))
+    # work B: a second full preprint (a Database member) + reference DOI record
+    _render(_item(
+        "arxiv:dbb", "arxiv", title="A database query engine",
+        raw_text="A database query engine plans joins.",
+        extracted_text="A database query engine plans joins.",
+        content_hash="sha256:dbb", concepts=("Database",), tags=("efficient",),
+        links=("https://doi.org/10.2000/db", "https://arxiv.example/dba")))
+    insert_item(db, _item(
+        "crossref:dbb", "crossref", links=("https://doi.org/10.2000/db",)))
+    # work C: two reference reps of one DOI → an all-reference at-risk work
+    insert_item(db, _item("arxiv:ref1", "arxiv", links=("https://doi.org/10.3000/db",)))
+    insert_item(db, _item("crossref:ref2", "crossref", links=("https://doi.org/10.3000/db",)))
+
+    # --- a web hub: a rendered search/concept/tag member that links into the graph
+    _render(_item(
+        "web:hub", "web", title="Database hub overview",
+        raw_text="An overview of database tools.",
+        extracted_text="An overview of database tools and indexing.",
+        content_hash="sha256:hub", concepts=("Database", "Indexing"),
+        tags=("efficient",), links=("https://arxiv.example/dba",)))
+    # an x thread → a 4th source and a cross-source search hit
+    insert_item(db, _item(
+        "x:post", "x", title="A database thread",
+        raw_text="A thread about database internals.",
+        extracted_text="A thread about database internals.",
+        content_hash="sha256:xp"))
+
+    # --- a byte-identical content-duplicate pair (content_duplicates) ---------
+    for ident in ("web:dup1", "web:dup2"):
+        insert_item(db, _item(
+            ident, "web", title="A duplicated note",
+            extracted_text="same body", content_hash="sha256:dup", stage="fetched"))
+
+    # --- a drifted item that also carries an unresolved conflict -------------
+    record_events(db, [
+        CustodyEvent(item_id="web:hub", checked_at="2026-06-14T00:00:00+00:00",
+                     status="drifted", prior_hash="sha256:hub",
+                     observed_hash="sha256:moved"),
+        conflict_event("web:hub", held_hash="sha256:hub",
+                       incoming_hash="sha256:incoming",
+                       now="2026-06-15T00:00:00+00:00"),
+    ])
+
+    # --- a tampered archived prior (the archive.events integrity alarm, plus the
+    #     list_archived / get_archived recovery reads) ------------------------
+    held = _item("web:archived", "web", title="An archived note",
+                 extracted_text="the prior body", content_hash="sha256:held",
+                 stage="fetched")
+    insert_item(db, held)
+    adopt_incoming(db, dataclasses.replace(
+        held, extracted_text="a later capture", content_hash="sha256:moved"),
+        archived_at="2026-06-22T00:00:00+00:00")
+    # tamper the recorded prior hash so doctor's archive integrity alarm fires —
+    # the un-launderable recovery-mismatch row (the H381 health-mix precedent)
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+                     ("sha256:tampered", held.id))
+    conn.close()
+
+
+def _prepare_read_surface_library():
+    """init + seed + compile + two maintenance passes — the shared setup the
+    determinism reads run against, so the compiled concept/tag pages, the verify
+    ledger, the archive store, and a non-trivial maintenance trend all exist for
+    every read tool (compile_library is offline; run_maintenance is --no-recheck
+    over MCP, so this is network-free)."""
+    main(["init"])
+    _seed_read_surface_determinism_mix(get_paths())
+    mcp_server.compile_library()  # concept/tag pages for get_concept_page/get_tag_page
+    mcp_server.run_maintenance()  # two passes → a real custody trajectory for the trend
+    mcp_server.run_maintenance()
+
+
+def _assert_read_surface_mix_is_non_vacuous(results):
+    """Every leak-prone read tool returned a multi-element fold, so the
+    byte-identity claims are real (a mis-ordered empty fold would pass too)."""
+    search = results["search_scrolls"]
+    assert len(search) >= 3 and len({h["source"] for h in search}) >= 2
+    assert len(results["list_scrolls"]) >= 8
+    graph = results["get_link_graph"]
+    assert len(graph["nodes"]) >= 3 and len(graph["edges"]) >= 2
+    assert len(graph["stats"]["custody"]["by_source"]) >= 3
+    assert len(results["get_works"]["works"]) >= 2
+    assert results["get_related_scrolls"]  # arxiv:dba has neighbours
+    health = results["get_library_health"]
+    assert sorted(health["by_source"]) == ["arxiv", "crossref", "web", "x"]
+    assert health["content_duplicates"]["groups"]
+    assert health["drift"]["events"] and health["conflicts"]["events"]
+    assert health["archive"]["events"]
+    assert health["works"]["most_at_risk"] is not None
+    history = results["get_maintenance_history"]
+    assert len(history["runs"]) == 2
+    assert history["trend"]["posture"] != "insufficient-history"
+    assert results["get_scroll_history"]  # the drifted item's ledger
+    assert results["list_archived"]["count"] >= 1
+    # the compiled-page reads list their multi-element member folds
+    concept_page = results["get_concept_page"]
+    assert "Indexing in a database" in concept_page
+    assert "A database query engine" in concept_page
+    assert "A database hub" in concept_page or "Database hub" in concept_page
+    assert "efficient" in results["get_tag_page"].casefold()
+
+
+def _read_surface_results():
+    """Call every read tool once and return {tool_name: payload}."""
+    return {
+        name: getattr(mcp_server, name)(*args, **kwargs)
+        for name, args, kwargs in _READ_SURFACE_CALLS
+    }
+
+
+def test_mcp_read_surface_calls_cover_exactly_the_registered_read_tools():
+    """The completeness keystone (roadmap H388): the determinism call list covers
+    *exactly* `_MCP_READ_TOOLS`, so a new read tool fails this until it is given a
+    determinism call — forcing reproducibility coverage by construction and
+    retiring the per-tool twin treadmill. Also pins each named tool is a live
+    registered tool (the H364 `_TOOLS ≡ build_server` invariant)."""
+    covered = {name for name, _, _ in _READ_SURFACE_CALLS}
+    assert covered == _MCP_READ_TOOLS, (
+        f"determinism coverage drift: missing={_MCP_READ_TOOLS - covered}, "
+        f"extra={covered - _MCP_READ_TOOLS}"
+    )
+    registered = {fn.__name__ for fn in mcp_server._TOOLS}
+    assert covered <= registered
+
+
+def test_mcp_read_surface_is_byte_identical_across_two_same_process_reads(scrolls_home):
+    # roadmap H388: every registered read tool serializes to byte-identical output
+    # across two reads of one unchanged library — the *whole agent-read surface* is a
+    # reproducible artifact, pinned once. The same-process face; the cross-seed pair
+    # below catches the set-iteration leak this one (under a single fixed hash seed)
+    # structurally cannot.
+    _prepare_read_surface_library()
+
+    first = _read_surface_results()
+    second = _read_surface_results()
+
+    _assert_read_surface_mix_is_non_vacuous(first)
+    for name, _, _ in _READ_SURFACE_CALLS:
+        assert json.dumps(first[name]) == json.dumps(second[name]), f"{name} not stable"
+
+
+def _read_surface_driver(sabotage_set_size=64):
+    """A standalone driver (run under a fresh interpreter) that calls every read
+    tool from the single source of truth `_READ_SURFACE_CALLS` and writes each
+    payload as `name=<json>`. When `SCROLLS_DETERMINISM_SABOTAGE=<tool>` is set it
+    wraps that tool's payload with a `list(set(...))` leak — an order that is fixed
+    within one process but varies across `PYTHONHASHSEED`, the exact regression the
+    cross-seed face exists to catch."""
+    leak = "{'k%d' % i for i in range(" + str(sabotage_set_size) + ")}"
+    return (
+        "import sys, json, os\n"
+        "from scrolls import mcp_server\n"
+        "calls = " + repr(list(_READ_SURFACE_CALLS)) + "\n"
+        "sabotage = os.environ.get('SCROLLS_DETERMINISM_SABOTAGE')\n"
+        "parts = []\n"
+        "for name, args, kwargs in calls:\n"
+        "    result = getattr(mcp_server, name)(*args, **kwargs)\n"
+        "    if name == sabotage:\n"
+        "        result = {'_leak': list(" + leak + "), 'payload': result}\n"
+        "    parts.append(name + '=' + json.dumps(result))\n"
+        "sys.stdout.write(chr(10).join(parts))\n"
+    )
+
+
+def _run_read_surface(home, seed, *, sabotage=None):
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed}
+    if sabotage is not None:
+        env["SCROLLS_DETERMINISM_SABOTAGE"] = sabotage
+    result = subprocess.run(
+        [sys.executable, "-c", _read_surface_driver()],
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_mcp_read_surface_is_deterministic_across_hash_seeds(scrolls_home):
+    # roadmap H388: the whole read surface emits byte-identical output across two
+    # processes with *different* `PYTHONHASHSEED`s — the cross-process face the
+    # same-process pair structurally cannot see. One subprocess pair covers every
+    # registered read tool at once (the consolidation that retires the per-tool
+    # cross-seed twins): a `set` leaking into *any* read fold iterates the same way
+    # twice under one fixed seed, so the same-process read stays green over it; only
+    # two differently-seeded processes surface the divergence.
+    _prepare_read_surface_library()
+
+    out_a = _run_read_surface(scrolls_home, "0")  # hash randomization off
+    out_b = _run_read_surface(scrolls_home, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the populated surface
+    parsed = {
+        line.split("=", 1)[0]: json.loads(line.split("=", 1)[1])
+        for line in out_a.split("\n")
+    }
+    _assert_read_surface_mix_is_non_vacuous(parsed)
+    assert {name for name, _, _ in _READ_SURFACE_CALLS} <= set(parsed)
+
+    assert out_a == out_b
+
+
+def test_mcp_read_surface_determinism_guard_has_teeth(scrolls_home):
+    # roadmap H388 sabotage: a `set`-fold leaked into one read tool (`get_works`)
+    # must (1) stay invisible to two reads under the *same* seed — proving the
+    # cross-seed dimension is the load-bearing half, not redundant — and (2) be
+    # caught by the cross-seed pair, proving the contract above is non-vacuous. So
+    # the same set leak the per-tool twins each caught for one tool is caught here
+    # for any read tool, by construction.
+    _prepare_read_surface_library()
+
+    same_seed_a = _run_read_surface(scrolls_home, "0", sabotage="get_works")
+    same_seed_b = _run_read_surface(scrolls_home, "0", sabotage="get_works")
+    # (1) a single fixed seed cannot see the leak — the same-process blind spot
+    assert same_seed_a == same_seed_b
+
+    cross_seed = _run_read_surface(scrolls_home, "1", sabotage="get_works")
+    # (2) two differently-seeded processes do — the contract has teeth
+    assert same_seed_a != cross_seed
