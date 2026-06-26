@@ -4319,6 +4319,170 @@ def test_get_library_health_unknown_source_is_the_honest_empty_block(scrolls_hom
     assert health["headline"] == "_Custody: 0 scroll(s)._"
 
 
+def _seed_health_determinism_mix(paths):
+    """A held mix where every order-sensitive sub-block of the MCP custody audit is
+    non-vacuous, so the H381 byte-identity guards below are real claims (an all-empty
+    payload would pass a mis-ordered fold too).
+
+    Mirrors tests/test_doctor.py's `_seed_doctor_determinism_mix` (kept local —
+    `tests/` is not a package), the H375 CLI `scrolls doctor` determinism fixture this
+    MCP-surface guard is the sibling of:
+
+    - **three sources** (web, arxiv, crossref) → a multi-key `by_source` map;
+    - a **byte-identical content pair** under two ids → `content_duplicates.groups`;
+    - a **drifted** full item that *also* carries an unresolved import **conflict**
+      (disjoint ledger axes) → `drift.events` + `conflicts.events`;
+    - a **tampered archived prior** → `archive.events` (one mismatched recovery row);
+    - an **all-reference work** (two reference reps of one DOI) → `works.most_at_risk`.
+
+    Every one is a list/map a set/dict-iteration leak would re-order between two reads —
+    exactly what the cross-`PYTHONHASHSEED` pair catches. Structurally clean
+    (`issues == 0`), so `get_library_health` is the honest custody audit.
+    """
+    import sqlite3
+
+    from scrolls.custody import CustodyEvent, conflict_event, record_events
+    from scrolls.items import ScrollItem, adopt_incoming, insert_item, make_item_id
+
+    db = paths.db_path
+
+    def _web(url, **overrides):
+        fields = dict(id=make_item_id("web", None, url), source="web", source_id=None,
+                      url=url, saved_at="2026-06-12T08:00:00+00:00")
+        fields.update(overrides)
+        return ScrollItem(**fields)
+
+    def _rep(item_id, doi):  # an all-reference representation of a DOI work
+        return ScrollItem(id=item_id, source=item_id.split(":")[0],
+                          source_id=item_id.split(":", 1)[1],
+                          url=f"https://example.org/{item_id}",
+                          saved_at="2026-06-12T08:00:00+00:00",
+                          links=(f"https://doi.org/{doi}",), stage="rendered")
+
+    # a multi-source all-reference at-risk work (works.most_at_risk) — also the second
+    # and third sources that make `by_source` a multi-key map
+    insert_item(db, _rep("arxiv:z", "10.3000/z"))
+    insert_item(db, _rep("crossref:cz", "10.3000/z"))
+    # a byte-identical content pair under two ids (content_duplicates.groups)
+    insert_item(db, _web("https://example.com/a", extracted_text="same body",
+                         content_hash="sha256:dup", stage="fetched"))
+    insert_item(db, _web("https://example.com/b", extracted_text="same body",
+                         content_hash="sha256:dup", stage="fetched"))
+    # a drifted full item that also carries an unresolved import conflict (the two
+    # disjoint ledger axes — drift.events and conflicts.events both non-empty)
+    drift = _web("https://example.com/drift", title="A Post", extracted_text="body",
+                 content_hash="sha256:wd", stage="fetched")
+    insert_item(db, drift)
+    record_events(db, [
+        CustodyEvent(item_id=drift.id, checked_at="2026-06-14T00:00:00+00:00",
+                     status="drifted", prior_hash="sha256:wd",
+                     observed_hash="sha256:changed"),
+        conflict_event(drift.id, held_hash="sha256:wd", incoming_hash="sha256:incoming",
+                       now="2026-06-15T00:00:00+00:00"),
+    ])
+    # a tampered archived prior (archive.events: one mismatched recovery row)
+    held = _web("https://example.com/archived", title="A Post", extracted_text="body",
+                content_hash="sha256:held", stage="fetched")
+    insert_item(db, held)
+    adopt_incoming(db, dataclasses.replace(held, extracted_text="a later capture",
+                                           content_hash="sha256:moved"),
+                   archived_at="2026-06-22T00:00:00+00:00")
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE item_archive SET prior_hash = ? WHERE item_id = ?",
+                     ("sha256:tampered", held.id))
+    conn.close()
+
+
+def _assert_health_mix_is_non_vacuous(health):
+    """Every order-sensitive MCP-audit sub-block is populated (an all-empty payload
+    would pass a mis-ordered fold too), so the byte-identity claims below are real."""
+    assert sorted(health["by_source"]) == ["arxiv", "crossref", "web"]
+    assert health["content_duplicates"]["groups"]      # the byte-identical pair
+    assert health["drift"]["events"]                   # the drifted item
+    assert health["conflicts"]["events"]               # the unresolved conflict
+    assert health["archive"]["events"]                 # the tampered prior
+    assert health["works"]["most_at_risk"] is not None  # the all-reference work
+
+
+def test_get_library_health_is_byte_identical_across_two_same_process_reads(scrolls_home):
+    # roadmap H381: two `get_library_health` reads of one unchanged library serialize
+    # to byte-identical JSON — the *agent-facing* custody audit (the MCP twin of
+    # `scrolls doctor`, H161) is a reproducible artifact, not a per-run snapshot. The
+    # MCP-surface sibling of H375's CLI `scrolls doctor` determinism: H375 pinned the
+    # CLI `print(json.dumps(run_doctor(...)))` path, but an agent driving MCP reads a
+    # *separate serialization* (`get_library_health` re-keys the `run_doctor` report
+    # through the MCP tool envelope — it spreads the custody block and adds
+    # `attention`/`headline`, a distinct code path). This is the same-process face; the
+    # cross-seed pair below catches the set-iteration leak this one — under a single
+    # fixed hash seed — structurally cannot.
+    from scrolls.doctor import run_doctor
+
+    main(["init"])
+    _seed_health_determinism_mix(get_paths())
+
+    first = mcp_server.get_library_health()
+    second = mcp_server.get_library_health()
+
+    _assert_health_mix_is_non_vacuous(first)
+    # the determinism guard rides the H186/H180 registered-twin shape contract: the
+    # payload is exactly `run_doctor`'s custody block carried verbatim plus the two
+    # distilled members `status` adds — no MCP-side re-derivation that could de-sync.
+    custody = run_doctor(get_paths())["custody"]
+    for key in custody:
+        assert first[key] == custody[key]
+    assert set(first) == set(custody) | {"attention", "headline"}
+    assert mcp_server.get_library_health in mcp_server._TOOLS
+
+    assert json.dumps(first) == json.dumps(second)
+
+
+def test_get_library_health_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H381: `get_library_health` emits a byte-identical serialized payload
+    # across two processes with *different* `PYTHONHASHSEED`s — the cross-process face
+    # the same-process pair structurally cannot see. The decisive half of the guard: a
+    # `set` leaking into any sub-block fold in the MCP path (an unsorted by_source /
+    # conflicts / archive / drift / works ordering, or an envelope keyed off a
+    # set-derived map) iterates the *same* way twice under one fixed seed, so the
+    # same-process read above stays green over it; only two processes seeded
+    # differently surface the divergence. The H375 `scrolls doctor` cross-seed
+    # precedent lifted to the MCP audit-twin surface.
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_health_determinism_mix(get_paths())
+
+    # two homes with the same seeded DB — each subprocess audits its own copy under its
+    # own hash seed (the H375 / H363 copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _health(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys, json; from scrolls.mcp_server import get_library_health; "
+             "sys.stdout.write(json.dumps(get_library_health()))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _health(home_a, "0")  # hash randomization off
+    out_b = _health(home_b, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the populated audit (not an early
+    # empty return), so the byte-identity is a real claim.
+    _assert_health_mix_is_non_vacuous(json.loads(out_a))
+
+    assert out_a == out_b
+
+
 def _seed_refresh_debt(paths):
     """A two-source library carrying both stale-classification and stale-summary debt.
 
