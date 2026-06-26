@@ -3137,3 +3137,78 @@ def test_context_bundle_is_deterministic_across_hash_seeds(scrolls_home, tmp_pat
     # (not an early empty return), so the byte-identity is a real claim.
     _assert_context_bundle_non_vacuous(out_a)
     assert out_a == out_b
+
+
+def test_mcp_context_bundle_is_byte_identical_across_two_same_process_reads(scrolls_home):
+    # roadmap H382: two `get_context_bundle("database", budget="full")` reads of one
+    # unchanged library are byte-identical — the *agent-transport* context bundle (the
+    # MCP twin of `scrolls context`, exercised by the H366 MCP nesting twin) is a
+    # reproducible artifact, not a per-run snapshot. The MCP-surface sibling of H376's
+    # CLI `scrolls context` determinism: H376 pinned the CLI `print(build_context(...))`
+    # path, but an agent driving MCP never calls the CLI — it calls `get_context_bundle`,
+    # a *separate entry point* (it could re-key/wrap the bundle through the MCP tool
+    # envelope, a distinct code path no determinism test pins). This is the same-process
+    # face; the cross-seed pair below catches the set-iteration leak this one — under a
+    # single fixed hash seed — structurally cannot.
+    from scrolls import mcp_server
+
+    main(["init"])
+    _seed_context_determinism_mix(get_paths().db_path)
+
+    first = mcp_server.get_context_bundle("database", budget="full")
+    second = mcp_server.get_context_bundle("database", budget="full")
+
+    _assert_context_bundle_non_vacuous(first)
+    # the determinism guard rides the H186/H180 registered-twin shape contract: the MCP
+    # twin folds the *same* deterministic `build_context` the CLI prints (H376) — no
+    # MCP-side re-wrap that could de-sync — so the bundle is byte-identical to the CLI
+    # `build_context` over the same query/budget, and the tool is a registered MCP tool.
+    assert first == build_context(get_paths().db_path, "database", budget="full")
+    assert mcp_server.get_context_bundle in mcp_server._TOOLS
+
+    assert first == second
+
+
+def test_mcp_context_bundle_is_deterministic_across_hash_seeds(scrolls_home, tmp_path):
+    # roadmap H382: `get_context_bundle("database", budget="full")` emits a byte-identical
+    # string across two processes with *different* `PYTHONHASHSEED`s — the cross-process
+    # face the same-process pair structurally cannot see. The decisive half of the guard:
+    # a `set` leaking into the connected-neighbours (or excerpt) fold in the MCP path
+    # iterates the *same* way twice under one fixed seed, so the same-process read above
+    # stays green over it; only two processes seeded differently surface the divergence
+    # (verified by the sabotage check on the shared connected fold — it fails *here* while
+    # the same-process read and H366's nesting twin stay green). H376's CLI `scrolls
+    # context` cross-seed precedent lifted to the MCP context-bundle twin.
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    main(["init"])
+    _seed_context_determinism_mix(get_paths().db_path)
+
+    # two homes with the same seeded DB — each subprocess builds its own bundle under its
+    # own hash seed (the H376 `scrolls context` / H375 `doctor` copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(scrolls_home, home_a)
+    shutil.copytree(scrolls_home, home_b)
+
+    def _bundle(home, seed):
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; from scrolls.mcp_server import get_context_bundle; "
+             "sys.stdout.write(get_context_bundle('database', budget='full'))"],
+            env={**os.environ, "SCROLLS_HOME": str(home), "PYTHONHASHSEED": seed},
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    out_a = _bundle(home_a, "0")  # hash randomization off
+    out_b = _bundle(home_b, "1")  # a different fixed seed
+
+    # non-vacuity: the subprocess really produced the full multi-element bundle (not an
+    # early empty return), so the byte-identity is a real claim.
+    _assert_context_bundle_non_vacuous(out_a)
+    assert out_a == out_b
