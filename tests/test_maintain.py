@@ -18,6 +18,7 @@ detecting source drift moves the *drift posture* without lowering the integrity
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from dataclasses import replace
 
@@ -5580,3 +5581,330 @@ def test_trend_requires_history(home, capsys):
     assert exit_code == 2
     assert out.out == ""
     assert "history" in json.loads(out.err)["error"].lower()
+
+
+# --- `scrolls maintain` trend-log determinism + no-movement settle (roadmap H377) --
+#
+# The `maintain` snapshot/trend (H36/H115/H372) is what an unattended worker reads
+# to decide *"is custody degrading?"*. Every movement clause it renders (the
+# coverage/posture/at-risk/conflicts/duplicates deltas) silently assumes that a
+# clean, unchanged library settles to a **no-movement** delta — but that contract is
+# only *implied* by the single-pass tests above. Two regressions would slip past
+# every per-axis trend test yet make the worker cry drift where there is none:
+#
+#   1. a **phantom delta** on an unchanged library — a non-idempotent snapshot fold,
+#      or a stray `+1` in `compute_delta` — would report movement the worker reads as
+#      degradation, triggering needless rechecks / alarms; and
+#   2. a **non-deterministic fold** — a snapshot/trend field built over a `set` — that
+#      re-orders between two reads, so two runs of one unchanged library disagree and
+#      a `diff` of the trend log shows spurious churn.
+#
+# This is the tenth **forward-hardening cell** — the *cross-run maintenance-ledger*
+# sibling of H365's repair convergence and H375's audit determinism, on the trend
+# axis (deliberately *not* another content-identity guard). The decisive choice is to
+# assert *both* faces: the same-process **settle** (no phantom movement, the
+# value-based contract a single fixed seed catches) *and* the cross-`PYTHONHASHSEED`
+# **determinism** of the whole report and the `--history --trend` read (the
+# iteration-order leak a same-process pass structurally cannot — a `set` iterates the
+# same way twice under one fixed seed, the H363/H375/H376 precedent). All three tests
+# share the H367 non-vacuous mix, so every order-sensitive axis is populated.
+
+
+def _maintain_determinism_item(item_id, title, **overrides):
+    """One held scroll for `_seed_maintain_determinism_mix`, the `_item` shape the
+    H367 fixture (`test_custody_convergence._seed_boot_audit_nonvacuous`) uses —
+    `web`/`fetched` by default, every field overridable."""
+    base = dict(
+        id=item_id, source="web", url=f"https://example.com/{item_id}",
+        saved_at="2026-06-12T00:00:00+00:00", title=title, stage="fetched",
+    )
+    base.update(overrides)
+    return ScrollItem(**base)
+
+
+def _seed_maintain_determinism_mix(db):
+    """The H367 non-vacuous custody mix (`_seed_boot_audit_nonvacuous`), seeded for a
+    `maintain` pass: every load-bearing snapshot scalar is non-zero, so the settle /
+    determinism guards below are real claims (an all-zeros library would pass a
+    phantom-delta or a mis-ordered fold too). The pass over it audits a structurally
+    clean library (`issues == 0` — pure `insert_item`, FTS in sync, no missing/orphan
+    scrolls), so the cross-seed subprocess pair can assert a clean return code.
+
+    - a **byte-identical content pair** (two `full` ids sharing one `content_hash`)
+      → `content_duplicate_groups == 1`, `content_duplicate_items == 2`;
+    - the pair's first member classified against a **stale ruleset** → `enrichment_stale`;
+    - a **drifted** `full` item that *also* carries an unresolved import **conflict**
+      (disjoint ledger axes) → `drift.drifted` + `conflicts`;
+    - the pair's other member re-checked clean → `drift.unchanged` + recheck `coverage`;
+    - a `partial` item → the `partial` tier;
+    - an **all-reference work** (two reference reps sharing one DOI) → `works.at_risk`
+      and the `reference` tier;
+    - the worst custody band any axis fires → a `posture` verdict of `at_risk` with
+      multiple `reasons` (the comma-joined render a reasons set-leak would re-order).
+    """
+    # byte-identical content pair; dup1 is also stale-classified (enrichment_stale)
+    insert_item(db, _maintain_determinism_item(
+        "web:dup1", "Topic full one", category="tutorial",
+        extracted_text="topic one body", raw_text="<raw>topic one</raw>",
+        content_hash="sha256:dup",
+        provenance={"classified_by": "rules-v1", "classified_basis": "weak-source",
+                    "classified_ruleset": "deadbeef0000"}))  # stale ruleset
+    insert_item(db, _maintain_determinism_item(
+        "web:dup2", "Topic full two",
+        extracted_text="topic two body", raw_text="<raw>topic two</raw>",
+        content_hash="sha256:dup"))
+    # a drifted full item that also carries an unresolved import conflict
+    insert_item(db, _maintain_determinism_item(
+        "web:drift", "Topic drift",
+        extracted_text="topic drift body", raw_text="<raw>topic drift</raw>",
+        content_hash="sha256:wd"))
+    insert_item(db, _maintain_determinism_item(
+        "web:partial", "Topic partial", extracted_text="topic partial body"))  # partial
+    # an all-reference work: two reference reps of the same DOI, no full copy
+    insert_item(db, _maintain_determinism_item(
+        "arxiv:workz", "Topic arxiv z", source="arxiv",
+        url="https://arxiv.org/abs/workz", links=("https://doi.org/10.3000/z",),
+        stage="rendered"))
+    insert_item(db, _maintain_determinism_item(
+        "crossref:workz", "Topic crossref z", source="crossref",
+        url="https://example.org/crossref-workz",
+        links=("https://doi.org/10.3000/z",), stage="rendered"))
+    record_events(db, [
+        CustodyEvent("web:dup1", "2026-06-14T00:00:00+00:00", "unchanged",
+                     "sha256:dup", "sha256:dup", None),
+        CustodyEvent("web:drift", "2026-06-14T00:00:00+00:00", "drifted",
+                     "sha256:wd", "sha256:changed", None),
+        # disjoint conflict axis: an import disagreed with the held copy, unresolved
+        conflict_event("web:drift", held_hash="sha256:wd",
+                       incoming_hash="sha256:incoming", now="2026-06-15T00:00:00+00:00"),
+    ])
+
+
+def _no_movement_delta(delta):
+    """Assert a `compute_delta` result is the all-zero / no-movement shape every axis:
+    a present baseline (`first_run` False), every numeric `change` zero, and the
+    categorical posture band steady (`changed` False). Walks *every* axis (scalar and
+    per-key mapping), so a phantom `+1` injected anywhere is caught, not just `score`."""
+    assert delta["first_run"] is False
+    assert delta["posture"]["changed"] is False
+    for axis, value in delta.items():
+        if axis in ("first_run", "since", "posture"):
+            continue
+        # a scalar axis is `{before, after, change}`; a mapping axis is
+        # `{key: {before, after, change}}` (tiers/drift/coverage)
+        changes = (
+            [value["change"]] if "change" in value
+            else [sub["change"] for sub in value.values()]
+        )
+        assert all(change == 0 for change in changes), (axis, changes)
+
+
+def _comparable_snapshot(snapshot):
+    """A recorded snapshot minus its wall-clock `recorded_at` — the comparable custody
+    scalars two passes of one unchanged library must reproduce exactly."""
+    return {key: value for key, value in snapshot.items() if key != "recorded_at"}
+
+
+def test_maintain_snapshot_settles_to_a_no_movement_delta(home, capsys):
+    # roadmap H377 (the settle face): two `maintain --no-recheck` passes over one
+    # unchanged library record the *same* comparable custody scalars, and the second
+    # pass's delta vs the first's baseline is the all-zero / no-movement shape on
+    # every axis — so the unattended worker reads "nothing moved", never a phantom
+    # drift. `--no-recheck` keeps the pass from mutating the ledger (a default
+    # stale-bounded recheck would re-verify the fixture's drifted item and flip its
+    # posture), so the only thing varying between passes is the wall-clock
+    # `recorded_at`. The value-based face a single fixed hash seed catches; the
+    # cross-seed determinism guards below catch the iteration-order leak this cannot.
+    assert main(["init"]) == 0
+    _seed_maintain_determinism_mix(home.db_path)
+    capsys.readouterr()
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    snapshot_one = load_snapshot(snapshot_path(home))
+
+    assert main(["maintain", "--no-recheck"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    snapshot_two = load_snapshot(snapshot_path(home))
+
+    # non-vacuity: every order-sensitive / movement-bearing scalar is non-zero, so the
+    # settle below is a real claim (an all-zeros snapshot would settle past a phantom
+    # delta too).
+    custody = first["custody"]
+    assert custody["score"] == 100
+    assert custody["tiers"] == {"full": 3, "partial": 1, "reference": 2}
+    assert custody["drift"]["drifted"] == 1
+    assert custody["drift"]["unchanged"] == 1
+    assert custody["enrichment_stale"] == 1
+    assert custody["at_risk"] == 1
+    assert custody["conflicts"] == 1
+    assert custody["content_duplicate_groups"] == 1
+    assert custody["content_duplicate_items"] == 2
+    assert custody["posture"]["verdict"] == "at_risk"
+    assert len(custody["posture"]["reasons"]) >= 2  # the comma-joined render axis
+    assert first["issues"] == 0
+
+    # the snapshot settles: two passes over the unchanged library record byte-equal
+    # comparable scalars (only `recorded_at` may differ).
+    assert _comparable_snapshot(snapshot_one) == _comparable_snapshot(snapshot_two)
+
+    # and the delta between the two recorded snapshots is the no-movement shape …
+    _no_movement_delta(compute_delta(snapshot_one, snapshot_two))
+    # … as is the *production* delta the second pass reported vs the first's baseline
+    # (the very figure the worker reads — a stray `+1` in `compute_delta` fails here).
+    _no_movement_delta(second["delta"])
+
+
+def _maintain_subprocess(home_dir, seed, argv):
+    """Run `scrolls <argv>` in a fresh subprocess under a fixed `PYTHONHASHSEED`,
+    rooted at `home_dir` — the cross-process face the same-process reads cannot see
+    (the H375 `test_doctor` / H376 `test_context` cross-seed harness)."""
+    import os
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c",
+         f"import sys; from scrolls.cli import main; sys.exit(main({argv!r}))"],
+        env={**os.environ, "SCROLLS_HOME": str(home_dir), "PYTHONHASHSEED": seed},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_maintain_report_is_deterministic_across_hash_seeds(home, tmp_path, capsys):
+    # roadmap H377 (the determinism face — snapshot/report): `scrolls maintain
+    # --no-recheck` emits a byte-identical report (minus the wall-clock `recorded_at`)
+    # across two processes seeded with *different* `PYTHONHASHSEED`s. This is the
+    # decisive half a same-process settle structurally cannot see: a `set` leaking
+    # into any snapshot/render fold (the posture `reasons` order, `by_source`, the
+    # `at_risk_works`/`duplicate_prunes` lists) iterates the *same* way twice under one
+    # fixed seed, so the settle above stays green over it; only two differently-seeded
+    # processes surface the re-ordering. The H363/H375/H376 cross-seed precedent on the
+    # scheduled-maintenance report axis (every readable headline + suggested repair a
+    # `maintain` pass renders, beyond the `run_doctor` block H375 already pinned).
+    assert main(["init"]) == 0
+    _seed_maintain_determinism_mix(home.db_path)
+    capsys.readouterr()
+
+    # two homes with the same seeded DB — each subprocess audits its own copy under
+    # its own hash seed (the H363 `kb` copytree precedent)
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(home.root, home_a)
+    shutil.copytree(home.root, home_b)
+
+    out_a = _maintain_subprocess(home_a, "0", ["maintain", "--no-recheck"])
+    out_b = _maintain_subprocess(home_b, "1", ["maintain", "--no-recheck"])
+
+    report_a = json.loads(out_a)
+    report_b = json.loads(out_b)
+
+    # non-vacuity: the subprocess really produced the populated maintenance report
+    # (not an early skipped/empty return), so the byte-identity is a real claim.
+    assert report_a["custody"]["posture"]["verdict"] == "at_risk"
+    assert report_a["custody"]["conflicts"] == 1
+    assert report_a["custody"]["content_duplicate_groups"] == 1
+    assert report_a["at_risk_works"]["at_risk"] == 1
+    assert len(report_a["custody"]["posture"]["reasons"]) >= 2
+
+    # the whole report is reproducible bar the one wall-clock field — a set/dict leak
+    # anywhere (snapshot scalar, readable headline, by-source map, prune guidance)
+    # would diverge across the two seeds.
+    report_a.pop("recorded_at")
+    report_b.pop("recorded_at")
+    assert json.dumps(report_a) == json.dumps(report_b)
+
+
+def _determinism_trend_snapshot(**overrides):
+    """A recorded-log custody snapshot (the bare `custody_snapshot` shape, no
+    `recorded_at`) with sane non-vacuous defaults, every field overridable."""
+    snapshot = {
+        "score": 100,
+        "tiers": {"full": 3, "partial": 1, "reference": 2},
+        "drift": {"checked": 2, "unchanged": 2, "unverified": 4,
+                  "drifted": 0, "rotted": 0, "error": 0},
+        "coverage": {"verified": 2, "total": 3},
+        "enrichment_stale": 0, "summaries_stale": 0,
+        "at_risk": 0, "conflicts": 0, "archive_mismatched": 0,
+        "content_duplicate_groups": 0, "content_duplicate_items": 0,
+        "posture": {"verdict": "sound", "reasons": []},
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
+# A fixed two-entry maintenance log: a clean `sound` baseline, then a degraded
+# `at_risk` window with multiple posture reasons + non-zero drift/at-risk/conflicts/
+# duplicates — so `compute_trend` folds a real `sound → at_risk` movement and the
+# `--history --trend` read renders every cross-run clause (the comma-joined reasons a
+# set-leak would re-order). Hand-authored (not a live pass) so the bytes are fixed and
+# the determinism claim is about the *read*, not the audit.
+_DETERMINISM_TREND_LOG = [
+    {"recorded_at": "2026-06-24T00:00:00+00:00",
+     "snapshot": _determinism_trend_snapshot(),
+     "delta": {"first_run": True}},
+    {"recorded_at": "2026-06-25T00:00:00+00:00",
+     "snapshot": _determinism_trend_snapshot(
+         drift={"checked": 2, "unchanged": 1, "unverified": 4,
+                "drifted": 1, "rotted": 0, "error": 0},
+         enrichment_stale=1, at_risk=2, conflicts=1,
+         content_duplicate_groups=1, content_duplicate_items=2,
+         posture={"verdict": "at_risk",
+                  "reasons": ["custody_integrity", "source_drift", "at_risk_works"]}),
+     "delta": {"first_run": False}},
+]
+
+
+def _write_determinism_trend_log(paths):
+    for entry in _DETERMINISM_TREND_LOG:
+        append_log_entry(log_path(paths), entry)
+
+
+def test_maintain_trend_is_deterministic_across_reads_and_hash_seeds(
+    home, tmp_path, capsys
+):
+    # roadmap H377 (the determinism face — trend read): `compute_trend` over a *fixed*
+    # two-entry log is invariant across two reads (no dict/set-iteration leak), and
+    # `scrolls maintain --history --trend` emits byte-identical output across two
+    # processes seeded with *different* `PYTHONHASHSEED`s. The trend is the genuinely
+    # new fold a `maintain` worker reads to decide the custody *trajectory*; an
+    # unordered map in `compute_trend`/`snapshot_headline` (or the comma-joined posture
+    # reasons) would pass the per-axis trend tests yet make two reads of one fixed log
+    # disagree — the reproducibility the H375 `doctor` / H376 `context` cross-seed
+    # guards pin on their surfaces, here on the maintenance-trajectory read.
+    assert main(["init"]) == 0
+    _write_determinism_trend_log(home)
+    capsys.readouterr()
+
+    # same-process read-stability: two reads of one fixed log fold to identical bytes.
+    log = read_log(log_path(home))
+    assert len(log) == 2
+    assert json.dumps(compute_trend(log)) == json.dumps(compute_trend(read_log(log_path(home))))
+
+    # the trend is non-vacuous: a real `sound → at_risk` movement over the window, so
+    # the byte-identity below exercises every cross-run clause (not an empty trend).
+    trend = compute_trend(log)
+    assert trend["runs"] == 2
+    assert trend["posture_change"] == {"first": "sound", "last": "at_risk", "changed": True}
+    assert "sound → at_risk" in trend["posture_headline"]
+    assert trend["at_risk_change"] == 2
+    assert trend["conflicts_change"] == 1
+
+    # two homes carrying the same fixed log — each subprocess reads its own copy under
+    # its own hash seed (no DB needed; `--history --trend` reads only the log).
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    shutil.copytree(home.root, home_a)
+    shutil.copytree(home.root, home_b)
+
+    out_a = _maintain_subprocess(home_a, "0", ["maintain", "--history", "--trend"])
+    out_b = _maintain_subprocess(home_b, "1", ["maintain", "--history", "--trend"])
+
+    # non-vacuity: the subprocess really rendered the two-run trend window.
+    payload = json.loads(out_a)
+    assert payload["trend"]["runs"] == 2
+    assert len(payload["runs"]) == 2
+
+    assert out_a == out_b
