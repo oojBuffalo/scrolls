@@ -560,6 +560,132 @@ def test_context_cli_rejects_unknown_budget(scrolls_home):
         main(["context", "database", "--budget", "bogus"])
 
 
+# --- budget tiers are strictly nested (roadmap H366) ------------------------
+#
+# The per-tier tests above pin each block's presence *one tier at a time*; none
+# pins that the tiers are strictly nested *as a whole* over one library — that a
+# leaner budget reduces depth *per match* but never the match *set* (the M3
+# depth-vs-set orthogonality: "the two are orthogonal and both always hold"). A
+# regression that dropped a Best Match at a leaner budget (a plausible "save
+# tokens" change) would pass the per-block presence tests yet silently break the
+# contract an agent relies on to read a lean `index` boot as "the same matches,
+# less depth" — never "fewer matches". This guard pins the whole contract over
+# one seeded library, and mirrors it on the MCP `get_context_bundle` twin so the
+# agent transport carries it too.
+
+
+def _seed_nested_library(db):
+    # a non-vacuous fixture: three keyword matches for "database" (a multi-item
+    # Best-Match set, so set-equality is a real constraint, not a singleton) plus
+    # one linked-but-unmatched paper (a non-empty Connected block) — so every
+    # tier-gated section (matches, the link graph, the deep-body excerpts) is
+    # populated and the nesting has teeth at each level.
+    insert_item(db, make_item(
+        "wikipedia:en:SQLite", "SQLite",
+        "SQLite is a database engine with full-text search.",
+        links=("https://arxiv.org/abs/1706.03762",),
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:PostgreSQL", "PostgreSQL",
+        "PostgreSQL is a relational database system.",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Redis", "Redis",
+        "Redis is an in-memory database used as a cache.",
+    ))
+    # linked from SQLite but holds no "database" keyword, so it surfaces only as a
+    # Connected neighbour, never as a Best Match
+    insert_item(db, make_item(
+        "arxiv:1706.03762", "Attention Is All You Need",
+        "We propose the Transformer, a sequence model built on attention.",
+        source="arxiv", url="https://arxiv.org/abs/1706.03762",
+    ))
+
+
+def _best_match_ids(bundle):
+    """The ordered ids on the bundle's Best Matches lines."""
+    section = bundle.partition("## Best Matches")[2].split("\n## ", 1)[0]
+    return re.findall(r"^\d+\. .*?\(`([^`]+)`\)", section, re.MULTILINE)
+
+
+def _connected_block(bundle):
+    """The Connected scrolls section text (heading through to the next ## )."""
+    return bundle.partition("## Connected scrolls")[2].partition("## Links")[0]
+
+
+def _assert_budget_tiers_strictly_nested(by_tier):
+    """Pin the M3 strictly-nested `index`/`connected`/`full` contract.
+
+    `by_tier` maps each tier name to its rendered bundle text (one library, one
+    query). Asserts the four legs of the nesting: (a) the Best-Match set is
+    identical across all three tiers — the load-bearing depth-vs-set
+    orthogonality; (b) the Connected link-graph block is absent at `index`,
+    present at `connected`/`full`, and byte-identical between the two; (c) the
+    deep-body Excerpts block appears only at `full`; (d) a sub-`full` tier
+    discloses its reduced depth in a `_Budget:_` note, omitted at `full`.
+    """
+    index_out, connected_out, full_out = (
+        by_tier["index"], by_tier["connected"], by_tier["full"]
+    )
+
+    # (a) the load-bearing invariant: the Best-Match set never shrinks with
+    # depth. The same ranked search drives every tier, so the *ordered* ids are
+    # equal (stronger), and so the *set* is equal (the documented contract M3
+    # pins and the sabotage below breaks).
+    index_ids = _best_match_ids(index_out)
+    connected_ids = _best_match_ids(connected_out)
+    full_ids = _best_match_ids(full_out)
+    assert len(full_ids) >= 2, "fixture must seed a multi-item Best-Match set"
+    assert index_ids == connected_ids == full_ids
+    assert set(index_ids) == set(connected_ids) == set(full_ids)
+
+    # (b) the Connected link-graph block: absent at index, present at
+    # connected/full, and byte-identical between them (depth doesn't perturb it)
+    assert "## Connected scrolls" not in index_out
+    assert "## Connected scrolls" in connected_out
+    assert "## Connected scrolls" in full_out
+    connected_block = _connected_block(connected_out)
+    assert connected_block.strip(), "fixture must seed a non-empty Connected block"
+    assert connected_block == _connected_block(full_out)
+
+    # (c) the deep-body Excerpts block appears only at full
+    assert "## Excerpts" not in index_out
+    assert "## Excerpts" not in connected_out
+    assert "## Excerpts" in full_out
+
+    # (d) the honest `_Budget:_` depth note on the lean tiers, omitted at full
+    assert "_Budget: index" in index_out
+    assert "_Budget: connected" in connected_out
+    assert "Budget:" not in full_out
+
+
+def test_context_budget_tiers_are_strictly_nested(scrolls_home, capsys):
+    main(["init"])
+    _seed_nested_library(get_paths().db_path)
+    capsys.readouterr()
+
+    by_tier = {
+        tier: run_context(capsys, "database", "--budget", tier)
+        for tier in ("index", "connected", "full")
+    }
+    _assert_budget_tiers_strictly_nested(by_tier)
+
+
+def test_mcp_context_budget_tiers_are_strictly_nested(scrolls_home):
+    # the same nesting tie on the MCP `get_context_bundle(budget=)` twin, so the
+    # agent transport an agent boots through carries the contract too
+    from scrolls import mcp_server
+
+    main(["init"])
+    _seed_nested_library(get_paths().db_path)
+
+    by_tier = {
+        tier: mcp_server.get_context_bundle("database", budget=tier)
+        for tier in ("index", "connected", "full")
+    }
+    _assert_budget_tiers_strictly_nested(by_tier)
+
+
 # --- scope custody headline (roadmap H47) ----------------------------------
 
 
