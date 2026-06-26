@@ -79,10 +79,17 @@ def fake_feed(monkeypatch):
     return url
 
 
-def test_server_exposes_exactly_the_documented_tools(scrolls_home):
-    server = mcp_server.build_server()
-    tools = asyncio.run(server.list_tools())
-    assert {tool.name for tool in tools} == {
+# --- H364: the MCP tool registry is a custody-safety boundary ---------------
+# The registered tool surface is the agent transport into the library. Every
+# tool must be a *read* or a *custody-safe write* — none may delete or overwrite
+# a held capture (custody-vision §2.4, raw-is-sacred). The exact-set allow-list
+# forces a new tool to be classified before it can ship (the registry-completeness
+# analogue of M2's search-completeness contract); the verb scan is the backstop
+# for a destroyer that someone also slipped into the allow-list.
+
+# Reads — never touch a held capture.
+_MCP_READ_TOOLS = frozenset(
+    {
         "search_scrolls",
         "list_scrolls",
         "list_facets",
@@ -98,18 +105,109 @@ def test_server_exposes_exactly_the_documented_tools(scrolls_home):
         "list_archived",
         "get_archived",
         "get_library_health",
-        "run_maintenance",
         "get_maintenance_history",
+        "list_feed_subscriptions",
+    }
+)
+# Custody-safe writes — add a capture (`ingest_url`), record a ledger event
+# (`verify_scroll`), regenerate a view (`run_maintenance`/`compile_library`), or
+# manage a feed subscription (`follow_feed`/`unfollow_feed`/`sync_feeds`). None
+# destroy or overwrite raw: the prune is the shell's explicit `scrolls rm`, never
+# an MCP act (H355).
+_MCP_SAFE_WRITE_TOOLS = frozenset(
+    {
         "ingest_url",
         "verify_scroll",
+        "run_maintenance",
+        "compile_library",
         "follow_feed",
         "unfollow_feed",
-        "list_feed_subscriptions",
         "sync_feeds",
-        "compile_library",
     }
+)
+# Feed-subscription ops live in their own namespace: a future `remove_subscription`
+# would carry a destructive verb yet only touch a subscription row, never a held
+# capture. Whitelist them so the verb scan stays a clean backstop, not a false
+# alarm — the exact-set allow-list still forces such a tool to be classified.
+_MCP_FEED_OPS = frozenset(
+    {"follow_feed", "unfollow_feed", "sync_feeds", "list_feed_subscriptions"}
+)
+# Verbs that, applied to a scroll/item/capture, would breach raw-is-sacred.
+_MCP_DESTRUCTIVE_VERBS = frozenset(
+    {"delete", "remove", "drop", "purge", "prune", "rm", "overwrite", "merge"}
+)
+
+
+def _assert_mcp_registry_is_classified(names):
+    """Every registered MCP tool is a classified read or custody-safe write.
+
+    A new tool must be triaged into one bucket to pass — adding a
+    capture-mutating tool fails loudly and forces an ADR.
+    """
+    assert set(names) == _MCP_READ_TOOLS | _MCP_SAFE_WRITE_TOOLS
+
+
+def _assert_mcp_registry_has_no_destroyer(names):
+    """No non-feed MCP tool name carries a capture-destroying verb.
+
+    Token-based (snake_case) so `transform`-style names never false-positive on
+    the short `rm` verb; the backstop catches a destroyer even if it were also
+    added to the allow-list above.
+    """
+    for name in names:
+        if name in _MCP_FEED_OPS:
+            continue
+        offending = set(name.split("_")) & _MCP_DESTRUCTIVE_VERBS
+        assert not offending, f"{name} carries capture-destroying verb(s) {sorted(offending)}"
+
+
+def test_server_exposes_exactly_the_documented_tools(scrolls_home):
+    server = mcp_server.build_server()
+    tools = asyncio.run(server.list_tools())
+    # one source of truth: the documented surface is the classified allow-list
+    assert {tool.name for tool in tools} == _MCP_READ_TOOLS | _MCP_SAFE_WRITE_TOOLS
     # every tool teaches the model what it does
     assert all(tool.description for tool in tools)
+
+
+def test_mcp_registry_holds_the_custody_line(scrolls_home):
+    """H364: the registered MCP tool surface can never destroy or overwrite a
+    held capture — every tool is a classified read or custody-safe write, and no
+    tool name carries a capture-destroying verb (custody-vision §2.4,
+    raw-is-sacred; the M2 tested-contract shape lifted to the tool registry).
+
+    Pins `mcp_server._TOOLS` directly (the registration source), not only the
+    built server — so a future convenience `delete_scroll` / a `update_item`
+    that rewrites `raw_text`/`content_hash` fails loudly over the agent
+    transport, the way H355's "the prune is a CLI choice" premise requires.
+    """
+    # `_TOOLS` is exactly what `build_server` registers — pin the "≡" the
+    # contract leans on, so classifying `_TOOLS` classifies the live transport.
+    server = mcp_server.build_server()
+    registered = {tool.name for tool in asyncio.run(server.list_tools())}
+    source = {fn.__name__ for fn in mcp_server._TOOLS}
+    assert source == registered
+
+    # (1) exact-set allow-list and (2) the verb-scan backstop both hold today.
+    _assert_mcp_registry_is_classified(source)
+    _assert_mcp_registry_has_no_destroyer(source)
+
+
+def test_mcp_registry_guard_rejects_a_capture_destroying_tool():
+    """Sabotage check: a stub `delete_scroll` appended to the registry must fail
+    *both* halves of the H364 guard, so the contract isn't vacuous.
+
+    It is unclassified (allow-list mismatch) and carries a destructive verb (the
+    backstop) — either one would catch a regression that slipped it past the
+    other (e.g. a destroyer also added to the allow-list).
+    """
+    sabotaged = {fn.__name__ for fn in mcp_server._TOOLS} | {"delete_scroll"}
+    # half (1): unclassified — not in the read ∪ safe-write allow-list
+    with pytest.raises(AssertionError):
+        _assert_mcp_registry_is_classified(sabotaged)
+    # half (2): the verb scan catches it independently of the allow-list
+    with pytest.raises(AssertionError):
+        _assert_mcp_registry_has_no_destroyer(sabotaged)
 
 
 def test_ingest_url_returns_the_cli_payload(scrolls_home, fake_wikipedia_api):
