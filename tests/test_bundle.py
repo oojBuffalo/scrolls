@@ -1889,6 +1889,98 @@ def test_mixed_fidelity_bundle_rebuilds_byte_identically_across_a_fresh_library(
     assert _read_tree(paths_b.library_dir) == src_library
 
 
+# --- the WHOLE bundle is a reproducible artifact (H368) ----------------------
+#
+# The forward-hardening cells so far each pin a distinct reproducibility axis:
+# H363 the `kb` compile, H364 the MCP registry, H365 `doctor --fix` repair
+# convergence, H366 the read-budget nesting, H367 the status↔doctor scalar
+# convergence. H368 adds the sixth — the *portable-bundle/export-transport*
+# determinism — for the shareable custody bundle an operator hands a peer.
+#
+# Every round-trip guard above (H336/H354/H360) leans on the bundle being lossless
+# and reproducible, but the *whole-artifact* determinism is only ever *implied*:
+# `list_items` is ordered and `build_bundle` embeds no wall-clock (verified —
+# `bundle.py` carries no `now()`/`generated_at`), yet a regression (an unsorted
+# fold, a set-iteration leak, a timestamp slipped into the header) would pass the
+# per-section bundle tests while breaking the reproducibility the sender relies on:
+# a recipient who re-exports to forward the bundle would emit *different* bytes.
+#
+# Decisive choice: compare the **whole bundle text** (the H363 whole-tree-hash
+# precedent on the bundle axis), not one section — non-determinism anywhere (a
+# group page, the custody briefing, the `@generated` lossless block, the custody
+# events block) is caught, not just the header. The fixture is multi-source +
+# carries drift events so every order-sensitive sub-block (per-source breakdown,
+# the items block, the events block) is non-vacuous. Both libraries are
+# materialised with the documented `doctor --fix` / `kb` restore so the re-export
+# reads clean and network-free (the H360 round-trip discipline).
+
+
+def test_export_bundle_is_byte_identical_across_two_exports_of_one_library(
+    scrolls_home, capsys
+):
+    # determinism in place: the same unchanged library exported twice yields a
+    # byte-identical bundle — no set-iteration leak, no wall-clock in the artifact.
+    main(["init"])
+    db = get_paths().db_path
+    _seed_multi_source(db)  # multi-source + drift events → every sub-block non-vacuous
+    # materialise so the export reads a clean, network-free library (no missing scrolls)
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    first = capsys.readouterr().out
+    # no DB mutation between the two reads (export is read-only)
+    assert main(["export", "bundle", "database"]) == 0
+    second = capsys.readouterr().out
+
+    # non-vacuous: the bundle really spans the order-sensitive sub-blocks
+    assert "_By source:_" in first  # the per-source fold
+    assert "scrolls export bundle (custody events)" in first  # the events block
+    assert first == second  # whole-text byte-identity, not just one section
+
+
+def test_export_bundle_round_trips_to_byte_identical_bytes_in_a_fresh_library(
+    scrolls_home, monkeypatch, tmp_path, capsys
+):
+    # the portable-artifact reproducibility: a real `export bundle` → `import
+    # bundle` into a fresh SCROLLS_HOME → re-`export bundle` reproduces the
+    # sender's bytes. A recipient who forwards the received bundle emits the same
+    # artifact the sender shipped — the lossless round-trip is *reproducible*, not
+    # merely content-equal.
+    main(["init"])
+    db_a = get_paths().db_path
+    _seed_multi_source(db_a)
+    # the sender materialises (the documented restore) so its export is the clean,
+    # network-free artifact the recipient will be compared against
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    assert main(["export", "bundle", "database"]) == 0
+    sender_bundle = capsys.readouterr().out
+    bundle_path = tmp_path / "briefing.md"
+    bundle_path.write_text(sender_bundle, encoding="utf-8")
+
+    # a fresh, empty library B receives the bundle and materialises it the same way
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-b"))
+    main(["init"])
+    capsys.readouterr()
+    assert main(["import", "bundle", str(bundle_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == 3
+    # the documented `doctor --fix` / `kb` restore so the re-export reads clean
+    assert main(["doctor", "--fix"]) == 0
+    assert main(["kb"]) == 0
+    capsys.readouterr()
+
+    # the recipient re-exports to forward the bundle — and emits the sender's bytes
+    assert main(["export", "bundle", "database"]) == 0
+    recipient_bundle = capsys.readouterr().out
+    # whole-text byte-identity across the transport boundary (the H354/H360
+    # round-trips proved content-equality; H368 proves *artifact* reproducibility)
+    assert recipient_bundle == sender_bundle
+
+
 # --- portable custody: the verify ledger travels in the bundle (H67) --------
 
 
