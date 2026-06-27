@@ -27,13 +27,15 @@ reports the missing file rather than pretending it is held, exactly the
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import json
 import sqlite3
+from typing import Callable, NamedTuple
 
 import pytest
 
-from scrolls.cli import main
+from scrolls.cli import build_parser, main
 from scrolls.custody import (
     CONFLICT_STATUS,
     CustodyEvent,
@@ -874,3 +876,280 @@ def test_whole_library_backup_rebuilds_byte_identically_across_tiers(home, capsy
     # and the compiled library/ pages, built over the mixed-fidelity spread,
     # rebuild byte-identically too
     assert _read_tree(dst.library_dir) == src_library
+
+
+# --- the round-trip transport contract (H395) --------------------------------
+#
+# The second **contract-consolidation** cell (the H388/H394 pattern applied to
+# the PRD round-trip success-metric: "Round-trip invariant holds in CI —
+# export→import→export byte-stable"). The per-transport reproducibility guards
+# above and in `test_bundle.py` each hand-wrote one cell for one transport —
+# H379 (`export items`), H384 (`export events`), H390 (`export archive`), and
+# H368 (`export bundle`) — a treadmill that appends a new cell every time a
+# transport ships. This lifts that family to a single completeness-asserted
+# invariant driven off an enumerated transport registry, so a *new* lossless
+# transport is auto-covered: it must either register a round-trip guard or be
+# explicitly exempted, exactly the way H394's `_CLI_READ_COMMANDS` keystone ends
+# the per-command determinism treadmill.
+#
+# Two faces, the H394 shape:
+#   1. the **completeness keystone** — `_ROUND_TRIP_TRANSPORTS` (the lossless
+#      custody transports) plus an explicit interchange-exempt set must partition
+#      *exactly* the bidirectional `export <kind>` ∩ `import <kind>` pairs walked
+#      from the live argparse registry, so a new `export X`/`import X` pair fails
+#      the contract until classified (the `_MCP_READ_TOOLS`/H364 mechanism on the
+#      transport axis); and
+#   2. the **per-transport round-trip + determinism guard**, parametrised over
+#      the registry: for every transport, two same-library exports are
+#      byte-identical (the determinism leg — an unsorted fold or a per-row
+#      counter would diverge) AND a real export→import→export into a fresh
+#      `SCROLLS_HOME` reproduces the sender's bytes (the round-trip leg). A new
+#      transport added to the registry is round-tripped automatically.
+#
+# The interchange-exempt set is `opml`/`bookmarks`: both expose an `export` and
+# an `import`, but neither is a *lossless custody* round-trip — they are foreign
+# interchange formats (a Netscape bookmark file, an OPML feed list) that carry no
+# custody model to reproduce, so export→import→export is not a byte-stable
+# identity over them. Listing them by name (not silently skipping them) is the
+# keystone's teeth: a transport can only leave the round-trip set by an explicit,
+# reasoned exemption.
+
+
+def _seed_events_ledger(db_path) -> int:
+    """Append a realistic chronological custody ledger on the held items: a
+    verify history (unchanged → drifted) plus an import-time conflict on the
+    first item and a single verify on the second — the `export events` fixture
+    shape (≥2 items, ≥2 statuses, the conflict axis), every `checked_at`
+    distinct and increasing in append order so the importer's stable
+    sort-by-`checked_at` reproduces the sender's read order. Returns the count."""
+    ids = [item.id for item in list_items(db_path)]
+    first_id, second_id = ids[0], ids[1]
+    record_events(db_path, [
+        CustodyEvent(first_id, "2026-06-11T00:00:00+00:00", "unchanged", "h0", "h0"),
+        CustodyEvent(second_id, "2026-06-11T06:00:00+00:00", "unchanged", "h1", "h1"),
+        CustodyEvent(first_id, "2026-06-12T00:00:00+00:00", "drifted", "h0", "h0b"),
+        conflict_event(
+            first_id, held_hash="h0b", incoming_hash="hX",
+            now="2026-06-13T00:00:00+00:00",
+        ),
+    ])
+    return _event_count(db_path)
+
+
+class _Transport(NamedTuple):
+    """One lossless round-trip transport: how to seed a source library that
+    makes its export non-vacuous, the export argv, the ordered imports that
+    restore it into a fresh home, and whether the re-export needs the derived
+    artifacts materialised (`doctor --fix`/`kb`) first."""
+
+    kind: str
+    export_argv: tuple[str, ...]
+    # the ordered (import-kind, that-kind's export argv) restore steps run in the
+    # fresh home; the import subcommand name equals the kind for every transport.
+    restore: tuple[tuple[str, tuple[str, ...]], ...]
+    materialize: bool
+    seed: Callable[[object], object] | None
+
+
+# The registry the round-trip loop is driven off. `items` reads index rows and
+# `events`/`archive` read their own tables, so the re-export needs only the rows
+# restored (no `doctor --fix`/`kb`); `bundle` renders a briefing over the
+# materialised library, so its recipient runs the documented restore first. The
+# `kind` set is held equal to `_ROUND_TRIP_KINDS` by the keystone below.
+_ROUND_TRIP_TRANSPORTS: tuple[_Transport, ...] = (
+    _Transport(
+        kind="items",
+        export_argv=("export", "items"),
+        restore=(("items", ("export", "items")),),
+        materialize=False,
+        seed=None,
+    ),
+    _Transport(
+        kind="events",
+        export_argv=("export", "events"),
+        # `export events` is item-scoped, so the held items are restored first.
+        restore=(("items", ("export", "items")), ("events", ("export", "events"))),
+        materialize=False,
+        seed=_seed_events_ledger,
+    ),
+    _Transport(
+        kind="archive",
+        export_argv=("export", "archive"),
+        # the recovery store recovers *into* the held library, restored first.
+        restore=(("items", ("export", "items")), ("archive", ("export", "archive"))),
+        materialize=False,
+        seed=_seed_archive,
+    ),
+    _Transport(
+        kind="bundle",
+        # "search" matches the two databases scrolls in `_seed_items` (a
+        # non-vacuous multi-scroll bundle), the H368 round-trip shape.
+        export_argv=("export", "bundle", "search"),
+        restore=(("bundle", ("export", "bundle", "search")),),
+        materialize=True,
+        seed=None,
+    ),
+)
+
+_ROUND_TRIP_KINDS = frozenset(t.kind for t in _ROUND_TRIP_TRANSPORTS)
+
+# Bidirectional transports that are *not* lossless custody round-trips: foreign
+# interchange formats with no custody model to reproduce byte-for-byte. Named,
+# not skipped, so a new bidirectional transport cannot silently dodge the
+# round-trip contract (the keystone's teeth).
+_INTERCHANGE_EXEMPT = {
+    "opml": "OPML feed-subscription interchange, not a lossless custody transport",
+    "bookmarks": "Netscape bookmark interchange, not a lossless custody transport",
+}
+
+
+def _registered_transport_kinds(command: str) -> set[str]:
+    """The leaf subcommand names registered under `export`/`import` in the live
+    argparse tree — the source of truth the completeness keystone holds the
+    classification to (the `_registered_cli_command_paths` idiom, H394)."""
+    for action in build_parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            sub = action.choices.get(command)
+            if sub is None:
+                continue
+            for inner in sub._actions:
+                if isinstance(inner, argparse._SubParsersAction):
+                    return set(inner.choices)
+    raise AssertionError(f"no {command!r} subcommand registry found")
+
+
+def _export(argv, capsys) -> str:
+    """Run one `export` command and return its stdout, asserting a clean exit."""
+    rc = main(list(argv))
+    captured = capsys.readouterr()
+    assert rc == 0, f"{' '.join(argv)} exited {rc}: {captured.err}"
+    return captured.out
+
+
+def test_round_trip_registry_covers_every_export_import_pair():
+    """The completeness keystone (roadmap H395): every transport that exposes
+    *both* a `scrolls export <kind>` and a `scrolls import <kind>` is classified
+    — either a lossless round-trip transport (`_ROUND_TRIP_TRANSPORTS`, which the
+    parametrised guard round-trips) or an explicit interchange exemption. A
+    *new* bidirectional transport fails this until classified, so the round-trip
+    contract auto-covers it — the `_CLI_READ_COMMANDS`/H394 mechanism on the
+    transport axis, the mechanism that ends the per-transport round-trip
+    treadmill."""
+    export_kinds = _registered_transport_kinds("export")
+    import_kinds = _registered_transport_kinds("import")
+    bidirectional = export_kinds & import_kinds
+
+    classified = _ROUND_TRIP_KINDS | set(_INTERCHANGE_EXEMPT)
+    assert classified == bidirectional, (
+        f"transport classification drift: unclassified="
+        f"{bidirectional - classified}, unknown={classified - bidirectional}"
+    )
+    # disjoint: a transport is round-trip *or* exempt, never both
+    assert _ROUND_TRIP_KINDS.isdisjoint(_INTERCHANGE_EXEMPT)
+    # every round-trip transport really has both legs in the registry
+    assert _ROUND_TRIP_KINDS <= export_kinds and _ROUND_TRIP_KINDS <= import_kinds
+    # the registry and the classification stay in sync (no spec without a kind)
+    assert _ROUND_TRIP_KINDS == {t.kind for t in _ROUND_TRIP_TRANSPORTS}
+    # non-vacuous: the four lossless transports are actually present
+    assert _ROUND_TRIP_KINDS == {"items", "events", "archive", "bundle"}
+
+
+@pytest.mark.parametrize(
+    "transport", _ROUND_TRIP_TRANSPORTS, ids=[t.kind for t in _ROUND_TRIP_TRANSPORTS]
+)
+def test_round_trip_transport_is_a_reproducible_artifact(transport, home, capsys):
+    """Roadmap H395, the per-transport leg: for *every* lossless transport,
+
+    1. exporting the same unchanged library twice is **byte-identical** (the
+       determinism leg — an unsorted fold or a per-row counter would diverge), and
+    2. a real `export <kind>` → restore into a fresh `SCROLLS_HOME` →
+       re-`export <kind>` reproduces the sender's bytes (the round-trip leg).
+
+    Driven off `_ROUND_TRIP_TRANSPORTS`, so a new transport added to the registry
+    is round-tripped automatically — the consolidation that retires the
+    per-transport reproducibility cells (H368/H379/H384/H390)."""
+    src = home("source")
+    _build_library(_seed_items())
+    if transport.seed is not None:
+        transport.seed(src.db_path)
+    capsys.readouterr()  # drain the kb (+ any seed) output before the export captures
+
+    # 1. determinism: two exports of the unchanged library are byte-identical
+    first = _export(transport.export_argv, capsys)
+    second = _export(transport.export_argv, capsys)
+    assert second == first, f"{transport.kind}: two same-library exports diverged"
+    # non-vacuous: the export carried real rows, not an empty stream comparing equal
+    assert first.strip(), f"{transport.kind}: export was empty (vacuous determinism)"
+
+    # produce every restore backup from the *source* (the transport's own export
+    # plus, for the item-scoped transports, the held items the restore needs)
+    backups = []
+    for dep_kind, dep_argv in transport.restore:
+        out = _export(dep_argv, capsys)
+        path = src.root.parent / f"{transport.kind}.{dep_kind}.backup"
+        path.write_text(out, encoding="utf-8")
+        backups.append((dep_kind, path))
+
+    # 2. round-trip: rebuild in a fresh home from the backups alone, re-export,
+    #    and assert it reproduces the sender's bytes
+    dst = home("rebuilt")
+    assert main(["init"]) == 0
+    for dep_kind, path in backups:
+        assert main(["import", dep_kind, str(path)]) == 0
+    if transport.materialize:
+        # the documented restore for a transport whose re-export reads the
+        # rendered/compiled artifacts, not just the rows (the bundle briefing)
+        assert main(["doctor", "--fix"]) == 0
+        assert main(["kb"]) == 0
+    capsys.readouterr()  # drain the import/restore reports before the re-export
+
+    reexport = _export(transport.export_argv, capsys)
+    assert reexport == first, (
+        f"{transport.kind}: export→import→export was not byte-stable"
+    )
+    assert dst.db_path.exists()  # guard: the re-export read a real rebuilt store
+
+
+def test_round_trip_contract_has_teeth(home, capsys, monkeypatch):
+    """Roadmap H395 sabotage: a per-row counter on *one* transport's export rows
+    must fail that transport's determinism leg while the others stay green.
+
+    Monkeypatching `dump_items_export` (the items transport's export fold) to
+    append a process-global counter to each call is exactly the "lossless backup
+    that secretly carries a per-export sequence" regression the byte-identity leg
+    exists to catch: two exports of the unchanged library now differ. A transport
+    that does *not* fold through `dump_items_export` (`export archive`, whose own
+    `dump_archive_export` is untouched) stays byte-identical — proving the leak is
+    isolated to its transport, not a global break that any assertion would catch.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    seeded = _seed_archive(src.db_path)  # a non-vacuous archive for the green leg
+    assert seeded == 3
+    capsys.readouterr()
+
+    import scrolls.cli as cli
+
+    real_dump = cli.dump_items_export
+    counter = {"n": 0}
+
+    def leaky(items):
+        # a process-global per-export counter — the exact reproducibility
+        # regression (first export numbered 1, the second 2) the guard must catch
+        counter["n"] += 1
+        return real_dump(items) + json.dumps({"_seq": counter["n"]}) + "\n"
+
+    monkeypatch.setattr(cli, "dump_items_export", leaky)
+
+    # the items transport's determinism leg now FAILS (the guard has teeth)
+    first_items = _export(("export", "items"), capsys)
+    second_items = _export(("export", "items"), capsys)
+    assert first_items != second_items, "the per-export counter must break byte-identity"
+
+    # a transport that does not fold through dump_items_export stays green — and
+    # non-vacuously so (the seeded archive really travels), proving the leak is
+    # isolated to one transport rather than a global non-determinism
+    first_archive = _export(("export", "archive"), capsys)
+    second_archive = _export(("export", "archive"), capsys)
+    assert first_archive == second_archive
+    assert first_archive.count("\n") == seeded
