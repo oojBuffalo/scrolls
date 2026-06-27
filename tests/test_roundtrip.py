@@ -1153,3 +1153,302 @@ def test_round_trip_contract_has_teeth(home, capsys, monkeypatch):
     second_archive = _export(("export", "archive"), capsys)
     assert first_archive == second_archive
     assert first_archive.count("\n") == seeded
+
+
+# --- the re-import idempotency contract (H399) -------------------------------
+#
+# The sixth **contract-consolidation** cell (the H388/H394/H395 keystone pattern
+# applied to the PRD round-trip success-metric on the *ingest settle* axis). The
+# scattered per-transport idempotency guards — `test_reimport_is_idempotent`
+# (items, above), `test_reimport_events_is_whole_ledger_idempotent` (events,
+# H380, above), `test_import_archive_is_idempotent` (archive, H386,
+# `test_cli.py`), and `test_reimport_bundle_is_a_true_no_op_on_rows_disk_and_
+# conflict_ledger` (bundle, H374, `test_bundle.py`) — each hand-wrote one cell
+# for one transport: a treadmill that appends a new cell every time an import
+# ships. This lifts that family to a single completeness-asserted invariant
+# driven off the live `import` subcommand registry, so a *new* import transport
+# is auto-covered — it must register an idempotency guard or be explicitly
+# exempted, the `_CLI_READ_COMMANDS`/H394 mechanism on the ingest axis.
+#
+# The *settle*-axis sibling of H395's round-trip contract: H395 pins
+# export→import→export is byte-stable; this pins import-twice = a whole-store
+# no-op. Two faces, the H395 shape:
+#   1. the **completeness keystone** — `_IMPORT_TRANSPORTS` (the lossless custody
+#      ingest transports) plus a named foreign-interchange-exempt set must
+#      partition *exactly* the `scrolls import <kind>` leaf subcommands walked
+#      from the live argparse registry, so a new `import X` fails the contract
+#      until classified; and
+#   2. the **per-transport idempotency guard**, parametrised over the registry:
+#      for every transport, importing its export into a fresh `SCROLLS_HOME`
+#      *twice* is a no-op on the second pass across BOTH axes — the report
+#      (`imported == 0`, all `skipped`) AND the raw-store row count (the
+#      transport's dedup key — `merge_item`'s `INSERT OR IGNORE`,
+#      `import_events`' `_EVENT_IDENTITY` 5-tuple, `import_archive`'s
+#      `_ARCHIVE_IDENTITY (item_id, prior_hash)` — never the per-library
+#      autoincrement id, which the export never carries). A new transport added
+#      to the registry is re-imported automatically.
+#
+# The both-axes choice is decisive: a re-keyed dedup that both *skips* (report)
+# and *re-inserts* (store) is invisible to a report-only check (the H380/H386
+# precedent — the sabotage below proves the row-count axis has teeth).
+#
+# The interchange-exempt set is the foreign-format imports (`bookmarks`/`opml`/
+# `pocket`/`google-takeout`/`fieldtheory`): each ingests an external file format
+# with no lossless `export <kind>` custody transport that produces it, so the
+# export→import-twice round-trip-settle shape does not apply (their own
+# import-the-same-file-twice idempotency stays guarded per-format in
+# `tests/test_cli.py`). Named, not silently skipped — the keystone's teeth, the
+# H395 `_INTERCHANGE_EXEMPT` discipline on the ingest axis.
+
+
+def _item_count(db_path) -> int:
+    """The raw `items` table row count — the held-set size a silent double-insert
+    would inflate, read straight from the table (not folded through `list_items`)
+    so the assertion sees the rows SQLite actually holds, the `_event_count`/
+    `_archive_count` idiom on the held-items axis."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    finally:
+        conn.close()
+
+
+class _ImportTransport(NamedTuple):
+    """One lossless custody ingest transport's re-import idempotency spec: how to
+    seed a source library so its export is non-vacuous, the export argv that
+    produces the backup, the raw-store row-count probe (keyed on the transport's
+    own dedup table, never the autoincrement id), and the non-vacuous count the
+    first import lands and the second must leave untouched."""
+
+    kind: str
+    export_argv: tuple[str, ...]
+    seed: Callable[[object], object] | None
+    store_count: Callable[[object], int]
+    count: int
+
+
+# The registry the idempotency loop is driven off. `items`/`events`/`archive`
+# each import into their own dedup table; `bundle` imports items (its top-level
+# `imported`/`skipped` IS the items axis — `merge_item`'s INSERT OR IGNORE into
+# the same `items` table — alongside the events/archive blocks it carries). The
+# `kind` set is held equal to the live `import` registry by the keystone below.
+_IMPORT_TRANSPORTS: tuple[_ImportTransport, ...] = (
+    _ImportTransport(
+        kind="items",
+        export_argv=("export", "items"),
+        seed=None,  # `_seed_items` already populates the held set
+        store_count=_item_count,
+        count=len(_seed_items()),
+    ),
+    _ImportTransport(
+        kind="events",
+        export_argv=("export", "events"),
+        seed=_seed_events_ledger,
+        store_count=_event_count,
+        count=4,  # `_seed_events_ledger` appends four custody events
+    ),
+    _ImportTransport(
+        kind="archive",
+        export_argv=("export", "archive"),
+        seed=_seed_archive,
+        store_count=_archive_count,
+        count=3,  # `_seed_archive` supersedes into three archived priors
+    ),
+    _ImportTransport(
+        kind="bundle",
+        # "search" matches the two databases scrolls in `_seed_items` (a
+        # non-vacuous multi-scroll bundle), the H368/H395 bundle round-trip shape;
+        # the bundle's top-level imported/skipped is its items axis.
+        export_argv=("export", "bundle", "search"),
+        seed=None,
+        store_count=_item_count,
+        count=2,
+    ),
+)
+
+_IMPORT_TRANSPORT_KINDS = frozenset(t.kind for t in _IMPORT_TRANSPORTS)
+
+# Import subcommands that are *not* lossless custody re-imports: foreign-format
+# ingests with no `export <kind>` custody transport that produces their input,
+# so the export→import-twice round-trip-settle shape does not apply (each carries
+# its own import-the-same-file-twice idempotency guard in `tests/test_cli.py`).
+# Named, not skipped, so a new import subcommand cannot silently dodge the
+# idempotency contract (the keystone's teeth, the H395 `_INTERCHANGE_EXEMPT`
+# discipline on the ingest axis).
+_IMPORT_INTERCHANGE_EXEMPT = {
+    "bookmarks": "Netscape bookmark interchange import, no lossless export transport",
+    "opml": "OPML feed-subscription interchange import, no lossless custody store",
+    "pocket": "Pocket CSV interchange import, no lossless export transport",
+    "google-takeout": "Google Takeout interchange import, no lossless export transport",
+    "fieldtheory": "Field Theory archive interchange import, no lossless export transport",
+}
+
+
+def test_import_idempotency_registry_covers_every_import_subcommand():
+    """The completeness keystone (roadmap H399): every `scrolls import <kind>` leaf
+    subcommand is classified — either a lossless custody transport
+    (`_IMPORT_TRANSPORTS`, which the parametrised guard re-imports twice) or an
+    explicit foreign-interchange exemption. A *new* `import X` fails this until
+    classified, so the idempotency contract auto-covers it — the
+    `_CLI_READ_COMMANDS`/H394 mechanism on the ingest axis, the mechanism that
+    ends the per-transport idempotency treadmill (H374/H380/H386 + items')."""
+    import_kinds = _registered_transport_kinds("import")
+    classified = _IMPORT_TRANSPORT_KINDS | set(_IMPORT_INTERCHANGE_EXEMPT)
+    assert classified == import_kinds, (
+        f"import classification drift: unclassified="
+        f"{import_kinds - classified}, unknown={classified - import_kinds}"
+    )
+    # disjoint: an import is a lossless transport *or* exempt, never both
+    assert _IMPORT_TRANSPORT_KINDS.isdisjoint(_IMPORT_INTERCHANGE_EXEMPT)
+    # every lossless transport really is a registered import subcommand
+    assert _IMPORT_TRANSPORT_KINDS <= import_kinds
+    # the registry and the classification stay in sync (no spec without a kind)
+    assert _IMPORT_TRANSPORT_KINDS == {t.kind for t in _IMPORT_TRANSPORTS}
+    # non-vacuous: the four lossless custody transports are actually present
+    assert _IMPORT_TRANSPORT_KINDS == {"items", "events", "archive", "bundle"}
+
+
+@pytest.mark.parametrize(
+    "transport", _IMPORT_TRANSPORTS, ids=[t.kind for t in _IMPORT_TRANSPORTS]
+)
+def test_reimport_transport_is_a_whole_store_no_op(transport, home, capsys):
+    """Roadmap H399, the per-transport leg: for *every* lossless custody transport,
+    importing its export into a fresh `SCROLLS_HOME` *twice* is a whole-store no-op
+    on the second pass across BOTH axes —
+
+    1. the **report** axis: the first import restores the whole store
+       (`imported == count`, `skipped == 0`), the second is a true no-op
+       (`imported == 0`, every row `skipped`); and
+    2. the **raw-store row-count** axis: the transport's own dedup table did not
+       grow on the re-import (the decisive both-axes choice — a dedup that reports
+       `skipped` yet re-inserts, or one re-keyed on the per-library autoincrement
+       id the export never carries, would double the store while the report stays
+       clean).
+
+    Driven off `_IMPORT_TRANSPORTS`, so a new transport added to the registry is
+    re-imported automatically — the consolidation that retires the per-transport
+    idempotency cells (H374 bundle, H380 events, H386 archive, items')."""
+    src = home("source")
+    _build_library(_seed_items())
+    if transport.seed is not None:
+        transport.seed(src.db_path)
+    capsys.readouterr()  # drain the kb (+ any seed) output before the export capture
+
+    backup_text = _export(transport.export_argv, capsys)
+    assert backup_text.strip(), f"{transport.kind}: export was empty (vacuous)"
+    backup = src.root.parent / f"{transport.kind}.backup"
+    backup.write_text(backup_text, encoding="utf-8")
+
+    # import the SAME backup into a fresh home twice, no intervening mutation
+    dst = home("rebuilt")
+    assert main(["init"]) == 0
+    capsys.readouterr()  # drain the init report before the import captures
+    import_argv = ["import", transport.kind, str(backup)]
+
+    assert main(import_argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    count_after_first = transport.store_count(dst.db_path)
+
+    assert main(import_argv) == 0
+    second = json.loads(capsys.readouterr().out)
+    count_after_second = transport.store_count(dst.db_path)
+
+    # axis 1 (report): the first pass restores the whole store; the second is a
+    # true no-op — nothing imported, every row skipped
+    assert first["imported"] == transport.count and first["skipped"] == 0, (
+        f"{transport.kind}: first import did not restore the whole store"
+    )
+    assert second["imported"] == 0 and second["skipped"] == transport.count, (
+        f"{transport.kind}: re-import was not a report no-op"
+    )
+
+    # axis 2 (raw store): the underlying dedup table did not grow on the re-import
+    assert count_after_first == transport.count, f"{transport.kind}: first import miscounted"
+    assert count_after_second == transport.count, (
+        f"{transport.kind}: re-import grew the raw store ({count_after_second} != "
+        f"{transport.count}) — a dedup that skips yet re-inserts"
+    )
+    # non-vacuous: a real multi-row store, not "0 == 0" passing on both passes
+    assert transport.count > 0
+
+
+def test_reimport_idempotency_contract_has_teeth(home, capsys, monkeypatch):
+    """Roadmap H399 sabotage: a dedup that reports `skipped` yet *re-inserts* must
+    fail its transport's raw-store row-count axis while the report axis — and the
+    other transports — stay green. The both-axes choice's teeth: a report-only
+    idempotency check is blind to a re-keyed dedup that both skips and re-inserts
+    (the H380/H386 precedent).
+
+    Monkeypatching `cli.import_archive` to duplicate the recovery store's rows on
+    the *skip* pass (returning the real `skipped` count, but doubling
+    `item_archive` behind it) is exactly that regression: the report still reads
+    `imported == 0`/`skipped == 3` (a report-only check passes), yet the raw store
+    grew 3 → 6. The `items` transport — whose re-import folds through `merge_item`,
+    not the patched `import_archive` — stays a true whole-store no-op, proving the
+    leak is isolated to one transport, not a global break any assertion would catch.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    seeded = _seed_archive(src.db_path)
+    assert seeded == 3  # a non-vacuous recovery store for the sabotaged leg
+    capsys.readouterr()
+
+    archive_backup_text = _export(("export", "archive"), capsys)
+    items_backup_text = _export(("export", "items"), capsys)
+    archive_backup = src.root.parent / "teeth.archive"
+    items_backup = src.root.parent / "teeth.items"
+    archive_backup.write_text(archive_backup_text, encoding="utf-8")
+    items_backup.write_text(items_backup_text, encoding="utf-8")
+
+    import scrolls.cli as cli
+
+    real_import_archive = cli.import_archive
+
+    def leaky(db_path, records):
+        imported, skipped = real_import_archive(db_path, records)
+        if skipped:  # only on the re-import — the first pass skips nothing
+            # report `skipped` honestly, but duplicate the store behind the report:
+            # the exact "skips and re-inserts" regression the row-count axis catches
+            conn = sqlite3.connect(db_path)
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO item_archive "
+                        "(item_id, archived_at, prior_hash, superseded_by, snapshot) "
+                        "SELECT item_id, archived_at, prior_hash, superseded_by, snapshot "
+                        "FROM item_archive"
+                    )
+            finally:
+                conn.close()
+        return imported, skipped
+
+    monkeypatch.setattr(cli, "import_archive", leaky)
+
+    dst = home("rebuilt")
+    assert main(["init"]) == 0
+    capsys.readouterr()  # drain the init report before the import captures
+
+    # --- archive: the sabotaged transport — report no-op, but the store DOUBLES ---
+    assert main(["import", "archive", str(archive_backup)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == seeded  # first restores
+    archive_after_first = _archive_count(dst.db_path)
+    assert main(["import", "archive", str(archive_backup)]) == 0
+    archive_report = json.loads(capsys.readouterr().out)
+    archive_after_second = _archive_count(dst.db_path)
+
+    # a report-only idempotency check is FOOLED: the report says it skipped them all
+    assert archive_report["imported"] == 0 and archive_report["skipped"] == seeded
+    # but the raw-store row-count axis catches it — the store grew on the re-import
+    assert archive_after_first == seeded
+    assert archive_after_second == seeded * 2  # the teeth: 6 != 3
+
+    # --- items: an untouched transport stays a true whole-store no-op (isolated) ---
+    held = len(_seed_items())
+    assert main(["import", "items", str(items_backup)]) == 0
+    assert json.loads(capsys.readouterr().out)["imported"] == held
+    items_after_first = _item_count(dst.db_path)
+    assert main(["import", "items", str(items_backup)]) == 0
+    items_report = json.loads(capsys.readouterr().out)
+    items_after_second = _item_count(dst.db_path)
+    assert items_report["imported"] == 0 and items_report["skipped"] == held
+    assert items_after_first == items_after_second == held
