@@ -203,7 +203,25 @@ and `context` (the `Coverage:` line, over `count_matches`); **H8 (done)**
 sharpens `doctor`'s drift block — `basis`/`as_of`/`unverified` make it
 verified-now-vs-as-of-last-check honest (`docs/agents/autonomous-roadmap.md`).
 With H8, **G2 is enforced across every read surface and M2 is complete.**
-Each landed with its own tests in the matching suite. The MCP twins read
+Each landed with its own tests in the matching suite. That scattered
+per-surface scope-echo enforcement is then **consolidated once** (roadmap
+H398, the fifth contract-consolidation cell, after the surface-parity matrix)
+into `tests/test_completeness_contract.py`: a registry-driven invariant that
+*every* browse/audit surface (`search`/`list`/`related`/`works`/`context`/
+`doctor` and their MCP twins) is scope-honest and completeness-honest on two
+axes. The **completeness keystone** — a `_COMPLETENESS_SURFACES` registry —
+partitions the live read registries (`_CLI_READ_PATHS`/H394, `_MCP_READ_TOOLS`/
+H388) together with their *named* exemptions, so a **new browse/audit surface
+fails until it declares scope-honesty** (`test_completeness_matrix_is_complete`,
+`test_completeness_surfaces_partition_the_live_read_registries`). The guard
+proves each scope-echoing surface discloses a scope its other-scope read does
+not (`test_every_scope_echoing_surface_discloses_its_scope`) and each surface's
+empty form is distinguishable from a could-not-check
+(`test_cli_every_surface_distinguishes_empty_from_not_checked`,
+`test_mcp_every_surface_distinguishes_empty_from_not_checked`); the sabotage
+drops one surface's scope echo — so a per-ref read claims whole-library
+completeness — and fails *only* that surface's leg
+(`test_dropping_a_scope_echo_fails_only_that_surface`). The MCP twins read
 from the same builders, so `get_works`/`get_context_bundle` carry the scope
 echo and coverage line too. The bare-list `search_scrolls`/`list_scrolls`/
 `get_related_scrolls` twins are **array-only by design** (roadmap H163): they
