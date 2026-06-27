@@ -27,6 +27,7 @@ reports the missing file rather than pretending it is held, exactly the
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 
@@ -41,7 +42,15 @@ from scrolls.custody import (
     record_events,
 )
 from scrolls.db import init_db
-from scrolls.items import ScrollItem, insert_item, item_to_dict, list_items, make_item_id
+from scrolls.items import (
+    ScrollItem,
+    adopt_incoming,
+    archived_records,
+    insert_item,
+    item_to_dict,
+    list_items,
+    make_item_id,
+)
 from scrolls.paths import get_paths
 from scrolls.render import write_scroll
 from scrolls.search import search_items
@@ -485,6 +494,128 @@ def test_export_events_is_a_reproducible_artifact(home, capsys):
     assert main(["export", "events"]) == 0
     assert capsys.readouterr().out == first_export
     assert _event_count(dst.db_path) == seeded  # guard: the re-export read a real ledger
+
+
+def _archive_count(db_path) -> int:
+    """The raw `item_archive` row count — the whole recovery-store size, read
+    straight from the table (not folded through `archived_records`) so the
+    assertion sees the prior captures SQLite actually holds, the `_event_count`
+    idiom on the archive axis."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM item_archive").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _seed_archive(db_path) -> int:
+    """Supersede two held items so the recovery store spans a multi-prior fold.
+
+    Drives the production archival path (`adopt_incoming`, ADR 0106): item 0 is
+    superseded **twice** (a two-link chain — two priors of one id, distinct
+    `prior_hash`/`archived_at`) and item 2 once, so `item_archive` holds three
+    rows across two items. That makes both fold orders non-vacuous — within an
+    id (the chain) and across ids — so `archived_records`' `(archived_at,
+    item_id, prior_hash)` sort is actually exercised, not a single-row pass.
+    Each `archived_at` is distinct and increasing in adoption order (the H384
+    chronological-append shape), so the fresh home's re-export reproduces the
+    sender's read order regardless of restored local ids. Returns the seeded row
+    count.
+    """
+    held = {item.id: item for item in list_items(db_path)}
+    ids = list(held)
+    first_id, third_id = ids[0], ids[2]
+    # item 0, link 1: original prior (the held content_hash) → archived
+    adopt_incoming(
+        db_path,
+        dataclasses.replace(held[first_id], content_hash="sha256:adopt0a"),
+        archived_at="2026-06-20T00:00:00+00:00",
+    )
+    # item 0, link 2: the now-held "sha256:adopt0a" → archived (the chain's 2nd prior)
+    adopt_incoming(
+        db_path,
+        dataclasses.replace(held[first_id], content_hash="sha256:adopt0b"),
+        archived_at="2026-06-21T00:00:00+00:00",
+    )
+    # item 2: one prior superseded
+    adopt_incoming(
+        db_path,
+        dataclasses.replace(held[third_id], content_hash="sha256:adopt2"),
+        archived_at="2026-06-22T00:00:00+00:00",
+    )
+    return _archive_count(db_path)
+
+
+def test_export_archive_is_a_reproducible_artifact(home, capsys):
+    """`export archive` is the whole-library *prior-content recovery-store backup
+    transport* (ADR 0106/H280 — the JSONL the bundle's `--with-archive` block also
+    wraps), and a backup must be a reproducible artifact:
+
+    1. exporting the *same unchanged library*'s archive twice yields a
+       **byte-identical** JSONL (whole-file, not one row — an unsorted
+       `item_archive` fold or a per-row non-determinism would make two recovery
+       backups of one library disagree, breaking an operator who `diff`s two
+       machines' archive stores), and
+    2. a real `export archive` → restore into a *fresh* home → re-`export archive`
+       reproduces the sender's bytes — the lossless-backup reproduction a
+       single-pass identity check misses.
+
+    The **third leg of the transport-determinism triptych** — after H379
+    (`export items`, the held set) and H384 (`export events`, the verify ledger) —
+    on the **archive** transport: `dump_archive_export` folds `archive_export_dict`
+    over the whole `item_archive` table, a *distinct code path* from both siblings
+    and from H385's per-item `archive show <id>` recovery read (which folds
+    `archived_snapshots`/`latest_archived` over one item). H280/H285 pin the
+    *restore outcome* (the recovered prior body), not the JSONL *bytes* — so an
+    unsorted `item_archive` fold or a per-row non-determinism would pass those yet
+    make two recovery backups of one library disagree.
+
+    Not cross-seed: `archived_records` is an explicit ordered fold
+    (`ORDER BY (archived_at, item_id, prior_hash)`, no set to scramble), so the
+    same-process two-export check suffices — the H384 events precedent, where the
+    cross-`PYTHONHASHSEED` face is reserved for surfaces whose per-row field folds
+    a `set`. The realistic full restore mirrors H384: `import items` rebuilds the
+    held library the recovery store recovers *into*, and `import archive`
+    repopulates the standalone `item_archive` whose bytes the re-export reproduces.
+    """
+    src = home("source")
+    _build_library(_seed_items())
+    capsys.readouterr()  # drain the kb report so the export captures are clean
+
+    seeded = _seed_archive(src.db_path)
+    assert seeded == 3  # non-vacuous: a real multi-prior, multi-item recovery store
+
+    # 1. same-library determinism: two exports, no DB change between them, are
+    #    byte-identical (the artifact a `diff` across two machines must match).
+    assert main(["export", "archive"]) == 0
+    first_export = capsys.readouterr().out
+    assert main(["export", "archive"]) == 0
+    second_export = capsys.readouterr().out
+    assert second_export == first_export
+    # non-vacuous: the whole store travels (one JSON line per prior), not "" == ""
+    assert first_export.count("\n") == seeded
+
+    # 2. round-trip reproduction: restore into a *fresh* home from the backups
+    #    alone, then re-export the archive and assert it reproduces the sender's
+    #    bytes. The recovery store is keyed by `item_id` with no held-row join, so
+    #    `import archive` alone repopulates the bytes; `import items` rides along to
+    #    rebuild the library the store recovers into (the realistic full restore).
+    assert main(["export", "items"]) == 0
+    items_backup = src.root.parent / "items.jsonl"
+    items_backup.write_text(capsys.readouterr().out, encoding="utf-8")
+    archive_backup = src.root.parent / "archive.jsonl"
+    archive_backup.write_text(first_export, encoding="utf-8")
+
+    dst = home("rebuilt")
+    assert main(["import", "items", str(items_backup)]) == 0
+    assert main(["import", "archive", str(archive_backup)]) == 0
+    capsys.readouterr()  # drain the import reports before the re-export capture
+    assert main(["export", "archive"]) == 0
+    assert capsys.readouterr().out == first_export
+    # guard: the re-export read a real rebuilt store, and the priors survived the
+    # restore byte-for-byte (the recovered records equal the sender's by content).
+    assert _archive_count(dst.db_path) == seeded
+    assert archived_records(dst.db_path) == archived_records(src.db_path)
 
 
 def test_media_blob_degrades_honestly_on_rebuild(home, capsys):
