@@ -490,25 +490,54 @@ catches it while the `items` transport — folding through `merge_item`, not the
 no-op, proving a report-only check is blind and the leak is isolated to one transport. This retires the scattered
 ingest-idempotency triptych (H374 bundle, H380 events, H386 archive) and items' `test_reimport_is_idempotent` (the
 per-transport cells stay as deeper regression guards, the H395 discipline). Test-only, no production change (every
-importer is already content-deduped). Suite **4262 passed**. The forward buffer's **contract-consolidation** theme
-now leads with **H400** (the CLI↔MCP read-parity contract), with **H401–H405** the remaining consolidation cells.
+importer is already content-deduped). Suite **4262 passed**. **H400 shipped this run** — the CLI↔MCP
+read-parity contract, the seventh **contract-consolidation** cell and the *cross-transport* sibling of
+H397's intra-CLI surface-parity matrix: one completeness-asserted invariant in `tests/test_cli_mcp_parity.py`
+that *every* MCP read tool either has a CLI twin whose **custody-bearing payload** reads identically across
+the (CLI command, MCP tool) twin, or is a *named* exemption. The matrix checks the four inspect + aggregate
+twins H397's browse-enumerate matrix does *not* cover — `get_scroll`≡`show` (the per-item axes
+`fidelity`/`drift`/`last_checked`/`content_duplicate_ids` over every held item, where the H328
+content-duplicate axis lives), `get_link_graph`≡`graph` and `get_works`≡`works` (the aggregate
+`stats.custody` block plus each node/representation's per-node custody axes), and
+`get_library_health`≡`doctor` (the shared `run_doctor` custody block — `get_library_health` spreads it with
+two distilled `attention`/`headline` members `scrolls status` adds beside it, the H367/H381 precedent, so the
+twin strips them and compares the block). The **completeness keystone**
+(`test_cli_mcp_twin_registry_partitions_the_mcp_read_surface`) holds `_CLI_MCP_TWINS` (the four checked twins)
+∪ three *named* exemption sets — `_BROWSE_PARITY_BY_H397` (`search_scrolls`/`list_scrolls`/`list_facets`,
+custody parity already H397's job), `_NON_CUSTODY_AXIS_TWIN` (the six reads with a CLI twin carrying a
+*non*-custody-axis payload: the `history` ledger timeline, the `related` rank list, the `archive list`/`archive
+show` recovery snapshots, the `maintain --history` ledger, the `context` bundle [CLI≡MCP byte-identity pinned
+by H382]), and `_MCP_ONLY` (`get_concept_page`/`get_tag_page`/`list_sources`/`list_feed_subscriptions`, with no
+CLI JSON read twin) — to partition `_MCP_READ_TOOLS` (H388) *exactly*, so a *new* MCP read tool fails until
+classified; a second keystone holds every declared CLI twin path to the live `_CLI_READ_PATHS` (H394), the
+"fails until *both* contracts register it" tie. The sabotage
+(`test_a_single_transport_re_deriving_one_axis_fails_only_that_twin`) monkeypatches `mcp_server.get_fidelity`
+(the binding *only* `get_scroll` reads through — a distinct module binding from `cli.get_fidelity` and from
+the `graph`/`works`/`doctor` builders' own `get_fidelity`) to misreport one full holding's tier and pins the
+failure set is *exactly* `{get_scroll}` — the cross-transport regression a single surface's own tests miss.
+This retires the scattered per-twin convergence guards in `tests/test_custody_convergence.py`
+(`test_status_custody_scalars_converge_with_doctor_nested_audit`, the `graph`/`works` object-twin
+convergence guards, `test_mcp_library_health_converges_with_status_and_doctor`) — they stay as deeper
+regression guards, the H395 discipline. Test-only, no production change (the twins share one builder, so parity
+holds by construction). Suite **4266 passed**. The forward buffer's **contract-consolidation** theme now leads
+with **H401** (the bundle-format briefing-parity contract), with **H402–H405** the remaining consolidation cells.
 
 **The forward-hardening guard cells.** The per-tool MCP determinism treadmill is closed (H388's
 completeness-asserted whole-surface contract subsumes it — a new read tool now fails the contract until
 covered, so no further per-tool twins are needed). The active queue is the **contract-consolidation**
 theme: each cell replaces a *family* of per-surface tests with a single completeness-asserted invariant
 that auto-covers new surfaces (the H388 pattern applied to round-trip, regeneration-safety, surface-parity,
-and completeness-honesty — the PRD success metrics). Take the next one whose preconditions are met (H400
-next; H399 re-import idempotency shipped — see the Status snapshot):
+and completeness-honesty — the PRD success metrics). Take the next one whose preconditions are met (H401
+next; H400 CLI↔MCP read-parity shipped — see the Status snapshot):
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H400 | **CLI↔MCP read-parity contract — one completeness-asserted invariant that *every* read exposed on both transports returns the same custody-bearing payload (fidelity tier + drift posture + works membership + content-duplicate ids, and the aggregate custody block) across its (CLI command, MCP tool) twin, pinned once over an enumerated twin registry rather than the scattered per-pair convergence checks. The seventh **contract-consolidation** cell — the *cross-transport* sibling of H397's intra-CLI surface-parity matrix — lifting the per-twin parity guards (`get_scroll`≡`show`, `get_library_health`≡`status.custody`, `get_works`≡`works`, `get_link_graph`≡`graph`, `search_scrolls`≡`search`, …) to a single matrix guard whose **completeness keystone** — a `_CLI_MCP_TWINS` registry keyed to `_MCP_READ_TOOLS` (H388) — fails when a *new* MCP read tool ships without a declared CLI twin (or an explicit "MCP-only"/"CLI-only" exemption). → PRD success-metric: surface parity (search/list/MCP return identical custody for the same item).** For each twin: drive both transports over the shared `_seed_read_surface_determinism_mix` and assert the custody-bearing projection agrees field-for-field (normalising the CLI JSON shape to the MCP payload shape where they legitimately differ, e.g. the `status.custody` flat block ≡ the `doctor`/`get_library_health` nested block — the H367 scalar-to-nested precedent). **Sabotage:** re-deriving one custody axis differently on one transport must fail *only* that twin's leg. **Decisive choice:** drive the loop off the twin registry keyed to `_MCP_READ_TOOLS` so a new MCP read tool is forced to declare its CLI parity (or exemption). Test-only. Precondition: `_MCP_READ_TOOLS` (H388), `_CLI_READ_COMMANDS` (H394), the per-item custody projection (`custody_snapshot`/`hit_payload`/row shape), `tests/test_custody_convergence.py`. | → cap 3 |
 | H401 | **Bundle-format briefing-parity contract — one completeness-asserted invariant that *every* custody briefing fact (per-source breakdown, weakest-source attention, at-risk-work, conflicts, archive integrity, content-duplicates, custody posture, scope headline, classification/summary provenance, refresh) renders in **both** the Markdown bundle and the `--format html` bundle, carrying the same facts, pinned once over an enumerated briefing-line registry rather than the scattered per-line HTML↔Markdown convergence tests in `test_bundle.py` (the `..._converges_with_the_markdown_form` pairs). The eighth **contract-consolidation** cell, lifting those per-line Markdown↔HTML convergence guards to a single matrix guard whose **completeness keystone** — a `_BRIEFING_LINES` registry asserted to cover every briefing-line emitter in `bundle.py` (the `build_bundle`/`build_bundle_html` line-render functions) — fails when a *new* briefing line ships in only one form, so the two portable forms can never silently diverge. → PRD success-metric: shareable custody bundle parity (cap 9).** Over the H368 multi-source + drift/conflict/archive/duplicate fixture, render both forms and assert each registered briefing line's fact is present and equal across them (normalising Markdown `_..._` emphasis vs the HTML `<p>`/`<li>` wrapper). **Sabotage:** a briefing line dropped from the HTML form (or carrying a different count) must fail its line's leg. **Decisive choice:** drive the loop off the briefing-line registry so a new line is forced into both forms. Test-only. Precondition: `build_bundle`/`build_bundle_html` (`bundle.py`), the H39/H378 HTML form, the scattered HTML↔Markdown convergence tests in `test_bundle.py`. | → cap 9 |
 | H402 | **Reconcile-safety contract (ADR 0102) — the *removal*-axis sibling of H396's refresh axis: one completeness-asserted invariant that when a compiled `library/` page's group **vanishes** (a reclassified category, a dropped concept/tag, an emptied source), a stale page carrying a `@user` annotation is **tombstoned** (the generated region replaced by `_STALE_BODY`, the annotation preserved byte-for-byte), never silently deleted — and a stale page with *no* annotation *is* removed (the "stale pages can't linger" guarantee), across *every* reconcilable dir-kind. The ninth **contract-consolidation** cell, lifting the scattered `_reconcile_generated` tombstone tests to a single guard whose **completeness keystone** — a `_RECONCILABLE_KINDS` registry asserted to equal `kb._GENERATED_DIRS` (only dir-kinds are reconcilable; `index.md`/`graph.md`/`works.md` are always written, so never reconciled) — fails when a *new* reconcilable page family ships without a reconcile-safety test. → PRD success-metric: "Regeneration safety: re-compiling preserves any `@user` block" (cap 6 [OSB]), the deletion corner.** For each dir-kind: compile a page, then recompile with that group's data removed — assert an annotated page survives as a tombstone (annotation intact, generated body replaced) and an un-annotated page is unlinked. **Sabotage:** a reconcile that `unlink`s an annotated stale page (skipping the `has_user_content` tombstone branch) must fail its kind's leg. **Decisive choice:** drive the loop off `_GENERATED_DIRS` so a new reconcilable family is forced to prove deletion-safety. Test-only. Precondition: `_reconcile_generated`/`_STALE_BODY` (`kb.py`), `has_user_content`/`user_regions` (ADR 0102), the H396 `_GENERATED_ARTIFACT_KINDS` fixture, `tests/test_regeneration_safety.py`/`tests/test_kb.py`. | → cap 6 |
 | H403 | **Browse-filter drill contract — one completeness-asserted invariant that *every* custody/rank browse filter (`--fidelity`, `--drift`, `--strength`, `--content-duplicate`) on `search`/`list` (+ the MCP `search_scrolls`/`list_scrolls` twins) selects *exactly* the rows the unfiltered surface carries at that axis value, with the per-item axis on the returned rows uniformly that value — the drill-from-the-aggregate guarantee, pinned once over a filter registry rather than the scattered per-filter partition tests. The tenth **contract-consolidation** cell and the *filter*-axis sibling of H397's read-parity matrix, lifting the per-filter convergence guards (`test_content_duplicate_browse_filter_converges_with_doctor_groups`, the `--fidelity`/`--drift` drill tests, `test_context_fidelity_filter_partitions_the_unfiltered_holdings`) to a single matrix guard whose **completeness keystone** — a `_BROWSE_FILTERS` registry asserted to cover every custody/rank filter flag on the live `search`/`list` argparse subparsers — fails when a *new* browse filter ships without a drill assertion. → PRD success-metric: filter consistency / surface parity (cap 3).** Over the H397 wide fixture, for each filter value assert the filtered surface returns exactly `{id : the unfiltered row carries that axis value}` and that every returned row's own axis field equals the filter value (no off-axis leak). **Sabotage:** a filter that admits one off-axis row must fail *only* that filter's leg. **Decisive choice:** drive the loop off the filter registry parsed from the live argparse flags so a new filter is forced to prove its drill. Test-only. Precondition: the `search`/`list` filter flags in `cli.py`, `search_items`/`list_items` filter clauses, the H397 `_seed_surface_parity_mix` fixture + `tests/test_surface_parity.py`. | → cap 3 |
 | H404 | **Compiled-page custody-honesty contract (M2, the compiled-surface sibling of H398) — one completeness-asserted invariant that *every* compiled `library/` page kind renders its derived custody lines **honestly**: a `_Custody:_` headline always (its basis is the page's own held scope), a `_By source:_` split iff the page spans ≥2 sources, and an `_Attention:_`/`_Refresh:_` action-pointer iff its JSON `attention`/refresh-debt basis is non-empty (never a fabricated pointer for an axis with no basis) — pinned once over the compiled-page registry rather than the scattered per-page honest-absence tests in `tests/test_completeness.py` (H190's `test_compiled_pages_omit_action_lines_with_no_basis`/`test_compiled_refresh_line_is_per_axis_honest`). The eleventh **contract-consolidation** cell — the compiled-surface axis of the same G1 honesty H398 pins for the JSON/MCP surfaces — whose **completeness keystone** — a `_COMPILED_PAGE_KINDS` registry asserted to equal `kb._GENERATED_DIRS` ∪ the custody-bearing `_GENERATED_FILES` (`index.md`/`graph.md`, the pages that carry a custody headline; `works.md` rides the works axis) — fails when a *new* compiled page kind ships without a custody-honesty assertion. → PRD success-metric: "Completeness honesty" on the compiled human-readable surface (cap 2/7).** For each page kind, over a clean fixture assert the headline renders but no `_Attention:_`/`_Refresh:_` appears (honest absence), and over a drift/stale-debt fixture assert the pointer renders iff the JSON basis is non-empty (tied to `run_doctor`'s `attention`/`enrichment`/`summaries` blocks, the convergence H97/H190 pin). **Sabotage:** a compiler that emits an `_Attention:_` line with no JSON `attention` basis (or omits a `_By source:_` split a multi-source page has a basis for) must fail that kind's leg. **Decisive choice:** drive the loop off the `_GENERATED_DIRS`/`_GENERATED_FILES` registry (shared with H396/H402) so a new compiled page is forced to prove custody-honesty. Test-only. Precondition: the KB compiler's headline/action-line renderers (`kb.py`/`render.py`), `kb._GENERATED_DIRS`/`_GENERATED_FILES` (H396), `run_doctor`'s `attention`/refresh blocks, the H190 honest-absence tests in `tests/test_completeness.py`. | → cap 2 |
 | H405 | **Lossless-importer conflict/adoption parity contract (ADR 0104/0106) — one completeness-asserted invariant that the Scrolls-native lossless importers (`import items`, `import bundle` — the pair routing incoming `content_hash`-bearing rows through `_merge_items`) detect and record a content conflict (a held id whose incoming `content_hash` differs) **identically**: the held copy is kept (never overwritten), a typed `conflict` custody event joins the append-only ledger, and the divergent id is surfaced in the report's `conflicts` — and, with `--accept-incoming`, adopt **identically**: the held capture is archived (recoverable via `archive show`), a `superseded` event is recorded, and the row is replaced. The twelfth **contract-consolidation** cell, lifting the scattered per-importer conflict/adopt tests (H272–H283 in `test_cli.py`/`test_bundle.py`) to one matrix guard whose **completeness keystone** — a `_CONFLICT_IMPORTERS` registry (`{items, bundle}`) ∪ a named `_NO_CONFLICT_IMPORTS` set (`events`/`archive`, custody-store appends with no held-row content to diverge) ∪ the H399 `_IMPORT_INTERCHANGE_EXEMPT` foreign formats partitioning *exactly* the live `import` registry — fails when a *new* lossless importer ships without a conflict-parity assertion. → PRD success-metric: drift/conflict is a recorded event, never an overwrite (cap 4/8).** For each conflict-bearing importer: seed a held library, prepare a divergent incoming capture for one id, import it both ways, and assert the durable ledger (the `conflict`/`superseded` event on the per-item `history` timeline) plus the report disposition agree across importers (normalising the bundle's nested report shape). **Sabotage:** an importer that overwrites the held copy on conflict (no event, no `conflicts` surface) must fail *only* its leg. **Decisive choice:** drive the loop off the conflict-importer partition of the live `import` registry so a new lossless importer is forced to prove conflict parity; assert the **durable** conflict/superseded event (the H274 ledger axis), not just the transient report (the H399 both-axes discipline on the conflict axis). Test-only. Precondition: `_merge_items`/`adopt_incoming` (`cli.py`/`items.py`), `conflict_event`/`supersession_event` (`custody.py`), the H399 `_IMPORT_INTERCHANGE_EXEMPT`/`_registered_transport_kinds` keystone harness, the H272–H283 conflict tests. | → cap 4 |
+| H406 | **MCP↔CLI write-act parity contract — the *write-side* sibling of H400: one completeness-asserted invariant that *every* custody-safe MCP write tool produces the **same custody effect** as its CLI act twin over the same library — `verify_scroll`≡`verify` (the same typed `custody_events` row appended), `run_maintenance`≡`maintain --no-recheck` (the same regenerated-view counts + report disposition + recorded snapshot/trend, the H383 offline-by-default convergence), `compile_library`≡`kb` (the same `{relpath → sha256}` whole-tree hash of the compiled `library/`, the H363 determinism axis), and the feed ops `follow_feed`/`unfollow_feed`/`sync_feeds`≡`follow`/`unfollow`/`sync` (the same subscription-row effect) — pinned once over a write-act twin registry rather than the scattered per-tool effect tests. The thirteenth **contract-consolidation** cell whose **completeness keystone** — a `_CLI_MCP_WRITE_TWINS` registry keyed to `_MCP_SAFE_WRITE_TOOLS` (H364) ∪ a named `_NETWORK_WRITE_EXEMPT` set (`ingest_url`, the one tool whose effect is a live capture — pinned by its own fake-API tests, not an offline effect twin) — fails when a *new* MCP write tool ships without a declared CLI act twin (or the network exemption). → PRD success-metric: custody-safe writes are transport-agnostic (the same library mutation whichever surface drives it; custody-vision §2.4, raw-is-sacred — no MCP write destroys/overwrites raw, the H364 line on the *effect* axis).** For each twin: drive the MCP tool and the CLI act over two fresh copies of the shared fixture and assert the custody effect agrees (the appended ledger event / the compiled-tree hash / the subscription roster), normalising the report/return shapes where they legitimately differ. **Sabotage:** an MCP write that records a different event verb (or skips the ledger append) on one tool must fail *only* that twin's leg. **Decisive choice:** drive the loop off `_MCP_SAFE_WRITE_TOOLS` so a new MCP write tool is forced to declare its CLI act parity (or the network exemption) — the H400 keystone mechanism on the write surface. Test-only. Precondition: `_MCP_SAFE_WRITE_TOOLS` (H364, `tests/test_mcp.py`), the CLI act handlers (`verify`/`maintain`/`kb`/`follow`/`unfollow`/`sync` in `cli.py`), `record_events`/`_EVENT_IDENTITY` (`custody.py`), the H363 compiled-tree-hash helper, the shared `seed_read_surface_determinism_mix`. | → cap 4 |
 
 **De-prioritized backlog** — the budget/tier convergence cells **H244–H249** remain valid
 regression guards but are explicitly de-prioritized (the tail of a combinatorial matrix,
@@ -881,99 +910,40 @@ status snapshot was folded back to one line each).
 | H397 | Surface-parity contract (test-only) — the *fourth* contract-consolidation cell, lifting the scattered per-axis/pairwise convergence guards in `test_custody_convergence.py` to one (surface × axis) matrix in `tests/test_surface_parity.py` (five tests): for *every* held item its custody axes (fidelity tier, drift posture, works membership, content-duplicate partition) read identically across the browse-and-enumerate family `search` ≡ `list` ≡ MCP `search_scrolls`/`list_scrolls` ≡ `facets`. Per-item surfaces compared item-for-item against one canonical projection off the primitives (`get_fidelity`/`drift_posture`/`work_membership`/`content_duplicate_ids`); aggregate `facets` count-for-count against the canonical tally; values compared *on the wire* (`json.dumps`, so the CLI list ≡ MCP native tuple JSON-array difference H400 anticipates is not a false desync — the matrix surfaced it on first run). Three completeness keystones: (1) `test_surface_parity_matrix_is_complete` — `_PARITY_SURFACES × _CUSTODY_AXES` covered cell-for-cell by a live assertion or a *named* exemption (per-item rows carry no content-duplicate field → rides `show`/`get_scroll` H328; `facets` has no works dimension); (2) `test_custody_axes_cover_the_browse_row_shape` — the carried axes equal exactly the custody-bearing fields of the live `item_summary`+`hit_payload` shapes minus a named non-custody set (a new custody row field fails until classified); (3) `test_parity_surfaces_classify_the_live_read_registries` — the parity surfaces partition `_CLI_READ_PATHS`/H394 ∪ `_MCP_READ_TOOLS`/H388 (imported from their contracts) so a new browse command/tool fails until declared parity-or-exempt. Sabotage proves teeth *and* isolation: monkeypatching `cli.item_summary` (the CLI `list` row builder, a distinct binding from `mcp_server.item_summary`/`hit_payload`) to claim one drifted source clean fails *only* `(list, drift)`. Wide fixture spans all 3 fidelity tiers, all 5 drift postures, a content-duplicate pair, and a 2-representation work. Test-only, no production change (the surfaces already share `item_summary`/`hit_payload`/`membership_payload`, one home); suite **4250 passed** | cap 3 |
 | H398 | Completeness-honesty contract (test-only) — the *fifth* contract-consolidation cell, lifting the scattered per-surface scope-echo (G2) tests (`tests/test_cli.py`/`tests/test_search.py`/`tests/test_works.py`/`tests/test_context.py`) to one registry-driven invariant in `tests/test_completeness_contract.py` (six tests): *every* browse/audit surface (`search`/`list`/`related`/`works`/`context`/`doctor` + the MCP twins) is scope-honest and completeness-honest on two axes — (axis 1) a *scoped* read discloses a scope its other-scope read does not (so a filtered slice never reads as the whole library, the H398 fabrication), and (axis 2) an empty in-scope read is the empty form, distinguishable from a could-not-check (G1 reaffirmed in registry-driven form). Two keystones: (1) `test_completeness_matrix_is_complete` — every (surface × axis) cell is a live probe or a *named* exemption (`_SCOPE_ECHO_EXEMPT` names the per-item ledgers `history`/`get_scroll_history` + the array-only MCP browse twins `search_scrolls`/`list_scrolls`/`get_related_scrolls` [H163]; `_NO_COULD_NOT_CHECK` names `list`/`doctor`/`list_scrolls`/`get_library_health`, which take no required input so have no could-not-check form); (2) `test_completeness_surfaces_partition_the_live_read_registries` — `_COMPLETENESS_SURFACES` ∪ the named exemptions partition `_CLI_READ_PATHS`/H394 ∪ `_MCP_READ_TOOLS`/H388 (imported from their contracts), so a *new* browse/audit surface fails until declared completeness-or-exempt (the H394 mechanism on the completeness-honesty axis). Guards: `test_every_scope_echoing_surface_discloses_its_scope` (9 live surfaces — `search`/`list`/`related`/`works`/`context`/`doctor` + MCP `get_works`/`get_context_bundle`/`get_library_health` — each scoped disclosure ≠ its other-scope read AND names its scope token) and `test_cli_every_surface_distinguishes_empty_from_not_checked` / `test_mcp_every_surface_distinguishes_empty_from_not_checked`. Sabotage proves teeth + isolation: monkeypatching `cli.works_payload` (a distinct binding from `mcp_server.works_payload`/`get_works`) to emit the whole-library scope shape regardless of the ref makes a per-ref `works` read claim whole-library completeness → fails *only* `works` (`test_dropping_a_scope_echo_fails_only_that_surface`). Wide fixture: an isolated never-verified item (genuine checked-and-empty for `related`/`works`/`history`) + two topic items in two sources (real scoped narrowing; `doctor` `by_source` spans both). Test-only, no production change (G2 shipped H6–H8, G1 in `tests/test_completeness.py`); doc tie-in in `docs/cli.md`; suite **4256 passed** | cap 7 |
 | H399 | Re-import idempotency contract (test-only) — the *sixth* contract-consolidation cell, the *settle*-axis sibling of H395's round-trip contract (H395 pins export→import→export byte-stable; this pins import-twice = a whole-store no-op), retiring the scattered ingest-idempotency triptych (H374 bundle / H380 events / H386 archive) + items' `test_reimport_is_idempotent`: six `tests/test_roundtrip.py` tests (one keystone + a 4-way parametrised guard + a teeth test) over one completeness-asserted invariant that re-importing *any* lossless custody export into a library that already holds it is a whole-store no-op, across *every* `import <kind>` transport (`items`/`events`/`archive`/`bundle`). (1) `test_import_idempotency_registry_covers_every_import_subcommand` — the **completeness keystone**: `_IMPORT_TRANSPORTS` (the four lossless kinds) ∪ a named `_IMPORT_INTERCHANGE_EXEMPT` (the five foreign-format ingests `bookmarks`/`opml`/`pocket`/`google-takeout`/`fieldtheory`, each with no lossless `export <kind>` to re-import twice — listed, not skipped) partition *exactly* the live `import` subparser registry walked from `build_parser()`, so a *new* `import X` fails until classified (the `_CLI_READ_COMMANDS`/H394 mechanism on the ingest axis). (2) `test_reimport_transport_is_a_whole_store_no_op[items|events|archive|bundle]` — per transport: import its export into a fresh `SCROLLS_HOME` *twice* and pin the second pass is a no-op on **both** axes — the report (`imported == 0`/all-`skipped`) AND the raw-store row count read straight from the transport's dedup table (`merge_item`'s `INSERT OR IGNORE` → `items`; `import_events`' `_EVENT_IDENTITY` → `custody_events`; `import_archive`'s `_ARCHIVE_IDENTITY` → `item_archive`; the bundle's items axis), never the per-library autoincrement id the export never carries. A new transport added to the registry is re-imported automatically. Teeth: `test_reimport_idempotency_contract_has_teeth` monkeypatches `cli.import_archive` to duplicate `item_archive` behind a *clean* report (`imported == 0`/`skipped == 3`, store 3 → 6) — the raw-count axis catches it while the `items` transport (folding through `merge_item`, not the patched fn) stays a true no-op, proving a report-only check is blind (the both-axes H380/H386 precedent) and the leak is isolated. Test-only, no production change (every importer is already content-deduped; the per-transport cells stay as deeper regression guards); suite **4262 passed** | cap 4 |
+| H400 | CLI↔MCP read-parity contract (test-only) — the *seventh* contract-consolidation cell and the *cross-transport* sibling of H397's intra-CLI surface-parity matrix, lifting the scattered per-twin convergence guards in `test_custody_convergence.py` (`test_status_custody_scalars_converge_with_doctor_nested_audit`, the `graph`/`works` object-twin convergence guards, `test_mcp_library_health_converges_with_status_and_doctor`) to one matrix in `tests/test_cli_mcp_parity.py` (four tests): for *every* MCP read tool, either its CLI twin's **custody-bearing payload** reads identically across the (CLI command, MCP tool) twin, or it is a *named* exemption. The matrix checks the four inspect + aggregate twins H397's browse-enumerate matrix omits — `get_scroll`≡`show` (per-item axes `fidelity`/`drift`/`last_checked`/`content_duplicate_ids` over every held item, the H328 content-duplicate axis), `get_link_graph`≡`graph` + `get_works`≡`works` (the aggregate `stats.custody` block + each node/representation's per-node custody axes), `get_library_health`≡`doctor` (the shared `run_doctor` custody block; `get_library_health` spreads it with `attention`/`headline` `scrolls status` adds beside it [H367/H381], stripped before the field-for-field compare); values compared *on the wire* (`json.dumps`) so the CLI-list ≡ MCP-tuple JSON-array difference is no false desync. (1) `test_cli_mcp_twin_registry_partitions_the_mcp_read_surface` — the **completeness keystone**: `_CLI_MCP_TWINS` (the four checked twins) ∪ `_BROWSE_PARITY_BY_H397` (`search_scrolls`/`list_scrolls`/`list_facets`, already H397's job) ∪ `_NON_CUSTODY_AXIS_TWIN` (the six reads with a CLI twin carrying a non-custody-axis payload: `history`/`related`/`archive list`/`archive show`/`maintain --history`/`context` [CLI≡MCP byte-identity pinned by H382]) ∪ `_MCP_ONLY` (`get_concept_page`/`get_tag_page`/`list_sources`/`list_feed_subscriptions`, no CLI JSON twin) partition `_MCP_READ_TOOLS`/H388 *exactly*, so a *new* MCP read tool fails until classified. (2) `test_every_declared_cli_twin_is_a_live_read_command` — every declared CLI twin path is a registered read in `_CLI_READ_PATHS`/H394, the "fails until *both* contracts register it" tie. (3) `test_every_cli_mcp_read_twin_agrees_on_its_custody_payload` over the shared `seed_read_surface_determinism_mix` (4 sources, 2 tiers, 3 postures, a duplicate pair, a 3-work cluster, an at-risk posture). Sabotage `test_a_single_transport_re_deriving_one_axis_fails_only_that_twin` monkeypatches `mcp_server.get_fidelity` (the binding only `get_scroll` reads through — distinct from `cli.get_fidelity` and the `graph`/`works`/`doctor` builders' own bindings) to misreport one full holding's tier → failure set is *exactly* `{get_scroll}`. Test-only, no production change (the twins share one builder, so parity holds by construction; the per-twin convergence guards stay as deeper regression guards, the H395 discipline); suite **4266 passed** | cap 3 |
 
 ---
 
-## 3-day plan — 2026-06-25 → 2026-06-28
+## 3-day plan — 2026-06-27 → 2026-06-30
 
-Forward-looking (re-derived 2026-06-25, the once-per-24h full re-derivation, at the
-content-identity→custody-posture theme boundary and bundled with the §6 file re-compaction).
-Each day ends on a committed, tested, clean stopping point; slips roll forward. MVP M1–M5,
-every post-MVP custody theme, and the **content-identity / near-duplicate custody theme**
-(H325–H362) are closed. The **custody-posture theme** (custody-vision §3.1, ADR 0107) is
-active; after it closes the forward work is hardening/integration — no new adapters.
+Forward-looking (re-derived 2026-06-27, the once-per-24h full re-derivation, at the
+contract-consolidation mid-theme boundary — the prior 2026-06-25→06-28 day-by-day narrative was
+pruned, its per-slice detail living in git + the Shipped ledger per maintenance-rule §4). Each day
+ends on a committed, tested, clean stopping point; slips roll forward. MVP M1–M5, every post-MVP
+custody theme, the **content-identity / near-duplicate custody theme** (H325–H362), and the
+**custody-posture theme** (H369–H373) are closed. The active work is the **contract-consolidation
+theme** — each cell replaces a *family* of per-surface tests with one completeness-asserted invariant
+that auto-covers new surfaces (the H388 pattern). Six cells have shipped (H388 MCP-determinism, H394
+CLI-determinism, H395 round-trip, H396 regeneration-safety, H397 surface-parity, H398
+completeness-honesty, H399 re-import-idempotency, H400 CLI↔MCP read-parity); the forward queue is
+H401–H406. No new adapters.
 
-- **Day 1 (2026-06-25):** **Done.** **H371** shipped — the `_Posture:_` briefing line on
-  `export bundle` (Markdown + HTML) + `scrolls context`, carrying `doctor`'s whole-library
-  `custody.posture` verdict via the shared `render_posture` (whole-library, always-rendered,
-  converging with `doctor`/`status`/`maintain`/MCP by construction). 13 tests; suite **4165
-  passed**. The roadmap was then re-compacted (this section + the snapshot + the ledger) per
-  maintenance-rule §6 (the file had grown to ~637 KB).
-- **Day 2 (2026-06-26):** **The custody-posture theme — trend + convergence. Done.**
-  **H372** shipped — the cross-run posture-movement clause on the `maintain`/trend
-  `_Posture:_` line (`sound → attention`), threading a posture axis through
-  `compute_delta`/`compute_trend`, reported never a posture trigger (the `at_risk`/`conflicts`
-  trend precedent). **H373** shipped (pulled forward) — the cross-surface posture convergence
-  guard: `status` ≡ `doctor` ≡ `get_library_health` ≡ `maintain`/`run_maintenance` ≡ the bare
-  `export bundle`/`context` `_Posture:_` line + the movement axis at CLI↔MCP parity, over one
-  non-vacuous `sound → attention` fixture. Suite **4186 passed**. **The custody-posture theme
-  (H369–H373) is closed** — read → render → travel → trend → converge.
-- **Day 3 (2026-06-27 → 2026-06-28):** **Forward hardening/integration.** With the posture
-  theme closed, take the **forward-hardening guard cells** and integration depth — not a new
-  theme. **H363 shipped** (the first pivot cell, `kb` recompile-determinism — a same-process
-  two-pass whole-tree-hash no-op plus a cross-`PYTHONHASHSEED` subprocess pair), **H364
-  shipped** (the second pivot cell, MCP holdings-immutability — `_TOOLS` asserted ≡
-  `build_server`'s registration, exactly an allow-list of read + custody-safe-write tools, no
-  non-feed name carrying a capture-destroying verb; a sabotage `delete_scroll` fails both
-  halves), and **H365 shipped** (the third pivot cell, `doctor --fix` repair-convergence — a
-  second `--fix` over a repaired library pinned a total no-op on both the report axis and a
-  `{relpath → sha256}` whole-tree hash of `scrolls/`; two sabotages — silent re-render, dropped
-  `exists()` short-circuit — prove each axis bites; suite **4191 passed**). **H366 shipped**
-  (`context --budget` tier-nesting), **H367 shipped** (`status`↔`doctor` custody scalars), and
-  **H368 shipped** (`export bundle` whole-text determinism + round-trip byte-identity; suite
-  **4196 passed**), **H374 shipped** (`import bundle` re-import idempotency — a re-import of
-  the same bundle is a true no-op on rows + `scrolls/` disk bytes + the conflict ledger; two
-  sabotages bite; suite **4197 passed**), **H375 shipped** (`doctor` whole-report determinism —
-  two same-process `run_doctor` reads byte-identical + `scrolls doctor` cross-`PYTHONHASHSEED`
-  subprocess byte-identity; a by-source set-fold sabotage fails only the cross-seed guard; suite
-  **4199 passed**), and **H376 shipped** (`scrolls context` bundle determinism — two
-  same-process `context db --budget full` reads byte-identical + cross-seed subprocess
-  byte-identity over an 8-match/8-neighbour fixture; the connected-fold set sabotage fails only
-  the cross-seed guard while the same-process read and H366's nesting tests stay green; suite
-  **4201 passed**). **H377–H380 shipped** (the `maintain` trend-log determinism + no-movement
-  settle, the `export bundle --format html` whole-text determinism, the `export items` JSONL
-  whole-file determinism + round-trip, and the `import events` re-import idempotency guard;
-  suite **4207 passed**). **H381 shipped this run** (the MCP `get_library_health` whole-payload
-  determinism guard — two same-process `get_library_health()` reads byte-identical + a
-  cross-`PYTHONHASHSEED` subprocess pair byte-identical, over a local mirror of the H375
-  non-vacuous fixture; a by-source `set`-fold sabotage in the MCP path fails *only* the cross-seed
-  guard while the same-process read and the shape-contract test stay green; suite **4209 passed**).
-  **H382 shipped this run** (the MCP `get_context_bundle` whole-payload determinism guard — two
-  same-process `get_context_bundle("database", budget="full")` reads byte-identical AND byte-identical
-  to the CLI `build_context`, + a cross-`PYTHONHASHSEED` subprocess pair, over the H376 wide fixture; a
-  `set`-fold of the shared connected-neighbours section fails *only* the cross-seed guard while the
-  same-process read and the H366 nesting twin stay green; suite **4211 passed**). **H383 shipped this
-  run** (the MCP `run_maintenance` whole-payload determinism + no-movement settle guard — two in-process
-  `run_maintenance()` calls record byte-equal comparable scalars + a no-movement second delta on every
-  axis, and the whole payload is byte-identical across a `PYTHONHASHSEED` subprocess pair, over a local
-  mirror of the H377 non-vacuous fixture; two sabotages bite — a phantom `+1` in `_scalar_delta` fails
-  *only* the settle and a posture-`reasons` `set`-fold in `custody_snapshot` fails *only* the cross-seed
-  while the per-tool shape tests stay green; suite **4213 passed**). **H384 shipped** (the `export events`
-  JSONL determinism + round-trip guard; suite **4214 passed**) and **H385 shipped this run** (the `archive
-  show` JSONL determinism + restore round-trip guard — two `archive show <id>` reads byte-identical on
-  **both** the single-prior default *and* the `--all` multi-prior fold, the default ≡ the `--all` head, plus
-  a real `archive show <id>` → `import items --accept-incoming` re-adoption of the archived prior; not
-  cross-seed, `archived_snapshots` is an `ORDER BY id DESC` fold; suite **4215 passed**). **H386 shipped
-  this run** (the `import archive` whole-store re-import idempotency guard — the multi-prior, three-axis
-  [report/store/recovery] sharpening of the single-prior `test_import_archive_is_idempotent`, completing the
-  items/events/archive ingest-idempotency triptych; suite **4216 passed**). **H387 shipped** (the MCP
-  `get_link_graph` whole-payload determinism guard; suite **4218 passed**). **H388 shipped this run** — the
-  **whole MCP read-surface determinism contract**, one completeness-asserted guard over every registered
-  read tool, which *retired the per-tool MCP determinism-twin treadmill* (the queued per-tool cells
-  H389/H391/H392/H393 were subsumed and pruned; suite **4222 passed**). **H390 shipped this run** (the CLI
-  `export archive` whole-library JSONL determinism + round-trip byte-identity guard — the third leg of the
-  transport-determinism triptych after H379/H384, on the **archive** transport; a process-global per-row
-  `_seq` counter fails *only* the same-library byte-identity; suite **4223 passed**).
-  Shipped this run: **H394** (CLI read-surface determinism), **H395** (round-trip transport contract),
-  and **H396** (regeneration-safety contract, ADR 0102). Remaining, un-started (the
-  **contract-consolidation** theme, re-derived off the PRD success metrics): **H397**
-  (surface-parity contract) — next — then **H398** (completeness-honesty contract, M2), **H399**
-  (re-import idempotency contract, the settle-axis sibling of H395), **H400** (CLI↔MCP read-parity
-  contract), **H401** (bundle-format briefing-parity contract), and **H402** (reconcile-safety
-  contract, the removal-axis sibling of H396) — each a single completeness-asserted invariant that
-  auto-covers new surfaces, replacing a *family* of per-surface tests. Close a de-prioritized guard
-  (H244–H249) only if nothing better is ready. The next once-per-24h full re-derivation is **due
-  2026-06-27** (the 3-day plan boundary).
+- **Day 1 (2026-06-27): Done — H400 shipped.** The CLI↔MCP read-parity contract
+  (`tests/test_cli_mcp_parity.py`): every MCP read tool has a CLI twin whose custody-bearing payload
+  reads identically (the four inspect+aggregate twins `get_scroll`≡`show`, `get_link_graph`≡`graph`,
+  `get_works`≡`works`, `get_library_health`≡`doctor`) or is a named exemption partitioning
+  `_MCP_READ_TOOLS`; the sabotage isolates to `{get_scroll}`. Suite **4266 passed**. The 3-day/week
+  plans were then re-derived (this section) per the once-per-24h maintenance rule.
+- **Day 2 (2026-06-28): H401** — the bundle-format briefing-parity contract (Markdown ≡ `--format html`
+  briefing lines over an enumerated `_BRIEFING_LINES` registry, retiring the per-line `test_bundle.py`
+  HTML↔Markdown convergence pairs). → cap 9. Preconditions met (`build_bundle`/`build_bundle_html`, the
+  H378 HTML form). If it lands fast, pull **H402** (reconcile-safety, the removal-axis sibling of H396)
+  forward.
+- **Day 3 (2026-06-29 → 2026-06-30): H402–H403** — reconcile-safety (the tombstone/deletion corner of
+  ADR 0102, keyed to `kb._GENERATED_DIRS`) then the browse-filter drill contract (every `--fidelity`/
+  `--drift`/`--strength`/`--content-duplicate` filter selects exactly the unfiltered rows at that axis
+  value, keyed to a `_BROWSE_FILTERS` registry). → cap 6 / cap 3. Close a de-prioritized guard
+  (H244–H249) only if nothing better is ready. Next once-per-24h full re-derivation **due 2026-06-28**.
 
 ---
 
@@ -985,16 +955,18 @@ active; after it closes the forward work is hardening/integration — no new ada
   surfaces, the `_Duplicates:_` readable line + trend, the `duplicate_prunes` suggested
   guidance, the import-time notice, and the full convergence + dogfood guard set across
   read/render/compile/MCP/import — report-only, never an auto-merge.
-- **Closed this week — the custody-posture theme** (H369–H373). `doctor`'s `custody.posture`
-  distils the seven custody blocks into one whole-library verdict (custody-vision §3.1, ADR
-  0107): H369 (doctor + MCP), H370 (the `maintain` line + the `status` twin), H371 (the
-  shareable/agent briefings), H372 (the cross-run movement clause + windowed trend), and H373
-  (the cross-surface convergence guard) — read → render → travel → trend → converge, all
-  shipped. **The forward work is now pure hardening/integration** — the H363–H368
-  forward-hardening guard cells (reproducibility/safety invariants), doctor/repair depth,
-  export/import round-trip edges, MCP/search/list/filter consistency — not a new theme. The
-  once-per-24h full re-derivation was **performed 2026-06-25** (bundled with the §6
-  re-compaction); the next is **due 2026-06-26**.
+- **Closed — the custody-posture theme** (H369–H373): `doctor`'s `custody.posture` distils the
+  seven custody blocks into one whole-library verdict (custody-vision §3.1, ADR 0107) — read →
+  render → travel → trend → converge, all shipped.
+- **Active — the contract-consolidation theme.** Each cell replaces a *family* of per-surface
+  tests with one completeness-asserted invariant that auto-covers new surfaces (the H388 pattern).
+  **Shipped:** H388 (whole-MCP determinism), H394 (CLI determinism), H395 (round-trip transport),
+  H396 (regeneration-safety, ADR 0102), H397 (surface-parity), H398 (completeness-honesty, M2),
+  H399 (re-import idempotency), **H400 (CLI↔MCP read-parity)**. **Forward queue:** H401
+  (bundle-format briefing-parity), H402 (reconcile-safety, the removal-axis sibling of H396), H403
+  (browse-filter drill), H404 (compiled-page custody-honesty, M2), H405 (lossless-importer
+  conflict/adoption parity), H406 (MCP↔CLI write-act parity, the write-side sibling of H400). The
+  once-per-24h full re-derivation was **performed 2026-06-27**; the next is **due 2026-06-28**.
 - The **budget/tier convergence guard cells H244–H249** remain valid regression guards but
   are explicitly **de-prioritized** — take a capability or forward-hardening slice first.
 - A **new source adapter** is out unless it introduces a genuinely new custody *shape* (a new
