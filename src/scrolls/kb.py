@@ -43,6 +43,8 @@ from scrolls.generated import fence, has_user_content, user_regions, write_gener
 from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import (
     ScrollItem,
+    classification_phrase,
+    classification_provenance,
     content_duplicate_index,
     get_fidelity,
     list_items,
@@ -870,15 +872,54 @@ def _content_duplicate_marker(item: ScrollItem, dup_index: dict[str, list[str]])
     return " · also held as " + ", ".join(f"`{sid}`" for sid in siblings)
 
 
+def _classification_marker(item: ScrollItem) -> str:
+    """A compact `· classified by \\`<engine>\\` (<basis|model>) · confidence …` marker (H419).
+
+    The Markdown surface of the per-item classification provenance every agent-facing
+    read already carries (`show`/`list`/`search` carry the `classification` view,
+    the bundle briefing H35 and `context` excerpt tag H44 render the same phrase) —
+    rendered for a human (or agent) browsing the compiled `library/` group pages, the
+    one surface the *enrichment* picture skipped, exactly the H89/H93 precedent that
+    brought the *custody* picture (`· fidelity · drift · when`) to the same surface.
+
+    Renders the shared `items.classification_phrase` over the item's recorded
+    `classification_provenance` — the engine that classified it (`by`), the rules
+    precedence tier / LLM model (`basis`/`model`), and the derived confidence marker
+    (`level` deterministic|inferred, plus `freshness` current|stale|unknown against the
+    *live* ruleset for the rules engine) — so an agent reads not just the category but
+    *how* it was produced and *how much to trust it*. The phrase reads byte-identical
+    to every other surface (the cross-surface provenance parity the H412 contract pins).
+
+    A user-set or unclassified item carries **no** engine stamp, so
+    `classification_provenance` is None and this is the honest-absence empty string
+    (no method is claimed for a category no engine produced). Trails the custody and
+    content-duplicate clauses so the phrase — which itself carries a ` · confidence`
+    separator — runs to the end of the row and stays unambiguously one clause. Rendered
+    inside the page's `@generated` fence (ADR 0102), so a recompile refreshes it after a
+    re-classify (a moved ruleset flips `current` → `stale`) without touching a hand
+    annotation outside the block (the H89/H93 refresh-safe discipline on the
+    enrichment axis). Report-only: a derived read, never a stored or mutated field.
+    """
+    view = classification_provenance(item)
+    if view is None:
+        return ""
+    return f" · classified {classification_phrase(view)}"
+
+
 def _row_markers(item: ScrollItem, verdicts: dict[str, CustodyEvent],
                  dup_index: dict[str, list[str]]) -> str:
-    """The full trailing per-row marker string: custody picture then content-identity.
+    """The full trailing per-row marker string: custody, content-identity, classification.
 
-    Concatenates the H89/H93 `· fidelity · drift · when` custody marker with the
-    H333 `· also held as …` content-duplicate clause (empty when the item holds no
-    byte-identical sibling), so the two derived per-item custody axes ride one row.
+    Concatenates the H89/H93 `· fidelity · drift · when` custody marker, the H333
+    `· also held as …` content-duplicate clause (empty when the item holds no
+    byte-identical sibling), and the H419 `· classified by …` classification-provenance
+    clause (empty on honest absence), so the three derived per-item axes ride one row.
+    The classification clause trails the others because its phrase carries a nested
+    ` · confidence` separator and so must run to the end of the row.
     """
-    return _custody_marker(item, verdicts) + _content_duplicate_marker(item, dup_index)
+    return (_custody_marker(item, verdicts)
+            + _content_duplicate_marker(item, dup_index)
+            + _classification_marker(item))
 
 
 def _count(n: int) -> str:

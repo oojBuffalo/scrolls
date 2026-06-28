@@ -451,6 +451,79 @@ def test_kb_custody_markers_are_refresh_safe(scrolls_home, capsys):
     assert "_My note._" in refreshed  # annotation outside the fence preserved
 
 
+def test_kb_classification_marker_renders_provenance_on_group_pages(scrolls_home, capsys):
+    """A compiled group-page row carries the item's classification provenance —
+    `· classified by \\`<engine>\\` (<basis>) · confidence <level>[, <freshness>]`
+    (roadmap H419, the H89/H93 custody-marker precedent on the *enrichment* axis).
+
+    The same method+confidence string `show`/`list`/the bundle briefing (H35) and
+    the `context` excerpt tag (H44) already render — `items.classification_phrase` —
+    so an agent (or human) browsing a concept/source/category/tag page reads *how*
+    each scroll's category was produced and *how much to trust it*, the picture the
+    one human-browse surface skipped. Lives inside the `@generated` fence (ADR 0102)
+    and trails the existing custody/content-duplicate clauses; omitted on honest
+    absence (a user-set or unclassified item carries no engine stamp, so no clause).
+    """
+    from scrolls.classify import ENGINE, RULESET_FINGERPRINT
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, make_rendered(
+        "web:c", "web", "Classified post", category="news", concepts=("Topic",),
+        provenance={"classified_by": ENGINE, "classified_basis": "source-domain",
+                    "classified_ruleset": RULESET_FINGERPRINT}))
+    insert_item(db, make_rendered(
+        "web:u", "web", "Unclassified post", concepts=("Topic",)))
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page = (scrolls_home / "library" / "concepts" / "topic.md").read_text(encoding="utf-8")
+    phrase = f"· classified by `{ENGINE}` (source-domain) · confidence deterministic, current"
+    assert phrase in page
+    assert phrase in generated_body(page)  # rendered inside the @generated fence
+    # the clause trails the custody marker on its own row (one row, both axes)
+    classified_row = next(r for r in page.splitlines() if "Classified post](" in r)
+    assert classified_row.index("· classified ") > classified_row.index("· never checked")
+    # honest absence: the unclassified row carries no classification clause
+    unclassified_row = next(r for r in page.splitlines() if "Unclassified post](" in r)
+    assert "· classified " not in unclassified_row
+
+
+def test_kb_classification_marker_is_refresh_safe(scrolls_home, capsys):
+    """A re-classify refreshes the marker on recompile; an annotation survives.
+
+    The H396 regeneration-safety tie on the new H419 marker: the classification
+    phrase is part of the fenced body, so a re-classify (here: the ruleset moving,
+    flipping `current` → `stale`) refreshes it on the next `scrolls kb`, while a
+    `@user` note appended outside the fence is preserved byte-for-byte (ADR 0102,
+    the H89/H93 refresh-safe discipline on the enrichment axis)."""
+    from scrolls.classify import ENGINE, RULESET_FINGERPRINT
+    main(["init"])
+    db = get_paths().db_path
+    item = make_rendered(
+        "web:c", "web", "Classified post", category="news", concepts=("Topic",),
+        provenance={"classified_by": ENGINE, "classified_basis": "source-domain",
+                    "classified_ruleset": RULESET_FINGERPRINT})
+    insert_item(db, item)
+    capsys.readouterr()
+    run_kb(capsys)
+
+    page_path = scrolls_home / "library" / "concepts" / "topic.md"
+    page = page_path.read_text(encoding="utf-8")
+    assert "· confidence deterministic, current" in page
+    page_path.write_text(page + "\n\n_My note._\n", encoding="utf-8")
+
+    # the ruleset moves out from under the stored classification, then recompile
+    from dataclasses import replace
+    update_item(db, replace(item, provenance={
+        "classified_by": ENGINE, "classified_basis": "source-domain",
+        "classified_ruleset": "oldfingerprint"}))
+    run_kb(capsys)
+    refreshed = page_path.read_text(encoding="utf-8")
+    assert "· confidence deterministic, stale" in refreshed  # refreshed in the fence
+    assert "· confidence deterministic, current" not in refreshed
+    assert "_My note._" in refreshed  # annotation outside the fence preserved
+
+
 def test_kb_list_page_marker_carries_last_checked_timestamp(scrolls_home, capsys):
     """The marker's time axis (roadmap H93): `· checked <ts>` for a row with a
     ledger verdict, `· never checked` for one with none (honest absence)."""

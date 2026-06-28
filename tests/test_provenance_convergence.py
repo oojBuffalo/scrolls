@@ -28,7 +28,7 @@ so convergence holds *by construction*; the contract's job is to catch a
 **surface** that re-derives or re-renders the marker differently — a row recomputing
 freshness, an aggregate that misbuckets `user-set` vs `unclassified`.
 
-Two surface kinds, each held to that one projection:
+Three surface kinds, each held to that one projection:
 
 - **per-item** — `search` hits (H26), `list`/`show` rows, and the MCP
   `search_scrolls`/`list_scrolls`/`get_scroll` twins each carry the whole
@@ -38,17 +38,27 @@ Two surface kinds, each held to that one projection:
   that produced each category (`rules-v1`/`llm-v1`, plus the honest `user-set`/
   `unclassified` buckets the per-item `None` covers). The reading is `{bucket:
   count}`, compared to the tally of the canonical bucket projection.
+- **rendered** (added by H419) — the compiled `library/` group pages served by the
+  MCP `get_concept_page`/`get_tag_page` carry, per member row, the `kb._classification_marker`
+  clause `· classified <phrase>` (the same `classification_phrase` the per-item
+  surfaces' view renders, omitted on honest absence). The reading is `{id:
+  phrase-or-None}` parsed off the page, compared to `classification_phrase(view)` of
+  the canonical projection — so the human-browse surface reads the same provenance
+  an agent's JSON read does.
 
-**A roadmap correction (the H404/H407 precedent).** The roadmap's H412 line names
-the compiled `library/` group pages "(H89-family marker)" as a provenance surface.
-The live H89/H93 marker (`kb._custody_marker`) renders `· fidelity · drift · when`
-— the *custody* picture, not a classification-method marker; the group pages carry
-no per-item enrichment provenance. So `get_concept_page`/`get_tag_page` (and their
-CLI-compiled origin) are classified `_NO_PROVENANCE_AXIS` here with a named reason,
-exactly as H407 reclassified `graph`/`get_link_graph` after finding the roadmap had
-wrongly called them rank-bearing. (Rendering the provenance marker on the human-
-browse group pages — the H89 precedent on the enrichment axis — is a separate
-*production* slice, deferred; this consolidation cell stays test-only.)
+**A roadmap correction, then its resolution (H412 → H419).** The roadmap's H412
+line named the compiled `library/` group pages "(H89-family marker)" as a provenance
+surface, but at H412 the live H89/H93 marker (`kb._custody_marker`) rendered only
+`· fidelity · drift · when` — the *custody* picture, not a classification-method
+marker — so H412 classified `get_concept_page`/`get_tag_page` `_NO_PROVENANCE_AXIS`
+with a named reason and *deferred* the production slice (exactly as H407 reclassified
+`graph`/`get_link_graph` after finding the roadmap had wrongly called them
+rank-bearing). **H419 shipped that deferred slice**: `kb._classification_marker`
+now renders `· classified <phrase>` on every group-page row (the H89/H93 precedent
+on the *enrichment* axis), so this contract **promotes** `get_concept_page`/
+`get_tag_page` out of the exemption set into `_PROVENANCE_SURFACES` as the third
+(`rendered`) surface kind — the group-page leg the H412 roadmap line originally
+wanted, now genuinely pinned.
 
 Two faces, the H388/H394/H397/H407 shape:
 
@@ -74,10 +84,13 @@ from collections import Counter
 import pytest
 
 import scrolls.cli as cli
+import scrolls.kb as kb
 import scrolls.mcp_server as mcp_server
 from scrolls.classify import RULESET_FINGERPRINT
+from scrolls.generated import generated_body
 from scrolls.items import (
     ScrollItem,
+    classification_phrase,
     classification_provenance,
     insert_item,
     list_items,
@@ -112,6 +125,14 @@ def _item(item_id, title, **overrides):
         saved_at="2026-06-20T00:00:00+00:00",
         title=title,
         stage="fetched",
+        # H419: a shared concept + tag so every fixture item co-occurs on one
+        # compiled `concepts/methods.md` and one `tags/demo.md` page (the `rendered`
+        # surface scope), and a `markdown_path` so `compile_kb` renders the item at
+        # all (it skips items with nothing to link). None affect the per-item view
+        # or the `facets method` tally the other two surface kinds read.
+        concepts=("Methods",),
+        tags=("demo",),
+        markdown_path=f"scrolls/{item_id.replace(':', '/')}.md",
     )
     base.update(overrides)
     return ScrollItem(**base)
@@ -164,6 +185,16 @@ _FIXTURE_IDS = (
     "web:rules-current", "web:rules-stale", "web:llm", "web:userset",
     "web:unclassified",
 )
+
+# id → title, so the `rendered` surface (which parses bullets off a compiled page)
+# can map each row back to its item by the `[<title>]` link text.
+_FIXTURE_TITLES = {
+    "web:rules-current": "Topic rules current",
+    "web:rules-stale": "Topic rules stale",
+    "web:llm": "Topic llm note",
+    "web:userset": "Topic user set",
+    "web:unclassified": "Topic unclassified",
+}
 
 
 def _canonical_view(db):
@@ -250,6 +281,44 @@ def _read_facets_method(capsys):
     return {entry["value"]: entry["count"] for entry in entries}
 
 
+def _phrase_or_none(view):
+    """`classification_phrase(view)` (the rendered method+confidence string) or None
+    for the honest absence — the canonical the `rendered` surfaces are held to."""
+    return classification_phrase(view) if view is not None else None
+
+
+def _phrases_from_page(text):
+    """`{id: phrase-or-None}` parsed off a compiled group page's bullets.
+
+    The `rendered` surface reading: each member row trails `· classified <phrase>`
+    (the `kb._classification_marker`), or carries no such clause on honest absence.
+    The phrase runs to the end of the row (it carries a nested ` · confidence`
+    separator, so it is the unambiguous tail). Rows are mapped back to ids by the
+    `[<title>]` link text (`_FIXTURE_TITLES`); read from inside the `@generated`
+    fence so a stray outside-fence annotation can never be miscounted as a row."""
+    title_to_id = {title: item_id for item_id, title in _FIXTURE_TITLES.items()}
+    body = generated_body(text) or text
+    out = {}
+    for line in body.splitlines():
+        if not line.startswith("- ["):
+            continue
+        title = line[len("- ["):].split("](", 1)[0]
+        item_id = title_to_id.get(title)
+        if item_id is None:
+            continue
+        marker = " · classified "
+        out[item_id] = line.split(marker, 1)[1] if marker in line else None
+    return out
+
+
+def _read_get_concept_page(capsys):
+    return _phrases_from_page(mcp_server.get_concept_page("Methods"))
+
+
+def _read_get_tag_page(capsys):
+    return _phrases_from_page(mcp_server.get_tag_page("demo"))
+
+
 # --- the (surface → kind, reader) registry — the completeness keystone --------
 
 # Every surface that carries a classification provenance marker, mapped to its
@@ -263,6 +332,9 @@ _PROVENANCE_SURFACES = {
     "list_scrolls": ("per_item", _read_list_scrolls),
     "get_scroll": ("per_item", _read_get_scroll),
     "facets": ("aggregate", _read_facets_method),
+    # H419: the compiled group pages now carry the per-row classification marker
+    "get_concept_page": ("rendered", _read_get_concept_page),
+    "get_tag_page": ("rendered", _read_get_tag_page),
 }
 
 # The CLI reads that carry a classification marker, vs the rest (each named).
@@ -284,7 +356,12 @@ _CLI_NO_PROVENANCE_READS = {
     "archive show": "archive recovery read, no classification marker",
 }
 
-_MCP_PROVENANCE_TOOLS = {"search_scrolls", "list_scrolls", "get_scroll"}
+# H419 promoted `get_concept_page`/`get_tag_page` here: the compiled group pages now
+# render the per-row `· classified <phrase>` marker (the `rendered` surface kind).
+_MCP_PROVENANCE_TOOLS = {
+    "search_scrolls", "list_scrolls", "get_scroll",
+    "get_concept_page", "get_tag_page",
+}
 _MCP_NO_PROVENANCE_TOOLS = {
     "list_facets": "aggregate facets twin; the CLI `facets method` aggregate carries "
                    "the provenance leg (the H397 facets-twin precedent)",
@@ -294,13 +371,6 @@ _MCP_NO_PROVENANCE_TOOLS = {
     "get_works": "consolidation surface twin of `works`",
     "get_context_bundle": "model-facing bundle twin of `context`; provenance rides "
                           "per-excerpt tags (H44)",
-    "get_concept_page": "compiled library group-page render; carries the H89/H93 "
-                        "custody marker (· fidelity · drift · when), NOT a "
-                        "classification-method marker — the roadmap's '(H89-family "
-                        "marker)' conflated custody with provenance (the H404/H407 "
-                        "roadmap-correction precedent)",
-    "get_tag_page": "compiled library group-page render; H89/H93 custody marker only, "
-                    "no classification marker (the H404/H407 roadmap correction)",
     "list_sources": "source roster, no per-item classification marker",
     "list_archived": "archive recovery read",
     "get_archived": "archive recovery read",
@@ -324,16 +394,24 @@ def _provenance_failures(db, capsys):
     failures = set()
     for key, (kind, read) in _PROVENANCE_SURFACES.items():
         reading = read(capsys)
+        if kind == "aggregate":
+            if reading != canonical_tally:
+                failures.add(key)
+            continue
+        # per_item (the JSON `classification` view) and rendered (the phrase parsed
+        # off a compiled page) both compare a whole-library `{id: …}` reading to the
+        # canonical projection — per_item to the view on the wire, rendered to
+        # `classification_phrase(view)`. The fixture puts all five ids in one
+        # concept/tag, so each surface must enumerate every held item (a dropped id
+        # is a desync, not silent convergence).
         if kind == "per_item":
             expected = {item_id: _on_the_wire(canonical_view[item_id]) for item_id in reading}
             got = {item_id: _on_the_wire(view) for item_id, view in reading.items()}
-            # the surface must enumerate every held item (a dropped id is a desync,
-            # not silent convergence) and read each one's view as the canonical
-            if set(reading) != set(canonical_view) or got != expected:
-                failures.add(key)
-        else:  # aggregate
-            if reading != canonical_tally:
-                failures.add(key)
+        else:  # rendered
+            expected = {item_id: _phrase_or_none(canonical_view[item_id]) for item_id in reading}
+            got = reading
+        if set(reading) != set(canonical_view) or got != expected:
+            failures.add(key)
     return failures
 
 
@@ -361,17 +439,21 @@ def test_provenance_surfaces_partition_the_live_read_registries():
 
 
 def test_every_provenance_surface_declares_a_known_kind():
-    """Each provenance surface is a `per_item` view or the one `aggregate` tally,
-    and the per-item view is exercised on **both** a CLI and an MCP surface — so the
-    convergence the matrix pins is genuinely cross-transport, not one-sided."""
+    """Each provenance surface is a `per_item` view, the one `aggregate` tally, or a
+    `rendered` group page (H419), and the per-item view is exercised on **both** a
+    CLI and an MCP surface — so the convergence the matrix pins is genuinely
+    cross-transport, not one-sided."""
     for key, (kind, _read) in _PROVENANCE_SURFACES.items():
-        assert kind in ("per_item", "aggregate"), key
+        assert kind in ("per_item", "aggregate", "rendered"), key
     per_item = {k for k, (kind, _r) in _PROVENANCE_SURFACES.items() if kind == "per_item"}
     aggregate = {k for k, (kind, _r) in _PROVENANCE_SURFACES.items() if kind == "aggregate"}
+    rendered = {k for k, (kind, _r) in _PROVENANCE_SURFACES.items() if kind == "rendered"}
     # per-item provenance is pinned on both transports (CLI + MCP), browse + inspect
     assert {"search", "list", "show"} <= per_item  # CLI: browse, browse, inspect
     assert {"search_scrolls", "list_scrolls", "get_scroll"} <= per_item  # MCP twins
     assert aggregate == {"facets"}
+    # H419: the two compiled group-page renders (concept + tag), the new surface kind
+    assert rendered == {"get_concept_page", "get_tag_page"}
 
 
 # --- the matrix guard --------------------------------------------------------
@@ -385,6 +467,7 @@ def test_every_surface_reads_the_canonical_provenance(scrolls_home, capsys):
     cli.main(["init"])
     db = get_paths().db_path
     _seed_provenance_surface_mix(db)
+    assert cli.main(["kb"]) == 0  # compile the group pages the `rendered` legs read
     capsys.readouterr()
 
     # sanity: the fixture spans the whole method axis and the confidence sub-axes
@@ -424,6 +507,7 @@ def test_one_surface_re_deriving_freshness_fails_only_that_surface(
     cli.main(["init"])
     db = get_paths().db_path
     _seed_provenance_surface_mix(db)
+    assert cli.main(["kb"]) == 0  # compile the group pages the `rendered` legs read
     capsys.readouterr()
 
     # baseline: every surface converges
@@ -443,3 +527,42 @@ def test_one_surface_re_deriving_freshness_fails_only_that_surface(
     monkeypatch.setattr(cli, "item_summary", _wrong)
 
     assert _provenance_failures(db, capsys) == {"list"}
+
+
+def test_page_marker_rendering_wrong_freshness_fails_only_the_page_legs(
+    scrolls_home, capsys, monkeypatch
+):
+    """The H419 page-leg sabotage: a marker that renders the wrong freshness on the
+    compiled page desyncs *only* the `rendered` legs, not the JSON per-item surfaces.
+
+    `kb.classification_provenance` is the binding `kb._classification_marker` reads to
+    render the group-page clause — a *distinct* module attribute from
+    `items.classification_provenance` the canonical and every per-item JSON surface
+    (`list`/`show`/`search` + MCP twins) read. So forcing the stale-ruleset item's
+    page marker to claim `current` (a human browsing the concept/tag page would read
+    "this category still holds" when the ruleset has moved) desyncs both rendered legs
+    — they share `_row_markers` — while the JSON surfaces and the `facets` tally stay
+    green. The cross-surface regression the promoted `rendered` leg catches that no
+    page's own golden test sees. Mirrors the `list` sabotage on the page axis."""
+    cli.main(["init"])
+    db = get_paths().db_path
+    _seed_provenance_surface_mix(db)
+    assert cli.main(["kb"]) == 0
+    capsys.readouterr()
+
+    # baseline: every surface — JSON and rendered — converges
+    assert _provenance_failures(db, capsys) == set()
+
+    real = kb.classification_provenance
+
+    def _wrong(item):
+        view = real(item)
+        if item.id == "web:rules-stale" and view is not None:
+            view = {**view, "confidence": {**view["confidence"], "freshness": "current"}}
+        return view
+
+    monkeypatch.setattr(kb, "classification_provenance", _wrong)
+    assert cli.main(["kb"]) == 0  # recompile so the pages render the sabotaged marker
+    capsys.readouterr()
+
+    assert _provenance_failures(db, capsys) == {"get_concept_page", "get_tag_page"}
