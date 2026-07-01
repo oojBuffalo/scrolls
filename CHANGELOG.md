@@ -12,3 +12,4 @@ Each autonomous run or agent slice should append one entry roughly the size of a
 
 - 2026-06-18 — docs: add AGENTS.md and automation changelog reporting convention.
 - 2026-06-18 — docs: grill and expand AGENTS.md with custody-first agent workflow.
+- 2026-07-01 — test: add H420 truncation/scope-echo honesty contract and fix uv toolchain availability.
