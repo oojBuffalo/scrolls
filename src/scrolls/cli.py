@@ -2332,12 +2332,16 @@ def _merge_items(
     H274): a divergence is no longer just a transient warning the next import
     re-detects from scratch — it joins the append-only ledger as a typed ``conflict``
     event (held vs incoming `content_hash`, stamped at import time), queryable on the
-    per-item `scrolls history` timeline. It is a *distinct* provenance-of-divergence
-    axis, not a verify verdict, so it never enters the drift posture (`latest_events`
-    reads only the verify verdicts) — the M2 honesty that a peer disagreement is not
-    evidence the live source moved. A clean import records nothing (`record_events`
-    no-ops on the empty list); this is the live, writing path, so the read-only
-    `_preview_merge_items` deliberately does **not** record.
+    per-item `scrolls history` timeline. Re-presenting the **same still-open**
+    conflict is a settled no-op on the ledger (the report still surfaces the conflict,
+    but no duplicate event is appended); a different incoming hash, a changed held
+    hash, or a conflict re-imported after `reconcile` records a fresh event. It is a
+    *distinct* provenance-of-divergence axis, not a verify verdict, so it never enters
+    the drift posture (`latest_events` reads only the verify verdicts) — the M2
+    honesty that a peer disagreement is not evidence the live source moved. A clean
+    import records nothing (`record_events` no-ops on the empty list); this is the
+    live, writing path, so the read-only `_preview_merge_items` deliberately does
+    **not** record.
 
     With ``accept_incoming`` (roadmap H278, ADR 0106), a divergence is *adopted*
     instead of merely surfaced: the held copy is replaced by the incoming one via
@@ -2353,6 +2357,7 @@ def _merge_items(
     adopted_ids: set[str] = set()
     imported_ids: set[str] = set()
     events: list[CustodyEvent] = []
+    pending_conflicts: set[tuple[str, str | None, str | None]] = set()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for item in items:
         outcome = merge_item(db_path, item)
@@ -2385,16 +2390,31 @@ def _merge_items(
                 # incoming capture diverged from — record both hashes so `history`
                 # answers "what disagreed, and when". `held` is non-None barring a
                 # concurrent delete (merge_item just read it); the `.content_hash`
-                # falls back to None defensively rather than crash the import.
+                # falls back to None defensively rather than crash the import. If the
+                # exact same conflict is already the item's latest open conflict, this
+                # import has reached the settled state: surface it in the report again,
+                # but do not append a duplicate ledger event with a fresh timestamp.
                 held = get_item(db_path, item.id)
-                events.append(
-                    conflict_event(
-                        item.id,
-                        held_hash=held.content_hash if held is not None else None,
-                        incoming_hash=item.content_hash,
-                        now=now,
+                held_hash = held.content_hash if held is not None else None
+                conflict_key = (item.id, held_hash, item.content_hash)
+                open_conflict = current_conflict(db_path, held) if held is not None else None
+                if (
+                    conflict_key not in pending_conflicts
+                    and not (
+                        open_conflict is not None
+                        and open_conflict.prior_hash == held_hash
+                        and open_conflict.observed_hash == item.content_hash
                     )
-                )
+                ):
+                    events.append(
+                        conflict_event(
+                            item.id,
+                            held_hash=held_hash,
+                            incoming_hash=item.content_hash,
+                            now=now,
+                        )
+                    )
+                    pending_conflicts.add(conflict_key)
     record_events(db_path, events)
     return counts, sorted(conflict_ids), sorted(adopted_ids), sorted(imported_ids)
 
