@@ -167,10 +167,10 @@ def build_context(
     straight to `search_items`/`count_matches`, so they AND with the facets and
     — crucially — scope the candidate set **before** the `limit` cap (the
     `list`-sieve shape, like `search`/`related`): the bundle keeps the top-k *at
-    that custody value*, not the top-k then sieved. Everything downstream — the
-    work-collapse, the budget tiers' depth, the `_Custody:_`/`_Fidelity:_`
-    headline, and the per-excerpt drift tags — therefore reads the kept set, so
-    the rendered headline describes exactly what the bundle contains. An unknown
+    that custody value*, not the top-k then sieved. The custody/audit briefing
+    lines fold that uncollapsed kept set (`scope_items`), while Best Matches and
+    Excerpts may collapse same-work display reps, so no held row is hidden from
+    the custody picture. An unknown
     tier/posture raises ValueError (`search_items`, a closed vocabulary; the CLI
     also rejects it via argparse `choices`).
 
@@ -217,9 +217,9 @@ def build_context(
     ValueError (the CLI also rejects it via argparse `choices`).
 
     From `connected` up the bundle also carries a one-line `_Custody:_` headline
-    (roadmap H47) — fidelity-tier and drift-posture counts over the in-bundle
-    scrolls, the same `custody_headline` the shareable bundle and `scrolls
-    status` render — so an agent sees how much of what it is about to read is
+    (roadmap H47) — fidelity-tier and drift-posture counts over the uncollapsed
+    matched scrolls under the cap, the same `custody_headline` the shareable bundle
+    and `scrolls status` render — so an agent sees how much of the matched scope is
     full-fidelity and how much has drifted. A *multi-source* bundle follows it
     with a `_By source:_` breakdown (roadmap H149) naming which source in the
     bundle is weakest, through the same `render_custody_by_source` the `export
@@ -250,15 +250,11 @@ def build_context(
     )
     kept, folded = _collapse_by_work(hits)
     # Fetch every matched row once (kept + folded). `items` (the bundle's kept,
-    # collapsed scrolls) drive the headline/excerpts; `scope_items` (the whole
-    # uncollapsed matched set) drive the work-level at-risk signal — a work's
-    # representations are folded into one canonical in `items`, so clustering the
-    # collapsed set would never see a multi-representation work, and a work's
-    # at-risk verdict depends on *all* its representations (a folded full+verified
-    # sibling makes the work safely held even when the kept canonical is a bare
-    # reference). The lean-scope decision (H264): the at-risk line describes the
-    # works the bundle's *matched set* touches, the same raw-match scope Coverage
-    # counts.
+    # collapsed scrolls) drive the displayed Best Matches / Excerpts; `scope_items`
+    # (the whole uncollapsed matched set under the cap) drives the custody/audit
+    # briefing lines. A work's representations are folded into one canonical in
+    # `items`, so a custody line over the collapsed set could hide a held sibling;
+    # the audit picture belongs to the raw matched scope the Coverage line counts.
     fetched = {hit.id: get_item(db_path, hit.id) for hit in hits}
     pairs = [(hit, fetched[hit.id]) for hit in kept if fetched[hit.id]]
     items = [item for _, item in pairs]
@@ -324,15 +320,19 @@ def build_context(
         latest_events(db_path) if _tier_at_least(budget, "connected") else {}
     )
 
-    # The scope custody headline (roadmap H47): how much of what the agent is
-    # about to read is full-fidelity, and how much has drifted — the same
-    # `custody_headline` the shareable bundle briefing (H45) and `scrolls status`
-    # (H38) render, over the in-bundle scrolls (the kept representations the
-    # Coverage line counts). Gated to `connected`/`full` like the depth-bearing
-    # sections (H44): the leanest `index` tier stays a bare catalog.
+    # The scope custody headline (roadmap H47): how much of the matched context
+    # scope is full-fidelity, and how much has drifted — the same `custody_headline`
+    # the shareable bundle briefing (H45) and `scrolls status` (H38) render. Fold it
+    # over the uncollapsed raw match scope (`scope_items`), not the collapsed display
+    # representatives (`items`), so same-work folding never hides a held source from
+    # the custody/audit picture. The Best-Matches catalog may spend one line on a
+    # work, but the `_Custody:_`/audit lines describe every matched scroll under the
+    # cap — the same basis the Coverage denominator names. Gated to `connected`/`full`
+    # like the depth-bearing sections (H44): the leanest `index` tier stays a bare
+    # catalog.
     if _tier_at_least(budget, "connected"):
-        lines += [custody_headline(items, verdicts), ""]
-        by_source = custody_counts_by_source(items, verdicts)
+        lines += [custody_headline(scope_items, verdicts), ""]
+        by_source = custody_counts_by_source(scope_items, verdicts)
         # the readable weakest-source pointer (roadmap H159): one `_Attention:_`
         # line naming the single source with the most actionable loss and the
         # exact recheck command, so an agent reads "this one source needs
@@ -367,12 +367,12 @@ def build_context(
         # `custody.conflicts` reads, so the count converges with the JSON block for
         # the same scope by construction. Gated to `connected`+ with the headline
         # (the `index` tier reads no ledger, so it makes no conflict claim); folded
-        # over the per-*item* `items` (the collapsed kept set the headline/`_Attention:_`
-        # use — a conflict is a per-item custody fact, not a work-consolidation one);
-        # names no command (the `reconcile` act is H276, the at-risk orphan-command
-        # discipline); honest no-op when no held item in scope carries an unresolved
-        # conflict ([] lines).
-        lines += render_custody_conflicts(items, latest_conflict_events(db_path))
+        # over `scope_items` (the uncollapsed matched set), because a conflict is a
+        # per-held-item custody fact and a folded same-work representation carrying
+        # one must still appear in the briefing/audit count. Names no command (the
+        # `reconcile` act is H276, the at-risk orphan-command discipline); honest
+        # no-op when no held item in scope carries an unresolved conflict ([] lines).
+        lines += render_custody_conflicts(scope_items, latest_conflict_events(db_path))
         # the readable archive-integrity pointer (roadmap H320): one `_Archive:_`
         # line when an in-scope item's archived prior is corrupt — its advertised
         # `prior_hash` no longer equals its snapshot's `content_hash`, a
@@ -386,12 +386,11 @@ def build_context(
         # line, the bundle line, the maintenance summary, and `doctor`'s
         # `custody.archive` JSON audit converge by construction. Gated to `connected`+
         # with the headline (the leanest `index` tier reads no recovery store, so it
-        # makes no archive claim); folded over the per-*item* `items` (the collapsed
-        # kept set the headline/`_Conflicts:_` use — archive integrity is a per-item
-        # custody fact, not a work-consolidation one); names no command (no
-        # whole-library archive-repair act exists — the `suggested`-block orphan
-        # discipline); honest no-op on a clean/empty scope ([] lines).
-        lines += render_archive_integrity(db_path, [item.id for item in items])
+        # makes no archive claim); folded over `scope_items` because archive integrity
+        # is a per-held-item recovery fact, not a work-consolidation one. Names no
+        # command (no whole-library archive-repair act exists — the suggested-block
+        # orphan discipline); honest no-op on a clean/empty scope ([] lines).
+        lines += render_archive_integrity(db_path, [item.id for item in scope_items])
         # the readable content-duplicate pointer (roadmap H331): one `_Duplicates:_`
         # line when ≥2 in-scope items hold byte-identical content under different ids
         # (the same bytes saved from two URLs, a mirror, a cross-post, or one work
@@ -404,7 +403,7 @@ def build_context(
         # summary, and `doctor`'s `custody.content_duplicates` JSON audit converge by
         # construction. Gated to `connected`+ with the headline (the leanest `index`
         # tier makes no custody claim). Folded over the **uncollapsed** `scope_items`
-        # (not the collapsed `items` the per-item `_Conflicts:_`/`_Archive:_` lines use):
+        # (not the collapsed display `items`):
         # content identity is *relational* across distinct ids, and a work-collapse folds
         # two byte-identical representations of one work (the H329 preprint-mirrored-into-
         # DOI case) into one canonical id — hiding the group — so this patterns with the
@@ -437,9 +436,9 @@ def build_context(
         # .by_source`/`summaries.by_source` fold, so the named sources converge with
         # the audit maps by construction. Gated to `connected`+ like the headline;
         # honest no-op when no source carries refresh debt ([] lines).
-        enrichment_by_source = stale_classification_counts_by_source(items)
+        enrichment_by_source = stale_classification_counts_by_source(scope_items)
         summary_by_source = stale_summary_counts_by_source(
-            items, load_concept_summaries(db_path)
+            scope_items, load_concept_summaries(db_path)
         )
         lines += render_custody_refresh(enrichment_by_source, summary_by_source)
         # the per-source custody breakdown under the scope headline (roadmap
@@ -462,8 +461,8 @@ def build_context(
         # tier. The counts fold the same `custody_counts` the `connected`+ headline
         # does (with `{}` verdicts — no ledger read), so the tier counts converge
         # with the headline's `fidelity` section by construction (H213).
-        tiers = custody_counts(items, {})["tiers"]
-        lines += [render_fidelity_holdings(tiers, len(items)), ""]
+        tiers = custody_counts(scope_items, {})["tiers"]
+        lines += [render_fidelity_holdings(tiers, len(scope_items)), ""]
 
     lines += ["## Best Matches", ""]
     for rank, (hit, item) in enumerate(pairs, start=1):
