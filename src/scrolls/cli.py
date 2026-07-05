@@ -109,7 +109,6 @@ from scrolls.items import (
     import_archive,
     insert_item,
     item_summary,
-    latest_archived,
     library_counts,
     list_archived,
     list_items,
@@ -1237,6 +1236,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit every archived prior capture for the id (newest first) as a JSONL "
         "stream, not just the latest — the full recoverable history",
     )
+    archive_show_parser.add_argument(
+        "--hash",
+        dest="prior_hash",
+        default=None,
+        metavar="H",
+        help="Emit the archived prior with this content hash (the `archive list` "
+        "prior_hash) — a specific version, not just the latest. Conflicts with --all",
+    )
+    archive_show_parser.add_argument(
+        "--at",
+        dest="at",
+        default=None,
+        metavar="ISO",
+        help="Emit the newest prior archived at or before this ISO-8601 timestamp "
+        "(date-only ok → that day's UTC midnight) — the version held as of a point "
+        "in time. Conflicts with --all; at most one of --hash/--at",
+    )
     archive_restore_parser = archive_sub.add_parser(
         "restore",
         help="Restore a specific archived prior in place (accept-incoming) — "
@@ -1648,7 +1664,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_reconcile(args.id, args.keep_held, args.dry_run)
     if args.command == "archive":
         if args.archive_command == "show":
-            return _cmd_archive_show(args.id, args.all_history)
+            return _cmd_archive_show(
+                args.id,
+                args.all_history,
+                prior_hash=args.prior_hash,
+                at=args.at,
+            )
         if args.archive_command == "restore":
             return _cmd_archive_restore(
                 args.id,
@@ -4617,7 +4638,92 @@ def _cmd_archive_list(ref: str | None = None) -> int:
     return 0
 
 
-def _cmd_archive_show(ref: str, all_history: bool = False) -> int:
+def _select_archive_prior(
+    ref: str,
+    *,
+    command: str,
+    prior_hash: str | None = None,
+    at: str | None = None,
+) -> tuple[dict | None, int]:
+    """Resolve an archive version selector for the CLI recovery surfaces.
+
+    Shared by `archive show`, `archive diff`, and `archive restore` (H423), so the
+    re-importable artifact, the decide-before-you-restore read, and the restore
+    preview/write cannot drift on selector semantics. The only selector primitive is
+    `select_archived_snapshot`: ``--hash`` names a prior hash, ``--at`` is inclusive
+    after `parse_since` normalization, and no selector means latest.
+    """
+    paths = get_paths()
+    try:
+        item_id = resolve_item_id(ref)
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return None, 2
+    if prior_hash is not None and at is not None:
+        print(
+            json.dumps({
+                "error": f"{command} takes at most one version selector: "
+                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
+            }),
+            file=sys.stderr,
+        )
+        return None, 2
+    boundary: str | None = None
+    if at is not None:
+        try:
+            boundary = parse_since(at)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return None, 2
+        if boundary is None:
+            print(
+                json.dumps({"error": "--at needs an ISO-8601 timestamp boundary"}),
+                file=sys.stderr,
+            )
+            return None, 2
+    selector: dict = (
+        {"hash": prior_hash} if prior_hash is not None
+        else {"at": boundary} if boundary is not None
+        else {"latest": True}
+    )
+    selected = (
+        select_archived_snapshot(
+            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
+        )
+        if paths.db_path.exists()
+        else None
+    )
+    if selected is None:
+        suffix = f" (from {ref})" if item_id != ref else ""
+        scoped = (
+            f" matching {json.dumps(selector)}"
+            if prior_hash is not None or boundary is not None
+            else ""
+        )
+        print(
+            json.dumps(
+                {"error": f"no archived prior capture for {item_id}{suffix}{scoped}"}
+            ),
+            file=sys.stderr,
+        )
+        return None, 1
+    entry, prior = selected
+    return {
+        "paths": paths,
+        "item_id": item_id,
+        "selector": selector,
+        "entry": entry,
+        "prior": prior,
+    }, 0
+
+
+def _cmd_archive_show(
+    ref: str,
+    all_history: bool = False,
+    *,
+    prior_hash: str | None = None,
+    at: str | None = None,
+) -> int:
     """Emit an item's archived prior capture(s) as re-importable JSONL line(s) (H278/H285).
 
     The recovery read (ADR 0106): the superseded copy/copies of the item, serialized
@@ -4627,12 +4733,33 @@ def _cmd_archive_show(ref: str, all_history: bool = False) -> int:
     it, archiving the current copy in turn). The line(s) *are* the artifact, like
     `export items`, so they print raw to stdout.
 
-    Default emits only the latest archived prior (one line). With ``--all`` (H285) it
-    emits **every** archived prior for the id, newest first — the full recoverable
-    history of a multi-supersession item, not just its newest copy. Either way exit 1
-    when the id has no archived prior (never superseded) or is unknown — the
-    could-not-recover signal.
+    Default emits only the latest archived prior (one line). ``--hash`` / ``--at``
+    select a specific prior through the same `select_archived_snapshot` fold
+    `archive diff`/`archive restore` use (H423), so the artifact an agent inspects is
+    the one a restore preview would adopt. With ``--all`` (H285) it emits **every**
+    archived prior for the id, newest first — the full recoverable history of a
+    multi-supersession item, not just its newest copy. Either way exit 1 when the id
+    has no archived prior (never superseded) or is unknown — the could-not-recover
+    signal.
     """
+    if all_history and (prior_hash is not None or at is not None):
+        print(
+            json.dumps({
+                "error": "archive show takes either --all or one version selector: "
+                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
+            }),
+            file=sys.stderr,
+        )
+        return 2
+    if not all_history:
+        selected, code = _select_archive_prior(
+            ref, command="archive show", prior_hash=prior_hash, at=at
+        )
+        if selected is None:
+            return code
+        sys.stdout.write(dump_items_export([selected["prior"]]))
+        return 0
+
     paths = get_paths()
     try:
         item_id = resolve_item_id(ref)
@@ -4641,11 +4768,8 @@ def _cmd_archive_show(ref: str, all_history: bool = False) -> int:
         return 2
     if not paths.db_path.exists():
         priors: list[ScrollItem] = []
-    elif all_history:
-        priors = archived_snapshots(paths.db_path, item_id)
     else:
-        latest = latest_archived(paths.db_path, item_id)
-        priors = [latest] if latest is not None else []
+        priors = archived_snapshots(paths.db_path, item_id)
     if not priors:
         suffix = f" (from {ref})" if item_id != ref else ""
         print(
@@ -4708,65 +4832,16 @@ def _cmd_archive_restore(
     ``dry_run: true``) via the read-only `_preview_merge_items` and writes nothing —
     the "preview never drifts from reality" discipline (H245/H273).
     """
-    paths = get_paths()
-    try:
-        item_id = resolve_item_id(ref)
-    except ValueError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 2
-    # at most one version selector — the explicit gate (the `archive prune` /
-    # `reconcile` opt-in precedent); none means "the latest" (today's behavior)
-    if prior_hash is not None and at is not None:
-        print(
-            json.dumps({
-                "error": "archive restore takes at most one version selector: "
-                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
-            }),
-            file=sys.stderr,
-        )
-        return 2
-    boundary: str | None = None
-    if at is not None:
-        # a malformed --at is a loud usage error (exit 2, the `archive prune --before`
-        # / `verify --stale-before` precedent), never a silently empty selection
-        try:
-            boundary = parse_since(at)
-        except ValueError as exc:
-            print(json.dumps({"error": str(exc)}), file=sys.stderr)
-            return 2
-        if boundary is None:
-            print(
-                json.dumps({"error": "--at needs an ISO-8601 timestamp boundary"}),
-                file=sys.stderr,
-            )
-            return 2
-    selector: dict = (
-        {"hash": prior_hash} if prior_hash is not None
-        else {"at": boundary} if boundary is not None
-        else {"latest": True}
-    )
-    selected = (
-        select_archived_snapshot(
-            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
-        )
-        if paths.db_path.exists()
-        else None
+    selected, code = _select_archive_prior(
+        ref, command="archive restore", prior_hash=prior_hash, at=at
     )
     if selected is None:
-        suffix = f" (from {ref})" if item_id != ref else ""
-        scoped = (
-            f" matching {json.dumps(selector)}"
-            if prior_hash is not None or boundary is not None
-            else ""
-        )
-        print(
-            json.dumps(
-                {"error": f"no archived prior capture for {item_id}{suffix}{scoped}"}
-            ),
-            file=sys.stderr,
-        )
-        return 1
-    entry, prior = selected
+        return code
+    paths = selected["paths"]
+    item_id = selected["item_id"]
+    selector = selected["selector"]
+    entry = selected["entry"]
+    prior = selected["prior"]
     held = get_item(paths.db_path, item_id)
     held_hash = held.content_hash if held is not None else None
     if dry_run:
@@ -4824,63 +4899,16 @@ def _cmd_archive_diff(
     loud usage error (exit 2); an id with no archived prior — or none matching the
     selector — is a could-not-recover (exit 1).
     """
-    paths = get_paths()
-    try:
-        item_id = resolve_item_id(ref)
-    except ValueError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 2
-    # at most one version selector — the explicit gate (the `archive restore` precedent)
-    if prior_hash is not None and at is not None:
-        print(
-            json.dumps({
-                "error": "archive diff takes at most one version selector: "
-                "--hash <prior_hash> or --at <ISO> (default: the latest archived prior)"
-            }),
-            file=sys.stderr,
-        )
-        return 2
-    boundary: str | None = None
-    if at is not None:
-        # a malformed --at is a loud usage error (exit 2), never a silently empty read
-        try:
-            boundary = parse_since(at)
-        except ValueError as exc:
-            print(json.dumps({"error": str(exc)}), file=sys.stderr)
-            return 2
-        if boundary is None:
-            print(
-                json.dumps({"error": "--at needs an ISO-8601 timestamp boundary"}),
-                file=sys.stderr,
-            )
-            return 2
-    selector: dict = (
-        {"hash": prior_hash} if prior_hash is not None
-        else {"at": boundary} if boundary is not None
-        else {"latest": True}
-    )
-    selected = (
-        select_archived_snapshot(
-            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
-        )
-        if paths.db_path.exists()
-        else None
+    selected, code = _select_archive_prior(
+        ref, command="archive diff", prior_hash=prior_hash, at=at
     )
     if selected is None:
-        suffix = f" (from {ref})" if item_id != ref else ""
-        scoped = (
-            f" matching {json.dumps(selector)}"
-            if prior_hash is not None or boundary is not None
-            else ""
-        )
-        print(
-            json.dumps(
-                {"error": f"no archived prior capture for {item_id}{suffix}{scoped}"}
-            ),
-            file=sys.stderr,
-        )
-        return 1
-    entry, prior = selected
+        return code
+    paths = selected["paths"]
+    item_id = selected["item_id"]
+    selector = selected["selector"]
+    entry = selected["entry"]
+    prior = selected["prior"]
     held = get_item(paths.db_path, item_id)
     held_hash = held.content_hash if held is not None else None
     # would a restore actually change the held copy? the H286 idempotency predicted

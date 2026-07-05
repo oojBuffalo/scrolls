@@ -1757,13 +1757,13 @@ $ scrolls archive list
 [exit 0]
 ```
 
-### `scrolls archive show <id> [--all]`
+### `scrolls archive show <id> [--all | --hash H | --at ISO]`
 
-**Recovers** one item's latest archived prior capture, emitting it as a
-re-importable `export items` JSONL line on stdout (ADR 0106). Because the line is
-the model-complete snapshot, restoring the prior copy is the **symmetric round-trip**
-— pipe it back through `import items --accept-incoming` and the held copy is the
-original again (the incoming archived in turn):
+**Recovers** one item's selected archived prior capture (default: latest), emitting
+it as a re-importable `export items` JSONL line on stdout (ADR 0106). Because the
+line is the model-complete snapshot, restoring the prior copy is the **symmetric
+round-trip** — pipe it back through `import items --accept-incoming` and the held
+copy is the original again (the incoming archived in turn):
 
 ```console
 $ scrolls archive show web:demo | scrolls import items /dev/stdin --accept-incoming
@@ -1771,14 +1771,25 @@ $ scrolls archive show web:demo | scrolls import items /dev/stdin --accept-incom
 [exit 0]
 ```
 
-An id with no archived prior (never superseded) or an unknown id is a loud
+The single-prior selectors use the same `select_archived_snapshot` fold as
+`archive diff` and `archive restore`, so the JSONL artifact an operator inspects is
+the exact prior a dry-run restore would adopt:
+
+- `--hash H` — emit the archived prior whose content hash is `H` (the `archive list`
+  `prior_hash`).
+- `--at ISO` — emit the **newest** prior archived **at or before** the boundary
+  (date-only ok → that day's UTC midnight; inclusive).
+- neither — emit the **latest** archived prior.
+
+At most one of `--all`, `--hash`, and `--at` may be supplied. An id with no archived
+prior (never superseded), an unknown id, or a selector with no match is a loud
 could-not-recover (exit 1), the `verify`/`reconcile` empty-vs-error split.
 
 `--all` (H285) emits **every** archived prior for the id — the whole recoverable
-history, not just the latest — as a JSONL stream, **newest first** (the `archive list`
-order). After several adoptions a multi-supersession item carries more than one prior;
-`--all` backs up or inspects all of them as re-importable snapshots, where the default
-emits only the head:
+history, not just the latest or selected prior — as a JSONL stream, **newest first**
+(the `archive list` order). After several adoptions a multi-supersession item carries
+more than one prior; `--all` backs up or inspects all of them as re-importable
+snapshots, where the default emits only the head:
 
 ```console
 $ scrolls archive show web:demo --all          # newest archived prior first
@@ -1789,17 +1800,18 @@ $ scrolls archive show web:demo --all          # newest archived prior first
 ```
 
 The default and `--all` never disagree by construction: `archive show <id>` is
-byte-identical to `archive show <id> --all`'s first line (`latest_archived` is the head
-of the shared `items.archived_snapshots` read). An empty history (`--all` on a
+byte-identical to `archive show <id> --all`'s first line (the latest selector is the
+head of the shared `items.archived_snapshots` read). An empty history (`--all` on a
 never-superseded id) is the same exit-1 could-not-recover.
 
 The recovery **read** also travels over MCP (H281): `list_archived` is the twin of
 `archive list` (the same `{count, archived}` index, folding the shared
-`items.archive_entry_dict`) and `get_archived(item_id)` is the twin of `archive show`
-(the model-complete, re-importable prior snapshot, folding the same
-`items.latest_archived`) — so an agent operating purely over MCP can read the recovery
-store. The **write** stays **CLI-only**: the `import … --accept-incoming` adoption, and
-the symmetric restore, are explicit operator acts (custody §2.4).
+`items.archive_entry_dict`) and `get_archived(item_id)` is the twin of `archive show`'s
+default-latest read (the model-complete, re-importable prior snapshot) — so an agent
+operating purely over MCP can read the recovery store. Version-selected `archive show`
+and `archive diff` are currently CLI-only reads. The **write** stays **CLI-only**: the
+`import … --accept-incoming` adoption, and the symmetric restore, are explicit operator
+acts (custody §2.4).
 
 ### `scrolls archive restore <id> [--hash H | --at ISO] [--dry-run]`
 
