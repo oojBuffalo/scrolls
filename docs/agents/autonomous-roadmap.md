@@ -323,7 +323,7 @@ drill, enrichment-provenance convergence, recency-`last_checked` convergence, co
 bundle-briefing ↔ live-audit convergence, preview ↔ live-run parity, facet scope-composition convergence,
 audit-aggregate ↔ browse-drill convergence, and the compiled group-page classification marker [H419, the
 one *production* cell — the H412-deferred slice]); the live queue (below) is the authoritative lead, now
-leading with **H424**.
+leading with **H425**.
 
 ---
 
@@ -798,23 +798,23 @@ still holds (the two tools just moved between the named sets). The page-leg sabo
 **H421 shipped this run** — the context-briefing ↔ live-audit convergence contract: `tests/test_context_audit_convergence.py` reuses H415's `_AUDIT_BASIS` registry and Markdown extractors against the `scrolls context --budget full` surface, with an AST keystone over `context.build_context`'s briefing-line emitters. The H401/H415 composite fixture is driven as a whole-library context scope (`limit == len(list_items)`) and every `_Custody:_`/`_Attention:_`/`_At-risk work:_`/`_Conflicts:_`/`_Archive:_`/`_Duplicates:_`/`_Posture:_`/`_Refresh:_` fact is asserted equal to the live `run_doctor` custody projection; a tampered context duplicate count fails only that leg. **Production change** (`context.py`): custody/audit briefing lines now fold the uncollapsed raw match scope (`scope_items`) rather than the collapsed Best-Matches representatives, so same-work collapse cannot hide held rows from the audit picture. Suite **4357 passed**.
 **H422 shipped this run** — the live-act settle parity contract: `tests/test_live_settle_parity.py` keys its `_SETTLE_ACTS` completeness registry to H416's `_PREVIEW_ACTS`/`_NO_PREVIEW`, drives every preview-capable live act twice over the wide fixture under a ticking clock, snapshots the ledger/raw/row-count durable axes around the second run, and asserts settled reports (`import bundle` all-skipped/imported 0, `reconcile` no unresolved conflict, version-specific `archive restore --hash` unchanged, `archive prune --apply` 0-drop). The sabotage makes a second prune perform a hidden archive-row write and fails only the `archive prune` row-count leg. **Production change** (`cli.py`): re-presenting the same still-open import conflict no longer appends a duplicate conflict event, so repeated bundle imports remain loud in the report but settled on the ledger. Suite **4360 passed**.
 **H423 shipped this run** — archive-selector recovery convergence: `tests/test_archive_selector_convergence.py` pins `archive show`/`archive diff`/`archive restore --dry-run` to the same selected archived prior for `latest`, `--hash`, and inclusive `--at`; `archive show` now accepts `--hash`/`--at`, and all three CLI recovery surfaces share `cli._select_archive_prior` over `items.select_archived_snapshot`.
-The forward buffer's **contract-consolidation** theme now leads with **H424** (per-source scoped audit-drill convergence), with **H425** the remaining cell.
+**H424 shipped this run** — per-source scoped audit-drill convergence: `tests/test_source_audit_drill_convergence.py` reuses H418's `_AUDIT_DRILL` registry on the source axis, ties every `tiers`/`drift` per-source count across `doctor.by_source`, `doctor --source`, and `get_library_health(source=)` to `list --source S --<filter>`, and asserts per-source sums reproduce the whole-library counts; the by-source misattribution sabotage isolates to `web`/`tiers.full`.
+The forward buffer's **contract-consolidation** theme now leads with **H425** (compiled group-page custody-marker convergence), the remaining cell.
 
 **The forward-hardening guard cells.** The per-tool MCP determinism treadmill is closed (H388's
 completeness-asserted whole-surface contract subsumes it — a new read tool now fails the contract until
 covered, so no further per-tool twins are needed). The active queue is the **contract-consolidation**
 theme: each cell replaces a *family* of per-surface tests with a single completeness-asserted invariant
 that auto-covers new surfaces (the H388 pattern applied to round-trip, regeneration-safety, surface-parity,
-and completeness-honesty — the PRD success metrics). Take the next one whose preconditions are met (H424
+and completeness-honesty — the PRD success metrics). Take the next one whose preconditions are met (H425
 next; H409 append-only custody-ledger + H410 stale-set drill + H411 facet-aggregate drill + H412
 enrichment-provenance convergence + H413 recency-`last_checked` convergence + H414 could-not-check G1
 error-parity + H415 bundle-briefing ↔ live-audit convergence + H416 preview ↔ live-run parity + H417 facet
 scope-composition convergence + H418 audit-aggregate ↔ browse-drill convergence + H419 compiled group-page
-classification marker + H420 truncation/scope-echo honesty + H421 context-briefing ↔ live-audit convergence + H422 live-act settle parity + H423 archive-selector recovery convergence shipped — see the Status snapshot / Shipped ledger):
+classification marker + H420 truncation/scope-echo honesty + H421 context-briefing ↔ live-audit convergence + H422 live-act settle parity + H423 archive-selector recovery convergence + H424 per-source scoped audit-drill convergence shipped — see the Status snapshot / Shipped ledger):
 
 | Slot | Intended slice | Maps to |
 | --- | --- | --- |
-| H424 | **Per-source scoped audit-drill convergence contract — the *scope*-axis sibling of H418's whole-library audit drill, exactly as H417 is the *scope*-axis sibling of H411's whole-library facet drill (H418 ties the whole-library `doctor` audit count to the unscoped `list` drill; this ties the *per-source* audit to the *source-scoped* drill): one completeness-asserted invariant that for *every* held source `S` and *every* drillable custody count, `doctor --source S` (and the MCP `get_library_health(source=S)` twin) reports exactly the rows `list --source S --<filter> value` enumerates — `by_source[S].tiers[tier]` ≡ `len(list --source S --fidelity tier)`, `by_source[S].drift[posture]` ≡ `len(list --source S --drift posture)` — so an agent reading the weakest source's `attention` flag and drilling that source is promised exactly the rows the per-source audit named. The **completeness keystone** — reuse H418's `_AUDIT_DRILL` registry restricted to the per-source `by_source` block's count axes (`tiers`/`drift`, the two axes the per-source decomposition carries; the whole-library-only counts `enrichment.stale`/`content_duplicates.total_items` named `_WHOLE_LIBRARY_ONLY`, since `by_source` carries no per-source stale/dup count — the H418 registry on the scope axis), so a *new* per-source count axis fails until it declares a scoped drill tie. → PRD success-metric: per-source custody breakdown + scoped reads / filter consistency (cap 1/5/7).** Over the H418 `_seed_audit_drill_mix` (multi-source: `web`/`arxiv`/`wikipedia`/`crossref`, every fidelity tier and drift posture spanning ≥2 sources so each scoped drill is non-vacuous), for each `(S, axis, value)` assert `by_source[S][axis][value] == len(list --source S --<filter> value)` on both transports, and that summing each source's scoped count reproduces the whole-library `tiers`/`drift` (the H417 scope-composition tie on the audit axis). **Sabotage:** a per-source fold misattributing one source's tier (e.g. `by_source` reading the whole-library tally for `S`) desyncs *only* that source's legs, never the other sources nor the whole-library headline. **Decisive choice:** assert per-source *and* the source-sum↔whole-library tie, so a scope that double-counts across sources (a missing source filter in the `by_source` fold) is caught even when each source's own count looks plausible. Test-only. Precondition: H418's `_AUDIT_DRILL` + `_seed_audit_drill_mix` (`tests/test_audit_drill_convergence.py`), the `doctor --source`/`get_library_health(source=)` scope (H162/H167), the `list --source` + `--fidelity`/`--drift` filters, `custody.custody_counts_by_source`. | → cap 1/5/7 |
 | H425 | **Compiled group-page custody-marker convergence contract — the *custody*-axis sibling of H419's enrichment-axis `rendered` convergence (H419 pins the new `· classified <phrase>` page clause ≡ the per-item classification view; this pins the *original* H89/H93 `· fidelity · drift · when` page clause ≡ the per-item custody view): one completeness-asserted invariant that every compiled `library/` group-page row's `kb._custody_marker` reads exactly the `fidelity`/`drift`/`last_checked` the per-item JSON surfaces (`show`/`list`/`get_scroll`) carry — parsed off the `get_concept_page`/`get_tag_page` render, `{id: (fidelity, drift, when)}` ≡ the canonical per-item custody projection (`items.get_fidelity` + `custody.drift_posture`/`last_checked` over `latest_events`). It lifts the scattered per-page custody-marker golden tests (the `· full · unverified · never checked` string assertions across `test_kb.py`) into one matrix and closes the loop H419 opened: the human-browse surface reads the *same* fidelity/drift/when picture an agent's JSON read does, on the axis the H89/H93 marker introduced. The **completeness keystone** — reuse H419's `rendered`-surface readers + `_phrases_from_page` parser (generalised to the custody clause) and the `_PROVENANCE_SURFACES`-style registry, so the two page tools auto-inherit a custody-marker convergence assertion beside their classification one. → PRD success-metric: fidelity/provenance travel with every result (cap 1/9).** Over a multi-tier/multi-posture fixture (every fidelity tier × a drifted/verified/never-checked posture sharing one concept + tag so both pages enumerate every held item), assert each row's parsed `(fidelity, drift, when)` triple equals the canonical per-item custody view. **Sabotage:** a `kb._custody_marker` rendering a drifted item `verified` on the page desyncs *only* `{get_concept_page, get_tag_page}` while the per-item JSON custody surfaces (a distinct binding) stay green. **Decisive choice:** include a re-verified item carrying a non-null `last_checked` timestamp so the *when* axis is non-vacuous (a never-checked-only fixture would pass a dropped-timestamp bug). Test-only. Precondition: H419's `rendered` surface kind + `_phrases_from_page`/page readers (`tests/test_provenance_convergence.py`), `kb._custody_marker` (H89/H93), the per-item custody projection (`items.get_fidelity`, `custody.drift_posture`/`last_checked`/`latest_events`), the `list --source`/`--fidelity`/`--drift` per-item reads. | → cap 1/9 |
 
 **De-prioritized backlog** — the budget/tier convergence cells **H244–H249** remain valid
@@ -1211,6 +1211,7 @@ status snapshot was folded back to one line each).
 | H421 | Context-briefing ↔ live-audit convergence contract — `tests/test_context_audit_convergence.py` reuses H415's `_AUDIT_BASIS` registry/extractors against `scrolls context --budget full`, with an AST keystone over the live context briefing emitters; the H401/H415 composite fixture proves every audit-basis line equals `run_doctor`, a duplicate-count sabotage isolates to `_Duplicates:_`, and `context.py` now folds custody/audit lines over uncollapsed `scope_items` so same-work collapse cannot hide held rows from the audit picture | cap 9 |
 | H422 | Live-act settle parity contract — `tests/test_live_settle_parity.py` keys `_SETTLE_ACTS` to H416's `_PREVIEW_ACTS`/`_NO_PREVIEW`, runs every preview-capable live act twice over the wide fixture with a ticking clock, snapshots ledger/raw/row-count durable axes around the second run, and asserts settled reports; the archive-restore settle leg uses a stable `--hash` selector (default-latest remains the reversible undo affordance), the prune sabotage isolates to the row-count axis, and `cli._merge_items` now avoids duplicate conflict-event appends for the same still-open held/incoming conflict | cap 7/9 |
 | H423 | Archive-selector recovery convergence contract — `tests/test_archive_selector_convergence.py` pins `archive show`/`archive diff`/`archive restore --dry-run` to the same `select_archived_snapshot` result for the `latest`/`--hash`/inclusive `--at` selectors, with a live argparse/symbol keystone over the recovery surfaces; `archive show` gained `--hash`/`--at` and all three CLI surfaces now share `cli._select_archive_prior`; the exclusive-`--at` sabotage isolates to the at-selector leg | cap 1/9 |
+| H424 | Per-source scoped audit-drill convergence contract — `tests/test_source_audit_drill_convergence.py` reuses H418's `_AUDIT_DRILL` registry, classifies the source-capable `tiers`/`drift` axes versus whole-library-only drills, and proves every `doctor.by_source[S]`, `doctor --source S`, and `get_library_health(source=S)` tier/drift count equals `list --source S --<filter>`; source splits sum back to the whole-library counts, with a by-source `web`/`tiers.full` sabotage isolating to that source/field | cap 1/5/7 |
 
 ---
 
@@ -1233,8 +1234,8 @@ stale-set drill, H411 facet-aggregate drill, H412 enrichment-provenance converge
 recency-`last_checked` convergence, H414 could-not-check error-parity, H415 bundle-briefing ↔ live-audit
 convergence, H416 preview ↔ live-run parity, H417 facet scope-composition convergence, H418
 audit-aggregate ↔ browse-drill convergence, H419 compiled group-page classification marker, H420
-truncation/scope-echo honesty, H421 context-briefing ↔ live-audit convergence, H422 live-act settle parity, H423 archive-selector recovery convergence);
-the forward queue is now **H424–H425**. No new adapters.
+truncation/scope-echo honesty, H421 context-briefing ↔ live-audit convergence, H422 live-act settle parity, H423 archive-selector recovery convergence, H424 per-source scoped audit-drill convergence);
+the forward queue is now **H425**. No new adapters.
 
 - **Day 1 (2026-06-27): Done — H400 + H401 shipped.** H400 (`tests/test_cli_mcp_parity.py`): every MCP
   read tool has a CLI twin whose custody-bearing payload reads identically (the four inspect+aggregate
@@ -1260,9 +1261,9 @@ the forward queue is now **H424–H425**. No new adapters.
   parity; the lock let the run overrun through them). **Then H417 + H418 also shipped this same span**
   (H417 facet scope-composition convergence, H418 audit-aggregate ↔ browse-drill convergence), followed by
   H419 (compiled library group-page classification marker), H420 (truncation/scope-echo honesty), H421
-  (context-briefing ↔ live-audit convergence), H422 (live-act settle parity), and H423
-  (archive-selector recovery convergence). The lead is now **H424**
-  (per-source scoped audit-drill convergence), forward queue **H424–H425**. Next once-per-24h full re-derivation **due 2026-06-28**.
+  (context-briefing ↔ live-audit convergence), H422 (live-act settle parity), H423
+  (archive-selector recovery convergence), and H424 (per-source scoped audit-drill convergence). The lead is now **H425**
+  (compiled group-page custody-marker convergence), forward queue **H425**. Next once-per-24h full re-derivation **due 2026-06-28**.
 
 ---
 
@@ -1290,9 +1291,9 @@ the forward queue is now **H424–H425**. No new adapters.
   live-audit convergence), H416 (preview ↔ live-run parity), H417 (facet scope-composition convergence),
   H418 (audit-aggregate ↔ browse-drill convergence), H419 (compiled group-page classification marker),
   H420 (truncation/scope-echo G2 honesty), H421 (context-briefing ↔ live-audit convergence),
-  H422 (live-act settle parity), and **H423 (archive-selector recovery convergence)**.
-  **Forward queue:** H424 (per-source scoped audit-drill convergence — the scope-axis sibling of H418),
-  H425 (compiled group-page custody-marker convergence). The once-per-24h full
+  H422 (live-act settle parity), H423 (archive-selector recovery convergence), and
+  **H424 (per-source scoped audit-drill convergence)**.
+  **Forward queue:** H425 (compiled group-page custody-marker convergence). The once-per-24h full
   re-derivation was **performed 2026-06-27**; the next is **due 2026-06-28**.
 - The **budget/tier convergence guard cells H244–H249** remain valid regression guards but
   are explicitly **de-prioritized** — take a capability or forward-hardening slice first.

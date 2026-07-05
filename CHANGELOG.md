@@ -16,3 +16,4 @@ Each autonomous run or agent slice should append one entry roughly the size of a
 - 2026-07-01 — fix: align context custody briefing with live audit and add H421 convergence contract.
 - 2026-07-03 — fix: add H422 live-act settle parity and suppress duplicate open-conflict ledger appends.
 - 2026-07-05 — feat: add H423 archive-selector recovery convergence and versioned archive show selectors.
+- 2026-07-05 — test: add H424 per-source scoped audit-drill convergence contract.
