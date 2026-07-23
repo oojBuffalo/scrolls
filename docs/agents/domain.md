@@ -6,6 +6,7 @@ Primary context sources, in reading order for a new contributor or agent:
 
 - `README.md` — public project framing and the current command surface.
 - `docs/architecture.md` — how the implemented system fits together: pipeline stages, module map, data model, the source adapter contract, and how to add an adapter.
+- `docs/adapters.md` — the per-source adapter catalog: what each adapter captures, its identity rules, and its fidelity boundary.
 - `docs/cli.md` — the CLI output contract: per-command JSON keys, exit codes, and error envelopes, with captured real output and an offline reproduction script.
 - `docs/library-format.md` — the on-disk artifact contract: scroll frontmatter and body format, compiled `library/` page formats, agent instruction files, and what consumers may rely on.
 - `docs/adr/` — architectural decision records, indexed at `docs/adr/README.md`.

@@ -42,7 +42,7 @@ Start with the reading order in `docs/agents/domain.md`:
 
 1. `README.md` — public framing and current command surface.
 2. `docs/architecture.md` — pipeline stages, module map, data model, and source
-   adapter contract.
+   adapter contract; `docs/adapters.md` — the per-source adapter catalog.
 3. `docs/cli.md` — CLI JSON/output contract, exit codes, and error envelopes.
 4. `docs/library-format.md` — scroll, `library/`, agent-doc, and media artifact
    contracts.
@@ -57,7 +57,8 @@ Start with the reading order in `docs/agents/domain.md`:
 9. `IDEAS.md` — brainstorm and backlog; not everything in it exists yet.
 
 When a slice changes the pipeline, adapter contract, or data model, update
-`docs/architecture.md`. When it changes command arguments, output keys, or exit
+`docs/architecture.md` (and `docs/adapters.md` when it adds or changes a source
+adapter). When it changes command arguments, output keys, or exit
 codes, update `docs/cli.md`. When it changes scroll frontmatter, body sections,
 compiled `library/` pages, generated agent docs, or media artifacts, update
 `docs/library-format.md`. Consequential decisions should get an ADR.
