@@ -1,14 +1,22 @@
-# Scrolls — Development Progress Snapshot
+# Progress Report — 2026-07-22
 
 **Date:** 2026-07-22
 **Branch:** `work/scrolls-dev` (agent trunk) — HEAD `2a5344f`, 523 commits ahead of `main`
 **Slice series:** through **H425**
 **Suite:** 4370 tests passing (~62s, `uv run pytest -q`)
 
-This is a *current-state* snapshot, not a changelog. Per-slice detail lives in git
+*Amended: 2026-07-26 — moved from the old top-level docs progress location
+into the check-in structure `docs/agents/progress/<YYMMDD>/`; retitled to a
+facts-only report
+(the "what's next" material moved to `plans.md` alongside) and vision/lineage
+pointers retargeted after the docs consolidation.*
+
+This is a **facts-only** current-state report, not a changelog: what exists
+and what is complete. The companion files in this directory carry the
+judgment: `reconciliation.md` (did progress match the goals/plans?) and
+`plans.md` (next objectives + 1/3/7-day plan). Per-slice detail lives in git
 (`git log --oneline | grep '(H<NN>)'`) and the shipped ledger in
-`docs/agents/autonomous-roadmap.md`. This doc answers "where are we?" for a reader
-catching up.
+`docs/agents/autonomous-roadmap.md`.
 
 ---
 
@@ -29,7 +37,8 @@ The Markdown scroll (rich frontmatter + body) is the canonical durable artifact;
 SQLite is a rebuildable index. **Raw is sacred** — every derived view (scrolls,
 `library/`, facets, bundles) must be regenerable from raw + index with one command.
 
-Authoritative north star: `docs/custody-vision.md` (outranks older `docs/vision.md`).
+Authoritative north star: `docs/vision.md` (the custody-first synthesis; the
+three vision documents were merged into it 2026-07-26).
 
 ## Codebase shape
 
@@ -47,7 +56,8 @@ is that every custody claim is backed by a fixture-driven contract, not asserted
 
 ## Pipeline & module map
 
-Six stages, elevated from the Field-Theory lineage:
+Six stages, elevated from the Field Theory lineage
+(`docs/inspiration/fieldtheory-cli-inspiration.md`):
 
 1. **Ingest** — `sources/*` adapters detect + fetch; `detect.py`, `pipeline.py`.
 2. **Enrich** — full text, transcripts, metadata, provenance.
@@ -120,17 +130,7 @@ byte-stable fold — verified, not asserted.
 
 - ✅ 4370 tests green in ~62s.
 - ✅ Working tree clean; branch tracks `origin/work/scrolls-dev`, up to date.
-- ✅ No new source adapters added recently (correct per custody-vision §2.7 — breadth
+- ✅ No new source adapters added recently (correct per vision §2.7 — breadth
   is not the unit of progress; a new adapter needs a genuinely new custody shape).
 
-## What's next
-
-Per `docs/agents/autonomous-roadmap.md`, the forward queue is continued
-hardening/integration — closing remaining cross-surface convergence gaps rather
-than opening a new theme. The maintenance rule keeps ~6 concrete slices queued
-against the PRD/MVP; a slice ships only with a concrete path mapped to a PRD
-capability, else the correct entry is "report blocker."
-
-Open strategic focus areas (from `docs/vision.md`, still live): deeper
-reconciliation, provenance/quality model, agent-contract hardening, richer
-export/shareable artifacts, and doctor/repair/audit depth.
+Forward-looking material lives in `plans.md` alongside this report.
