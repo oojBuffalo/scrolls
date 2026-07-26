@@ -87,7 +87,7 @@ same captured-content fingerprint the verify ledger drifts on (ADR 0098):
   question above, observed at merge time). The held copy is kept; the diverging
   ids are surfaced in the structured `conflicts` field **and** a loud stderr
   warning, so the divergence is a recorded, reviewable event — never silently
-  swallowed into a `skipped` count, and never an overwrite (custody vision §2.4).
+  swallowed into a `skipped` count, and never an overwrite (vision §2.4).
 
 This is reconciliation *detection* made custody-safe: it answers "these two
 captures of the same id disagree" without choosing a winner or rewriting anything.

@@ -10,8 +10,8 @@ Primary context sources, in reading order for a new contributor or agent:
 - `docs/cli.md` — the CLI output contract: per-command JSON keys, exit codes, and error envelopes, with captured real output and an offline reproduction script.
 - `docs/library-format.md` — the on-disk artifact contract: scroll frontmatter and body format, compiled `library/` page formats, agent instruction files, and what consumers may rely on.
 - `docs/adr/` — architectural decision records, indexed at `docs/adr/README.md`.
-- `docs/custody-vision.md` — the operative, most-current north star (custody-first synthesis); `docs/vision.md` and `docs/agents/vision.md` are the earlier syntheses it sharpens.
-- `docs/product/prd.md` — inspiration-backed product direction; `docs/product/mvp.md` — the near-term coherent scope. Both defer to the custody vision as authority.
+- `docs/vision.md` — the operative north star (custody-first synthesis; the three vision documents were merged here 2026-07-26 — `docs/custody-vision.md` and `docs/agents/vision.md` are stubs pointing here, kept because ADRs reference them).
+- `docs/product/prd.md` — product direction; `docs/product/mvp.md` — the shipped near-term scope. Both defer to the vision as authority.
 - `docs/agents/autonomous-roadmap.md` — the hour/day/week automation buffer the hourly worker follows, mapped to the PRD/MVP.
 - `docs/agents/last30days-inspiration.md` and `docs/agents/obsidian-second-brain-inspiration.md` — the two external inspiration sources, with explicit adopt/adapt/reject mappings to Scrolls' local-first custody model.
 - `IDEAS.md` — the product/architecture brainstorm the implementation draws from; not everything in it exists yet.

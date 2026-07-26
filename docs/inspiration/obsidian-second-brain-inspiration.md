@@ -19,7 +19,7 @@ vendored code, secrets, or its product framing wholesale.
 obsidian-second-brain's headline is *"a vault that rewrites itself"*: each
 ingested source **mutates existing pages** in place, and `/obsidian-reconcile`
 **auto-resolves contradictions by overwriting** the losing claim. That is the
-exact inverse of Scrolls' custody contract (`docs/custody-vision.md`):
+exact inverse of Scrolls' custody contract (`docs/vision.md`):
 
 > Raw is sacred; everything else is derivable. … No view may hold information
 > that cannot be regenerated. (§2)
@@ -37,11 +37,11 @@ mapping below is filtered through that distinction.
 
 | obsidian-second-brain pattern | Scrolls mapping | Why it fits custody |
 | --- | --- | --- |
-| **Sentinel-safe generated blocks** (`/obsidian-architect`: `<!-- @generated -->` / `<!-- @user -->`; refresh replaces only generated content) | Make compiled `library/` pages and generated `agents/` instruction files carry a generated/user boundary, so a human/agent can hand-annotate without the next `kb`/`agent install` clobbering it | Directly enacts "raw is sacred, views regenerable" (custody-vision §2). Today a re-compile silently overwrites the whole file; this makes regeneration *non-destructive of annotations* while keeping the generated region authoritative. ADR 0102. |
-| **Anti-fabrication + search-completeness hard rules** (never assert absence without exhaustive search; enumerate, don't sample; mark unknowns `TBD`) | Promote to an explicit **agent-contract invariant** for `search`, `context`, `related`, `works`, and `doctor`: results state their scope, never imply completeness they didn't verify, and "nothing found" is distinguishable from "not checked" | Custody-vision §6: "an agent that cannot trust a result's provenance and fidelity cannot use it." False absence silently corrupts a memory the same way for a vault and a library. |
+| **Sentinel-safe generated blocks** (`/obsidian-architect`: `<!-- @generated -->` / `<!-- @user -->`; refresh replaces only generated content) | Make compiled `library/` pages and generated `agents/` instruction files carry a generated/user boundary, so a human/agent can hand-annotate without the next `kb`/`agent install` clobbering it | Directly enacts "raw is sacred, views regenerable" (vision §2). Today a re-compile silently overwrites the whole file; this makes regeneration *non-destructive of annotations* while keeping the generated region authoritative. ADR 0102. |
+| **Anti-fabrication + search-completeness hard rules** (never assert absence without exhaustive search; enumerate, don't sample; mark unknowns `TBD`) | Promote to an explicit **agent-contract invariant** for `search`, `context`, `related`, `works`, and `doctor`: results state their scope, never imply completeness they didn't verify, and "nothing found" is distinguishable from "not checked" | Vision §6: "an agent that cannot trust a result's provenance and fidelity cannot use it." False absence silently corrupts a memory the same way for a vault and a library. |
 | **Progressive context levels** (`/obsidian-world` L0–L3 token budgets) | An explicit budget tier on `scrolls context` (the agent-native bundle, IDEAS.md §11): identity/index first, deep bodies on demand | Builds on the just-shipped "collapse same-work context bundle hits"; turns the bundle into a budgeted boot sequence instead of a flat dump. |
 | **AI-first preamble** ("For future Claude": what/why/when in 2-3 lines before the body) | A short agent-first preamble on generated `library/` index/section pages and bundles, stating scope + recency anchor | Cheap, and it makes a generated view self-describing for the agent that pulls it in isolation. Adopt the *discipline*, not a new note type. |
-| **Vendor-neutral export bundle** (`/obsidian-export` → OKF "folders of markdown") | Strengthen scoped, self-contained custody bundles (custody-vision §3.7): a portable Markdown/HTML slice carrying provenance + fidelity, re-importable losslessly | We already have lossless `export items` (ADR 0082); a portable *briefing* bundle is the shareable complement. |
+| **Vendor-neutral export bundle** (`/obsidian-export` → OKF "folders of markdown") | Strengthen scoped, self-contained custody bundles (vision §3.7): a portable Markdown/HTML slice carrying provenance + fidelity, re-importable losslessly | We already have lossless `export items` (ADR 0082); a portable *briefing* bundle is the shareable complement. |
 | **Scheduled maintenance agents** (nightly/weekly/health) | Frame the existing hourly autonomous worker as scheduled **custody maintenance** (audit → drift recheck → regenerate views → report), driven by `docs/agents/autonomous-roadmap.md` | The worker already exists; this gives its runs a custody-shaped default queue instead of ad-hoc adapter work. |
 
 ## Adapt — conceptual, defer the storage/implementation
@@ -58,7 +58,7 @@ mapping below is filtered through that distinction.
 These are good for a personal-knowledge/productivity app but conflict with the
 custody vision's de-emphasis of any note-app surface (Scrolls is a library, not
 a note app) and its reframing of retrieval as *what you hold*, not discovery
-(`docs/custody-vision.md` §4):
+(`docs/vision.md` §4):
 
 - **Self-mutating pages / auto-overwriting reconciliation** — violates raw-is-sacred and drift-surfaced (the framing decision above).
 - **Productivity surfaces** — calendar, tasks, people, meetings, daily notes, kanban. Scrolls custodies artifacts; it is not a planner.

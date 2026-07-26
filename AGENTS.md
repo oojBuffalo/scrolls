@@ -47,8 +47,9 @@ Start with the reading order in `docs/agents/domain.md`:
 4. `docs/library-format.md` — scroll, `library/`, agent-doc, and media artifact
    contracts.
 5. `docs/adr/README.md` and the relevant ADRs.
-6. `docs/custody-vision.md` — operative north star; this outranks older vision
-   docs when they differ.
+6. `docs/vision.md` — the operative north star (custody-first synthesis; the
+   old `docs/custody-vision.md` and `docs/agents/vision.md` paths are stubs
+   pointing here).
 7. `docs/product/prd.md`, `docs/product/mvp.md`, and
    `docs/agents/autonomous-roadmap.md`.
 8. `docs/agents/last30days-inspiration.md` and
@@ -69,7 +70,7 @@ Before a substantive design or implementation slice, self-grill the plan against
 the docs. Answer these in your own notes, commit message, PR/issue body, ADR, or
 source comments as appropriate:
 
-1. **Custody fit:** Which custody-vision principle does this strengthen? Does it
+1. **Custody fit:** Which vision principle (§2) does this strengthen? Does it
    preserve raw capture as the source of truth?
 2. **Scope honesty:** Could an agent mistake a filtered, truncated, stale, or
    unverified result for a complete answer? If so, add scope/provenance/fidelity

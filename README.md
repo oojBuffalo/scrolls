@@ -180,7 +180,7 @@ one is in [`docs/architecture.md`](docs/architecture.md).
   verify ledger and prior-content archive; `import bundle` restores them, deduped —
   so a recipient inherits the drift *history*, not just a frozen snapshot.
 
-The operative north star is **[`docs/custody-vision.md`](docs/custody-vision.md)**;
+The operative north star is **[`docs/vision.md`](docs/vision.md)**;
 reconciliation and conflict mechanics are in
 [`docs/reconciliation.md`](docs/reconciliation.md).
 
@@ -219,7 +219,7 @@ Reading order (see [`AGENTS.md`](AGENTS.md) for the contributor guide):
 2. [`docs/cli.md`](docs/cli.md) — CLI JSON/output contract, exit codes, error envelopes.
 3. [`docs/library-format.md`](docs/library-format.md) — scroll, `library/`, agent-doc, and media artifacts.
 4. [`docs/adapters.md`](docs/adapters.md) — the source-adapter catalog.
-5. [`docs/custody-vision.md`](docs/custody-vision.md) — the operative north star (custody-first).
+5. [`docs/vision.md`](docs/vision.md) — the operative north star (custody-first).
 6. [`docs/reconciliation.md`](docs/reconciliation.md) — reconciliation and custody-conflict design.
 7. [`docs/adr/README.md`](docs/adr/README.md) — the decision records behind the implementation.
 8. [`docs/product/prd.md`](docs/product/prd.md), [`docs/product/mvp.md`](docs/product/mvp.md) — product direction and scope.

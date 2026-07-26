@@ -58,7 +58,7 @@ Use the default Matt Pocock triage vocabulary. See `docs/agents/triage-labels.md
 
 This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/architecture.md`, root `IDEAS.md`, and the `docs/adr/` records (indexed at `docs/adr/README.md`). See `docs/agents/domain.md` for the reading order.
 
-**Primary north star:** Read `docs/agents/vision.md` first. It defines the first-principles product vision synthesized from Scrolls and last30days-skill. The operative, most-current north star is `docs/custody-vision.md` (custody-first synthesis, 2026-06-15); `docs/vision.md` and `docs/agents/vision.md` are the earlier syntheses it sharpens. All autonomous decisions must be justified against the custody vision.
+**Primary north star:** Read `docs/vision.md` first — the custody-first synthesis (original 2026-06-15; the three vision documents were merged into it 2026-07-26). All autonomous decisions must be justified against it. `docs/custody-vision.md` and `docs/agents/vision.md` are stubs kept only because ADRs reference those paths.
 
 Secondary references: `docs/agents/last30days-inspiration.md` and `docs/agents/obsidian-second-brain-inspiration.md` (specific patterns to adapt) and `docs/agents/domain.md`.
 

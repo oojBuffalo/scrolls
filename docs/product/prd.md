@@ -1,11 +1,10 @@
 # Scrolls PRD — inspiration-backed product direction
 
 **Status:** Living product doc for the `work/scrolls-dev` agent trunk.
-**Authority:** Subordinate to the vision. `docs/custody-vision.md` is the
-operative north star; `docs/vision.md` and `docs/agents/vision.md` are the
-earlier syntheses it sharpens. This PRD does not redefine the vision — it states
-*what we are building next and why*, with the obsidian-second-brain inspiration
-(`docs/agents/obsidian-second-brain-inspiration.md`) folded in.
+**Authority:** Subordinate to the vision — `docs/vision.md` is the operative
+north star. This PRD does not redefine the vision — it states *what we are
+building next and why*, with the obsidian-second-brain adoptions
+(`docs/inspiration/obsidian-second-brain-inspiration.md`) folded in.
 
 ## Problem
 
@@ -60,7 +59,7 @@ notebook (see the Non-goals).
 
 ## Capabilities (priority order)
 
-These extend the prioritized list in `docs/custody-vision.md` §3 with the two
+These extend the prioritized list in `docs/vision.md` §3 with the two
 obsidian-derived additions marked **[OSB]**.
 
 1. **Custody integrity audit** — `scrolls doctor` as a full custody report with

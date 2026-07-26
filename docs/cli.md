@@ -59,7 +59,7 @@ claim cites the test that locks it; unless noted, tests live in
 
 A custody library is only trustworthy if an agent can believe what its
 browse and audit surfaces *don't* say as much as what they do. The
-integrity boundary is the agent contract (custody-vision §6); false
+integrity boundary is the agent contract (vision §6); false
 absence corrupts an agent's memory the same way a fabricated row does.
 So every read and audit surface — `search`, `list`, `related`, `works`,
 `context`, `doctor`, `maintain` (run offline with `--no-recheck`),
@@ -110,7 +110,7 @@ The same invariant holds for the **MCP twins** (`search_scrolls`,
 `get_scroll`, `get_scroll_history`), where "exit 0 + empty shape" becomes "returns the empty
 form" and an error envelope becomes a raised tool error — so an agent gets
 the same honesty whether it reads the CLI or the protocol server
-(custody-vision §6, surface parity;
+(vision §6, surface parity;
 `test_mcp_checked_and_empty_returns_the_empty_shape`,
 `test_mcp_could_not_check_raises_not_emptily`).
 
@@ -180,7 +180,7 @@ inventing a new one:
 **Why the companion is opt-in, not the default shape.** G1 (above) locks
 the bare array as the *empty form* of `search`/`list` — `[]`, exit 0 — and
 that bare array is also the established CLI/MCP agent contract (every
-`search_scrolls`/`list_scrolls` consumer reads a list, custody-vision §6
+`search_scrolls`/`list_scrolls` consumer reads a list, vision §6
 surface parity). So G2 is delivered as a **deliberate, documented evolution
 that adds** rather than replaces: `scrolls search --stats` / `scrolls list
 --stats` wrap the array in a `{scope, stats, results}` envelope consistent
@@ -228,7 +228,7 @@ echo and coverage line too. The bare-list `search_scrolls`/`list_scrolls`/
 return the bare per-item hit list — the G1-locked browse contract, never an
 envelope — because the `--stats` opt-in is a CLI affordance with no natural
 MCP analogue (an MCP tool returns one shape, not a flag-toggled one), and
-custody-vision §6 surface parity keeps the bare array the agent contract. The
+vision §6 surface parity keeps the bare array the agent contract. The
 per-source `stats.custody.by_source` split those CLI envelopes carry (H155) is
 therefore *not* lost over MCP, only **relocated** to the surfaces that already
 return an object: `get_link_graph` and `get_works` carry `stats.custody.
@@ -683,7 +683,7 @@ completion of `doctor`'s `custody.content_duplicates` report (H325), the
 corrupt recovery store, this flags **byte-identical holdings** — when ≥2 in-scope items
 hold the same non-null `content_hash` under *different* ids (the same bytes saved from
 two URLs, a mirror, a cross-post, or one work captured by two source adapters — a
-genuinely new custody *shape*, custody-vision §2.7, distinct from URL-spelling
+genuinely new custody *shape*, vision §2.7, distinct from URL-spelling
 duplicates and from canonical DOI works): `_Duplicates: N group(s) of byte-identical
 content (M item(s))._`, with the HTML twin `<p class="custody-duplicates">Duplicates: N
 group(s) of byte-identical content (M item(s)).</p>`. It folds the *same*
@@ -1256,7 +1256,7 @@ the **content-identity redundancy report**, the byte-identity sibling of the
 URL-spelling `duplicates` list and of canonical DOI `works`. A custody library can
 hold **byte-identical content under different ids** — the same bytes saved from two
 URLs, a mirror, a cross-post, or one work captured by two source adapters — a
-genuinely new custody *shape* (custody-vision §2.7), neither a spelling accident
+genuinely new custody *shape* (vision §2.7), neither a spelling accident
 (`duplicates`, ADR 0023) nor a scholarly cluster (`works`). It holds
 `{status, groups, total_groups, total_items}`: the held items are grouped by their
 non-null `content_hash` and every group of **≥2 distinct ids** is flagged as
@@ -2209,7 +2209,7 @@ trend's repaired-backup `▼` line (`test_trend_carries_the_readable_duplicates_
 `test_trend_duplicates_line_is_omitted_on_a_fall_to_zero`,
 `test_trend_duplicates_line_is_omitted_when_steady_clean`).
 
-This is **report-only and idempotent** (custody-vision §2.4): it records drift
+This is **report-only and idempotent** (vision §2.4): it records drift
 events and regenerates views, but never repairs index rows, reclassifies, or
 re-summarizes — `doctor --fix`, `classify --stale`, and `kb --stale` stay the
 explicit, on-request mutations. The recorded snapshot is dot-prefixed so it is
@@ -2799,7 +2799,7 @@ fingerprint the verify ledger itself drifts on (`scrolls verify`) — into
 `unchanged` (same content, a true no-op) and `conflict` (a different capture of
 the same id: e.g. another library's bundle of a source that has since drifted).
 The held copy is still kept — raw is sacred, a conflict is a *recorded, surfaced*
-event, not an overwrite (custody vision §2.4; the obsidian reconcile adoption —
+event, not an overwrite (vision §2.4; the obsidian reconcile adoption —
 *detect and surface, don't silently rewrite*, `docs/reconciliation.md`). The
 diverging ids ride the structured `conflicts` list (sorted, deduped, uncapped —
 the completeness contract) **and** a loud stderr warning naming them (bounded
@@ -3374,7 +3374,7 @@ HTML form too (both share the gather step, `test_bundle_html_custody_scope`).
 
 Beside the scope custody headline the briefing carries a one-line **rank-confidence
 headline** (roadmap H317) — `_Strength: strong <a>, moderate <b>, weak <c> (of N)._` —
-the explainable-ranking surface (the `search`/`context` `match_strength`, custody-vision
+the explainable-ranking surface (the `search`/`context` `match_strength`, vision
 §3.5) lifted to the portable bundle: how many of the matches are **title hits** (`strong`,
 BM25-weight 5×), **summary hits** (`moderate`, 2×), or **body-only** (`weak`, 1×), so a
 recipient reads not just *what* matched but *how strongly* it ranked. Each in-scope scroll
@@ -4204,7 +4204,7 @@ tier, derived per item by the same `items.get_fidelity`/`fidelity_tier` primitiv
 (`test_list_fidelity_rows_total_the_facets_fidelity_count`), the drill-from-the-
 count companion to that aggregate (`facets fidelity` says *how many* are
 reference-only, `list --fidelity reference` says *which ones* — the exact drill
-the custody vision §3.2 names). Unlike `--drift` it reads **no ledger** — fidelity
+the vision §3.2 names). Unlike `--drift` it reads **no ledger** — fidelity
 is a pure function of the stored content columns — so it ANDs with every other
 facet over the already-filtered rows (`--fidelity full --source web` is web's
 full-fidelity holdings, `test_list_fidelity_composes_with_another_facet`). The
@@ -4518,7 +4518,7 @@ whose tokens split across columns — one in the title, another in the body —
 names *both* fields it landed in rather than reporting an empty set
 (`test_search_explains_a_match_split_across_columns`). Because the explanation
 is grounded in the very column weights that produced the rank, it is custody's
-ranking signal (provenance/holdings, not engagement — custody-vision §3.5), not
+ranking signal (provenance/holdings, not engagement — vision §3.5), not
 an invented relevance score.
 
 `--source`, `--category`, `--stage`, `--tag`, and `--concept` scope the
@@ -5164,7 +5164,7 @@ duplicate folded into its best-ranked sibling (ADR 0101) is still *covered*
 truncated. The line appears only when there are matches — the empty bundle
 keeps its G1-locked `No matching scrolls.` form untouched.
 
-Each match also **explains why it ranked** (roadmap H315, custody-vision §3.5,
+Each match also **explains why it ranked** (roadmap H315, vision §3.5,
 `test_context_best_match_lines_carry_a_strength_marker`): its Best-Matches line
 ends in a compact `· <strength>` marker naming the strongest indexed field its
 query landed in — `strong` (title), `moderate` (summary), `weak` (body-only) —

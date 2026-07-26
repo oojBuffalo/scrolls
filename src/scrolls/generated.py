@@ -1,6 +1,6 @@
 """Refresh-safe regeneration of generated artifacts (ADR 0102).
 
-Scrolls' custody contract (`docs/custody-vision.md` §2) is *raw is sacred;
+Scrolls' custody contract (`docs/vision.md` §2) is *raw is sacred;
 every other surface is a regenerable view*. Compiled `library/` pages and the
 generated `agents/` instruction files are exactly such views — rebuilt on every
 `scrolls kb` / `scrolls agent install` run. Historically a re-run overwrote the
@@ -9,7 +9,7 @@ note on the next compile.
 
 This module supplies the *mechanism* adapted from obsidian-second-brain's
 sentinel-fenced regeneration (mechanism, not its self-mutating-vault
-philosophy; see `docs/agents/obsidian-second-brain-inspiration.md`): the
+philosophy; see `docs/inspiration/obsidian-second-brain-inspiration.md`): the
 generated content lives between an `@generated` begin marker and an `@end`
 marker. A regenerate replaces only that fenced region and is *authoritative*
 over it — so stale generated content can never linger — while anything outside

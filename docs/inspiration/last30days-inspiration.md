@@ -27,7 +27,7 @@ The Scrolls agent trunk should take explicit product and architecture inspiratio
 4. **Signal-aware ranking**
    - Last30Days scores by engagement, recency, source quality, humor/virality, and relevance instead of treating every result as equal.
    - Scrolls analog: expose ranking signals such as source confidence, link graph centrality, publication date, tag/concept overlap, engagement when available, and relationship density. Keep ranking explainable in CLI/MCP output.
-   - *Amended 2026-07-26:* the custody vision later reframed this (§4) —
+   - *Amended 2026-07-26:* the vision later reframed this (§4) —
      provenance and fidelity, **not engagement scores**, are the ranking
      signals for a custody system. The *explainability* discipline stands and
      shipped as the `match_strength`/`relation_strength` bands; the

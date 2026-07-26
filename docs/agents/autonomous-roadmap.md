@@ -14,9 +14,9 @@ unstarted slice whose preconditions are met, finishes it to a real stopping
 point (committed, tested, clean), and stops — even if that consumes several
 nominal slots.
 
-**Authority.** Slices are justified against `docs/custody-vision.md` and the
+**Authority.** Slices are justified against `docs/vision.md` and the
 MVP. New adapters are out unless they introduce a new custody shape
-(custody-vision §2.7). Anything not on the queue still loses to "finish the
+(vision §2.7). Anything not on the queue still loses to "finish the
 half-done slice from the previous run first."
 
 ---
@@ -55,14 +55,14 @@ me* (M5, `docs/dogfood.md`).
   `_Strength:_` headline, the `--strength` filter, and the `--stats` tally across
   search/context/`export bundle`/`related` (H312–H318, H322–H324).
 - **Content-identity / near-duplicate custody** (a genuinely new custody shape — byte-
-  identical holdings under different ids, custody-vision §2.7): the
+  identical holdings under different ids, vision §2.7): the
   `doctor.custody.content_duplicates` report, the `related` "identical content" edge,
   per-item/work/browse/graph/aggregate surfaces, the `_Duplicates:_` readable line + trend,
   the `duplicate_prunes` suggested guidance, and the import-time notice — report-only, never
   an auto-merge (raw is sacred); pinned across every read/render/compile/MCP/import surface
   by convergence + dogfood guards (H325–H362).
 
-**Closed theme — custody posture** (custody-vision §3.1, ADR 0107): `doctor`'s
+**Closed theme — custody posture** (vision §3.1, ADR 0107): `doctor`'s
 `custody.posture` distils the seven custody audit blocks into one whole-library verdict
 (`{verdict: sound|attention|at_risk, reasons}`) — a deterministic fold over the report
 `run_doctor` already produces (drift is `attention` never `at_risk`; content duplicates
@@ -124,7 +124,7 @@ custody block scalar-to-nested against the full `doctor --json` `custody` audit,
 `drift` axes, `coverage`, `enrichment_stale`/`summaries_stale`, `at_risk`→`works.at_risk`,
 `conflicts`→`conflicts.items`, `archive_mismatched`→`archive.mismatched`, the two
 `content_duplicate_*`→`content_duplicates.total_{groups,items}`, and the whole `posture` dict) — the M2
-"identical semantics across surfaces" contract (custody-vision §2.6) on the boot-vs-audit axis, beside
+"identical semantics across surfaces" contract (vision §2.6) on the boot-vs-audit axis, beside
 H363's compile determinism, H364's MCP-registry immutability, H365's repair convergence, and H366's
 read-budget nesting. The sabotage proves the teeth: re-wiring one `status` scalar in `_cmd_status` (e.g.
 `content_duplicate_groups = content_duplicate_items`) fails *only* the convergence guard while all 434
@@ -331,8 +331,8 @@ closed through **H425**; the next step is the post-theme assessment/recommendati
 
 Ordered. Take the next slice whose preconditions are met (all listed preconditions are
 shipped), finish it to a committed/tested/clean stopping point, and stop. `→ capN` marks
-the PRD capability. Slices are justified against `docs/custody-vision.md` and the MVP; new
-adapters are out unless they introduce a new custody shape (custody-vision §2.7). Anything
+the PRD capability. Slices are justified against `docs/vision.md` and the MVP; new
+adapters are out unless they introduce a new custody shape (vision §2.7). Anything
 not on the queue still loses to "finish the half-done slice from the previous run first."
 
 **The custody-posture theme is closed** (H369–H373; the cross-surface convergence guard
@@ -1263,7 +1263,7 @@ the contract-consolidation queue is now closed through **H425**. No new adapters
   guidance, the import-time notice, and the full convergence + dogfood guard set across
   read/render/compile/MCP/import — report-only, never an auto-merge.
 - **Closed — the custody-posture theme** (H369–H373): `doctor`'s `custody.posture` distils the
-  seven custody blocks into one whole-library verdict (custody-vision §3.1, ADR 0107) — read →
+  seven custody blocks into one whole-library verdict (vision §3.1, ADR 0107) — read →
   render → travel → trend → converge, all shipped.
 - **Closed — the contract-consolidation theme.** Each cell replaced a *family* of per-surface
   tests with one completeness-asserted invariant that auto-covers new surfaces (the H388 pattern).
@@ -1285,7 +1285,7 @@ the contract-consolidation queue is now closed through **H425**. No new adapters
 - The **budget/tier convergence guard cells H244–H249** remain valid regression guards but
   are explicitly **de-prioritized** — take a capability or forward-hardening slice first.
 - A **new source adapter** is out unless it introduces a genuinely new custody *shape* (a new
-  fidelity boundary, identity rule, or thread/canonical structure — custody-vision §2.7);
+  fidelity boundary, identity rule, or thread/canonical structure — vision §2.7);
   adapter-churn for its own sake loses to hardening.
 - Explicitly **not** this week: new adapters (absent a new custody shape), productivity
   surfaces, paid research integrations.

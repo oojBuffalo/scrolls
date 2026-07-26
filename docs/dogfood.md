@@ -2,7 +2,7 @@
 
 This is Scrolls' **success metric made runnable**: the one end-to-end,
 agent-runnable flow that exercises the whole custody promise in order. The
-custody vision (`docs/custody-vision.md`, capability 8) names it directly —
+vision (`docs/vision.md`, capability 8) names it directly —
 *"If an agent can't run it unattended, it isn't done."* It is MVP slice **M5**
 (`docs/product/mvp.md`), and it ties together the earlier slices: refresh-safe
 regeneration (M1), the completeness contract (M2), context budgets (M3), and
@@ -112,7 +112,7 @@ moves from *"unverified"* (we have not looked) to *"drifted, recorded"* (we
 looked and the source moved).
 
 That the integrity score does **not** drop when a source drifts is the whole
-point, not a gap. *Raw is sacred* (custody-vision §2.2): the source changing
+point, not a gap. *Raw is sacred* (vision §2.2): the source changing
 upstream is a recorded custody **event**, not a loss of what we hold
 (§2.4 — "a re-fetch that disagrees … is a custody event … not an overwrite").
 Custody stays intact precisely because the capture is never clobbered by the
@@ -699,7 +699,7 @@ scheduled custody-maintenance pass an hourly worker can run unattended:
    drift posture, and the `enrichment_stale`/`summaries_stale` counts — against a
    snapshot recorded at `<root>/.maintenance/last-run.json`.
 
-It is report-only and idempotent (custody-vision §2.4): it records events and
+It is report-only and idempotent (vision §2.4): it records events and
 regenerates views, but never repairs index rows, reclassifies, or re-summarizes —
 `doctor --fix`, `classify --stale`, and `kb --stale` stay the explicit, on-request
 mutations. The delta makes the custody point above **recurring**: each pass shows

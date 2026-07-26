@@ -18,7 +18,7 @@ classified, searchable, agent-readable local library. Its original 6-stage
 pipeline and its focus on deliberately saved items is where Scrolls began —
 "we keep the spirit while generalizing it," as the earlier vision synthesis
 put it. Scrolls elevates the same flow into a source-agnostic **custody
-system** (`docs/custody-vision.md` §1): the pipeline generalized across ~57
+system** (`docs/vision.md` §1): the pipeline generalized across ~57
 adapters, and the library reframed from a knowledge base into a custody
 ledger.
 
@@ -43,7 +43,7 @@ Borrow these regardless of stack:
 ## Patterns adopted
 
 - **Raw-record preservation for rebuildability.** Field Theory's JSONL cache
-  became Scrolls' *raw is sacred* principle (custody vision §2.2): every
+  became Scrolls' *raw is sacred* principle (vision §2.2): every
   derived view regenerates from raw + index.
 - **`import` / `sync` / `add` as distinct verbs.** Bulk local-archive
   ingestion vs live platform deltas vs one-off URL capture (IDEAS.md §13).

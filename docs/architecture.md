@@ -51,7 +51,7 @@ each command moves items between stages or derives artifacts from them.
   whatever is rendered (`src/scrolls/classify.py`,
   `src/scrolls/media.py`, `src/scrolls/kb.py`).
 - **Enrichment is provenance-complete and re-derivable** (PRD cap 8,
-  custody-vision §3.6). Every engine that writes a derived field records
+  vision §3.6). Every engine that writes a derived field records
   *how* it was produced, in `provenance`, alongside (never replacing) the
   capture facts: the rules engine stamps `classified_by="rules-v1"`,
   the precedence tier that fired (`classified_basis` — one of
@@ -1180,7 +1180,7 @@ choice (ADRs 0004, 0005).
   files under `library/` are left alone. **Regeneration is refresh-safe**
   (`generated.py`, ADR 0102): each page wraps its content in a sentinel
   `@generated`…`@end` fence, and a recompile replaces only the fenced region —
-  so a hand annotation outside the fence survives, enacting custody-vision §2
+  so a hand annotation outside the fence survives, enacting vision §2
   ("views are regenerable") without clobbering edits. A page whose group
   vanishes is removed unless it carries such an annotation, in which case it is
   kept with the generated region tombstoned (the annotation is never silently
@@ -1209,7 +1209,7 @@ choice (ADRs 0004, 0005).
   `latest_events` read per compile (the bundle/context pattern), rendered
   *inside* the `@generated` fence so a recompile refreshes it (after a re-verify
   moves the posture *or* its timestamp) without disturbing annotations, and
-  report-only — never a stored or mutated field (custody-vision §2.4). When the
+  report-only — never a stored or mutated field (vision §2.4). When the
   library holds **byte-identical content under another id** the row also trails a
   **content-identity marker** — `· also held as `<id>`, `<id>`` (roadmap H333) —
   naming the *other* held ids sharing this scroll's `content_hash`, the Markdown
@@ -1610,7 +1610,7 @@ choice (ADRs 0004, 0005).
   per-source custody picture is never lost, only relocated.** The browse twins
   `search_scrolls`/`list_scrolls`/`get_related_scrolls` are **array-only by
   design** (roadmap H163): they return the bare per-item hit list — the
-  G1-locked browse contract (custody-vision §6 surface parity) — because the CLI
+  G1-locked browse contract (vision §6 surface parity) — because the CLI
   `--stats` scope/custody envelope is a flag affordance with no natural MCP
   analogue (an MCP tool returns one shape). The per-source `stats.custody.by_source`
   split those CLI envelopes carry (H155) therefore rides the *object-returning*
