@@ -2,14 +2,14 @@
 
 **Status:** The operative north star for the `work/scrolls-dev` agent trunk.
 All autonomous decisions are justified against this document.
-**Original:** 2026-06-15, as `docs/custody-vision.md`.
+**Original:** 2026-06-15, as the standalone custody-vision document.
 
 *Amended: 2026-07-26 — the three vision documents were merged into this single
 file. §1–§5 below are the custody-first synthesis unchanged (section numbering
 preserved, so a citation like "custody-vision §2.4" resolves here as §2.4).
 The unnumbered sections after §5 salvage the still-operative remainder of the
-two earlier syntheses, whose paths are now stubs (`docs/custody-vision.md`,
-`docs/agents/vision.md`).*
+two earlier syntheses; their old paths were removed, and the ADRs that cited
+them were amended in place with the updated paths.*
 
 **Merge record — deliberately dropped from the earlier syntheses:**
 

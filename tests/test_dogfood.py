@@ -1,6 +1,6 @@
 """The dogfood proof: one agent-runnable flow that exercises M1–M4 end to end.
 
-The custody vision (`docs/custody-vision.md`, capability 8) names dogfood
+The custody vision (`docs/vision.md`, capability 8) names dogfood
 workflows as *the* success metric: "End-to-end, agent-runnable flows: *hold a
 topic* (ingest → render → audit), *prove custody* (doctor → custody score),
 *detect loss* (recheck → drift report), *take it with me* (export bundle →

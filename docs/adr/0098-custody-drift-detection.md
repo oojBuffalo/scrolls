@@ -4,9 +4,13 @@ Date: 2026-06-15
 
 Status: accepted
 
+*Amended: 2026-07-26 — the vision docs were merged into `docs/vision.md`
+(§ numbering preserved); the path reference below was updated. Decision
+content unchanged.*
+
 ## Context
 
-The custody-first vision (`docs/custody-vision.md`) names drift/rot detection
+The custody-first vision (`docs/vision.md`) names drift/rot detection
 as capability 3 and the **explicit next slice** after the integrity audit:
 
 > `scrolls fetch --recheck` (or `scrolls verify`) re-captures a rendered item,

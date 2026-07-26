@@ -1,9 +1,8 @@
 # Obsidian Second Brain inspiration for Scrolls
 
-*Amended: 2026-07-26 — moved here from
-`docs/agents/obsidian-second-brain-inspiration.md` as part of consolidating all
-inspiration material under `docs/inspiration/`; shipped-status notes added and
-one mis-attributed quotation paraphrased.*
+*Amended: 2026-07-26 — moved here from its old `docs/agents/` location as
+part of consolidating all inspiration material under `docs/inspiration/`;
+shipped-status notes added and one mis-attributed quotation paraphrased.*
 
 The Scrolls agent trunk takes a third explicit inspiration source, alongside
 [Field Theory CLI](fieldtheory-cli-inspiration.md) and

@@ -50,9 +50,7 @@ Start with the reading order in `docs/agents/domain.md`:
 4. `docs/library-format.md` — scroll, `library/`, agent-doc, and media artifact
    contracts.
 5. `docs/adr/README.md` and the relevant ADRs.
-6. `docs/vision.md` — the operative north star (custody-first synthesis; the
-   old `docs/custody-vision.md` and `docs/agents/vision.md` paths are stubs
-   pointing here).
+6. `docs/vision.md` — the operative north star (custody-first synthesis).
 7. `docs/product/prd.md`, `docs/product/mvp.md`, and
    `docs/agents/autonomous-roadmap.md`.
 8. `docs/inspiration/` — the inspiration/lineage record (Field Theory CLI,

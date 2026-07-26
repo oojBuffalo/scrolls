@@ -4,9 +4,13 @@ Date: 2026-06-15
 
 Status: accepted
 
+*Amended: 2026-07-26 — the vision docs were merged into `docs/vision.md`
+(§ numbering preserved); the path reference below was updated. Decision
+content unchanged.*
+
 ## Context
 
-The custody-first vision (`docs/custody-vision.md`) names the **custody
+The custody-first vision (`docs/vision.md`) names the **custody
 integrity audit** as the load-bearing first capability: `scrolls doctor` should
 graduate from "find broken links / missing scrolls" to a per-library *custody
 report* — a fidelity distribution, categorized integrity findings, and an

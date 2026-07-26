@@ -4,7 +4,7 @@
 it: "the derived artifacts (the Markdown scrolls, captured media, the compiled
 `library/`) rebuild from those rows: `scrolls doctor --fix` rewrites any missing
 scroll file and the FTS index, and `scrolls kb` recompiles the library." The
-custody vision (`docs/custody-vision.md`, capability 4) demands that this be a
+custody vision (`docs/vision.md`, capability 4) demands that this be a
 *tested* invariant — "integrity is verified, not asserted" — and a dogfood-
 verified path (capability 8: *take it with me — export bundle → reimport*).
 

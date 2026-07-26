@@ -45,10 +45,10 @@ Give it its own `<name>-inspiration.md` here (origin, adopt/adapt/reject,
 pointers), add a row to the table above, record the decision-grade parts in
 an ADR, and keep every reference elsewhere a pointer.
 
-## Why no ADR for this consolidation
+## ADR status of this consolidation
 
 The 2026-07-26 docs consolidation (this directory plus the single merged
-`docs/vision.md`) deliberately added no ADR: the instruction for the slice
-was to leave `docs/adr/` untouched, and a new ADR would modify that directory
-and its index. The rationale lives here, in the stubs left at the old paths,
-and in the commit messages.
+`docs/vision.md`) added no new ADR. The ADRs that cited the pre-consolidation
+paths (0093, 0097, 0098, 0099, 0102, 0103, and the ADR index) were instead
+amended in place — dated path updates only, decision content unchanged — and
+the old paths were removed rather than left as redirect stubs.

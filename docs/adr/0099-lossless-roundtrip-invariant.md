@@ -4,9 +4,13 @@ Date: 2026-06-15
 
 Status: accepted
 
+*Amended: 2026-07-26 — the vision docs were merged into `docs/vision.md`
+(§ numbering preserved); the path reference below was updated. Decision
+content unchanged.*
+
 ## Context
 
-The custody vision (`docs/custody-vision.md`) makes "take it with me" a
+The custody vision (`docs/vision.md`) makes "take it with me" a
 load-bearing promise, not a convenience:
 
 > **The library is a way-station, not a sink.** Custody without exit is

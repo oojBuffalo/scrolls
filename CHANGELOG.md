@@ -19,3 +19,4 @@ Each autonomous run or agent slice should append one entry roughly the size of a
 - 2026-07-05 — test: add H424 per-source scoped audit-drill convergence contract.
 - 2026-07-05 — test: add H425 compiled group-page custody-marker convergence contract.
 - 2026-07-26 — docs: consolidate inspiration into docs/inspiration/, merge the vision docs into a single docs/vision.md, scrub scattered lineage references to pointers, and restructure dev check-ins under docs/agents/progress/<YYMMDD>/.
+- 2026-07-26 — docs: amend the ADRs to the consolidated doc paths and remove the transition stubs.

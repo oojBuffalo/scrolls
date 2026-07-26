@@ -4,11 +4,16 @@ Date: 2026-06-16
 
 Status: accepted
 
+*Amended: 2026-07-26 — the docs consolidation merged the vision docs into
+`docs/vision.md` (§ numbering preserved) and moved the inspiration docs to
+`docs/inspiration/`; path references below were updated. Decision content
+unchanged.*
+
 ## Context
 
 Scrolls already names two inspiration sources — Field Theory CLI and
-`mvanhorn/last30days-skill` (`docs/agents/last30days-inspiration.md`, IDEAS.md
-§0). A third, [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain),
+`mvanhorn/last30days-skill` (`docs/inspiration/last30days-inspiration.md`,
+IDEAS.md §0). A third, [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain),
 is a mature agent-facing knowledge system worth evaluating: 45 commands, AI-first
 note rules, scheduled maintenance agents, vendor-neutral export, and a
 codebase-architect command that writes *maintained* docs.
@@ -16,7 +21,7 @@ codebase-architect command that writes *maintained* docs.
 But its headline philosophy is the inverse of Scrolls'. obsidian-second-brain is
 *"a vault that rewrites itself"*: each ingested source **mutates existing pages**
 in place, and reconciliation **auto-resolves contradictions by overwriting** the
-losing claim. Scrolls' operative north star (`docs/custody-vision.md`) is the
+losing claim. Scrolls' operative north star (`docs/vision.md`) is the
 opposite — *raw is sacred, every other surface is a regenerable view* (§2), and
 *drift is a recorded custody event, never an overwrite* (§4). Adopting
 obsidian's patterns naively would quietly erode the one promise that
@@ -31,7 +36,7 @@ part this record exists to answer.
 
 **Adopt obsidian-second-brain as an inspiration source under a strict
 mechanism-not-philosophy posture.** The full adopt/adapt/reject mapping lives in
-`docs/agents/obsidian-second-brain-inspiration.md`; the product consequences are
+`docs/inspiration/obsidian-second-brain-inspiration.md`; the product consequences are
 in `docs/product/prd.md` and `docs/product/mvp.md`; the scheduling is in
 `docs/agents/autonomous-roadmap.md`. The load-bearing rules:
 
@@ -71,7 +76,8 @@ in `docs/product/prd.md` and `docs/product/mvp.md`; the scheduling is in
 
 - This commit makes the decision real in the operating docs: a new inspiration
   doc, a PRD and MVP under `docs/product/`, an autonomous roadmap, and updates
-  to `CLAUDE.md`, `IDEAS.md`, `docs/agents/vision.md`, and
+  to `CLAUDE.md`, `IDEAS.md`, the then-current agents vision doc (since merged
+  into `docs/vision.md`), and
   `docs/agents/domain.md` so future runs see the source and its posture. No
   application code changes in this slice.
 - The refresh-safe-artifacts contract (rule 2) is the committed *direction*; its
@@ -85,5 +91,5 @@ in `docs/product/prd.md` and `docs/product/mvp.md`; the scheduling is in
   `/grill-me-docs` (installed as `grill-with-docs`), so plans are stress-tested
   against this repo's documented decisions and terminology before implementation.
 - Risk acknowledged: the repo now has several vision-adjacent docs. Mitigation:
-  this ADR and the PRD/MVP defer to `docs/custody-vision.md` as authority and do
+  this ADR and the PRD/MVP defer to `docs/vision.md` as authority and do
   not fork the vision; the inspiration doc is explicitly subordinate.

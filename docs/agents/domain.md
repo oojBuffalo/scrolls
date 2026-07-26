@@ -13,7 +13,7 @@ Primary context sources, in reading order for a new contributor or agent:
 - `docs/cli.md` — the CLI output contract: per-command JSON keys, exit codes, and error envelopes, with captured real output and an offline reproduction script.
 - `docs/library-format.md` — the on-disk artifact contract: scroll frontmatter and body format, compiled `library/` page formats, agent instruction files, and what consumers may rely on.
 - `docs/adr/` — architectural decision records, indexed at `docs/adr/README.md`.
-- `docs/vision.md` — the operative north star (custody-first synthesis; the three vision documents were merged here 2026-07-26 — `docs/custody-vision.md` and `docs/agents/vision.md` are stubs pointing here, kept because ADRs reference them).
+- `docs/vision.md` — the operative north star (custody-first synthesis; the three vision documents were merged here 2026-07-26).
 - `docs/product/prd.md` — product direction; `docs/product/mvp.md` — the shipped near-term scope. Both defer to the vision as authority.
 - `docs/agents/autonomous-roadmap.md` — the hour/day/week automation buffer the hourly worker follows, mapped to the PRD/MVP.
 - `docs/agents/progress/` — dated dev check-ins (`<YYMMDD>/`): `report.md` (facts), `reconciliation.md` (progress vs goals — deviations + corrections), `plans.md` (next objectives + 1/3/7-day plan).

@@ -4,6 +4,10 @@ Date: 2026-06-15
 
 Status: accepted
 
+*Amended: 2026-07-26 — the inspiration doc moved to
+`docs/inspiration/last30days-inspiration.md`; the path reference below was
+updated. Decision content unchanged.*
+
 ## Context
 
 The library now fetches conversations from a dozen sources: the four code
@@ -80,8 +84,8 @@ its byline and the section heading.
   `format_thread` — the rendering is no longer something to get right a
   thirteenth time. This is the consolidation the autonomous priority calls for
   over more one-off adapters: a deeper module with a smaller interface
-  (`docs/agents/last30days-inspiration.md`, the "threaded/comment rendering"
-  slice).
+  (`docs/inspiration/last30days-inspiration.md`, the "threaded/comment
+  rendering" slice).
 - Deliberately *not* consolidated: the skip rules, bylines, text extraction,
   and ordering. Those are genuine per-source knowledge (GitLab's `system`
   notes, Bitbucket's inline review comments, Lemmy's `path` pre-order, Stack

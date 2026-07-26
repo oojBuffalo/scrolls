@@ -1,7 +1,7 @@
 # Last30Days inspiration for Scrolls
 
-*Amended: 2026-07-26 — moved here from `docs/agents/last30days-inspiration.md`
-as part of consolidating all inspiration material under `docs/inspiration/`;
+*Amended: 2026-07-26 — moved here from its old `docs/agents/` location as
+part of consolidating all inspiration material under `docs/inspiration/`;
 stale scheduling content replaced with pointers and a status note.*
 
 The Scrolls agent trunk should take explicit product and architecture inspiration from [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill), while adapting the ideas to Scrolls' local-first library model rather than copying its implementation. Reference checkout: `/Users/claw/.hermes/gh-repos/last30days-skill` (inspiration only — never vendored code or secrets).

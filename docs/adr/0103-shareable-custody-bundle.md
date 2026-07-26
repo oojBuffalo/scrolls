@@ -4,6 +4,10 @@ Date: 2026-06-16
 
 Status: accepted
 
+*Amended: 2026-07-26 — the inspiration doc moved to
+`docs/inspiration/obsidian-second-brain-inspiration.md`; the path reference
+below was updated. Decision content unchanged.*
+
 ## Context
 
 Scrolls already has a lossless whole-library round-trip: `scrolls export items`
@@ -20,7 +24,8 @@ not raw text; it surfaces no per-item provenance or fidelity; and it cannot be
 re-imported.
 
 The custody-vision (§3.7) and the obsidian-second-brain "vendor-neutral export
-bundle" adaptation (ADR 0102, `docs/agents/obsidian-second-brain-inspiration.md`)
+bundle" adaptation (ADR 0102,
+`docs/inspiration/obsidian-second-brain-inspiration.md`)
 call for the artifact that is *both*: a scoped, self-contained briefing an agent
 can hand to a person or another library, that reads as a topic briefing carrying
 provenance + fidelity per item **and** re-imports losslessly. This is PRD

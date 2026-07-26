@@ -1,6 +1,6 @@
 """Cap 8 invariant: enrichment is provenance-complete and re-derivable.
 
-The custody vision (`docs/custody-vision.md`, capability 6) and the PRD
+The custody vision (`docs/vision.md`, capability 6) and the PRD
 (capability 8) require that derived enrichment — classification, concepts, and
 the LLM concept summaries — *record its inputs and method and regenerate
 deterministically from raw*. "Auditable enrichment stays; un-reproducible
