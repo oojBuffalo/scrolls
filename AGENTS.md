@@ -1,5 +1,8 @@
 # Scrolls Agent Guide
 
+*Amended: 2026-07-26 — vision, inspiration, and priority pointers consolidated
+(see `docs/vision.md` and `docs/inspiration/`); dev check-in convention added.*
+
 Scrolls is a local-first custody system for saved internet artifacts. Its job is
 to hold what a person deliberately saved, prove what was held at capture time,
 surface drift/rot honestly, and export the library losslessly.
@@ -52,9 +55,9 @@ Start with the reading order in `docs/agents/domain.md`:
    pointing here).
 7. `docs/product/prd.md`, `docs/product/mvp.md`, and
    `docs/agents/autonomous-roadmap.md`.
-8. `docs/agents/last30days-inspiration.md` and
-   `docs/agents/obsidian-second-brain-inspiration.md` for adopt/adapt/reject
-   mappings.
+8. `docs/inspiration/` — the inspiration/lineage record (Field Theory CLI,
+   last30days-skill, obsidian-second-brain), one document per source with
+   adopt/adapt/reject mappings.
 9. `IDEAS.md` — brainstorm and backlog; not everything in it exists yet.
 
 When a slice changes the pipeline, adapter contract, or data model, update
@@ -153,6 +156,19 @@ Examples:
 - 2026-06-18 — blocked: skipped feature work because the checkout was dirty.
 ```
 
+## Dev check-ins
+
+Human steering checkpoints live under `docs/agents/progress/`, one dated
+directory (`<YYMMDD>/`) per check-in, three files each:
+
+- `report.md` — facts only: what exists and what is complete.
+- `reconciliation.md` — did progress match the goals/plans? Deviations and
+  corrections. (Distinct from `docs/reconciliation.md`, the custody-conflict
+  design doc — same word, different job.)
+- `plans.md` — next objectives as logical items, plus a 1/3/7-day plan. The
+  roadmap remains operationally authoritative for the hourly worker until a
+  human edits `plans.md`.
+
 ## Issue tracker and labels
 
 GitHub Issues are the default issue tracker for this repo. See
@@ -163,14 +179,12 @@ Use the default Matt Pocock triage vocabulary. See
 
 ## Reference checkouts
 
-- Last30Days inspiration: `/Users/claw/.hermes/gh-repos/last30days-skill`
-- Obsidian Second Brain inspiration:
-  `/Users/claw/.hermes/gh-repos/obsidian-second-brain`
+- Last30Days: `/Users/claw/.hermes/gh-repos/last30days-skill`
+- Obsidian Second Brain: `/Users/claw/.hermes/gh-repos/obsidian-second-brain`
 
-Use these for mechanisms and patterns only. Do not copy secrets, vendored code,
-or implementation details blindly. Scrolls explicitly rejects the
-self-mutating-vault philosophy: generated views may refresh, but raw artifacts
-and user-authored regions must not be silently rewritten.
+Inspiration only — mechanisms, never the self-mutating-vault philosophy, and
+never copied secrets, vendored code, or implementation details. The full
+adopt/adapt/reject record is `docs/inspiration/`.
 
 ## Development process
 
@@ -184,10 +198,9 @@ and user-authored regions must not be silently rewritten.
   to definitions and usages before editing.
 - Do not invent imports, files, symbols, or APIs. Inspect the repo and manifests.
 
-Current autonomous priority: finish and harden custody-depth work before breadth:
-deep works merge, explainable ranking/confidence, evidence clustering,
-MCP/search/list consistency, doctor/repair, lossless export/import plus
-shareable bundles, threaded rendering, fixtures/evals, and dogfood workflows.
+Current autonomous priority: custody depth before breadth — follow the
+`docs/agents/autonomous-roadmap.md` queue, steered by the latest
+`docs/agents/progress/` check-in's `plans.md`.
 
 ## Verification expectations
 
@@ -202,6 +215,8 @@ shareable bundles, threaded rendering, fixtures/evals, and dogfood workflows.
 ## Safety
 
 - Do not commit secrets.
+- Do not change the operative vision (`docs/vision.md`) without explicit human
+  approval.
 - Do not force-push unless explicitly instructed.
 - Do not rewrite `main` history.
 - Do not overwrite another agent's uncommitted work.

@@ -1,6 +1,11 @@
 # Scrolls Agent Guide
 
-Scrolls is a local-first CLI/project for turning saved internet artifacts into an agent-readable knowledge library.
+*Amended: 2026-07-26 — vision, inspiration, and priority pointers consolidated
+(see `docs/vision.md` and `docs/inspiration/`).*
+
+Scrolls is a local-first custody system for saved internet artifacts: it holds
+what you deliberately saved, proves what was captured, surfaces drift honestly,
+and exports losslessly.
 
 Core flow:
 
@@ -60,17 +65,16 @@ This is a single-context project. Use this `CLAUDE.md`, root `README.md`, `docs/
 
 **Primary north star:** Read `docs/vision.md` first — the custody-first synthesis (original 2026-06-15; the three vision documents were merged into it 2026-07-26). All autonomous decisions must be justified against it. `docs/custody-vision.md` and `docs/agents/vision.md` are stubs kept only because ADRs reference those paths.
 
-Secondary references: `docs/agents/last30days-inspiration.md` and `docs/agents/obsidian-second-brain-inspiration.md` (specific patterns to adapt) and `docs/agents/domain.md`.
+Secondary references: `docs/inspiration/` (the adopt/adapt/reject mappings per inspiration source) and `docs/agents/domain.md`.
 
-**Product direction:** `docs/product/prd.md` (inspiration-backed direction), `docs/product/mvp.md` (near-term coherent scope), and `docs/agents/autonomous-roadmap.md` (the hour/day/week buffer the hourly worker should follow). Read these to pick the next coherent slice.
+**Product direction:** `docs/product/prd.md` (direction), `docs/product/mvp.md` (shipped near-term scope), `docs/agents/autonomous-roadmap.md` (the queue the hourly worker follows), and the latest `docs/agents/progress/` check-in (`report.md` facts, `reconciliation.md` deviations, `plans.md` steering). Read these to pick the next coherent slice.
 
-### Last30Days inspiration
+### Inspiration sources
 
-Use `/Users/claw/.hermes/gh-repos/last30days-skill` as a reference checkout for inspiration only. Adapt its patterns to Scrolls' local-first library model: agent-facing contracts, multi-source fanout with graceful degradation, evidence clustering/dedupe, signal-aware ranking, shareable artifacts, fixtures/evals, and dogfood workflows. Do not copy secrets, vendored code, or implementation details blindly.
+All inspiration/lineage material lives in `docs/inspiration/` — Field Theory CLI, last30days-skill, and obsidian-second-brain, one document per source with full adopt/adapt/reject mappings. Ground rules: inspiration only (never copy secrets, vendored code, or implementation details blindly); adopt mechanisms, never the self-mutating-vault philosophy. Reference checkouts:
 
-### Obsidian Second Brain inspiration
-
-Use `/Users/claw/.hermes/gh-repos/obsidian-second-brain` (GitHub: `eugeniughelbur/obsidian-second-brain`) as a reference checkout for inspiration only. Adopt **mechanisms, not its self-mutating-vault philosophy**: Scrolls rejects "the vault rewrites itself" / auto-overwriting reconciliation because it violates custody (raw is sacred; drift is a recorded event, never an overwrite). Adopt refresh-safe sentinel-fenced regeneration of generated artifacts, anti-fabrication/search-completeness as a tested contract, progressive context budgets, portable custody bundles, and scheduled custody maintenance. See `docs/agents/obsidian-second-brain-inspiration.md` and ADR 0102 for the full adopt/adapt/reject mapping. Do not copy secrets, vendored code, or implementation details blindly.
+- `/Users/claw/.hermes/gh-repos/last30days-skill`
+- `/Users/claw/.hermes/gh-repos/obsidian-second-brain`
 
 ## Development process
 
@@ -93,7 +97,7 @@ The user has authorized autonomous, practical decisions on architecture, design,
 
 Prefer small vertical slices over broad rewrites, but each autonomous run should do real work until it reaches a natural, coherent stopping point.
 
-Current autonomous priority (from vision.md): deep works merge, explainable ranking & confidence, evidence clustering, MCP/search/list consistency, doctor/repair, lossless export/import + shareable bundles, threaded rendering, fixtures/evals, and dogfood workflows. New adapters only when they validate a broader abstraction.
+Current autonomous priority: follow the `docs/agents/autonomous-roadmap.md` queue, steered by the latest `docs/agents/progress/` check-in's `plans.md`. New adapters only when they introduce a genuinely new custody shape (vision §2.7).
 
 The goal is not to check a box once the hourly automation fires. A run should complete an isolated feature, vertical slice, schema/module, CLI path, adapter, test-backed behavior, or decision-grade architecture step that future runs can build on without first finishing half-done work.
 
@@ -104,6 +108,7 @@ Avoid trivial progress: typo-only edits, README reshuffling, formatting-only chu
 ## Safety
 
 - Do not commit secrets.
+- Do not change the operative vision (`docs/vision.md`) without explicit human approval.
 - Do not force-push unless explicitly instructed by the user.
 - Do not rewrite `main` history, and do not touch repository `main` beyond fetch/compare operations unless Elijah explicitly asks.
 - Do not let multiple agents write the same checkout at the same time.

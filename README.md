@@ -24,7 +24,7 @@ Sources → Items → Scrolls → Library → Agents
 2. **Enrich** — add source metadata, media/link context, transcripts, article text, or page extracts.
 3. **Classify** — category, domain, concepts, and usefulness (rules engine, optional LLM).
 4. **Reconcile** — merge representations of the same work, detect duplicates, surface conflicts and drift.
-5. **Index & compile** — SQLite/FTS index plus a Karpathy-style interlinked Markdown knowledge base.
+5. **Index & compile** — SQLite/FTS index plus a compiled, interlinked Markdown knowledge base.
 6. **Expose** — serve the library to humans and agents via CLI, MCP, and portable bundles.
 
 ## Quickstart
@@ -220,10 +220,11 @@ Reading order (see [`AGENTS.md`](AGENTS.md) for the contributor guide):
 3. [`docs/library-format.md`](docs/library-format.md) — scroll, `library/`, agent-doc, and media artifacts.
 4. [`docs/adapters.md`](docs/adapters.md) — the source-adapter catalog.
 5. [`docs/vision.md`](docs/vision.md) — the operative north star (custody-first).
-6. [`docs/reconciliation.md`](docs/reconciliation.md) — reconciliation and custody-conflict design.
-7. [`docs/adr/README.md`](docs/adr/README.md) — the decision records behind the implementation.
-8. [`docs/product/prd.md`](docs/product/prd.md), [`docs/product/mvp.md`](docs/product/mvp.md) — product direction and scope.
-9. [`docs/dogfood.md`](docs/dogfood.md) — the end-to-end *hold → prove → detect → take-it-with-me* workflow.
+6. [`docs/inspiration/`](docs/inspiration/README.md) — where the ideas came from: the adopt/adapt/reject record per inspiration source.
+7. [`docs/reconciliation.md`](docs/reconciliation.md) — reconciliation and custody-conflict design.
+8. [`docs/adr/README.md`](docs/adr/README.md) — the decision records behind the implementation.
+9. [`docs/product/prd.md`](docs/product/prd.md), [`docs/product/mvp.md`](docs/product/mvp.md) — product direction and scope.
+10. [`docs/dogfood.md`](docs/dogfood.md) — the end-to-end *hold → prove → detect → take-it-with-me* workflow.
 
 ## Status
 

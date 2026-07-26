@@ -1,5 +1,10 @@
 # Scrolls Implementation Ideas
 
+*Amended: 2026-07-26 — this file is the historical brainstorm, kept in place
+(its numbered sections are cited from `src/` and the ADRs; do not renumber).
+The inspiration summaries that used to live in §0 and §13 moved to
+`docs/inspiration/`; pointers remain.*
+
 The clean mental model for **Scrolls** could be:
 
 ```text
@@ -14,40 +19,16 @@ Where:
 - **Library** = compiled interlinked KB / concept map.
 - **Agents** = Claude Code, Codex, Hermes, shell tools, future MCP server.
 
-**Read `docs/agents/vision.md` for the authoritative product vision.** This IDEAS.md captures early thinking; the vision document is the current north star.
+**Read `docs/vision.md` for the authoritative product vision.** This IDEAS.md captures early thinking; the vision document is the current north star.
 
 ## 0. Product inspiration: Last30Days and Obsidian Second Brain
 
-Scrolls draws on two external reference projects (and the original Field Theory
-CLI spark). Neither is code to copy — both are product bars for agent-facing
-usefulness, adapted to Scrolls' local-first **custody** model.
-
-### Last30Days
-
-Scrolls should take inspiration from [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill): not as code to copy, but as a product bar for agent-facing usefulness. Relevant patterns:
-
-- a clear contract between the agent-facing instructions and the executable engine,
-- multi-source fanout that tolerates partial failures and reports degraded states,
-- evidence clustering/dedupe so repeated representations collapse into one useful story,
-- signal-aware ranking that explains why an item matters,
-- shareable artifacts in addition to chat/CLI output,
-- fixtures/evals/regression tests as product infrastructure,
-- dogfood workflows that prove agents can actually use the system end to end.
-
-For the detailed adaptation notes, see `docs/agents/last30days-inspiration.md`. Near-term autonomous work should prefer these cross-cutting product patterns over adding more one-off adapters unless a new adapter validates a broader abstraction.
-
-### Obsidian Second Brain
-
-Scrolls also draws on [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain) — but under a strict *mechanism-not-philosophy* posture. Its headline idea, *"a vault that rewrites itself"* (ingest mutates existing pages; reconciliation auto-overwrites the losing claim), is **rejected**: it is the inverse of Scrolls' custody contract (raw is sacred; drift is a recorded event, never an overwrite). What Scrolls adopts is the mechanism underneath:
-
-- refresh-safe **sentinel-fenced regeneration** of generated artifacts (`@generated`/`@user` blocks) so re-compiling a view never clobbers human annotations,
-- **anti-fabrication / search-completeness** as a tested agent-contract invariant (scope-honest results; "nothing found" ≠ "not checked"),
-- **progressive context budgets** for the agent bundle (identity/index first, deep bodies on demand),
-- portable, vendor-neutral **custody bundles** that survive outside the running system,
-- **bi-temporal** framing of drift (captured-at vs source-changed-at) as a concept,
-- **scheduled custody maintenance** (the hourly worker as audit → recheck → regenerate → report).
-
-Rejected as out of scope for a custody library (not a planner or discovery engine): productivity surfaces (calendar/tasks/people/meetings/kanban), the paid live-research toolkit, presets/roles, and the multi-CLI build matrix. For the full adopt/adapt/reject mapping see `docs/agents/obsidian-second-brain-inspiration.md` and ADR 0102; for how it sequences see `docs/product/prd.md`, `docs/product/mvp.md`, and `docs/agents/autonomous-roadmap.md`.
+Scrolls draws on three external inspirations — the original **Field Theory
+CLI** spark, [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill),
+and [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain).
+None is code to copy. The full record — origin, adopt/adapt/reject mappings,
+and pointers per source — lives in `docs/inspiration/` (one document per
+inspiration); the summaries that used to live here moved there on 2026-07-26.
 
 ## 1. Core abstraction: source adapters
 
@@ -336,6 +317,9 @@ Then add:
 - X bookmarks / Field Theory import
 
 ## 7. Field Theory compatibility/import could be a killer feature
+
+*(Realized as `scrolls import fieldtheory` — ADR 0009; the lineage write-up is
+`docs/inspiration/fieldtheory-cli-inspiration.md`.)*
 
 Instead of immediately reimplementing X bookmark sync, Scrolls could initially support:
 
@@ -697,20 +681,9 @@ Weaknesses: packaging can get heavier, especially with ML/PDF extras; browser/se
 
 ### Field Theory lessons to preserve
 
-Field Theory's useful pattern is not the language; it is the discipline:
-
-```text
-browser session/cookies → platform API/GraphQL → JSONL cache → SQLite FTS/BM25 → Markdown → agent skill
-```
-
-Borrow these regardless of stack:
-
-- avoid literal browser driving when a session-backed API/export path works
-- preserve raw records so indexes and Markdown can be rebuilt
-- separate sync/import from enrichment
-- run rules/regex before optional LLM classification
-- expose agents through shell commands first; MCP can come later
-- keep Markdown scrolls as durable, human-readable artifacts
+Moved verbatim to `docs/inspiration/fieldtheory-cli-inspiration.md`
+(2026-07-26), which carries the discipline pipeline and the six
+borrow-regardless-of-stack rules.
 
 
 ## 14. MVP in five passes

@@ -2,6 +2,11 @@
 
 **Status:** Initial design. This is the foundation for the Reconcile stage in the Scrolls pipeline.
 
+*Amended: 2026-07-26 — inspiration references reduced to pointers
+(`docs/inspiration/`). Not to be confused with the dev check-in
+`reconciliation.md` files under `docs/agents/progress/` — same word,
+different job: this is the custody-conflict design doc.*
+
 ## Goals
 
 - Collapse multiple representations of the same intellectual work into one canonical item.
@@ -69,11 +74,11 @@ These will be answered in subsequent slices with real usage data.
 
 ## Shipped: conflict-on-import detection (the custody-safe reconcile surface)
 
-The obsidian-second-brain inspiration (`docs/agents/obsidian-second-brain-inspiration.md`,
-the `/obsidian-reconcile` row) sharpened the reconcile posture: **keep the
-detection, replace auto-overwrite with surfacing a conflict for review — surface,
-don't silently rewrite.** The first concrete enactment of that posture is at the
-**import boundary**, where two libraries' captures actually collide.
+The reconcile posture is **keep the detection, replace auto-overwrite with
+surfacing a conflict for review — surface, don't silently rewrite** (an
+adopted mechanism; see `docs/inspiration/obsidian-second-brain-inspiration.md`).
+The first concrete enactment of that posture is at the **import boundary**,
+where two libraries' captures actually collide.
 
 **Both lossless importers** — `scrolls import items` (H272) and `scrolls import
 bundle` (H273) — no longer treat a skipped row as opaque. Every row goes through
@@ -189,7 +194,7 @@ clean/held-filter/source-scope siblings in `tests/test_cli.py`;
 
 A readable `_Conflicts:_` briefing line (H277, below) and a reviewed `reconcile`
 resolution (H276, below — *choose a winner, record the supersession*) both shipped
-after this read leg: detection → read → resolve, the obsidian *surface, don't
+after this read leg: detection → read → resolve, the *surface, don't
 rewrite* posture carried to its close.
 
 ## Shipped: a readable `_Conflicts:_` briefing line (H277, ADR 0104)
@@ -250,7 +255,7 @@ Detection (H272–H274) and the scope read (H275/H277) *surface and count* a
 divergence but never resolve it — the held copy is always kept, so `doctor`'s
 `custody.conflicts` and the `_Conflicts:_` line flag every recorded conflict
 indefinitely. `scrolls reconcile <id> --keep-held` is the **operator act** that
-closes the loop — the final move of the obsidian *surface, don't rewrite* posture:
+closes the loop — the final move of the *surface, don't rewrite* posture:
 *choose a winner, record the supersession, never destroy the prior capture.*
 
 ```bash

@@ -68,9 +68,9 @@ ledger), and their MCP twins — honors one
 cross-cutting contract:
 **results are scope-honest and completeness-honest; "nothing found" is
 never confused with "not checked," and nothing is fabricated for content
-the library does not hold** (PRD cap 7, MVP M2, adapted from
-obsidian-second-brain's anti-fabrication rules — see
-`docs/agents/obsidian-second-brain-inspiration.md`). The contract has two
+the library does not hold** (PRD cap 7, MVP M2, an adapted anti-fabrication
+mechanism — see
+`docs/inspiration/obsidian-second-brain-inspiration.md`). The contract has two
 guarantees.
 
 ### G1 — Honest absence, honest failure *(enforced; `tests/test_completeness.py`)*
@@ -2799,7 +2799,7 @@ fingerprint the verify ledger itself drifts on (`scrolls verify`) — into
 `unchanged` (same content, a true no-op) and `conflict` (a different capture of
 the same id: e.g. another library's bundle of a source that has since drifted).
 The held copy is still kept — raw is sacred, a conflict is a *recorded, surfaced*
-event, not an overwrite (vision §2.4; the obsidian reconcile adoption —
+event, not an overwrite (vision §2.4; the adopted reconcile posture —
 *detect and surface, don't silently rewrite*, `docs/reconciliation.md`). The
 diverging ids ride the structured `conflicts` list (sorted, deduped, uncapped —
 the completeness contract) **and** a loud stderr warning naming them (bounded
@@ -3478,8 +3478,8 @@ roadmap H273), the bundle importer splits every skip on the captured-content
 `content_hash` into `unchanged` (an identical re-import — a true custody no-op)
 and `conflict` (a held id whose incoming copy **disagrees** — e.g. a peer's
 bundle of a source that has since drifted). The held copy is still kept — raw is
-sacred, a conflict is a *recorded, surfaced* event, never an overwrite (custody
-vision §2.4; the obsidian reconcile adoption *surface, don't silently rewrite*).
+sacred, a conflict is a *recorded, surfaced* event, never an overwrite (vision
+§2.4; the adopted *surface, don't silently rewrite* posture).
 The diverging ids ride the structured `conflicts` list (sorted, deduped,
 uncapped) **and** a bounded `{"warning": …}` on stderr naming them (the shared
 `_merge_items`/`_warn_conflicts` helpers, the same as `import items`).
@@ -3897,7 +3897,7 @@ reads identically on every browse surface; `tests/test_classify.py` pins the
 per-tier basis, the fingerprint, and their deterministic re-derivation.
 
 The `classification` block also carries a derived `confidence` marker (roadmap
-H21, the obsidian "confidence levels" adaptation) so an agent knows *how much
+H21, an adapted confidence-levels mechanism) so an agent knows *how much
 to trust* the category without consulting `doctor` or knowing the live ruleset:
 
 - `level` — the method's nature: `deterministic` for a rules match (it follows
@@ -5188,8 +5188,8 @@ to tell a strong match from a weak one before spending budget on bodies. The MCP
 (`test_get_context_bundle_carries_the_strength_explanation`).
 
 `--budget` bounds the bundle's *depth* — a budgeted boot sequence, identity/
-index first, deep bodies on demand (MVP M3, the obsidian L0–L3 adaptation,
-`tests/test_context.py`). The three tiers are strictly nested: `index` is the
+index first, deep bodies on demand (MVP M3, an adapted progressive-context
+mechanism, `tests/test_context.py`). The three tiers are strictly nested: `index` is the
 catalog alone (Best Matches + Links — ids, titles, source URLs, and any
 same-work collapse note, with no link-graph build at all); `connected` adds the
 `## Connected scrolls` graph; `full` (the default) adds the `## Excerpts` deep

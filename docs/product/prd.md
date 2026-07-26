@@ -1,4 +1,8 @@
-# Scrolls PRD — inspiration-backed product direction
+# Scrolls PRD — product direction
+
+*Amended: 2026-07-26 — vision references retargeted to the merged
+`docs/vision.md`; the principles restatement compressed to a pointer plus the
+two genuine deltas; inspiration references now point at `docs/inspiration/`.*
 
 **Status:** Living product doc for the `work/scrolls-dev` agent trunk.
 **Authority:** Subordinate to the vision — `docs/vision.md` is the operative
@@ -35,32 +39,24 @@ notebook (see the Non-goals).
 2. **A single owner or small team** who deliberately keeps artifacts and wants
    durable, portable, provable custody of them.
 
-## Product principles (from the vision, restated as build rules)
+## Product principles
 
-1. **Custody over capture.** Stewardship over time is the product; ingestion is
-   the cheap part.
-2. **Raw is sacred; views are regenerable.** Every derived surface
-   (`library/`, facets, concept pages, bundles, `agents/` files) must rebuild
-   from raw + index. *New from obsidian:* regeneration is sentinel-fenced so it
-   never destroys human annotations (ADR 0102).
-3. **Fidelity and provenance travel with every result.** Search ≡ list ≡ MCP ≡
-   facets. An agent always sees how much of an item we hold and where it came
-   from (ADR 0100, ADR 0101).
-4. **Drift is a recorded event, never an overwrite.** *Reinforced by obsidian's
-   bi-temporal facts:* captured-at vs source-changed-at.
-5. **The library is a way-station, not a sink.** Lossless export/import is
-   load-bearing infrastructure (ADR 0082).
-6. **Agents must be able to trust completeness.** *New from obsidian:*
-   anti-fabrication + search-completeness are a tested contract invariant — a
-   result states its scope, and "nothing found" is distinguishable from "not
-   checked."
-7. **Adapters are commodity; custody guarantees are the moat.** No new adapter
-   unless it introduces a new custody shape.
+The build rules **are** the vision's principles — `docs/vision.md` §2; they
+are not restated here. Two adopted deltas extend them (both shipped;
+the mappings live in `docs/inspiration/obsidian-second-brain-inspiration.md`):
+
+1. **Regeneration is sentinel-fenced** — rebuilding any derived surface never
+   destroys human annotations (extends §2.2; ADR 0102).
+2. **Agents must be able to trust completeness** — anti-fabrication +
+   search-completeness are a tested contract invariant: a result states its
+   scope, and "nothing found" is distinguishable from "not checked" (extends
+   §2.6; MVP M2).
 
 ## Capabilities (priority order)
 
-These extend the prioritized list in `docs/vision.md` §3 with the two
-obsidian-derived additions marked **[OSB]**.
+These extend the prioritized list in `docs/vision.md` §3 with the two adopted
+additions marked **[OSB]** (adopted from obsidian-second-brain —
+`docs/inspiration/obsidian-second-brain-inspiration.md`).
 
 1. **Custody integrity audit** — `scrolls doctor` as a full custody report with
    a per-library custody score (network-free, deterministic).
@@ -107,11 +103,13 @@ obsidian-derived additions marked **[OSB]**.
 
 ## Risks and how we handle them
 
-- **Vision-doc sprawl** (now several vision-ish docs). Mitigation: this PRD and
-  the MVP cite the existing custody vision as authority and do not fork it.
-- **Adopting obsidian's framing by accident.** Mitigation: the inspiration doc
-  pins the one rejected idea (self-mutation) up front; every adoption is the
-  *mechanism*, not the philosophy.
+- **Vision-doc sprawl.** *Resolved 2026-07-26:* the vision docs were merged
+  into the single `docs/vision.md`; this PRD and the MVP cite it as authority
+  and do not fork it.
+- **Adopting the self-mutating framing by accident.** Mitigation:
+  `docs/inspiration/obsidian-second-brain-inspiration.md` pins the one
+  rejected idea (self-mutation) up front; every adoption is the *mechanism*,
+  not the philosophy.
 - **Live-source flakiness** for drift detection. Mitigation: the deterministic
   custody audit lands first and is the home drift reports write into.
 

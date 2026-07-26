@@ -71,7 +71,9 @@ each command moves items between stages or derives artifacts from them.
   `search.hit_payload` serializer, so it costs no extra query and the `--stats`
   scope/truncation stays honest — roadmap H26). Every present view also carries
   a derived `confidence` marker (`items.classification_confidence`, roadmap H21,
-  the obsidian "confidence levels" adaptation): `level` (`deterministic` for a
+  an adapted confidence-levels mechanism —
+  `docs/inspiration/obsidian-second-brain-inspiration.md`): `level`
+  (`deterministic` for a
   rules match, `inferred` for an LLM category — the trust axis) and, for the
   rules engine only, `freshness` (`current` / `stale` / `unknown` against the
   live ruleset — the recency axis; omitted for the LLM, where there is no ruleset

@@ -1,5 +1,9 @@
 # Scrolls MVP — near-term coherent scope
 
+*Amended: 2026-07-26 — M1–M5 have all shipped (see the 2026-07-22 check-in
+report, `docs/agents/progress/260722/report.md`); this document is kept as
+the historical scope record.*
+
 **Status:** Near-term build scope for `work/scrolls-dev`. Pairs with
 `docs/product/prd.md` (direction) and `docs/agents/autonomous-roadmap.md`
 (scheduling). This MVP is the smallest set of vertical slices that makes the
