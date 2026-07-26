@@ -9,7 +9,11 @@
 into the check-in structure `docs/agents/progress/<YYMMDD>/`; retitled to a
 facts-only report
 (the "what's next" material moved to `plans.md` alongside) and vision/lineage
-pointers retargeted after the docs consolidation.*
+pointers retargeted after the docs consolidation. Realigned the same day:
+the automation/ops facts from the autonomous-machine session (the 2026-07-20
+reassessment) were folded in — see "Automation & ops" below and
+`reconciliation.md` — and the H363→H425 phase corrected from "in progress"
+to closed.*
 
 This is a **facts-only** current-state report, not a changelog: what exists
 and what is complete. The companion files in this directory carry the
@@ -101,11 +105,11 @@ Six stages, elevated from the Field Theory lineage
   blocks into one whole-library verdict `{sound | attention | at_risk}` + readable
   `_Posture:_` line + cross-run movement, at CLI↔MCP parity (H369–H373).
 
-### In progress — forward hardening / integration (H363 → H425)
+### Done — forward hardening / contract consolidation (H363 → H425, closed)
 
-With the custody themes closed, current work is **not a new theme** — it's
-cross-surface *convergence & determinism guards* that lock the invariants the
-themes established. Recent slices are largely test-only contracts, each an
+With the custody themes closed, this phase was **not a new theme** — it was
+cross-surface *convergence & determinism guards* locking the invariants the
+themes established. The slices are largely test-only contracts, each an
 executable, completeness-asserted invariant with a proven-teeth sabotage:
 
 - Compile determinism (`kb` two-pass + cross-`PYTHONHASHSEED`) — H363
@@ -126,11 +130,47 @@ that carries it (search ≡ list ≡ show ≡ facets ≡ MCP ≡ compiled `libra
 bundle ≡ context), and every generated artifact must be a reproducible,
 byte-stable fold — verified, not asserted.
 
+The contract-consolidation queue is **closed through H425** (last slices
+landed 2026-07-05). The roadmap's named next lead is an
+assessment/recommendation gate — not another guard-cell family.
+
+## Automation & ops
+
+How the H344→H425 span actually shipped (commit dates from git):
+
+- **2026-06-25** — the prior check-in (`../260625/`, HEAD `a7af87e`/H343),
+  followed the same day by ~24 more slices (the content-identity closure
+  H344–H362 and the posture verdict H369–H373).
+- **2026-06-26 → 06-27** — ~47 slices: the contract-consolidation run
+  (H388–H419 era), the worker's lock letting single runs overrun through
+  whole day-plan slots.
+- **2026-07-01 → 07-05** — the tail: H420 (07-01), H421 (07-02),
+  H422 (07-03), H423–H425 (07-05).
+- **2026-07-05 → 07-22** — no commits on the trunk; the repo sat idle.
+
+Per the autonomous-machine session notes: both Scrolls crons were paused
+around 2026-06-27/28 (last hourly finish recorded 2026-06-28) — yet the July
+tail still landed, because automated development had been **accidentally
+re-enabled** after the pause. In total, 77 H-slice commits landed after the
+2026-06-25 check-in with no steering checkpoint (the judgment on this is in
+`reconciliation.md`). The crons are paused now.
+
+A checkpoint commit `401ad34` ("chore: add GitHub CI + post-H425 docs
+freshness reset", 2026-07-07) exists **only on the autonomous machine's
+checkout** — one commit ahead of `origin/work/scrolls-dev`, never pushed. So
+the CI workflow has never actually run on GitHub, and that commit is absent
+from other clones (including the one this report was written on).
+
 ## Health
 
-- ✅ 4370 tests green in ~62s.
-- ✅ Working tree clean; branch tracks `origin/work/scrolls-dev`, up to date.
+- ✅ 4370 tests green in ~62s (locally; claimed green on 3.11/3.12/3.13).
+- ✅ Working tree clean; this clone tracks `origin/work/scrolls-dev`, up to
+  date with the origin tip (`2a5344f`).
 - ✅ No new source adapters added recently (correct per vision §2.7 — breadth
   is not the unit of progress; a new adapter needs a genuinely new custody shape).
+- ⚠️ The 2026-07-07 CI checkpoint (`401ad34`) is unpushed — GitHub CI has
+  never run; "we have CI" is so far a local-only claim.
+- ⚠️ Automation idle since 2026-07-05; both crons paused (deliberately, this
+  time).
 
 Forward-looking material lives in `plans.md` alongside this report.

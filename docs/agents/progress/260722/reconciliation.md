@@ -6,7 +6,8 @@ Deviations and corrections, judged against `docs/vision.md`,
 `docs/agents/autonomous-roadmap.md`, using `report.md` alongside as the facts.
 
 *Agent-drafted 2026-07-26 (retroactive to the 2026-07-22 report), pending
-Elijah's review.*
+Elijah's review; realigned the same day after the automation/ops state from
+the autonomous-machine session (the 2026-07-20 reassessment) was folded in.*
 
 Note: this file is a **dev check-in artifact** — distinct from
 `docs/reconciliation.md`, which is the custody-conflict *design doc* for the
@@ -14,8 +15,13 @@ reconcile feature. Same word, different job.
 
 ## Verdict
 
-Development matches the documented direction. The code did what the plans
-said; the *documentation surface* is where drift accumulated.
+The *content* of development stayed on-vision — but the *process* did not.
+Automated development was accidentally re-enabled after the 2026-06-25
+check-in (`../260625/`) and ran 77 slices (H344–H425) with no steering
+checkpoint, completing and then overshooting the June-25 plan. Since
+2026-07-05 the project has been operationally stalled: crons paused, the CI
+checkpoint unpushed, two idle weeks, no dogfood evidence. The documentation
+surface had also drifted (corrected 2026-07-26).
 
 ## On-plan
 
@@ -35,7 +41,33 @@ said; the *documentation surface* is where drift accumulated.
 
 ## Deviations and corrections
 
-1. **Doc coherence lagged code.** While the code stayed on-vision, the doc
+1. **Automation ran without authorization or steering.** The 2026-06-25
+   check-in expected the content-identity tail (H344–H348) and then a stop at
+   the assessment/recommendation gate. Instead the worker blew through the
+   tail, the posture theme, and the entire contract-consolidation queue —
+   and kept going even after both crons were paused around 2026-06-27/28,
+   because automated development had been **accidentally re-enabled** (the
+   2026-07-01→05 tail, H420–H425, landed in that window). The output is real
+   and green, but 77 slices landed with no human checkpoint, and the June-25
+   direction went stale without anyone recording it.
+   **Corrections:** (applied, 2026-07-26) this check-in structure plus the
+   backfilled `../260625/` record; (standing) both crons stay paused — the
+   hourly worker is not restarted on the guard-cell prompt (see `plans.md`).
+2. **Over-proving past diminishing returns.** The June-25 direction was
+   surface-closure → stewardship gate → enrichment. The overrun instead
+   produced ~30 further completeness-asserted guard matrices (H397–H425).
+   Valuable, on-vision — and past the knee: the roadmap itself names an
+   assessment gate before any further guard-cell family, and the 2026-07-20
+   reassessment calls more H426-style matrices the wrong default.
+   **Correction:** the next slice must be evidence-driven (dogfood friction),
+   not another invariant family — see `plans.md`.
+3. **Release/ops readiness stalled.** The CI + docs pivot was committed on
+   the autonomous machine 2026-07-07 (`401ad34`) but never pushed, so GitHub
+   has never run the workflow — local "we have CI" is not remote
+   verification — and the repo then sat idle for ~2 weeks.
+   **Correction:** push + verify remote CI green is the first item on the
+   1-day plan.
+4. **Doc coherence lagged code.** While the code stayed on-vision, the doc
    surface drifted: two superseded vision docs still self-declared as the
    north star, `IDEAS.md` and `CLAUDE.md` pointed readers at the wrong
    authority, inspiration material was restated across many files, and the
@@ -45,14 +77,7 @@ said; the *documentation surface* is where drift accumulated.
    material unified under `docs/inspiration/`, the vision docs merged into a
    single `docs/vision.md`, scattered references reduced to pointers, and
    this check-in structure created.
-2. **Hardening ran long without a steering checkpoint.** H363–H425 is ~60
-   slices of (valuable, on-vision) convergence guards, but no durable
-   check-in artifact existed between the 2026-06-25 roadmap snapshot and this
-   one, so the roadmap's own status section drifted from the shipped state.
-   **Correction (proposed):** the `docs/agents/progress/<YYMMDD>/` convention
-   gives human check-ins a durable home (report = facts, reconciliation =
-   this judgment, plans = steering); the roadmap's snapshot should be synced
-   against the latest report during its next maintenance pass.
-3. **No product-direction correction needed.** Nothing shipped contradicts
+5. **No product-direction correction needed.** Nothing shipped contradicts
    the custody vision; the non-goals (no discovery engine, no self-mutation,
-   no new adapters) were respected.
+   no new adapters) were respected. The correction is to *process and phase*
+   (steering, ops, evidence-from-use), not to the product direction.
