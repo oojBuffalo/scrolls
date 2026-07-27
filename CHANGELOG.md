@@ -22,3 +22,4 @@ Each autonomous run or agent slice should append one entry roughly the size of a
 - 2026-07-26 — docs: amend the ADRs to the consolidated doc paths and remove the transition stubs.
 - 2026-07-26 — docs: realign the dev check-ins — backfill the reconstructed 2026-06-25 check-in and fold the accidental automation re-enable, ops stall, and release/dogfood pivot into the 2026-07-22 check-in.
 - 2026-07-26 — docs: complete the inspiration moves as full cuts — the former IDEAS.md lineage portions now live only in docs/inspiration/, and CLAUDE.md/AGENTS.md no longer restate its ground rules or checkout paths.
+- 2026-07-26 — docs: move the 2026-06-25 status snapshot and 3-day/week plans out of the roadmap into docs/agents/progress/260625/ as full cuts; retarget the roadmap's internal references.

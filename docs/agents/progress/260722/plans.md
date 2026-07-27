@@ -54,8 +54,8 @@ roadmap queue stands superseded pending its next maintenance pass.*
 
 - Ship the chosen product-facing slice — test-backed, contract docs updated
   in the same commit.
-- Run the roadmap maintenance pass: sync its status snapshot to this
-  check-in, prune the superseded guard-cell queue, and requeue against these
-  objectives.
+- Run the roadmap maintenance pass: prune the superseded guard-cell queue
+  and requeue against these objectives. Dated status/plan material lives in
+  `docs/agents/progress/<YYMMDD>/` now, not in the roadmap.
 - Decide the automation-restart question explicitly (prompt, cadence, scope)
   rather than letting a cron decide it.
