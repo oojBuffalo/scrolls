@@ -71,10 +71,9 @@ Secondary references: `docs/inspiration/` (the adopt/adapt/reject mappings per i
 
 ### Inspiration sources
 
-All inspiration/lineage material lives in `docs/inspiration/` — Field Theory CLI, last30days-skill, and obsidian-second-brain, one document per source with full adopt/adapt/reject mappings. Ground rules: inspiration only (never copy secrets, vendored code, or implementation details blindly); adopt mechanisms, never the self-mutating-vault philosophy. Reference checkouts:
-
-- `/Users/claw/.hermes/gh-repos/last30days-skill`
-- `/Users/claw/.hermes/gh-repos/obsidian-second-brain`
+All inspiration/lineage material — the per-source adopt/adapt/reject
+mappings, the ground rules, and the reference-checkout paths — lives in
+`docs/inspiration/` (start at its `README.md`).
 
 ## Development process
 

@@ -1,4 +1,4 @@
-"""Tests for the Field Theory bookmark importer (IDEAS.md §7)."""
+"""Tests for the Field Theory bookmark importer (ADR 0009)."""
 
 import json
 

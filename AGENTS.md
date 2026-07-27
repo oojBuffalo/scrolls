@@ -175,14 +175,11 @@ GitHub Issues are the default issue tracker for this repo. See
 Use the default Matt Pocock triage vocabulary. See
 `docs/agents/triage-labels.md`.
 
-## Reference checkouts
+## Inspiration sources
 
-- Last30Days: `/Users/claw/.hermes/gh-repos/last30days-skill`
-- Obsidian Second Brain: `/Users/claw/.hermes/gh-repos/obsidian-second-brain`
-
-Inspiration only — mechanisms, never the self-mutating-vault philosophy, and
-never copied secrets, vendored code, or implementation details. The full
-adopt/adapt/reject record is `docs/inspiration/`.
+All inspiration/lineage material — the per-source adopt/adapt/reject
+mappings, the ground rules, and the reference-checkout paths — lives in
+`docs/inspiration/` (start at its `README.md`).
 
 ## Development process
 

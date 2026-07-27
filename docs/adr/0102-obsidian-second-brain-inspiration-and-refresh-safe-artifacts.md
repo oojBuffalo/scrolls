@@ -12,8 +12,7 @@ unchanged.*
 ## Context
 
 Scrolls already names two inspiration sources — Field Theory CLI and
-`mvanhorn/last30days-skill` (`docs/inspiration/last30days-inspiration.md`,
-IDEAS.md §0). A third, [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain),
+`mvanhorn/last30days-skill` (`docs/inspiration/last30days-inspiration.md`). A third, [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain),
 is a mature agent-facing knowledge system worth evaluating: 45 commands, AI-first
 note rules, scheduled maintenance agents, vendor-neutral export, and a
 codebase-architect command that writes *maintained* docs.

@@ -1,4 +1,5 @@
-"""Field Theory bookmark import (IDEAS.md §7, ADR 0009).
+"""Field Theory bookmark import (ADR 0009; lineage:
+`docs/inspiration/fieldtheory-cli-inspiration.md`).
 
 `scrolls import fieldtheory` reads X/Twitter bookmarks from a local Field
 Theory archive instead of reimplementing X auth/sync. The JSONL cache

@@ -3,11 +3,18 @@
 Date: 2026-06-12
 Status: accepted
 
+*Amended: 2026-07-26 — the Field Theory import proposal moved from the
+IDEAS.md brainstorm into `docs/inspiration/fieldtheory-cli-inspiration.md`;
+the references below were updated. Decision content unchanged.*
+
 ## Context
 
-IDEAS.md §7 proposes `scrolls import fieldtheory` as the path to X/Twitter
-bookmarks: native X sync needs auth/session plumbing (the reason §6 deferred
-X from the MVP trio), while Field Theory already maintains a local archive.
+The Field Theory import proposal
+(`docs/inspiration/fieldtheory-cli-inspiration.md`) names
+`scrolls import fieldtheory` as the path to X/Twitter
+bookmarks: native X sync needs auth/session plumbing (the reason IDEAS.md
+§6 deferred X from the MVP trio), while Field Theory already maintains a
+local archive.
 On this machine the archive holds 430 bookmarks; its layout:
 
 - `bookmarks/bookmarks.jsonl` — one raw record per bookmark (id, url, text,
@@ -62,4 +69,5 @@ imports the JSONL cache as items with `source="x"`:
   `key: value` lines; if Field Theory's page format changes materially,
   the join degrades gracefully to "no carried-over classification".
 - Native `scrolls sync x --bookmarks` remains open as a later, separate
-  decision (IDEAS.md §7's "later" path).
+  decision (the import proposal's "later" path,
+  `docs/inspiration/fieldtheory-cli-inspiration.md`).

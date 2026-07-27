@@ -2,8 +2,10 @@
 
 *Amended: 2026-07-26 — this file is the historical brainstorm, kept in place
 (its numbered sections are cited from `src/` and the ADRs; do not renumber).
-The inspiration summaries that used to live in §0 and §13 moved to
-`docs/inspiration/`; pointers remain.*
+The inspiration/lineage portions — the former §0, the former §7 Field Theory
+import proposal, and §13's "Field Theory lessons" — were moved fully into
+`docs/inspiration/`, leaving no remnants here; the ADRs that cited them were
+amended to point at the new home.*
 
 The clean mental model for **Scrolls** could be:
 
@@ -20,15 +22,6 @@ Where:
 - **Agents** = Claude Code, Codex, Hermes, shell tools, future MCP server.
 
 **Read `docs/vision.md` for the authoritative product vision.** This IDEAS.md captures early thinking; the vision document is the current north star.
-
-## 0. Product inspiration: Last30Days and Obsidian Second Brain
-
-Scrolls draws on three external inspirations — the original **Field Theory
-CLI** spark, [`mvanhorn/last30days-skill`](https://github.com/mvanhorn/last30days-skill),
-and [`eugeniughelbur/obsidian-second-brain`](https://github.com/eugeniughelbur/obsidian-second-brain).
-None is code to copy. The full record — origin, adopt/adapt/reject mappings,
-and pointers per source — lives in `docs/inspiration/` (one document per
-inspiration); the summaries that used to live here moved there on 2026-07-26.
 
 ## 1. Core abstraction: source adapters
 
@@ -315,36 +308,6 @@ Then add:
 - GitHub repos
 - PDFs/arXiv
 - X bookmarks / Field Theory import
-
-## 7. Field Theory compatibility/import could be a killer feature
-
-*(Realized as `scrolls import fieldtheory` — ADR 0009; the lineage write-up is
-`docs/inspiration/fieldtheory-cli-inspiration.md`.)*
-
-Instead of immediately reimplementing X bookmark sync, Scrolls could initially support:
-
-```bash
-scrolls import fieldtheory
-```
-
-It could read:
-
-```text
-~/.fieldtheory/bookmarks/
-~/.fieldtheory/library/
-```
-
-Then convert Field Theory items into Scrolls’ normalized format.
-
-That gives Scrolls an immediate path to X bookmarks while letting Field Theory keep doing what it already does well.
-
-Later:
-
-```bash
-scrolls sync x --bookmarks
-```
-
-could be native.
 
 ## 8. Classification should be layered
 
@@ -678,13 +641,6 @@ Python fits the broader extraction/analysis/ML direction well:
 Strengths: best ecosystem for archives, extraction, embeddings, clustering, topic analysis, PDFs, and data pipelines.
 
 Weaknesses: packaging can get heavier, especially with ML/PDF extras; browser/session work is possible but may feel less clean than a Node CLI.
-
-### Field Theory lessons to preserve
-
-Moved verbatim to `docs/inspiration/fieldtheory-cli-inspiration.md`
-(2026-07-26), which carries the discipline pipeline and the six
-borrow-regardless-of-stack rules.
-
 
 ## 14. MVP in five passes
 

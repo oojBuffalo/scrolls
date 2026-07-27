@@ -4,6 +4,10 @@
 - Date: 2026-06-12
 - Deciders: autonomous agent (per project decision posture in `CLAUDE.md`)
 
+*Amended: 2026-07-26 — the Field Theory import proposal moved from the
+IDEAS.md brainstorm into `docs/inspiration/fieldtheory-cli-inspiration.md`;
+the citation below now points at ADR 0009. Decision content unchanged.*
+
 ## Context
 
 arXiv is the second post-MVP source (README "Initial platform targets":
@@ -58,8 +62,7 @@ PDF dependencies the stack has deliberately avoided so far (ADR 0001).
   per 3 seconds in bursts); fine for one-off `add`, a bulk import would
   need throttling.
 - CLI tests that needed an adapterless source now use `x`, which stays
-  adapterless longest (Field Theory import is the planned path,
-  IDEAS.md §7).
+  adapterless longest (Field Theory import is the planned path, ADR 0009).
 
 ## Proof
 
