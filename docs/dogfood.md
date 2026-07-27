@@ -1,12 +1,20 @@
 # The dogfood flow — hold → prove → detect → take it with me
 
+*Amended: 2026-07-27 — prose restructured for readability; captured transcripts
+unchanged.*
+
 This is Scrolls' **success metric made runnable**: the one end-to-end,
 agent-runnable flow that exercises the whole custody promise in order. The
-vision (`docs/vision.md`, capability 8) names it directly —
-*"If an agent can't run it unattended, it isn't done."* It is MVP slice **M5**
-(`docs/product/mvp.md`), and it ties together the earlier slices: refresh-safe
-regeneration (M1), the completeness contract (M2), context budgets (M3), and
-the shareable custody bundle (M4).
+vision (`docs/vision.md`, capability 8) names it directly — *"If an agent can't
+run it unattended, it isn't done."*
+
+It is MVP slice **M5** (`docs/product/mvp.md`), and it ties together the
+earlier slices:
+
+- **M1** — refresh-safe regeneration
+- **M2** — the completeness contract
+- **M3** — context budgets
+- **M4** — the shareable custody bundle
 
 The executable proof is `tests/test_dogfood.py`. This page narrates what it
 does, the exact commands an agent runs, and the custody story the numbers tell.
@@ -99,10 +107,14 @@ integrity score is unchanged at 100**:
 
 **Take it with me.** `export bundle transformer` writes a self-contained
 briefing whose head reads like a topic summary and whose fenced block carries
-the full custody record; `import bundle` into a fresh library reports
-`{"imported": 3}` and recovers every scroll byte-for-byte (a second import
-reports `{"imported": 0, "skipped": 3}` — re-import is idempotent and never
-overwrites). The fresh library then scores its own custody at `100`.
+the full custody record. `import bundle` into a fresh library then proves the
+round-trip:
+
+- **Lossless:** the import reports `{"imported": 3}` and recovers every scroll
+  byte-for-byte.
+- **Idempotent:** a second import reports `{"imported": 0, "skipped": 3}` —
+  re-import never overwrites.
+- **Self-proving:** the fresh library then scores its own custody at `100`.
 
 ## The custody point the before/after makes visible
 
@@ -112,13 +124,16 @@ moves from *"unverified"* (we have not looked) to *"drifted, recorded"* (we
 looked and the source moved).
 
 That the integrity score does **not** drop when a source drifts is the whole
-point, not a gap. *Raw is sacred* (vision §2.2): the source changing
-upstream is a recorded custody **event**, not a loss of what we hold
-(§2.4 — "a re-fetch that disagrees … is a custody event … not an overwrite").
-Custody stays intact precisely because the capture is never clobbered by the
-re-check. An agent reading the report can always tell *"confirmed unchanged at
-the last verify"* from *"never checked"* from *"the source drifted, here is the
-event"* — and can still walk away with the faithful copy it held.
+point, not a gap:
+
+- **Raw is sacred** (vision §2.2): the source changing upstream is a recorded
+  custody **event**, not a loss of what we hold (§2.4 — "a re-fetch that
+  disagrees … is a custody event … not an overwrite").
+- **Custody stays intact** precisely because the capture is never clobbered by
+  the re-check.
+- **The report stays legible:** an agent can always tell *"confirmed unchanged
+  at the last verify"* from *"never checked"* from *"the source drifted, here
+  is the event"* — and can still walk away with the faithful copy it held.
 
 ## Adopting a peer's better capture — the accept-incoming flow
 
@@ -126,18 +141,24 @@ The four legs above are the *one-custodian* story: I hold a topic, prove it,
 watch the source drift, and carry it elsewhere. The accept-incoming flow
 (ADR 0106, roadmap H278) adds the *two-custodian* one — **a peer re-captured a
 source I hold and got a better copy, and I want to adopt it without losing the
-one I had.** It is a genuinely new custody move: the first import path that
-*changes* a held capture. The drift leg never overwrites; this one does — but
-custody-safely, because the prior is archived first and the swap is a recorded
-event, so it is a *flip of which faithful copy I hold*, never a loss.
+one I had.**
+
+It is a genuinely new custody move: the first import path that *changes* a held
+capture. The drift leg never overwrites; this one does — but custody-safely:
+
+- **The prior is archived first**, so nothing I held is destroyed.
+- **The swap is a recorded event**, so it is a *flip of which faithful copy I
+  hold*, never a loss.
 
 `tests/test_dogfood.py` pins it offline as
 `test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflict`:
-the same `_held_topic()` is held in a `library` home, then a `peer` home holds
-the same topic with one diverging arxiv capture (a fuller body, a fresh content
-hash) and exports a bundle. The custody story is the **conflict aggregate moving
-0 → 1 → 0** while the **held content flips and flips back and the integrity score
-never drops**.
+
+- the same `_held_topic()` is held in a `library` home;
+- a `peer` home holds the same topic with one diverging arxiv capture (a fuller
+  body, a fresh content hash) and exports a bundle.
+
+The custody story is the **conflict aggregate moving 0 → 1 → 0** while the
+**held content flips and flips back and the integrity score never drops**.
 
 ```bash
 # A peer shares a bundle. One capture (the arxiv paper) diverges from mine.
@@ -187,10 +208,13 @@ evidence *my* capture degraded):
 }
 ```
 
-**Adopt (`import bundle --accept-incoming`).** Now I take the peer's copy. The
-held row is replaced, its prior snapshot appended to the recovery archive, and a
-`superseded` event supersedes the open conflict — so the aggregate clears (`1 →
-0`) across every conflict surface at once, and the score is still 100:
+**Adopt (`import bundle --accept-incoming`).** Now I take the peer's copy:
+
+- **the held row is replaced**, its prior snapshot appended to the recovery
+  archive;
+- **a `superseded` event supersedes the open conflict**, so the aggregate
+  clears (`1 → 0`) across every conflict surface at once;
+- **the score is still 100**:
 
 ```json
 { "adopted": ["arxiv:1706.03762"], "conflicts": [] }
@@ -203,46 +227,60 @@ held row is replaced, its prior snapshot appended to the recovery archive, and a
 ```
 
 **Restore (`archive show … | import items --accept-incoming`).** The prior was
-archived, not destroyed: `archive show` re-emits it in the `export items` JSONL
-shape, and re-adopting it flips the held content back to my original capture
-(archiving the peer copy in turn). The aggregate stays `0` — a `superseded`
-adoption is a resolution, never an open conflict — and the final audit is clean:
+archived, not destroyed:
+
+- **`archive show` re-emits it** in the `export items` JSONL shape;
+- **re-adopting it flips the held content back** to my original capture,
+  archiving the peer copy in turn;
+- **the aggregate stays `0`** — a `superseded` adoption is a resolution, never
+  an open conflict — and the final audit is clean:
 
 ```json
 { "score": 100, "conflicts": { "items": 0 },
   "tiers": { "full": 3, "partial": 0, "reference": 0 } }
 ```
 
-The custody point is the adopt-axis twin of the drift leg's: **adopting a peer's
-capture never lowers the integrity score**, because the swap trades one
+The custody point is the adopt-axis twin of the drift leg's: **adopting a
+peer's capture never lowers the integrity score**, because the swap trades one
 full-fidelity copy for another and the displaced one is archived (custody §2.4 —
-"a re-fetch that disagrees … is a custody event"). The held `content_hash` goes
-*original → peer → original* while the score holds at `100` throughout; every
-prior stays recoverable, so the flip is fully reversible. (`adopt_incoming` swaps
-the row but does not re-render the scroll view — a real agent runs `scrolls kb`
-afterward to recompile `library/`; the held file the prior render left in place
-keeps the fidelity audit honest in the meantime.)
+"a re-fetch that disagrees … is a custody event").
+
+- **Fully reversible:** the held `content_hash` goes *original → peer →
+  original* while the score holds at `100` throughout; every prior stays
+  recoverable, so the flip can always be undone.
+- **One follow-up:** `adopt_incoming` swaps the row but does not re-render the
+  scroll view — a real agent runs `scrolls kb` afterward to recompile
+  `library/`. The held file the prior render left in place keeps the fidelity
+  audit honest in the meantime.
 
 ## Rolling back to a specific earlier version — restore-by-version
 
 The adopt flow above takes *one* peer capture and, if I change my mind, restores
 the **latest** prior. The restore-by-version flow (ADR 0106, roadmap H285/H286)
 covers the case a real custodian hits after living with a source for a while: I
-adopted a **chain** of recaptures over several days (v1 → v2 → v3), then realised a
-*specific earlier* version — not the latest — was the right one. `archive show
-<id> --all` shows the **whole** recoverable history, and `archive restore <id>
---hash H` / `--at ISO` rolls back to the version I name. The custody story is the
-adopt leg's, extended across many supersessions: **the held copy flips to the
-*chosen* prior, the displaced copy is itself archived, and the integrity score
-holds at 100 the whole way.**
+adopted a **chain** of recaptures over several days (v1 → v2 → v3), then
+realised a *specific earlier* version — not the latest — was the right one.
+
+Two commands cover it:
+
+- **`archive show <id> --all`** shows the **whole** recoverable history.
+- **`archive restore <id> --hash H` / `--at ISO`** rolls back to the version I
+  name.
+
+The custody story is the adopt leg's, extended across many supersessions: **the
+held copy flips to the *chosen* prior, the displaced copy is itself archived,
+and the integrity score holds at 100 the whole way.**
 
 `tests/test_dogfood.py` pins it offline as
-`test_restore_by_version_rolls_back_to_a_specific_earlier_capture`: the same
-`_held_topic()` arxiv paper is recaptured three times via `import items
---accept-incoming`, then rolled back twice — by `--hash` to an intermediate, by
-`--at` to the original. (A scripted clock spaces the three adoptions across days so
-`--at` has a real history to bisect — the same offline stand-in this module applies
-to capture and recheck, here on the adoption clock.)
+`test_restore_by_version_rolls_back_to_a_specific_earlier_capture`:
+
+- the same `_held_topic()` arxiv paper is recaptured three times via
+  `import items --accept-incoming`;
+- it is then rolled back twice — by `--hash` to an intermediate, by `--at` to
+  the original;
+- a scripted clock spaces the three adoptions across days so `--at` has a real
+  history to bisect — the same offline stand-in this module applies to capture
+  and recheck, here on the adoption clock.
 
 ```bash
 # I adopted three divergent recaptures over three days; the prior is archived each time.
@@ -295,33 +333,42 @@ The displaced `peer-v1` is archived in turn:
   "outcome": "adopted", "restored": true }
 ```
 
-The custody point is the restore-by-version twin of the adopt leg's: across a whole
-chain of adoptions **and** two rollbacks, **`doctor`'s `custody.score` never leaves
-100** — each restore swaps one full-fidelity capture for another and the displaced
-one is archived, so no version is ever destroyed and the held copy can flip to *any*
-prior on demand (custody §2.4). `archive show` after each rollback recovers exactly
-the version just left, the proof the whole history stays reversible.
+The custody point is the restore-by-version twin of the adopt leg's: across a
+whole chain of adoptions **and** two rollbacks, **`doctor`'s `custody.score`
+never leaves 100**.
+
+- **No version is ever destroyed:** each restore swaps one full-fidelity
+  capture for another, and the displaced one is archived — so the held copy can
+  flip to *any* prior on demand (custody §2.4).
+- **The history stays reversible:** `archive show` after each rollback recovers
+  exactly the version just left — the proof the whole chain remains walkable.
 
 ## Deciding before you restore — `archive diff`
 
-Restore-by-version above *acts* — it rolls back to a version I name. But a careful
-custodian wants to **look before they leap**: *what* would a restore change, and
-*would it change anything at all*? `archive diff <id>` (ADR 0106, roadmap H288) is
-that read — it folds the **same** `select_archived_snapshot` selector
-(`--hash`/`--at`, default the latest) `archive restore` uses against the
-currently-held copy and reports the delta *without writing*: the held↔prior
-`content_hash`, each side's fidelity tier, the model-complete `changed_fields` a
-restore would surface, and `would_restore` (would a restore actually move the held
-copy, or is the prior already what I hold?). Because the diff and the restore share
-one selector and one `content_hash` compare, **the decision the diff shows can never
-disagree with the restore I then run** — `would_restore` *is* the restore's
-`restored`.
+Restore-by-version above *acts* — it rolls back to a version I name. But a
+careful custodian wants to **look before they leap**: *what* would a restore
+change, and *would it change anything at all*? `archive diff <id>` (ADR 0106,
+roadmap H288) is that read.
+
+It folds the **same** `select_archived_snapshot` selector (`--hash`/`--at`,
+default the latest) `archive restore` uses against the currently-held copy and
+reports the delta *without writing*:
+
+- **the held↔prior `content_hash`**;
+- **each side's fidelity tier**;
+- **the model-complete `changed_fields`** a restore would surface;
+- **`would_restore`** — would a restore actually move the held copy, or is the
+  prior already what I hold?
+
+Because the diff and the restore share one selector and one `content_hash`
+compare, **the decision the diff shows can never disagree with the restore I
+then run** — `would_restore` *is* the restore's `restored`.
 
 `tests/test_dogfood.py` pins the whole decide → act loop offline as
-`test_archive_diff_decides_then_restore_acts_exactly_as_predicted`: hold the topic,
-adopt one divergent peer capture (one prior archived), then **diff → restore → diff
-again → restore again**, asserting each act lands exactly on the diff's prediction —
-on both the would-change case and the idempotent no-op.
+`test_archive_diff_decides_then_restore_acts_exactly_as_predicted`: hold the
+topic, adopt one divergent peer capture (one prior archived), then **diff →
+restore → diff again → restore again**, asserting each act lands exactly on the
+diff's prediction — on both the would-change case and the idempotent no-op.
 
 ```bash
 # I adopted one peer capture; my original is archived as the prior.
@@ -381,32 +428,40 @@ the first diff's chain implied, read *before* I'd act on it:
 { "selector": { "hash": "sha256:06.03762" }, "outcome": "unchanged", "restored": false }
 ```
 
-The custody point is the decide-before-you-restore twin of restore-by-version's: a
-diff is a true **read** — the held `content_hash` is untouched across every diff, only
-the `restore` between them moves it, and `doctor`'s `custody.score` holds at 100 the
-whole way. So an operator can inspect a rollback as many times as they like, on any
-version, before committing to it, and the write they finally run is exactly the one the
-read promised (custody §2.4).
+The custody point is the decide-before-you-restore twin of restore-by-version's:
+a diff is a true **read**.
+
+- **Diffs never write:** the held `content_hash` is untouched across every
+  diff; only the `restore` between them moves it, and `doctor`'s
+  `custody.score` holds at 100 the whole way.
+- **Inspect freely, then act:** an operator can inspect a rollback as many
+  times as they like, on any version, before committing to it — and the write
+  they finally run is exactly the one the read promised (custody §2.4).
 
 ## Taking the recovery workflow with you — a machine handoff
 
 The flows above all recover on the *same* library that made the adoptions. The
 custody promise is bigger than that: **the whole recovery workflow travels.**
-`export bundle --with-archive` (ADR 0106, roadmap H280) packs the prior-content
-archive *into* the portable bundle, so someone can hand you a single file and you
-can `import bundle` it into a fresh library on a machine that *never saw the
-original adoptions* — and still **decide-and-restore** on it. H291 pins that the
-recovery *reads* (`archive show --all`/`diff`/`restore --dry-run`) come back
-identical after the round-trip; this leg runs the recovery *act* — a real
-`archive restore` write — on the rebuilt library.
+
+- **`export bundle --with-archive`** (ADR 0106, roadmap H280) packs the
+  prior-content archive *into* the portable bundle — someone can hand you a
+  single file, you `import bundle` it into a fresh library on a machine that
+  *never saw the original adoptions*, and you can still **decide-and-restore**
+  on it.
+- **H291** pins that the recovery *reads* (`archive show --all`/`diff`/
+  `restore --dry-run`) come back identical after the round-trip; this leg runs
+  the recovery *act* — a real `archive restore` write — on the rebuilt library.
 
 `tests/test_dogfood.py` pins it offline as
-`test_recovery_workflow_survives_a_machine_handoff`: on **machine A**, hold the
-topic and adopt a *chain* of two divergent peer captures (v1 → v2) so the archive
-holds two recoverable priors, then `export bundle --with-archive`. On **machine
-B** — a fresh library — `import bundle`, repair, then **inspect → decide → act**,
-asserting the act lands exactly on the diff's prediction across the machine
-boundary, on both the would-change and the idempotent cases.
+`test_recovery_workflow_survives_a_machine_handoff`:
+
+- **machine A** holds the topic and adopts a *chain* of two divergent peer
+  captures (v1 → v2), so the archive holds two recoverable priors, then runs
+  `export bundle --with-archive`;
+- **machine B** — a fresh library — runs `import bundle`, repairs, then
+  **inspect → decide → act**;
+- the act lands exactly on the diff's prediction across the machine boundary,
+  on both the would-change and the idempotent cases.
 
 ```bash
 # ── machine A: I adopted a chain of two peer captures; both priors are archived ──
@@ -464,34 +519,46 @@ v2 is archived in turn (the rollback stays reversible on B too):
   "held_hash": "sha256:peer-v2", "outcome": "adopted", "restored": true }
 ```
 
-The custody point is the cross-machine twin of decide-before-you-restore's: the
-*whole* recovery workflow — inspect, decide, **and act** — travels in the portable
-bundle, so you can recover on a machine that never witnessed the adoptions, the
-act still lands exactly what the read promised, and `doctor`'s `custody.score`
-holds at 100 through the real recovery write. "Take it with me" reaches past the
-holdings to the recovery *capability* itself (M4/cap 4, custody §2.4).
+The custody point is the cross-machine twin of decide-before-you-restore's:
+
+- **the *whole* recovery workflow — inspect, decide, and act — travels** in the
+  portable bundle, so you can recover on a machine that never witnessed the
+  adoptions;
+- **the act still lands exactly what the read promised**, and `doctor`'s
+  `custody.score` holds at 100 through the real recovery write;
+- **"Take it with me" reaches past the holdings** to the recovery *capability*
+  itself (M4/cap 4, custody §2.4).
 
 ## Recovering from a whole-library backup — the JSONL transport
 
-The machine handoff above carries everything in *one* shareable bundle. The other
-portable recovery store is the whole-library JSONL **backup**: two files an
-operator stores off-machine — `export items` (the holdings + custody ledger) and
-`export archive` (the prior-content recovery store, ADR 0106 / roadmap H294). They
-are a *different* serialization with their own `import archive` restore, so the
-question is the same one the bundle leg answers, asked of the backup transport:
-after a backup-and-restore, does the *whole recovery workflow* — not just the
-read-family — still run? H294 pins that the recovery *reads* round-trip the backup
-identically; this leg runs the recovery *act* — a real `archive restore` write — on
-the backup-rebuilt library.
+The machine handoff above carries everything in *one* shareable bundle. The
+other portable recovery store is the whole-library JSONL **backup**: two files
+an operator stores off-machine —
+
+- **`export items`** — the holdings + custody ledger;
+- **`export archive`** — the prior-content recovery store (ADR 0106 / roadmap
+  H294).
+
+They are a *different* serialization with their own `import archive` restore,
+so the question is the same one the bundle leg answers, asked of the backup
+transport: after a backup-and-restore, does the *whole recovery workflow* — not
+just the read-family — still run?
+
+H294 pins that the recovery *reads* round-trip the backup identically; this leg
+runs the recovery *act* — a real `archive restore` write — on the
+backup-rebuilt library.
 
 `tests/test_dogfood.py` pins it offline as
-`test_recovery_workflow_survives_a_jsonl_backup_handoff`: on **machine A**, hold
-the topic and adopt a *chain* of two divergent peer captures (v1 → v2) so the
-archive holds two recoverable priors, then back A up to two JSONL files. Restore a
-fresh library **B** from *both backups alone* — `import items`, then `import
-archive` — repair, then **inspect → decide → act**, asserting the act lands exactly
-on the diff's prediction across the backup boundary, on both the would-change and
-the idempotent cases.
+`test_recovery_workflow_survives_a_jsonl_backup_handoff`:
+
+- **machine A** holds the topic and adopts a *chain* of two divergent peer
+  captures (v1 → v2), so the archive holds two recoverable priors, then backs
+  A up to two JSONL files;
+- **machine B** — a fresh library — restores from *both backups alone*
+  (`import items`, then `import archive`), repairs, then runs **inspect →
+  decide → act**;
+- the act lands exactly on the diff's prediction across the backup boundary, on
+  both the would-change and the idempotent cases.
 
 ```bash
 # ── machine A: I adopted a chain of two peer captures; both priors are archived ──
@@ -552,37 +619,49 @@ displaced v2 is archived in turn (the rollback stays reversible on B too):
   "held_hash": "sha256:peer-v2", "outcome": "adopted", "restored": true }
 ```
 
-The custody point is the JSONL-backup twin of the bundle handoff's: the *whole*
-recovery workflow — inspect, decide, **and act** — survives the two-file
-whole-library backup just as it survives the one-file portable bundle, so you can
-recover on a library restored from a backup that never witnessed the adoptions, the
-act still lands exactly what the read promised, and `doctor`'s `custody.score`
-holds at 100 through the real recovery write. Both portable recovery stores — the
-shareable bundle and the off-machine backup — carry the recovery *capability*, not
-just the holdings (cap 4, custody §2.4).
+The custody point is the JSONL-backup twin of the bundle handoff's:
+
+- **the *whole* recovery workflow — inspect, decide, and act — survives the
+  two-file whole-library backup** just as it survives the one-file portable
+  bundle, so you can recover on a library restored from a backup that never
+  witnessed the adoptions;
+- **the act still lands exactly what the read promised**, and `doctor`'s
+  `custody.score` holds at 100 through the real recovery write;
+- **both portable recovery stores** — the shareable bundle and the off-machine
+  backup — carry the recovery *capability*, not just the holdings (cap 4,
+  custody §2.4).
 
 ## Incremental backup — a full archive at T0, then only what's new since
 
-The whole-library backup above re-exports the *entire* recovery store every run.
-Once the archive grows, an operator wants the cheaper shape: a **full** backup at
-T0, then **incremental** ones that re-export only `export archive --since T0` — the
-priors archived since the last sweep — while still re-snapshotting the small
-holdings each run. The question this raises is whether the union of a full backup
-*plus* an overlapping increment restores to the same recovery store as a single
-full backup would: every prior exactly once, no double-count. It does, because
-`import archive` dedups by `(item_id, prior_hash)` (ADR 0106), so a prior that
-rides in *both* the full backup and the (inclusive `--since`) increment is restored
-once and skipped the second time.
+The whole-library backup above re-exports the *entire* recovery store every
+run. Once the archive grows, an operator wants the cheaper shape:
+
+- **a full backup at T0**, then
+- **incremental backups** that re-export only `export archive --since T0` — the
+  priors archived since the last sweep — while still re-snapshotting the small
+  holdings each run.
+
+The question this raises is whether the union of a full backup *plus* an
+overlapping increment restores to the same recovery store as a single full
+backup would: every prior exactly once, no double-count.
+
+It does, because `import archive` dedups by `(item_id, prior_hash)` (ADR 0106),
+so a prior that rides in *both* the full backup and the (inclusive `--since`)
+increment is restored once and skipped the second time.
 
 `tests/test_dogfood.py` pins it offline as
-`test_incremental_backup_workflow_round_trips_the_recovery_family`: on **machine
-A**, hold the topic and adopt `original → v1@06-18 → v2@06-19`, take a **full**
-backup at `T0 = 06-19`, then adopt `v3@06-20` (the archive grows to three priors)
-and take an **incremental** backup — the latest holdings plus `export archive
---since T0`. The increment carries a *strict subset* of A's archive (the two priors
-at/after T0, not the pre-T0 original) yet **overlaps** the full at the inclusive
-boundary prior (`v1@06-19`). Restore a fresh **B** from the latest holdings + the
-full archive + the increment, and the recovery family reads identically to A.
+`test_incremental_backup_workflow_round_trips_the_recovery_family`:
+
+- **machine A** holds the topic, adopts `original → v1@06-18 → v2@06-19`, and
+  takes a **full** backup at `T0 = 06-19`;
+- A then adopts `v3@06-20` (the archive grows to three priors) and takes an
+  **incremental** backup — the latest holdings plus `export archive --since
+  T0`;
+- the increment carries a *strict subset* of A's archive (the two priors
+  at/after T0, not the pre-T0 original) yet **overlaps** the full at the
+  inclusive boundary prior (`v1@06-19`);
+- a fresh **B** restores from the latest holdings + the full archive + the
+  increment, and the recovery family reads identically to A.
 
 ```bash
 # ── machine A, T0 = 06-19: a FULL backup after adopting v1@06-18, v2@06-19 ──
@@ -624,24 +703,30 @@ the increment skips it — the recovery store holds three priors, not four:
 { "imported": 1, "skipped": 1, "archive": 2 }    // import archive <increment> — v2 new, v1 deduped
 ```
 
-The custody point is the `--since`-axis twin of the whole-library backup leg's: an
-incremental backup is a faithful recovery *transport*, not just a smaller file. The
-holdings re-snapshot moves with the head (so the *latest* `export items`, not the
-T0 one, reconstructs A's head), but the append-only recovery store grows by
-increments whose overlapping union restores losslessly — every recoverable prior
-lands exactly once, and the whole inspect → decide → act family reads identically on
-the library rebuilt from full + increment (cap 4, custody §2.4).
+The custody point is the `--since`-axis twin of the whole-library backup leg's:
+an incremental backup is a faithful recovery *transport*, not just a smaller
+file.
 
-**The append-only boundary — a prune does *not* travel in an increment.** The recovery
-store can only ever *grow* across the incremental transport: `import archive` appends
-and dedups by `(item_id, prior_hash)` (ADR 0106) and has **no delete path**, so an
-`archive prune` on A — a retention *removal* — leaves no trace an `export archive
---since` increment could carry. Prune the pre-T0 priors, ship only the `--since T0`
-increment, and a peer **B** rebuilt from an *earlier* full backup (taken before the
-prune, so it still holds the pruned prior) plus that increment **still holds the pruned
-prior**. The prune and the window meet at the *same* boundary T0 — the prune drops
-`< T0`, the increment carries `>= T0` — so the pruned prior is exactly the part the
-increment can never reach:
+- **The holdings re-snapshot moves with the head** — the *latest*
+  `export items`, not the T0 one, reconstructs A's head.
+- **The append-only recovery store grows by increments** whose overlapping
+  union restores losslessly: every recoverable prior lands exactly once.
+- **The whole inspect → decide → act family reads identically** on the library
+  rebuilt from full + increment (cap 4, custody §2.4).
+
+**The append-only boundary — a prune does *not* travel in an increment.** The
+recovery store can only ever *grow* across the incremental transport:
+`import archive` appends and dedups by `(item_id, prior_hash)` (ADR 0106) and
+has **no delete path**, so an `archive prune` on A — a retention *removal* —
+leaves no trace an `export archive --since` increment could carry.
+
+- **The scenario:** prune the pre-T0 priors on A and ship only the `--since T0`
+  increment. A peer **B** rebuilt from an *earlier* full backup (taken before
+  the prune, so it still holds the pruned prior) plus that increment **still
+  holds the pruned prior**.
+- **Why:** the prune and the window meet at the *same* boundary T0 — the prune
+  drops `< T0`, the increment carries `>= T0` — so the pruned prior is exactly
+  the part the increment can never reach:
 
 ```bash
 # ── machine A: after the full backup, prune the pre-T0 priors ──
@@ -655,10 +740,11 @@ scrolls archive show arxiv:1706.03762 --all   # → 3 priors, INCLUDING sha256:0
 #   A holds 2 (the original is gone); B holds 3 — the prune did NOT travel
 ```
 
-To propagate retention you re-take a **full** backup. A fresh peer **C** rebuilt from a
-*post-prune* `export archive` (which simply omits the pruned prior) matches A's recovery
-store exactly — retention travels through a fresh full backup, never through an
-increment. `tests/test_dogfood.py::test_a_prune_does_not_propagate_through_an_incremental_backup`
+To propagate retention you re-take a **full** backup. A fresh peer **C** rebuilt
+from a *post-prune* `export archive` (which simply omits the pruned prior)
+matches A's recovery store exactly — retention travels through a fresh full
+backup, never through an increment.
+`tests/test_dogfood.py::test_a_prune_does_not_propagate_through_an_incremental_backup`
 pins both directions (cap 4, custody §2.4).
 
 ## Running the proof
@@ -667,23 +753,34 @@ pins both directions (cap 4, custody §2.4).
 uv run pytest tests/test_dogfood.py
 ```
 
-Thirteen tests: each leg on its own — the core hold/detect/take legs, the scoped
-drift- and refresh-triage legs, the accept-incoming *adopt-a-peer's-better-capture*
-flow, the *restore-by-version* roll-back, the *decide-before-you-restore*
-`archive diff` → `archive restore` loop, the *cross-machine recovery* leg (the whole
-decide → act loop run on a library rebuilt from a `--with-archive` bundle), the
-*JSONL-backup recovery* leg (the same decide → act loop on a library rebuilt from an
-`export items` + `export archive` backup), the *incremental-backup recovery* leg
-above (a full `export archive` at T0 + a later `export archive --since T0` increment,
-restored as an idempotent union onto a fresh peer), and the *append-only-boundary* leg
-(an `archive prune` on A does **not** travel in a later increment — a peer rebuilt from
-an earlier full backup keeps the pruned prior; retention propagates only through a fresh
-full backup) — plus
-`test_dogfood_flow_hold_prove_detect_take`, the whole hold → prove → detect → take
-sequence in order, unattended. The lossless round-trip leg shares its guarantee
-with `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099); the bundle
-envelope is ADR 0103; the accept-incoming adoption + prior-content archive (and its
-restore-by-version and decide-before-you-restore reads) are ADR 0106.
+Thirteen tests. Twelve pin each leg on its own:
+
+- **the core hold/detect/take legs**, each in isolation;
+- **the scoped drift- and refresh-triage legs**;
+- **the accept-incoming *adopt-a-peer's-better-capture* flow**;
+- **the *restore-by-version* roll-back**;
+- **the *decide-before-you-restore* `archive diff` → `archive restore` loop**;
+- **the *cross-machine recovery* leg** — the whole decide → act loop run on a
+  library rebuilt from a `--with-archive` bundle;
+- **the *JSONL-backup recovery* leg** — the same decide → act loop on a library
+  rebuilt from an `export items` + `export archive` backup;
+- **the *incremental-backup recovery* leg** above — a full `export archive` at
+  T0 + a later `export archive --since T0` increment, restored as an idempotent
+  union onto a fresh peer;
+- **the *append-only-boundary* leg** — an `archive prune` on A does **not**
+  travel in a later increment: a peer rebuilt from an earlier full backup keeps
+  the pruned prior, and retention propagates only through a fresh full backup.
+
+The thirteenth, `test_dogfood_flow_hold_prove_detect_take`, runs the whole
+hold → prove → detect → take sequence in order, unattended.
+
+Where the guarantees are recorded:
+
+- **the lossless round-trip leg** shares its guarantee with
+  `tests/test_roundtrip.py` (the JSONL backup invariant, ADR 0099);
+- **the bundle envelope** is ADR 0103;
+- **the accept-incoming adoption + prior-content archive** (and its
+  restore-by-version and decide-before-you-restore reads) are ADR 0106.
 
 ## The recurring sibling — `scrolls maintain`
 
@@ -700,32 +797,42 @@ scheduled custody-maintenance pass an hourly worker can run unattended:
    snapshot recorded at `<root>/.maintenance/last-run.json`.
 
 It is report-only and idempotent (vision §2.4): it records events and
-regenerates views, but never repairs index rows, reclassifies, or re-summarizes —
-`doctor --fix`, `classify --stale`, and `kb --stale` stay the explicit, on-request
-mutations. The delta makes the custody point above **recurring**: each pass shows
-the drift posture moving without the integrity score ever dropping. Proven offline
-in `tests/test_maintain.py` (the same `cli.live_recapture` seam this flow uses).
+regenerates views, but never repairs index rows, reclassifies, or
+re-summarizes — `doctor --fix`, `classify --stale`, and `kb --stale` stay the
+explicit, on-request mutations.
+
+The delta makes the custody point above **recurring**: each pass shows the
+drift posture moving without the integrity score ever dropping. Proven offline
+in `tests/test_maintain.py` (the same `cli.live_recapture` seam this flow
+uses).
 
 Each pass also appends its `{recorded_at, snapshot, delta}` to an append-only
 `<root>/.maintenance/log.jsonl`, so `scrolls maintain --history [N]` reads the
 last N runs back as the custody **trend** — the score/drift *trajectory* an
 unattended worker watches over time, not just the single most recent diff.
 
-When custody loss is confined to one source, an agent reads `scrolls status`
-(or `scrolls doctor`) — whose `attention` flag names the single weakest source
-and the exact `scrolls verify --source <S>` recheck command — and runs a
-**scoped** pass, `scrolls maintain --source <S> --no-recheck`, to triage *only*
-that source instead of the whole library. A scoped pass narrows the audit/delta
-to `<S>` (`by_source` collapses to the singleton `{S: …}`, `attention` is null —
-one source has nothing to flag *across*), regenerates the global views, and stays
-**non-persisting**: it writes no whole-library snapshot, so its `delta` is
-honestly `null` and the whole-library trend baseline an earlier pass recorded is
-left byte-untouched (ADR 0082 — the whole-library pass owns the single trend
-baseline). Its `custody` ≡ `doctor --source <S>`'s distilled snapshot. The
-dogfood suite pins this as one shell sequence — `status`'s `attention` names the
-weakest source, the agent runs the scoped pass on *exactly* that source, the
-trend baseline is untouched — the symmetric shell twin of the MCP triage below,
-so the agent reads *where* the loss is and acts *only there*, custody-safely.
+**The scoped pass — triage one source.** When custody loss is confined to one
+source, an agent reads `scrolls status` (or `scrolls doctor`) — whose
+`attention` flag names the single weakest source and the exact
+`scrolls verify --source <S>` recheck command — and runs a **scoped** pass,
+`scrolls maintain --source <S> --no-recheck`, to triage *only* that source
+instead of the whole library. A scoped pass:
+
+- **narrows the audit/delta to `<S>`** — `by_source` collapses to the singleton
+  `{S: …}`, and `attention` is null (one source has nothing to flag *across*);
+- **regenerates the global views**;
+- **stays non-persisting** — it writes no whole-library snapshot, so its
+  `delta` is honestly `null` and the whole-library trend baseline an earlier
+  pass recorded is left byte-untouched (ADR 0082 — the whole-library pass owns
+  the single trend baseline);
+- **matches the doctor read** — its `custody` ≡ `doctor --source <S>`'s
+  distilled snapshot.
+
+The dogfood suite pins this as one shell sequence — `status`'s `attention`
+names the weakest source, the agent runs the scoped pass on *exactly* that
+source, the trend baseline is untouched — the symmetric shell twin of the MCP
+triage below. The agent reads *where* the loss is and acts *only there*,
+custody-safely.
 
 ## The same loop over MCP
 
@@ -743,30 +850,40 @@ pinned in `tests/test_dogfood_mcp.py`, the MCP sibling of `tests/test_dogfood.py
 The MCP loop has **no "take it with me" leg** — export/import-bundle is a shell
 concern with no MCP twin (an MCP tool must never trigger a paid or implicit
 write). An MCP agent's *recurring* custody work is the maintenance pass and its
-trend read instead: `run_maintenance` runs offline (always `--no-recheck`,
-never an implicit re-capture — targeted live rechecks stay the explicit
-`verify_scroll`), records a snapshot, and `get_maintenance_history(trend=True)`
-reads the trajectory. Two passes that both carry the recorded drift read
-`holding`, not `regressing` — the recurring form of the custody point above:
-the drift is recorded and the integrity score never drops.
+trend read instead:
+
+- **`run_maintenance` runs offline** — always `--no-recheck`, never an implicit
+  re-capture; targeted live rechecks stay the explicit `verify_scroll` — and
+  records a snapshot;
+- **`get_maintenance_history(trend=True)` reads the trajectory** back;
+- **two passes that both carry the recorded drift read `holding`, not
+  `regressing`** — the recurring form of the custody point above: the drift is
+  recorded and the integrity score never drops.
 
 When `get_library_health`'s `attention` flag names a single weakest source, the
 agent can run a **scoped** pass on just that source — `run_maintenance(source=S)`
 (H203), the MCP sibling of `scrolls maintain --source S` — instead of the whole
-library or re-composing the triage. A scoped pass narrows the audit/delta to
-`S`, regenerates the global views, and stays **non-persisting** (it writes no
-whole-library snapshot, so its `delta` is honestly `null` — the whole-library
-pass owns the trend baseline). It converges field-for-field with the CLI
-`maintain --source S --no-recheck`. The dogfood-MCP suite pins this as one
-agent-driven sequence — the `attention` flag names the weakest source, the agent
-runs the scoped pass on *exactly* that source, and the whole-library trend
-baseline an earlier pass recorded is left byte-untouched — so the agent reads
-*where* the loss is and acts *only there*, custody-safely (the scoped sibling of
-the whole-library pass H201 tied in).
+library or re-composing the triage. A scoped pass:
 
-The MCP twins are pinned to converge with the CLI commands they wrap per-tool in
-`tests/test_mcp.py` (`get_library_health` ≡ `status`/`doctor`, `run_maintenance`
-≡ `maintain --no-recheck`, `get_maintenance_history` ≡ `maintain --history`); the
-dogfood-MCP suite ties them into one agent-driven flow and pins that an agent
-reading custody over MCP reaches the same conclusion `scrolls doctor` does over
-the identical post-drift state.
+- **narrows the audit/delta to `S`** and regenerates the global views;
+- **stays non-persisting** — it writes no whole-library snapshot, so its
+  `delta` is honestly `null`; the whole-library pass owns the trend baseline;
+- **converges field-for-field** with the CLI
+  `maintain --source S --no-recheck`.
+
+The dogfood-MCP suite pins this as one agent-driven sequence — the `attention`
+flag names the weakest source, the agent runs the scoped pass on *exactly* that
+source, and the whole-library trend baseline an earlier pass recorded is left
+byte-untouched. The agent reads *where* the loss is and acts *only there*,
+custody-safely (the scoped sibling of the whole-library pass H201 tied in).
+
+The MCP twins are pinned to converge with the CLI commands they wrap per-tool
+in `tests/test_mcp.py`:
+
+- `get_library_health` ≡ `status`/`doctor`;
+- `run_maintenance` ≡ `maintain --no-recheck`;
+- `get_maintenance_history` ≡ `maintain --history`.
+
+The dogfood-MCP suite ties them into one agent-driven flow and pins that an
+agent reading custody over MCP reaches the same conclusion `scrolls doctor`
+does over the identical post-drift state.
