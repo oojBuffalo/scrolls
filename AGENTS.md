@@ -1,7 +1,8 @@
 # Scrolls Agent Guide
 
 *Amended: 2026-07-26 — vision, inspiration, and priority pointers consolidated
-(see `docs/vision.md` and `docs/inspiration/`); dev check-in convention added.*
+(see `docs/vision.md` and `docs/inspiration/`); dev check-in convention added.
+2026-07-27 — doc-style rule added.*
 
 Scrolls is a local-first custody system for saved internet artifacts. Its job is
 to hold what a person deliberately saved, prove what was held at capture time,
@@ -64,6 +65,19 @@ adapter). When it changes command arguments, output keys, or exit
 codes, update `docs/cli.md`. When it changes scroll frontmatter, body sections,
 compiled `library/` pages, generated agent docs, or media artifacts, update
 `docs/library-format.md`. Consequential decisions should get an ADR.
+
+## Doc style
+
+Docs are read by humans first. Verbose is fine; walls of text are not:
+
+- Short paragraphs (roughly six lines max), one idea each; bullets with bold
+  lead-ins for enumerations; tables for catalogs; a subsection per topic. No
+  multi-line parenthetical asides — promote them to bullets or sentences.
+- Never narrate shipped slices into a living doc. Shipped facts go to the
+  roadmap's one-line ledger; dated narration goes to the dated check-in dirs
+  (`docs/agents/progress/<YYMMDD>/`).
+- Design and contract docs state the current contract; slice-by-slice history
+  lives in git and the check-ins, not appended as "Shipped:" sections.
 
 ## `/grill-me-docs` checklist
 

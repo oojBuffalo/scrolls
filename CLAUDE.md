@@ -1,7 +1,8 @@
 # Scrolls Agent Guide
 
 *Amended: 2026-07-26 — vision, inspiration, and priority pointers consolidated
-(see `docs/vision.md` and `docs/inspiration/`).*
+(see `docs/vision.md` and `docs/inspiration/`). 2026-07-27 — doc-style rule
+added.*
 
 Scrolls is a local-first custody system for saved internet artifacts: it holds
 what you deliberately saved, proves what was captured, surfaces drift honestly,
@@ -84,6 +85,15 @@ Use these practices for substantive work:
 - `/diagnose`: Use a disciplined reproduce/minimize/hypothesize/instrument/fix loop for bugs.
 - `/improve-codebase-architecture`: Periodically look for opportunities to deepen modules and simplify interfaces.
 - `/zoom-out`: Use when changing an unfamiliar area to preserve whole-system coherence.
+
+### Doc style
+
+Docs are read by humans first. Verbose is fine; walls of text are not: short
+paragraphs (roughly six lines max), bullets with bold lead-ins for
+enumerations, tables for catalogs, no multi-line parenthetical asides. Shipped
+facts go to the roadmap's one-line ledger; dated narration goes to
+`docs/agents/progress/<YYMMDD>/`; design docs state the current contract and
+leave slice-by-slice history to git.
 
 ## Project decision posture
 
