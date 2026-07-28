@@ -48,7 +48,7 @@ mapping below is filtered through that distinction.
 | Pattern | Scrolls adaptation | Status |
 | --- | --- | --- |
 | **Bi-temporal facts** (`from`/`until` event-time vs `learned` transaction-time; never overwrite, append) | The same shape Scrolls' **custody ledger** wants for drift: *captured-at* (when we held this content) vs *source-changed-at* (when the live source diverged), recorded as events, never as an overwrite (ADR 0098 drift detection) | Adopt the concept; defer a dedicated timeline store until drift events need more than the current event record. |
-| **`/obsidian-reconcile`** (find + resolve contradictions) | Scrolls already owns this as `docs/reconciliation.md` + the works model (ADR 0069/0095). Keep the *detection*; replace *auto-overwrite* with surfacing a conflict/drift custody event for review | Detection adopted; resolution stays custody-safe (surface, don't silently rewrite). |
+| **`/obsidian-reconcile`** (find + resolve contradictions) | Scrolls already owns this as `docs/conflicts.md` + the works model (ADR 0069/0095). Keep the *detection*; replace *auto-overwrite* with surfacing a conflict/drift custody event for review | Detection adopted; resolution stays custody-safe (surface, don't silently rewrite). |
 | **`/obsidian-health` severity grouping** (🔴/🟡/⚪ critical/warning/info) | `scrolls doctor` custody report could group findings by severity for a faster agent read | Minor enhancement; defer behind the custody-score work already prioritized. |
 | **Confidence levels per claim** (`stated`/`high`/`medium`/`speculation`) | Surface a confidence/recency marker on enrichment that infers (classification, LLM concept summaries) so an agent knows what to trust | Adopt as a surfacing gap; ties to fidelity tiers. |
 

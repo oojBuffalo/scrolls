@@ -1,4 +1,4 @@
-# Reconciliation in Scrolls
+# Custody conflicts in Scrolls
 
 **Status:** Original design plus the shipped surface. The design record below is
 the foundation for the Reconcile stage in the Scrolls pipeline; the
@@ -8,9 +8,9 @@ has since shipped and is documented in
 
 *Amended: 2026-07-26 — inspiration references reduced to pointers
 (`docs/inspiration/`); 2026-07-27 — shipped-slice narration consolidated into a
-per-capability contract section for readability. Not to be confused with the dev
-check-in `reconciliation.md` files under `docs/agents/progress/` — same word,
-different job: this is the custody-conflict design doc.*
+per-capability contract section for readability, and the file renamed from
+`reconciliation.md` to `conflicts.md` to end the name collision with the dev
+check-in `reconciliation.md` files under `docs/agents/progress/`.*
 
 ## Goals
 

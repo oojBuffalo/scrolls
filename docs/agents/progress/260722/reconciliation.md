@@ -10,8 +10,8 @@ Elijah's review; realigned the same day after the automation/ops state from
 the autonomous-machine session (the 2026-07-20 reassessment) was folded in.*
 
 Note: this file is a **dev check-in artifact** — distinct from
-`docs/reconciliation.md`, which is the custody-conflict *design doc* for the
-reconcile feature. Same word, different job.
+`docs/conflicts.md` (named reconciliation.md until 2026-07-27), which is the
+custody-conflict *design doc* for the reconcile feature.
 
 ## Verdict
 

@@ -4,7 +4,8 @@
 up to this check-in?
 
 *Reconstructed: 2026-07-26 — backfilled; see `report.md` for provenance.
-Distinct from `docs/reconciliation.md`, the custody-conflict design doc.*
+Distinct from `docs/conflicts.md`, the custody-conflict design doc (named
+reconciliation.md until 2026-07-27).*
 
 ## Verdict
 

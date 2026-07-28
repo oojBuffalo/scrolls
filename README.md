@@ -181,8 +181,8 @@ one is in [`docs/architecture.md`](docs/architecture.md).
   so a recipient inherits the drift *history*, not just a frozen snapshot.
 
 The operative north star is **[`docs/vision.md`](docs/vision.md)**;
-reconciliation and conflict mechanics are in
-[`docs/reconciliation.md`](docs/reconciliation.md).
+conflict and reconciliation mechanics are in
+[`docs/conflicts.md`](docs/conflicts.md).
 
 ## Library layout
 
@@ -221,7 +221,7 @@ Reading order (see [`AGENTS.md`](AGENTS.md) for the contributor guide):
 4. [`docs/adapters.md`](docs/adapters.md) — the source-adapter catalog.
 5. [`docs/vision.md`](docs/vision.md) — the operative north star (custody-first).
 6. [`docs/inspiration/`](docs/inspiration/README.md) — where the ideas came from: the adopt/adapt/reject record per inspiration source.
-7. [`docs/reconciliation.md`](docs/reconciliation.md) — reconciliation and custody-conflict design.
+7. [`docs/conflicts.md`](docs/conflicts.md) — custody-conflict and reconciliation design.
 8. [`docs/adr/README.md`](docs/adr/README.md) — the decision records behind the implementation.
 9. [`docs/product/prd.md`](docs/product/prd.md), [`docs/product/mvp.md`](docs/product/mvp.md) — product direction and scope.
 10. [`docs/dogfood.md`](docs/dogfood.md) — the end-to-end *hold → prove → detect → take-it-with-me* workflow.

@@ -3441,7 +3441,7 @@ re-import of the **same** captured content, or an incoming copy that
 - **The held copy is kept:** raw is sacred — a conflict is a *recorded,
   surfaced* event, not an overwrite (vision §2.4; the adopted reconcile
   posture — *detect and surface, don't silently rewrite*,
-  `docs/reconciliation.md`).
+  `docs/conflicts.md`).
 - **Loud on both channels:** the diverging ids ride the structured
   `conflicts` list (sorted, deduped, uncapped — the completeness
   contract) **and** a loud stderr warning naming them (bounded

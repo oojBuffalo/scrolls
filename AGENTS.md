@@ -175,8 +175,8 @@ directory (`<YYMMDD>/`) per check-in, three files each:
 
 - `report.md` — facts only: what exists and what is complete.
 - `reconciliation.md` — did progress match the goals/plans? Deviations and
-  corrections. (Distinct from `docs/reconciliation.md`, the custody-conflict
-  design doc — same word, different job.)
+  corrections. (Not the custody-conflict design doc — that is
+  `docs/conflicts.md`.)
 - `plans.md` — next objectives as logical items, plus a 1/3/7-day plan. The
   roadmap remains operationally authoritative for the hourly worker until a
   human edits `plans.md`.
