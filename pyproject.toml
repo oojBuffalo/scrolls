@@ -7,6 +7,10 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "anthropic>=0.109.1",
+    # Chrome encrypts its cookie store; the X collection on-ramp decrypts the
+    # session locally (AES-128-CBC). Present transitively via pyjwt[crypto],
+    # but declared here because scrolls imports it directly.
+    "cryptography>=42",
     "mcp>=1.27.2",
     "pypdf>=6.13.2",
     "trafilatura>=2.1.0",
