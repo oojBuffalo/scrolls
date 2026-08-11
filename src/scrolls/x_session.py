@@ -268,3 +268,50 @@ def load_session_from_env() -> XSession | None:
     if not ct0:
         raise XSessionError(f"{CT0_ENV} is missing but {AUTH_TOKEN_ENV} is set")
     return XSession(auth_token=auth_token, ct0=ct0, origin="env")
+
+
+def chrome_cookie_db_path(profile: str = "Default") -> Path:
+    """Where Chrome keeps its cookie database on macOS.
+
+    Chrome 96 and later use `<profile>/Network/Cookies`; older builds keep it
+    directly under the profile. The newer path wins when both exist.
+    """
+    base = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "Google"
+        / "Chrome"
+        / profile
+    )
+    modern = base / "Network" / "Cookies"
+    return modern if modern.is_file() else base / "Cookies"
+
+
+def load_session(browser: str = "auto", *, profile: str = "Default") -> XSession:
+    """Resolve an X session, preferring explicitly supplied cookies.
+
+    Args:
+        browser: 'auto' tries the environment then Chrome; 'env' and 'chrome'
+            pin one path so a failure names the thing that actually failed.
+        profile: Chrome profile directory name.
+
+    Returns:
+        The resolved XSession.
+
+    Raises:
+        XSessionError: No session could be resolved by the requested path.
+    """
+    if browser in ("auto", "env"):
+        session = load_session_from_env()
+        if session is not None:
+            return session
+        if browser == "env":
+            raise XSessionError(
+                f"{AUTH_TOKEN_ENV} and {CT0_ENV} are not set"
+            )
+    if browser in ("auto", "chrome"):
+        return read_chrome_session(
+            chrome_cookie_db_path(profile), key=derive_chrome_key(keychain_password())
+        )
+    raise XSessionError(f"unknown browser: {browser!r}")

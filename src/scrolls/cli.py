@@ -164,6 +164,8 @@ from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
 from scrolls.takeout import load_watch_history
+from scrolls.x_graphql import XGraphQLError, fetch_bookmarks
+from scrolls.x_session import XSessionError, load_session
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1519,12 +1521,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sync_parser = subparsers.add_parser(
-        "sync", help="Register new items from followed feeds (JSON output)"
+        "sync",
+        help="Register new items from followed feeds, or pull a saved "
+        "collection (JSON output)",
     )
     sync_parser.add_argument(
         "id",
         nargs="?",
-        help="Sync one subscription by id; default is every followed feed",
+        help="Sync one subscription by id, or the source `x` with "
+        "--bookmarks; default is every followed feed",
+    )
+    sync_parser.add_argument(
+        "--bookmarks",
+        action="store_true",
+        help="With source `x`: pull your X bookmarks collection",
+    )
+    sync_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after this many bookmarks; default walks the collection",
+    )
+    sync_parser.add_argument(
+        "--browser",
+        default="auto",
+        choices=("auto", "chrome", "env"),
+        help="Where to read the X session from; `env` uses "
+        "SCROLLS_X_AUTH_TOKEN/SCROLLS_X_CT0 and never touches the Keychain",
     )
 
     unfollow_parser = subparsers.add_parser(
@@ -1851,6 +1874,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         return _cmd_status(args.source)
     if args.command == "sync":
+        if args.bookmarks:
+            return _cmd_sync_x_bookmarks(args.id, args.limit, args.browser)
         return _cmd_sync(args.id)
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
@@ -2198,6 +2223,72 @@ def _cmd_sync(sub_id: str | None) -> int:
     payload = sync_many(paths.db_path, subscriptions)
     print(json.dumps(payload))
     return 1 if payload["failed"] else 0
+
+
+def _cmd_sync_x_bookmarks(source: str | None, limit: int | None, browser: str) -> int:
+    """Pull the X bookmarks collection into the library.
+
+    The fourth on-ramp shape: not a file someone exported and not a feed
+    delta, but the user's own saved collection, copied out of the service
+    they saved it in.
+    """
+    if source != "x":
+        print(
+            json.dumps(
+                {
+                    "error": "--bookmarks needs a source that has a bookmark "
+                    "collection: `scrolls sync x --bookmarks`"
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        session = load_session(browser)
+    except XSessionError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    synced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        # stop_on_error: a partial pull is still custody, so items already
+        # collected are kept and the error is reported alongside them
+        result = fetch_bookmarks(
+            session, synced_at=synced_at, limit=limit, stop_on_error=True
+        )
+    except XGraphQLError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    # Nothing captured and the walk failed is a plain failure, not a partial
+    # pull — it belongs in the error envelope on stderr, where an expired
+    # session or a rotated query id is actually looked for.
+    if result.error and not result.items:
+        print(json.dumps({"error": result.error}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0, "failed": len(result.failures)}
+    for item in result.items:
+        # INSERT OR IGNORE: an item added by URL earlier, or edited by the
+        # user, is never overwritten — re-syncing stays cheap and lossless
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    payload = {
+        **counts,
+        "pages": result.pages,
+        "session": session.origin,
+        "failures": list(result.failures),
+    }
+    if result.error:
+        payload["error"] = result.error
+    print(json.dumps(payload))
+    return 1 if counts["failed"] or result.error else 0
 
 
 def _cmd_import_fieldtheory(root: str | None) -> int:
