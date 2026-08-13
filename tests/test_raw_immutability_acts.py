@@ -54,8 +54,10 @@ universe (H394 classified it `_CLI_EXEMPT_READS`, a read transport).
 
 import dataclasses
 import hashlib
+import os
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -222,6 +224,21 @@ def _act_sync(capsys):
     assert main(["sync"]) == 0  # registers the feed entry as a detected row
 
 
+def _act_x_login(capsys):
+    """OAuth authorization: browser and network stubbed, credential store real."""
+    from scrolls.x_oauth import TokenSet
+
+    with mock.patch.dict(os.environ, {"SCROLLS_X_CLIENT_ID": "CID"}), mock.patch(
+        "scrolls.cli.run_login_flow",
+        return_value=TokenSet(access_token="A", refresh_token="R"),
+    ):
+        assert main(["x", "login"]) == 0
+
+
+def _act_x_logout(capsys):
+    assert main(["x", "logout"]) == 0
+
+
 def _act_unfollow(capsys):
     assert main(["follow", _FEED_URL]) == 0
     _drain(capsys)
@@ -340,6 +357,8 @@ _RAW_PRESERVING_ACTS = {
     ("reconcile",): _act_reconcile,
     ("sync",): _act_sync,
     ("unfollow",): _act_unfollow,
+    ("x", "login"): _act_x_login,
+    ("x", "logout"): _act_x_logout,
     ("verify",): _act_verify,
     ("archive", "prune"): _act_archive_prune,
     ("archive", "restore"): _act_archive_restore,

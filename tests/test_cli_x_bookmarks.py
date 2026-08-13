@@ -224,3 +224,140 @@ def test_a_partial_pull_keeps_what_it_captured(
     assert payload["error"] is not None
     assert exit_code == 1
     assert get_item(get_paths().db_path, "x:1") is not None
+
+
+# --- the OAuth route -----------------------------------------------------
+
+
+def _api_payload(ids, next_token=None):
+    payload = {
+        "data": [
+            {
+                "id": str(i),
+                "text": f"post {i}",
+                "created_at": "2026-06-01T15:34:00.000Z",
+                "author_id": "u1",
+            }
+            for i in ids
+        ],
+        "includes": {
+            "users": [{"id": "u1", "username": "karpathy", "name": "Andrej Karpathy"}]
+        },
+        "meta": {"result_count": len(ids)},
+    }
+    if next_token:
+        payload["meta"]["next_token"] = next_token
+    return payload
+
+
+@pytest.fixture
+def stored_grant(scrolls_home, monkeypatch):
+    """A live OAuth grant on disk and a client id in the environment."""
+    import time
+
+    from scrolls.paths import get_paths
+    from scrolls.x_oauth import TokenSet, save_tokens
+
+    monkeypatch.setenv("SCROLLS_X_CLIENT_ID", "CID")
+    save_tokens(
+        get_paths().credentials_path,
+        TokenSet(access_token="ACCESS", refresh_token="R", expires_at=time.time() + 3600),
+    )
+
+
+@pytest.fixture
+def fake_x_api(monkeypatch):
+    """Serve queued API v2 payloads instead of calling X."""
+
+    def install(pages):
+        queued = list(pages)
+
+        def get(url, headers):
+            if url.endswith("/users/me"):
+                return {"data": {"id": "u1"}}
+            return queued.pop(0)
+
+        monkeypatch.setattr("scrolls.x_api._http_get", get)
+        monkeypatch.setattr("scrolls.x_api.time.sleep", lambda _: None)
+
+    return install
+
+
+def test_the_oauth_route_pulls_the_collection_and_says_which_route_it_took(
+    stored_grant, fake_x_api, capsys
+):
+    fake_x_api([_api_payload([1, 2], "T1"), _api_payload([3])])
+
+    assert main(["sync", "x", "--bookmarks", "--auth", "oauth"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 3
+    assert payload["session"] == "oauth"
+
+    stored = get_item(get_paths().db_path, "x:1")
+    assert stored.provenance["extraction_method"] == "x:api-v2"
+
+
+def test_the_two_routes_dedupe_against_each_other(
+    scrolls_home, x_session, stored_grant, fake_x, fake_x_api, capsys
+):
+    """The same bookmark pulled either way is one item, not two."""
+    fake_x([_page([1, 2])])
+    main(["sync", "x", "--bookmarks", "--browser", "env"])
+    capsys.readouterr()
+
+    fake_x_api([_api_payload([1, 2, 3])])
+    assert main(["sync", "x", "--bookmarks", "--auth", "oauth"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["imported"] == 1
+    assert payload["skipped"] == 2
+
+
+def test_the_oauth_route_without_a_stored_grant_points_at_login(
+    scrolls_home, monkeypatch, capsys
+):
+    monkeypatch.setenv("SCROLLS_X_CLIENT_ID", "CID")
+    assert main(["sync", "x", "--bookmarks", "--auth", "oauth"]) == 1
+    assert "scrolls x login" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_the_oauth_route_without_a_client_id_says_how_to_get_one(
+    scrolls_home, monkeypatch, capsys
+):
+    monkeypatch.delenv("SCROLLS_X_CLIENT_ID", raising=False)
+    assert main(["sync", "x", "--bookmarks", "--auth", "oauth"]) == 1
+    assert "developer.x.com" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_the_browser_route_never_touches_the_credential_store(
+    scrolls_home, x_session, fake_x, capsys
+):
+    """The free default must not require, or create, a stored secret."""
+    fake_x([_page([1])])
+    assert main(["sync", "x", "--bookmarks", "--browser", "env"]) == 0
+    assert not get_paths().credentials_path.exists()
+
+
+def test_logout_forgets_the_grant_and_is_idempotent(stored_grant, capsys):
+    assert main(["x", "logout"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"forgotten": True}
+    assert main(["x", "logout"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"forgotten": False}
+
+
+def test_login_stores_the_grant_and_reports_it_refreshable(
+    scrolls_home, monkeypatch, capsys
+):
+    from scrolls.x_oauth import TokenSet, load_tokens
+
+    monkeypatch.setenv("SCROLLS_X_CLIENT_ID", "CID")
+    monkeypatch.setattr(
+        "scrolls.cli.run_login_flow",
+        lambda **kw: TokenSet(
+            access_token="A", refresh_token="R", scope="bookmark.read offline.access"
+        ),
+    )
+    assert main(["x", "login"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["authorized"] is True
+    assert payload["refreshable"] is True
+    assert load_tokens(get_paths().credentials_path).access_token == "A"

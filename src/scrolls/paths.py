@@ -22,6 +22,7 @@ class LibraryPaths:
     agents_dir: Path
     db_path: Path
     config_path: Path
+    credentials_path: Path
 
     @property
     def subdirs(self) -> tuple[Path, ...]:
@@ -48,4 +49,7 @@ def get_paths(root: Path | None = None) -> LibraryPaths:
         agents_dir=root / "agents",
         db_path=root / "db.sqlite",
         config_path=root / "config.toml",
+        # Deliberately not in `subdirs`: the credential store is created on
+        # first write, at 0600, and never by `ensure_library`.
+        credentials_path=root / "credentials.json",
     )

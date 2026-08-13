@@ -82,6 +82,14 @@ scrolls sync [id]             # register new items from followed feeds
 scrolls unfollow <id>         # remove a subscription
 ```
 
+Pull a saved collection (the on-ramp that is neither a file export nor a feed):
+
+```text
+scrolls sync x --bookmarks    # pull your X bookmarks over the browser session
+scrolls x login               # optional: authorize the official API instead
+scrolls x logout              # forget the stored X grant
+```
+
 Classify:
 
 ```text

@@ -268,6 +268,8 @@ _NO_PREVIEW = {
     ("sync",): "feed-subscription poll; no preview mode",
     ("unfollow",): "feed-subscription roster op; no preview mode",
     ("verify",): "records a verify verdict; no preview mode",
+    ("x", "login"): "credential-store write; no preview mode",
+    ("x", "logout"): "credential-store write; no preview mode",
     ("import", "archive"): "recovery-store restore; idempotent dedupe, no --dry-run flag",
     ("import", "bookmarks"): "foreign-format ingest; no preview mode",
     ("import", "events"): "ledger restore; idempotent dedupe, no --dry-run flag",

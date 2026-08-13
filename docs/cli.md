@@ -4703,6 +4703,12 @@ and quoted-tweet body from the same response that enumerated them
 - **A partial pull is kept** — items collected before a mid-walk failure stay,
   with `error` alongside them and exit 1. A pull that captured *nothing* is a
   plain error envelope on stderr instead.
+- **`--auth oauth`** takes the official API under the grant from
+  [`scrolls x login`](#scrolls-x-login) instead of the browser session. Same
+  items, same ids, so the two routes dedupe against each other; only
+  `provenance.extraction_method` differs (`x:graphql-internal` vs `x:api-v2`)
+  and `session` reports `oauth`. X bills bookmark reads per resource on this
+  path, so it is opt-in.
 - **No drift detection** — there is no `x` fetch adapter, so `scrolls verify`
   on a bookmark fails with `no fetch adapter for source 'x'` rather than
   reporting a false clean verdict. See [`adapters.md`](adapters.md#x).
@@ -4749,6 +4755,58 @@ When `auto` finds no session it reports every browser it searched, because
 $ scrolls sync x --bookmarks
 {"error": "no X session found in any installed browser.\n  chrome: no complete X session in chrome — open your browser, go to https://x.com, and make sure you are logged in\n  brave: no complete X session in brave — …\n  arc: arc is not installed on this machine\n  …\nAlternatively set SCROLLS_X_AUTH_TOKEN and SCROLLS_X_CT0 directly."}
 [exit 1]
+```
+
+### `scrolls x login`
+
+Authorize Scrolls against X over OAuth 2.0 + PKCE — the **opt-in fallback** to
+the cookie default. Needed only with `sync x --bookmarks --auth oauth`.
+
+This path is a fallback, not the default, for two reasons worth knowing before
+running it: it needs an app you register yourself at developer.x.com, and X
+bills bookmark reads per resource. The browser-session default costs nothing.
+
+- **Setup** — register an app with OAuth 2.0 enabled as a *native/public*
+  client (no client secret), add `http://127.0.0.1:<port>/callback` as a
+  redirect URI, and export its client id as `SCROLLS_X_CLIENT_ID`.
+- **`--port`** must match the port in that registered redirect URI. The
+  default `0` picks a free port, which only works if you registered a
+  wildcard-free loopback URI X accepts.
+- **Loopback, not a pasted code** — X delivers the authorization code to a
+  one-shot local server, so it never passes through a clipboard or terminal
+  scrollback. The authorization URL is also printed to stderr, so a headless
+  box can open it by hand.
+- **Scopes** — `tweet.read users.read bookmark.read offline.access`.
+  `offline.access` is what makes X issue a refresh token at all; without it
+  you would re-authorize every two hours.
+- **Stored at `<root>/credentials.json`, mode 0600.** This is the one
+  *writable* credential in the library: X rotates the refresh token on every
+  use, so each refresh rewrites the file. Other services' entries are
+  preserved.
+
+```console
+$ scrolls x login
+{"authorized": true, "scope": "tweet.read users.read bookmark.read offline.access", "refreshable": true, "stored_at": "/Users/you/.scrolls/credentials.json"}
+[exit 0]
+
+$ scrolls x login            # SCROLLS_X_CLIENT_ID unset
+{"error": "SCROLLS_X_CLIENT_ID is not set — register an app at developer.x.com, enable OAuth 2.0 with a native/public client, and export its client id as SCROLLS_X_CLIENT_ID"}
+[exit 1]
+```
+
+### `scrolls x logout`
+
+Forget the stored X grant. Other services' entries in the credential store are
+left alone, and forgetting twice is not an error.
+
+```console
+$ scrolls x logout
+{"forgotten": true}
+[exit 0]
+
+$ scrolls x logout
+{"forgotten": false}
+[exit 0]
 ```
 
 ### `scrolls unfollow <id>`

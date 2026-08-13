@@ -1319,7 +1319,10 @@ through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
   (`auth_token`, `ct0`), read live per run and never stored. Chrome, Brave,
   Arc, Edge, Vivaldi, Chromium and Firefox are all searched; `--browser` and
   `--profile` pin one, and `SCROLLS_X_AUTH_TOKEN`/`SCROLLS_X_CT0` skip browser
-  access entirely.
+  access entirely. `--auth oauth` takes the official API instead, under the
+  grant from `scrolls x login`; both routes mint the same items and dedupe
+  against each other, differing only in `provenance.extraction_method`
+  (`x:graphql-internal` vs `x:api-v2`).
 - **Captured:** text (`note_tweet` preferred over a truncated `full_text`),
   author handle and name, posted-at, media references, expanded links, and
   quoted-tweet text folded into the body.
@@ -1332,8 +1335,8 @@ through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
   fetch adapter for source 'x'`. An x item is captured once and held; Scrolls
   does not claim to know whether the post has since changed or been deleted.
   This is deliberate and recorded, not an oversight.
-- **Volatility:** the endpoint is X's internal GraphQL API, pinned to a build
-  hash that X rotates on deploy. A rotated id is reported as such, never as an
-  empty collection.
+- **Volatility:** the default route uses X's internal GraphQL API, pinned to a
+  build hash that X rotates on deploy. A rotated id is reported as such, never
+  as an empty collection. The OAuth route is stable but metered.
 - **Decision:** `docs/adr/0108-x-bookmarks-native-sync.md`, superseding
   `docs/adr/0009-fieldtheory-import.md`.

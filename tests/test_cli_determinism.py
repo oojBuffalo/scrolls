@@ -93,6 +93,7 @@ _CLI_WRITE_COMMANDS = frozenset({
     ("add",), ("agent", "install"), ("classify",), ("fetch",), ("follow",),
     ("ingest",), ("init",), ("kb",), ("reconcile",), ("rm",), ("set",),
     ("sync",), ("unfollow",), ("verify",),
+    ("x", "login"), ("x", "logout"),
     ("archive", "prune"), ("archive", "restore"),
     ("import", "archive"), ("import", "bookmarks"), ("import", "bundle"),
     ("import", "events"), ("import", "fieldtheory"), ("import", "google-takeout"),

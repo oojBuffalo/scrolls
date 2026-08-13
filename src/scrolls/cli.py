@@ -165,6 +165,17 @@ from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
 from scrolls.takeout import load_watch_history
 from scrolls.x_graphql import XGraphQLError, fetch_bookmarks
+from scrolls.x_api import XAPIError
+from scrolls.x_api import fetch_bookmarks as api_fetch_bookmarks
+from scrolls.x_oauth import SCOPES as OAUTH_SCOPES
+from scrolls.x_oauth import (
+    XOAuthError,
+    client_id_from_env,
+    forget_tokens,
+    resolve_access_token,
+    run_login_flow,
+    save_tokens,
+)
 from scrolls.x_session import BROWSER_CHOICES, XSessionError, load_session
 
 
@@ -194,6 +205,23 @@ def build_parser() -> argparse.ArgumentParser:
         "install",
         help="Write agent instruction files under <root>/agents (JSON output)",
     )
+
+    x_parser = subparsers.add_parser(
+        "x", help="X account commands (the bookmarks collection on-ramp)"
+    )
+    x_sub = x_parser.add_subparsers(dest="x_command", required=True)
+    x_login = x_sub.add_parser(
+        "login",
+        help="Authorize Scrolls against X over OAuth 2.0 + PKCE (JSON output)",
+    )
+    x_login.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Loopback port for the callback; must match the redirect URI "
+        "registered on the X app (0 picks a free one)",
+    )
+    x_sub.add_parser("logout", help="Forget the stored X grant (JSON output)")
 
     classify_parser = subparsers.add_parser(
         "classify", help="Categorize items with the rules engine (JSON output)"
@@ -1551,6 +1579,14 @@ def build_parser() -> argparse.ArgumentParser:
         "and never touches the Keychain",
     )
     sync_parser.add_argument(
+        "--auth",
+        default="browser",
+        choices=("browser", "oauth"),
+        help="Which X credential to use: `browser` reads the session cookies "
+        "(free, the default), `oauth` uses the grant from `scrolls x login` "
+        "(official API, billed per resource)",
+    )
+    sync_parser.add_argument(
         "--profile",
         default=None,
         help="Pin one browser profile directory by name (e.g. 'Profile 1'); "
@@ -1642,6 +1678,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(args.url)
     if args.command == "agent":
         return _cmd_agent_install()
+    if args.command == "x":
+        if args.x_command == "login":
+            return _cmd_x_login(args.port)
+        return _cmd_x_logout()
     if args.command == "classify":
         return _cmd_classify(args.id, args.engine, args.batch, args.stale, args.source)
     if args.command == "context":
@@ -1883,7 +1923,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         if args.bookmarks:
             return _cmd_sync_x_bookmarks(
-                args.id, args.limit, args.browser, args.profile
+                args.id, args.limit, args.browser, args.profile, args.auth
             )
         return _cmd_sync(args.id)
     if args.command == "unfollow":
@@ -2234,17 +2274,85 @@ def _cmd_sync(sub_id: str | None) -> int:
     return 1 if payload["failed"] else 0
 
 
+def _pull_x_bookmarks_oauth(synced_at: str, limit: int | None):
+    """Walk the collection over the official API under the stored grant.
+
+    Returns:
+        (result, origin, error). `error` is set when the pull could not
+        start at all; a mid-walk failure rides on `result.error` instead so
+        whatever was captured is still kept.
+    """
+    try:
+        client_id = client_id_from_env()
+        token = resolve_access_token(
+            get_paths().credentials_path, client_id=client_id
+        )
+    except XOAuthError as exc:
+        return None, "oauth", str(exc)
+    try:
+        result = api_fetch_bookmarks(
+            token, synced_at=synced_at, limit=limit, stop_on_error=True
+        )
+    except XAPIError as exc:
+        return None, "oauth", str(exc)
+    return result, "oauth", None
+
+
+def _cmd_x_login(port: int) -> int:
+    """Authorize Scrolls against X once and store the rotating grant."""
+    try:
+        client_id = client_id_from_env()
+    except XOAuthError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    def announce(url: str) -> None:
+        print(f"Opening X to authorize Scrolls:\n  {url}", file=sys.stderr)
+
+    try:
+        tokens = run_login_flow(client_id=client_id, port=port, announce=announce)
+    except XOAuthError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    path = get_paths().credentials_path
+    save_tokens(path, tokens)
+    print(
+        json.dumps(
+            {
+                "authorized": True,
+                "scope": tokens.scope or " ".join(OAUTH_SCOPES),
+                "refreshable": bool(tokens.refresh_token),
+                "stored_at": str(path),
+            }
+        )
+    )
+    return 0
+
+
+def _cmd_x_logout() -> int:
+    """Forget the stored X grant, leaving other services' credentials alone."""
+    print(json.dumps({"forgotten": forget_tokens(get_paths().credentials_path)}))
+    return 0
+
+
 def _cmd_sync_x_bookmarks(
     source: str | None,
     limit: int | None,
     browser: str,
     profile: str | None = None,
+    auth: str = "browser",
 ) -> int:
     """Pull the X bookmarks collection into the library.
 
     The fourth on-ramp shape: not a file someone exported and not a feed
     delta, but the user's own saved collection, copied out of the service
     they saved it in.
+
+    Two routes reach the same items (ADR 0108): the browser session against
+    X's internal GraphQL (free, the default) and the official API under an
+    OAuth grant (billed). Which route was taken rides in `session` and in
+    each item's `provenance.extraction_method`.
     """
     if source != "x":
         print(
@@ -2258,22 +2366,28 @@ def _cmd_sync_x_bookmarks(
         )
         return 1
 
-    try:
-        session = load_session(browser, profile=profile)
-    except XSessionError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
-
     synced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    try:
-        # stop_on_error: a partial pull is still custody, so items already
-        # collected are kept and the error is reported alongside them
-        result = fetch_bookmarks(
-            session, synced_at=synced_at, limit=limit, stop_on_error=True
-        )
-    except XGraphQLError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
+    if auth == "oauth":
+        result, origin, error = _pull_x_bookmarks_oauth(synced_at, limit)
+        if error is not None:
+            print(json.dumps({"error": error}), file=sys.stderr)
+            return 1
+    else:
+        try:
+            session = load_session(browser, profile=profile)
+        except XSessionError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
+        origin = session.origin
+        try:
+            # stop_on_error: a partial pull is still custody, so items already
+            # collected are kept and the error is reported alongside them
+            result = fetch_bookmarks(
+                session, synced_at=synced_at, limit=limit, stop_on_error=True
+            )
+        except XGraphQLError as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
 
     # Nothing captured and the walk failed is a plain failure, not a partial
     # pull — it belongs in the error envelope on stderr, where an expired
@@ -2296,7 +2410,7 @@ def _cmd_sync_x_bookmarks(
     payload = {
         **counts,
         "pages": result.pages,
-        "session": session.origin,
+        "session": origin,
         "failures": list(result.failures),
     }
     if result.error:

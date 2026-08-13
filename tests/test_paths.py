@@ -38,4 +38,5 @@ def test_layout_matches_readme(tmp_path):
         agents_dir=tmp_path / "agents",
         db_path=tmp_path / "db.sqlite",
         config_path=tmp_path / "config.toml",
+        credentials_path=tmp_path / "credentials.json",
     )

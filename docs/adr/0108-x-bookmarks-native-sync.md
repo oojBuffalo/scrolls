@@ -1,4 +1,4 @@
-# 0108: X bookmarks sync natively over the browser session
+# 0108: X bookmarks sync natively — browser session by default, OAuth as fallback
 
 Date: 2026-08-13
 
@@ -33,7 +33,17 @@ never the technique.
 
 ## Decision
 
-`scrolls sync x --bookmarks` pulls the collection directly from X.
+`scrolls sync x --bookmarks` pulls the collection directly from X, over
+**either of two routes**: the browser session by default, or X's official API
+under an OAuth grant with `--auth oauth`.
+
+**The route must not change the artifact.** Both mint `x:<tweetId>`, capture
+the same fields, and record the same `saved_at_source`, so the two dedupe
+against each other and a library assembled by both routes is one collection.
+Only `provenance.extraction_method` distinguishes them — `x:graphql-internal`
+against `x:api-v2` — which is exactly the distinction custody should keep:
+same artifact, different road. A test pins the two parsers to identical items
+for the same bookmark.
 
 ### Authentication: the browser's own session
 
@@ -56,6 +66,24 @@ never the technique.
 - **`SCROLLS_X_AUTH_TOKEN` / `SCROLLS_X_CT0` bypass all of it**, for anyone who
   would rather paste two cookies than grant Keychain access — and the only
   path available when the session lives in a browser Scrolls cannot read.
+
+### The official API as an opt-in fallback
+
+- **`scrolls x login`** runs OAuth 2.0 + PKCE once (S256, never `plain`) over
+  a **loopback** redirect, so the authorization code never passes through a
+  clipboard or terminal scrollback. The `state` is compared in constant time,
+  because it is the only thing standing between a forged callback and an
+  adopted grant.
+- **Scopes are `tweet.read users.read bookmark.read offline.access`.** The
+  last one is load-bearing: without it X issues no refresh token and the user
+  re-authorizes every two hours.
+- **A refresh that does not persist is worse than no refresh.** X rotates the
+  refresh token on every use, so `resolve_access_token` writes the rotated set
+  back before returning. Tokens are refreshed a minute ahead of expiry so one
+  cannot die mid-pagination.
+- **This path is metered**, so a 402 says so in those words rather than
+  reading as a bug, and it stays opt-in behind `--auth oauth`. The cookie path
+  costs nothing and remains the default.
 
 ### The volatile surface, named where it lives
 
@@ -124,11 +152,14 @@ comparing them.
 - **The maintenance bill is a rotating query id**, not a monthly invoice. When
   it rotates the on-ramp stops with an actionable message and needs a one-line
   refresh.
-- **Deferred: the OAuth 2.0 + PKCE fallback.** The official path
-  (`tweet.read users.read bookmark.read offline.access`, refresh-token
-  rotation) needs a *writable* secret store, which the repo does not have —
-  `config.py` parses one `[classify]` section and the only credential
-  precedent is a read-only env var. That store is the #2 contract's business.
+- **The credential store is the first *writable* secret in the library.**
+  Every prior credential was a read-only environment variable. X rotates the
+  refresh token on every use, so a store that cannot be updated locks the user
+  out after one refresh. Hence `<root>/credentials.json` at mode 0600, written
+  through a single `os.open(..., 0o600)` helper so the secret is never briefly
+  world-readable, keyed by service so other credentials survive an X rewrite.
+  If the #2 contract later settles on a different store, this is the shape it
+  has to beat, not a blocker it has to unblock.
 - **Deferred: drift detection for x**, which needs a re-capture path — most
   likely a re-sync that compares instead of skipping.
 - **Not supported: Safari.** Its cookies live in a proprietary

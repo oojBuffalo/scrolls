@@ -335,6 +335,8 @@ _DRIVE_EXEMPT = {
     "init": "library bootstrap; creates the empty ledger, records nothing",
     "follow": "feed-subscription roster op; records no custody event",
     "unfollow": "feed-subscription roster op; records no custody event",
+    "x login": "credential-store write; touches no item, records no custody event",
+    "x logout": "credential-store write; touches no item, records no custody event",
     "sync": "feed-subscription roster op; records no custody event",
     "follow_feed": "feed-subscription roster op (MCP); records no custody event",
     "unfollow_feed": "feed-subscription roster op (MCP); records no custody event",
