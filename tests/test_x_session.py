@@ -14,12 +14,15 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from scrolls.x_session import (
     CHROME_IV,
+    CHROMIUM_BROWSERS,
     XSession,
     XSessionError,
+    chromium_cookie_dbs,
     decrypt_chrome_value,
     derive_chrome_key,
     load_session_from_env,
     read_chrome_session,
+    read_firefox_session,
 )
 
 
@@ -151,8 +154,39 @@ def test_a_logged_out_profile_says_so_rather_than_returning_half_a_session(tmp_p
         read_chrome_session(db, key=key)
 
 
+def test_ciphertext_stored_with_a_text_storage_class_is_still_read(tmp_path):
+    """A real Chrome profile stores ciphertext under the TEXT storage class.
+
+    SQLite records a storage class per value, not per column, and Chrome's
+    writes land as TEXT. Python's sqlite3 then tries to UTF-8 decode the
+    ciphertext and raises before we ever see the bytes, so the read must cast
+    back to BLOB. This is what the first live run hit.
+    """
+    key = derive_chrome_key("pw")
+    db = tmp_path / "Cookies"
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('version', '24')")
+        conn.execute(
+            "CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB)"
+        )
+        conn.executemany(
+            "INSERT INTO cookies VALUES (?, ?, ?, CAST(? AS TEXT))",
+            [
+                (".x.com", "auth_token", "", _encrypt(b"\x00" * 32 + b"AUTH", key)),
+                (".x.com", "ct0", "", _encrypt(b"\x00" * 32 + b"CSRF", key)),
+            ],
+        )
+    conn.close()
+
+    session = read_chrome_session(db, key=key)
+    assert session.auth_token == "AUTH"
+    assert session.ct0 == "CSRF"
+
+
 def test_a_missing_cookie_database_names_the_path(tmp_path):
-    with pytest.raises(XSessionError, match="no Chrome cookie database"):
+    with pytest.raises(XSessionError, match="no chrome cookie database"):
         read_chrome_session(tmp_path / "absent", key=derive_chrome_key("pw"))
 
 
@@ -170,6 +204,75 @@ def test_the_cookie_database_is_never_opened_read_write(tmp_path):
     before = db.read_bytes()
     read_chrome_session(db, key=key)
     assert db.read_bytes() == before
+
+
+# --- Firefox -------------------------------------------------------------
+
+
+def _firefox_db(path, rows):
+    """Build a minimal Firefox cookie database. Firefox stores plaintext."""
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT)")
+        conn.executemany("INSERT INTO moz_cookies VALUES (?, ?, ?)", rows)
+    conn.close()
+
+
+def test_firefox_cookies_need_no_key_at_all(tmp_path):
+    """Firefox keeps cookie values in the clear, so there is nothing to decrypt."""
+    db = tmp_path / "cookies.sqlite"
+    _firefox_db(db, [(".x.com", "auth_token", "AUTH"), (".x.com", "ct0", "CSRF")])
+    session = read_firefox_session(db)
+    assert (session.auth_token, session.ct0, session.origin) == ("AUTH", "CSRF", "firefox")
+
+
+def test_firefox_hosts_match_with_or_without_the_leading_dot(tmp_path):
+    """Firefox writes 'x.com' where Chromium writes '.x.com'."""
+    db = tmp_path / "cookies.sqlite"
+    _firefox_db(db, [("x.com", "auth_token", "AUTH"), ("x.com", "ct0", "CSRF")])
+    assert read_firefox_session(db).auth_token == "AUTH"
+
+
+def test_a_logged_out_firefox_profile_says_so(tmp_path):
+    db = tmp_path / "cookies.sqlite"
+    _firefox_db(db, [(".x.com", "ct0", "CSRF")])
+    with pytest.raises(XSessionError, match="logged in"):
+        read_firefox_session(db)
+
+
+# --- browser discovery ---------------------------------------------------
+
+
+def test_every_known_chromium_browser_has_its_own_keychain_service():
+    """Each Chromium fork encrypts under its own Safe Storage entry."""
+    services = [browser.keychain_service for browser in CHROMIUM_BROWSERS.values()]
+    assert len(services) == len(set(services))
+    assert all(service.endswith("Safe Storage") for service in services)
+    assert "chrome" in CHROMIUM_BROWSERS and "brave" in CHROMIUM_BROWSERS
+
+
+def test_profile_discovery_finds_every_profile_holding_a_cookie_database(tmp_path):
+    for profile in ("Default", "Profile 1"):
+        (tmp_path / profile / "Network").mkdir(parents=True)
+        (tmp_path / profile / "Network" / "Cookies").touch()
+    (tmp_path / "Profile 2").mkdir()  # no cookie database: not a candidate
+    found = [path.parent.parent.name for path in chromium_cookie_dbs(tmp_path)]
+    assert found == ["Default", "Profile 1"]
+
+
+def test_profile_discovery_accepts_the_pre_chrome_96_layout(tmp_path):
+    """Older builds keep Cookies directly under the profile."""
+    (tmp_path / "Default").mkdir()
+    (tmp_path / "Default" / "Cookies").touch()
+    assert [path.name for path in chromium_cookie_dbs(tmp_path)] == ["Cookies"]
+
+
+def test_default_profile_is_searched_before_the_others(tmp_path):
+    """The signed-in profile is usually Default; look there first."""
+    for profile in ("Profile 3", "Default", "Profile 1"):
+        (tmp_path / profile / "Network").mkdir(parents=True)
+        (tmp_path / profile / "Network" / "Cookies").touch()
+    assert chromium_cookie_dbs(tmp_path)[0].parent.parent.name == "Default"
 
 
 # --- the credential-free escape hatch ------------------------------------

@@ -165,7 +165,7 @@ from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
 from scrolls.takeout import load_watch_history
 from scrolls.x_graphql import XGraphQLError, fetch_bookmarks
-from scrolls.x_session import XSessionError, load_session
+from scrolls.x_session import BROWSER_CHOICES, XSessionError, load_session
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1545,9 +1545,16 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--browser",
         default="auto",
-        choices=("auto", "chrome", "env"),
-        help="Where to read the X session from; `env` uses "
-        "SCROLLS_X_AUTH_TOKEN/SCROLLS_X_CT0 and never touches the Keychain",
+        choices=BROWSER_CHOICES,
+        help="Where to read the X session from; `auto` searches every "
+        "installed browser, and `env` uses SCROLLS_X_AUTH_TOKEN/SCROLLS_X_CT0 "
+        "and never touches the Keychain",
+    )
+    sync_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Pin one browser profile directory by name (e.g. 'Profile 1'); "
+        "default searches every profile",
     )
 
     unfollow_parser = subparsers.add_parser(
@@ -1875,7 +1882,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_status(args.source)
     if args.command == "sync":
         if args.bookmarks:
-            return _cmd_sync_x_bookmarks(args.id, args.limit, args.browser)
+            return _cmd_sync_x_bookmarks(
+                args.id, args.limit, args.browser, args.profile
+            )
         return _cmd_sync(args.id)
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
@@ -2225,7 +2234,12 @@ def _cmd_sync(sub_id: str | None) -> int:
     return 1 if payload["failed"] else 0
 
 
-def _cmd_sync_x_bookmarks(source: str | None, limit: int | None, browser: str) -> int:
+def _cmd_sync_x_bookmarks(
+    source: str | None,
+    limit: int | None,
+    browser: str,
+    profile: str | None = None,
+) -> int:
     """Pull the X bookmarks collection into the library.
 
     The fourth on-ramp shape: not a file someone exported and not a feed
@@ -2245,7 +2259,7 @@ def _cmd_sync_x_bookmarks(source: str | None, limit: int | None, browser: str) -
         return 1
 
     try:
-        session = load_session(browser)
+        session = load_session(browser, profile=profile)
     except XSessionError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
