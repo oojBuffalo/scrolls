@@ -6,6 +6,10 @@ summary, canonical URL, content hash, and provenance, and moving the item to sta
 `fetched`. Items from sources without an adapter yet (today only `x`) are skipped,
 and per-item failures don't abort the batch.
 
+`x` is the one source that has a capture path but no *fetch* adapter: bookmarks
+arrive already-captured through `scrolls sync x --bookmarks`. See
+[`x`](#x) below for what that costs.
+
 This page catalogs the adapters that exist today and the custody shape each one
 captures. For the adapter *contract* (identity rules, fidelity tiers, and how to
 add one), see [`architecture.md`](architecture.md) — "The source adapter model" and
@@ -1295,3 +1299,41 @@ with no JSON:API envelope, stdlib only).
 - **Deferred:** version↔concept consolidation, the deposit's files as captured
   media, and self-hosted InvenioRDM.
 - **Decision:** `docs/adr/0083-zenodo-adapter.md`.
+
+### x
+
+**The one source with a capture path but no fetch adapter.** X bookmarks are a
+*collection*: not a file someone exported and not a feed delta, but the user's
+own saved set, copied out of the service they saved it in. So `x` arrives
+through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
+
+- **Custody shape — capture-at-pull.** Items enter at stage `fetched` with
+  content taken from the same response that enumerated them. This is a third
+  shape beside the adapter/importer split: fetch adapters pull one item from
+  the network, importers bulk-read a local archive, and this pulls a live
+  remote collection already populated.
+- **Identity:** `x:<tweetId>`, matching what `detect.py` mints for x.com status
+  URLs — so a pulled bookmark dedupes against a `scrolls add` of the same
+  tweet.
+- **Auth:** the two session cookies already in the user's browser
+  (`auth_token`, `ct0`), read live per run and never stored. Chrome, Brave,
+  Arc, Edge, Vivaldi, Chromium and Firefox are all searched; `--browser` and
+  `--profile` pin one, and `SCROLLS_X_AUTH_TOKEN`/`SCROLLS_X_CT0` skip browser
+  access entirely.
+- **Captured:** text (`note_tweet` preferred over a truncated `full_text`),
+  author handle and name, posted-at, media references, expanded links, and
+  quoted-tweet text folded into the body.
+- **`saved_at` is the sync time, not a bookmark timestamp.** X exposes no
+  bookmark timestamp on either the internal or the official path, so
+  `provenance.saved_at_source` records `"synced_at"` and says so rather than
+  minting a plausible one from X's opaque ordering key.
+- **No drift detection.** Because there is no `x` entry in `FETCH_ADAPTERS`,
+  `scrolls verify` cannot re-capture a bookmarked post and fails with `no
+  fetch adapter for source 'x'`. An x item is captured once and held; Scrolls
+  does not claim to know whether the post has since changed or been deleted.
+  This is deliberate and recorded, not an oversight.
+- **Volatility:** the endpoint is X's internal GraphQL API, pinned to a build
+  hash that X rotates on deploy. A rotated id is reported as such, never as an
+  empty collection.
+- **Decision:** `docs/adr/0108-x-bookmarks-native-sync.md`, superseding
+  `docs/adr/0009-fieldtheory-import.md`.

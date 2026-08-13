@@ -1,7 +1,7 @@
 # 0009: X bookmarks arrive via Field Theory import, not native sync
 
 Date: 2026-06-12
-Status: accepted
+Status: superseded by [0108](0108-x-bookmarks-native-sync.md)
 
 *Amended: 2026-07-26 — the Field Theory import proposal moved from the
 IDEAS.md brainstorm into `docs/inspiration/fieldtheory-cli-inspiration.md`;
@@ -70,4 +70,7 @@ imports the JSONL cache as items with `source="x"`:
   the join degrades gracefully to "no carried-over classification".
 - Native `scrolls sync x --bookmarks` remains open as a later, separate
   decision (the import proposal's "later" path,
-  `docs/inspiration/fieldtheory-cli-inspiration.md`).
+  `docs/inspiration/fieldtheory-cli-inspiration.md`). **Settled by
+  [ADR 0108](0108-x-bookmarks-native-sync.md)**, which supersedes this record:
+  native sync ships over the browser session, and the `x:<tweetId>` identity
+  rule above is the property carried across.

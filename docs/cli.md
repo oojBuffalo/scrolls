@@ -4673,6 +4673,84 @@ $ scrolls sync          # full response again; the same entries are known
 [exit 0]
 ```
 
+### `scrolls sync` — the X bookmarks collection
+
+`scrolls sync x --bookmarks [--limit N] [--browser B] [--profile P]`
+
+Pull the X bookmarks **collection** — the user's own saved set, copied out of
+X. Unlike a feed sync, which only discovers URLs, this arrives already
+captured: items enter at stage `fetched` with text, author, posted-at, media
+and quoted-tweet body from the same response that enumerated them
+(ADR 0108).
+
+- **Auth is the browser's own session** — the `auth_token` and `ct0` cookies,
+  read live per run and never stored. Chrome, Brave, Arc, Edge, Vivaldi,
+  Chromium and Firefox are searched in that order, every profile within each,
+  stopping at the first that holds a session.
+- **`--browser`** pins one (`chrome`, `brave`, `arc`, `edge`, `vivaldi`,
+  `chromium`, `firefox`, or `env`), so a failure names the thing that actually
+  failed. **`--profile`** pins one profile directory by name.
+- **`--browser env`** reads `SCROLLS_X_AUTH_TOKEN` / `SCROLLS_X_CT0` and never
+  touches the Keychain — the path for Safari users and for anyone who would
+  rather paste two cookies. Setting only one of the pair is an error, not a
+  silent fallthrough.
+- **Idempotent** — `INSERT OR IGNORE`, so a re-sync counts held bookmarks as
+  `skipped` and never overwrites an item you edited.
+- **Dedupes against `add`** — ids are `x:<tweetId>`, the same id
+  `scrolls add https://x.com/…/status/…` mints.
+- **`--limit N`** stops the walk early. Without it the whole collection is
+  walked, pausing between pages.
+- **A partial pull is kept** — items collected before a mid-walk failure stay,
+  with `error` alongside them and exit 1. A pull that captured *nothing* is a
+  plain error envelope on stderr instead.
+- **No drift detection** — there is no `x` fetch adapter, so `scrolls verify`
+  on a bookmark fails with `no fetch adapter for source 'x'` rather than
+  reporting a false clean verdict. See [`adapters.md`](adapters.md#x).
+
+| Key | Meaning |
+| --- | --- |
+| `imported` / `skipped` / `failed` | items newly held, already held, and per-entry parse failures |
+| `pages` | how many GraphQL pages were walked |
+| `session` | where the session came from (`chrome`, `firefox`, `env`, …) — provenance for the pull |
+| `failures[]` | per-entry parse problems that did not abort the walk |
+| `error` | present only on a partial pull, alongside what was captured |
+
+```console
+$ scrolls sync x --bookmarks
+{"imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": []}
+[exit 0]
+
+$ scrolls sync x --bookmarks          # nothing new saved since
+{"imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": []}
+[exit 0]
+
+$ scrolls sync x --bookmarks --limit 1
+{"imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": []}
+[exit 0]
+```
+
+Failures name what to do, and a rotated query id is never reported as an empty
+collection:
+
+```console
+$ scrolls sync x --bookmarks --browser env      # neither variable set
+{"error": "SCROLLS_X_AUTH_TOKEN and SCROLLS_X_CT0 are not set"}
+[exit 1]
+
+$ scrolls sync --bookmarks                      # no collection source named
+{"error": "--bookmarks needs a source that has a bookmark collection: `scrolls sync x --bookmarks`"}
+[exit 1]
+```
+
+When `auto` finds no session it reports every browser it searched, because
+"no session found" is only actionable if you can see where it looked:
+
+```console
+$ scrolls sync x --bookmarks
+{"error": "no X session found in any installed browser.\n  chrome: no complete X session in chrome — open your browser, go to https://x.com, and make sure you are logged in\n  brave: no complete X session in brave — …\n  arc: arc is not installed on this machine\n  …\nAlternatively set SCROLLS_X_AUTH_TOKEN and SCROLLS_X_CT0 directly."}
+[exit 1]
+```
+
 ### `scrolls unfollow <id>`
 
 Remove a subscription by id — or by feed URL, which resolves to the same
