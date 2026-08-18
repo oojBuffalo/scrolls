@@ -157,7 +157,7 @@ class ReadingListSync:
     """
 
     items: tuple[ScrollItem, ...] = ()
-    lists: dict[int, str] = None
+    lists: dict[int, str] | None = None
     failures: tuple[dict, ...] = ()
     pages: int = 0
     error: str | None = None
