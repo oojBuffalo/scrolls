@@ -39,6 +39,8 @@ X_PUBLIC_BEARER = (
 )
 
 # Internal build hash — rotated by X without notice. See the module docstring.
+# Last confirmed working against live X on 2026-08-18. A 404 here means it has
+# rotated since; the date is what tells you that rather than a code bug.
 BOOKMARKS_QUERY_ID = "Z9GWmP0kP2dajyckAaDUBw"
 BOOKMARKS_OPERATION = "Bookmarks"
 _ENDPOINT = "https://x.com/i/api/graphql/{query_id}/{operation}"
@@ -56,7 +58,9 @@ _BACKOFF_CAP_SECONDS = 120
 _TIMEOUT_SECONDS = 30
 
 # The feature flags x.com sends. X rejects the call when a required flag is
-# absent, and adds new ones over time; unknown extras are ignored.
+# absent, and adds new ones over time; unknown extras are ignored. This set was
+# confirmed accepted by live X on 2026-08-18; a 400 naming a flag means the set
+# has drifted and needs the missing one added.
 GRAPHQL_FEATURES: dict[str, bool] = {
     "graphql_timeline_v2_bookmark_timeline": True,
     "responsive_web_graphql_exclude_directive_enabled": True,

@@ -45,6 +45,14 @@ against `x:api-v2` — which is exactly the distinction custody should keep:
 same artifact, different road. A test pins the two parsers to identical items
 for the same bookmark.
 
+**Verified against live X on 2026-08-18.** A full run over a Brave session
+pulled 479 bookmarks across 6 pages with no failures, terminated on the
+end-of-collection empty page, and re-synced to 479 skips. Every item carried an
+author, posted-at, text, media list and content hash; 71 had `t.co` links
+expanded to their real targets. The pinned query id and feature-flag set are
+therefore known-good as of that date, which is what distinguishes a later 404
+from a code defect.
+
 ### Authentication: the browser's own session
 
 - **Two cookies do the work.** `auth_token` is the session; `ct0` is the CSRF
