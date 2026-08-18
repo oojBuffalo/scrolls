@@ -1,12 +1,26 @@
 """Wikipedia fetch adapter (IDEAS.md §6, ADR 0002).
 
-One GET against the MediaWiki action API (`prop=extracts|info|categories`,
-`explaintext`, `redirects`) returns the full plain-text page plus its
-canonical URL — no auth, no runtime dependencies. Visible (editor-curated)
-page categories become `concepts`, joining github repo topics as honest
-concept producers (ADR 0007); hidden maintenance categories are excluded
-server-side. The raw page object is kept in `raw_text` so scrolls and
+One GET against the MediaWiki action API (`prop=extracts|info|categories|
+links|extlinks`, `explaintext`, `redirects`) returns the full plain-text page
+plus its canonical URL — no auth, no runtime dependencies. Visible
+(editor-curated) page categories become `concepts`, joining github repo topics
+as honest concept producers (ADR 0007); hidden maintenance categories are
+excluded server-side. The raw page object is kept in `raw_text` so scrolls and
 indexes can be rebuilt without refetching.
+
+An article's outbound links are content, not decoration: mainspace links become
+wiki URLs minted the same way `scrolls add` mints them, so `scrolls graph`
+resolves a link between two saved articles into an edge — a wiki's backlinks,
+answered from the library rather than from Wikipedia. External links follow
+them, because on a Wikipedia article they are the citations.
+
+Figures need a second GET (`generator=images` replaces the page set, so it
+cannot ride along with the article query). MediaWiki lists every file a page
+renders, so the editorial icons — `Commons-logo`, `Edit-clear`, the ambox
+maintenance banners — are filtered out by name. That filter is a heuristic over
+a slow-moving set, not a guarantee: a new icon leaks through as a media ref
+until its pattern is added. The figures request is best-effort, because losing
+a diagram must never cost the article text.
 """
 
 from __future__ import annotations
@@ -16,7 +30,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
@@ -27,12 +41,62 @@ _API_PARAMS = {
     "format": "json",
     "formatversion": "2",
     "redirects": "1",
-    "prop": "extracts|info|categories",
+    "prop": "extracts|info|categories|links|extlinks",
     "explaintext": "1",
     "inprop": "url",
     "clshow": "!hidden",
     "cllimit": "max",
+    "plnamespace": "0",
+    "pllimit": "max",
+    "ellimit": "max",
 }
+
+_IMAGE_PARAMS = {
+    "action": "query",
+    "format": "json",
+    "formatversion": "2",
+    "redirects": "1",
+    "generator": "images",
+    "gimlimit": "max",
+    "prop": "imageinfo",
+    "iiprop": "url|mime",
+}
+
+# MediaWiki reports every file a page renders, so an article's figures arrive
+# mixed with the encyclopedia's own furniture. These are matched against the
+# file name with the "File:" prefix stripped. Substring, not prefix: the icons
+# appear as "OOjs UI icon edit-ltr-progressive.svg" and "Symbol support vote.svg"
+# alike. Adding a pattern is the maintenance path when a new icon leaks through.
+_CHROME_PATTERNS = (
+    "ambox",
+    "commons-logo",
+    "crystal clear",
+    "disambig",
+    "edit-clear",
+    "emblem-",
+    "folder hexagonal",
+    "increase2.svg",
+    "loudspeaker",
+    "merge-arrow",
+    "nuvola",
+    "oojs ui icon",
+    "padlock",
+    "portal-puzzle",
+    "question book",
+    "red pog",
+    "star full",
+    "symbol ",
+    "text document",
+    "wiki letter",
+    "wikidata-logo",
+    "wikiquote-logo",
+    "wikisource-logo",
+    "wikispecies-logo",
+    "wikiversity-logo",
+    "wiktionary-logo",
+    "x mark",
+    "yes check",
+)
 
 GetJson = Callable[[str], dict[str, Any]]
 
@@ -67,6 +131,8 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         extracted_text=extract,
         summary=_lead_section(extract),
         concepts=_concepts(page),
+        links=_links(lang, page),
+        media=_media(get_json, lang, title),
         content_hash="sha256:" + hashlib.sha256(extract.encode("utf-8")).hexdigest(),
         provenance={
             "adapter": "wikipedia",
@@ -80,6 +146,73 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
 def _api_url(lang: str, title: str) -> str:
     query = urlencode({**_API_PARAMS, "titles": title})
     return f"https://{lang}.wikipedia.org/w/api.php?{query}"
+
+
+def _image_api_url(lang: str, title: str) -> str:
+    query = urlencode({**_IMAGE_PARAMS, "titles": title})
+    return f"https://{lang}.wikipedia.org/w/api.php?{query}"
+
+
+def encode_title(title: str) -> str:
+    """Percent-encode a page title for a `/wiki/` URL.
+
+    Spaces become underscores, as MediaWiki writes them. Parentheses are
+    left literal, which is how Wikipedia publishes its own disambiguated
+    titles; everything else is encoded, because a title like "24/7" carries
+    a slash that is part of the title, not a path separator. Both forms mint
+    the same item id, so this is a readability choice, not an identity one.
+    """
+    return quote(title.replace(" ", "_"), safe="()")
+
+
+def article_url(lang: str, title: str) -> str:
+    """The canonical `/wiki/` URL for a page.
+
+    This is the one minting path: `detect.py` reads these URLs back into
+    `wikipedia:<lang>:<title>` ids, so a captured link to a saved article
+    resolves to that article in `scrolls graph`.
+    """
+    return f"https://{lang}.wikipedia.org/wiki/{encode_title(title)}"
+
+
+def _links(lang: str, page: dict[str, Any]) -> tuple[str, ...]:
+    """Mainspace article links, then the external citations, deduped in order."""
+    urls = [
+        article_url(lang, link["title"])
+        for link in page.get("links") or ()
+        if link.get("title")
+    ]
+    urls += [
+        link["url"] for link in page.get("extlinks") or () if link.get("url")
+    ]
+    return tuple(dict.fromkeys(urls))
+
+
+def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ...]:
+    """The page's figures as media refs, or empty when they cannot be had.
+
+    Never raises: an article whose figure list failed to load is still the
+    article, and `scrolls fetch --force` can pick the figures up later.
+    """
+    try:
+        payload = get_json(_image_api_url(lang, title))
+    except (OSError, ValueError):
+        return ()
+    refs = []
+    for file_page in (payload or {}).get("query", {}).get("pages") or ():
+        name = (file_page.get("title") or "").partition(":")[2]
+        info = (file_page.get("imageinfo") or [{}])[0]
+        url = info.get("url")
+        if not name or not url or _is_chrome(name):
+            continue
+        refs.append({"type": "image", "url": url, "title": name})
+    return tuple(refs)
+
+
+def _is_chrome(name: str) -> bool:
+    """Whether a file name is Wikipedia's own furniture rather than a figure."""
+    lowered = name.lower()
+    return any(pattern in lowered for pattern in _CHROME_PATTERNS)
 
 
 def _single_page(payload: dict[str, Any]) -> dict[str, Any]:

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any, Callable
-from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 from scrolls.browser_cookies import BrowserCookies, CookieSpec, load_cookies
 from scrolls.dates import to_utc_iso
@@ -46,6 +46,7 @@ from scrolls.items import ScrollItem, make_item_id
 from scrolls.sources import http
 from scrolls.sources.detect import detect_source
 from scrolls.sources.urls import normalize_url
+from scrolls.sources.wikipedia import encode_title
 
 USER_ENV = "SCROLLS_WIKIPEDIA_USER"
 SESSION_ENV = "SCROLLS_WIKIPEDIA_SESSION"
@@ -166,9 +167,10 @@ class ReadingListSync:
 def entry_url(project: str, title: str) -> str:
     """The article URL for one reading-list entry.
 
-    MediaWiki hands back a display title with spaces; the canonical URL uses
-    underscores. Everything else is percent-encoded, including the slash in a
-    title like `24/7 service`, which would otherwise read as a path segment.
+    Delegates to the fetch adapter's `encode_title`, so a link captured from
+    an article and an entry pulled from a reading list are spelled the same
+    way. MediaWiki hands back a display title with spaces; the canonical URL
+    uses underscores.
 
     Args:
         project: The entry's project, e.g. `https://en.wikipedia.org`.
@@ -177,7 +179,7 @@ def entry_url(project: str, title: str) -> str:
     Returns:
         The article URL.
     """
-    return f"{project.rstrip('/')}/wiki/{quote(title.replace(' ', '_'), safe='')}"
+    return f"{project.rstrip('/')}/wiki/{encode_title(title)}"
 
 
 def _api_url(**params: str) -> str:

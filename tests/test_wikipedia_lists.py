@@ -257,7 +257,7 @@ def test_limit_stops_the_walk_early():
         ("AI-complete", "https://en.wikipedia.org/wiki/AI-complete"),
         (
             "APL (programming language)",
-            "https://en.wikipedia.org/wiki/APL_%28programming_language%29",
+            "https://en.wikipedia.org/wiki/APL_(programming_language)",
         ),
         ("24/7 service", "https://en.wikipedia.org/wiki/24%2F7_service"),
         ("C++", "https://en.wikipedia.org/wiki/C%2B%2B"),

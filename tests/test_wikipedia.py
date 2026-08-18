@@ -81,7 +81,9 @@ def test_fetch_item_builds_action_api_url_for_language_and_title():
     seen = {}
 
     def capture(url):
-        seen["url"] = url
+        # the figures request is a second call; this test is about the page one
+        if "generator=images" not in url:
+            seen["url"] = url
         return make_payload()
 
     fetch_item(make_item(source_id="de:Straße"), get_json=capture)
@@ -166,3 +168,149 @@ def test_fetch_item_wraps_transport_errors():
 
 def test_wikipedia_adapter_is_registered():
     assert FETCH_ADAPTERS["wikipedia"] is fetch_item
+
+
+# --- link graph and media capture -------------------------------------------
+#
+# The reading-lists on-ramp saves articles as an agent knowledgebase, so an
+# article's outbound links and its figures are content, not decoration: links
+# are what `scrolls graph` turns into edges between saved articles (the
+# "backlinks" of a wiki, resolved within the library), and images are what
+# `scrolls media` pulls onto disk.
+
+
+def images_payload(*titles_and_urls):
+    """A `generator=images` response: one page per file, with its imageinfo."""
+    return {
+        "query": {
+            "pages": [
+                {"title": title, "imageinfo": [{"url": url, "mime": "image/png"}]}
+                for title, url in titles_and_urls
+            ]
+        }
+    }
+
+
+def routed(page_payload, image_payload):
+    """A get_json that answers the page request and the images request."""
+
+    def get_json(url):
+        return image_payload if "generator=images" in url else page_payload
+
+    return get_json
+
+
+def test_fetch_item_captures_article_links_as_wiki_urls():
+    payload = make_payload(
+        links=[{"ns": 0, "title": "C (programming language)"}, {"ns": 0, "title": "SQL"}]
+    )
+    fetched = fetch_item(make_item(), get_json=routed(payload, {}))
+
+    assert fetched.links == (
+        "https://en.wikipedia.org/wiki/C_(programming_language)",
+        "https://en.wikipedia.org/wiki/SQL",
+    )
+
+
+def test_article_links_use_the_items_own_language():
+    item = make_item(id="wikipedia:de:SQLite", source_id="de:SQLite")
+    payload = make_payload(links=[{"ns": 0, "title": "Datenbank"}])
+    fetched = fetch_item(item, get_json=routed(payload, {}))
+
+    assert fetched.links == ("https://de.wikipedia.org/wiki/Datenbank",)
+
+
+def test_captured_links_match_what_add_would_mint():
+    """A link to a saved article must resolve to that article, not near it."""
+    from scrolls.sources.detect import detect_source
+    from scrolls.sources.urls import normalize_url
+
+    payload = make_payload(links=[{"ns": 0, "title": "Public key infrastructure"}])
+    fetched = fetch_item(make_item(), get_json=routed(payload, {}))
+
+    detected = detect_source(normalize_url(fetched.links[0]))
+    assert detected is not None
+    assert detected.source == "wikipedia"
+    assert detected.source_id == "en:Public_key_infrastructure"
+
+
+def test_external_links_follow_the_article_links():
+    payload = make_payload(
+        links=[{"ns": 0, "title": "SQL"}],
+        extlinks=[{"url": "https://sqlite.org/"}, {"url": "https://example.com/paper"}],
+    )
+    fetched = fetch_item(make_item(), get_json=routed(payload, {}))
+
+    assert fetched.links == (
+        "https://en.wikipedia.org/wiki/SQL",
+        "https://sqlite.org/",
+        "https://example.com/paper",
+    )
+
+
+def test_duplicate_links_collapse_keeping_first_order():
+    payload = make_payload(
+        links=[{"ns": 0, "title": "SQL"}, {"ns": 0, "title": "SQL"}],
+        extlinks=[{"url": "https://sqlite.org/"}, {"url": "https://sqlite.org/"}],
+    )
+    fetched = fetch_item(make_item(), get_json=routed(payload, {}))
+
+    assert fetched.links == ("https://en.wikipedia.org/wiki/SQL", "https://sqlite.org/")
+
+
+def test_fetch_item_captures_page_images_as_media_refs():
+    images = images_payload(
+        ("File:Dihydrocodeine skeletal.svg", "https://upload.wikimedia.org/a/skeletal.svg")
+    )
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert fetched.media == (
+        {
+            "type": "image",
+            "url": "https://upload.wikimedia.org/a/skeletal.svg",
+            "title": "Dihydrocodeine skeletal.svg",
+        },
+    )
+
+
+def test_interface_chrome_is_not_captured_as_article_media():
+    """MediaWiki lists every file the page renders, icons included."""
+    images = images_payload(
+        ("File:Commons-logo.svg", "https://upload.wikimedia.org/a/Commons-logo.svg"),
+        ("File:Edit-clear.svg", "https://upload.wikimedia.org/a/Edit-clear.svg"),
+        ("File:Question book-new.svg", "https://upload.wikimedia.org/a/Question.svg"),
+        ("File:X mark.svg", "https://upload.wikimedia.org/a/X_mark.svg"),
+        ("File:Yes check.svg", "https://upload.wikimedia.org/a/Yes_check.svg"),
+        ("File:OOjs UI icon edit-ltr.svg", "https://upload.wikimedia.org/a/OOjs.svg"),
+        ("File:Real diagram.png", "https://upload.wikimedia.org/a/Real_diagram.png"),
+    )
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert [ref["title"] for ref in fetched.media] == ["Real diagram.png"]
+
+
+def test_an_article_with_no_figures_captures_no_media():
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), {}))
+    assert fetched.media == ()
+
+
+def test_a_failed_image_request_never_costs_the_article():
+    """Figures are a bonus; losing them must not lose 26k characters of text."""
+
+    def get_json(url):
+        if "generator=images" in url:
+            raise OSError("connection reset")
+        return make_payload()
+
+    fetched = fetch_item(make_item(), get_json=get_json)
+
+    assert fetched.extracted_text == EXTRACT
+    assert fetched.media == ()
+
+
+def test_a_failed_page_request_still_raises():
+    def get_json(url):
+        raise OSError("connection reset")
+
+    with pytest.raises(FetchError):
+        fetch_item(make_item(), get_json=get_json)
