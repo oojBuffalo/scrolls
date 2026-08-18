@@ -1337,6 +1337,13 @@ through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
   This is deliberate and recorded, not an oversight.
 - **Volatility:** the default route uses X's internal GraphQL API, pinned to a
   build hash that X rotates on deploy. A rotated id is reported as such, never
-  as an empty collection. The OAuth route is stable but metered.
+  as an empty collection. The pinned id and feature flags were confirmed
+  working against live X on 2026-08-18.
+- **The OAuth route is unverified and will stay that way.** Verifying it needs
+  a registered X developer app on a paid plan, which the maintainer does not
+  hold. It is code-reviewed and covered by tests with the network injected,
+  but no request on that path has ever reached X. Use `--auth oauth` only if
+  you have an app and are willing to debug it; the cookie default is the
+  proven one.
 - **Decision:** `docs/adr/0108-x-bookmarks-native-sync.md`, superseding
   `docs/adr/0009-fieldtheory-import.md`.

@@ -4709,6 +4709,10 @@ and quoted-tweet body from the same response that enumerated them
   `provenance.extraction_method` differs (`x:graphql-internal` vs `x:api-v2`)
   and `session` reports `oauth`. X bills bookmark reads per resource on this
   path, so it is opt-in.
+- **`--auth oauth` is unverified.** No request on the official path has ever
+  reached live X — verifying it needs a paid developer app the maintainer does
+  not hold. It is tested only with the network injected. The cookie default
+  was verified live against a 479-bookmark collection; prefer it.
 - **No drift detection** — there is no `x` fetch adapter, so `scrolls verify`
   on a bookmark fails with `no fetch adapter for source 'x'` rather than
   reporting a false clean verdict. See [`adapters.md`](adapters.md#x).
@@ -4765,6 +4769,15 @@ the cookie default. Needed only with `sync x --bookmarks --auth oauth`.
 This path is a fallback, not the default, for two reasons worth knowing before
 running it: it needs an app you register yourself at developer.x.com, and X
 bills bookmark reads per resource. The browser-session default costs nothing.
+
+> **Unverified, and expected to stay that way.** No request on this path has
+> ever reached live X. Verifying it requires a registered developer app on a
+> paid plan, which the maintainer deliberately does not hold, so the flow is
+> reviewed and unit-tested but unproven end to end. If you have an app and hit
+> a problem, assume the bug is in Scrolls rather than in your setup — the
+> module docstrings in `src/scrolls/x_oauth.py` and `src/scrolls/x_api.py`
+> name the likeliest failure points, and a fix plus a note recording what you
+> confirmed is welcome.
 
 - **Setup** — register an app with OAuth 2.0 enabled as a *native/public*
   client (no client secret), add `http://127.0.0.1:<port>/callback` as a

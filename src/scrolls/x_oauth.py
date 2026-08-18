@@ -13,6 +13,26 @@ What makes this path different from every other credential in the codebase is
 that it **writes**. X rotates the refresh token on every use, so a store that
 cannot be updated locks the user out after one refresh. Hence the credential
 file, at 0600, rather than an environment variable.
+
+UNVERIFIED AGAINST LIVE X, AND EXPECTED TO STAY THAT WAY
+--------------------------------------------------------
+No request in this module has ever reached X. Everything here is exercised
+only by `tests/test_x_oauth.py`, which injects the network and the browser, so
+the tests prove the logic is self-consistent — PKCE is really S256, a rotated
+refresh token is really persisted, the store is really 0600 — and prove
+nothing about whether X accepts any of it.
+
+Verifying it requires a registered X developer app on a paid plan. The
+maintainer deliberately does not hold one, so this will not be verified here.
+That is a considered tradeoff, not an oversight: the cookie default in
+`x_session.py` / `x_graphql.py` is verified live, costs nothing, and is what
+`scrolls sync x --bookmarks` uses unless you pass `--auth oauth`.
+
+If you have a developer app and this path misbehaves, assume the bug is here
+rather than in your setup. The likeliest failure points, in order: the
+authorize/token URLs or scope strings drifting from X's current docs, the
+refresh-rotation contract, and the callback handling. Fixes are welcome —
+please amend this banner to record what you confirmed and when.
 """
 
 from __future__ import annotations
@@ -156,6 +176,10 @@ def exchange_code(
 
     Raises:
         XOAuthError: X rejected the exchange.
+
+    Note:
+        Unverified against live X — see the module docstring. The form below
+        matches X's documented exchange, but no real code has been traded.
     """
     payload = (post or _post_form)(
         TOKEN_URL,
@@ -189,6 +213,12 @@ def refresh_tokens(
 
     Raises:
         XOAuthError: There is no refresh token, or X rejected the refresh.
+
+    Note:
+        Unverified against live X — see the module docstring. The rotation
+        contract is the risky part: if X ever stops returning a new refresh
+        token, or invalidates the old one before the write lands, the user is
+        locked out and must run `scrolls x login` again.
     """
     if not tokens.refresh_token:
         raise XOAuthError(
@@ -227,7 +257,12 @@ def _token_set_from(payload: dict, *, fallback_refresh: str | None = None) -> To
 
 
 def _post_form(url: str, form: dict, headers: dict) -> dict:
-    """POST a form to X's token endpoint and decode the JSON reply."""
+    """POST a form to X's token endpoint and decode the JSON reply.
+
+    Unverified against live X — see the module docstring. This is the only
+    function here that opens a socket, so it is where a documentation-vs-reality
+    mismatch would first surface.
+    """
     request = urllib.request.Request(
         url, data=urllib.parse.urlencode(form).encode("ascii"), headers=headers
     )
@@ -465,6 +500,13 @@ def run_login_flow(
     Raises:
         XOAuthError: The user denied access, the callback was forged, or no
             redirect arrived in time.
+
+    Note:
+        Unverified against live X — see the module docstring. The tests drive
+        this loop by calling the loopback server themselves, so the server,
+        the state check and the timeout are all exercised; what has never
+        happened is X redirecting to it. A real app registration must list
+        this exact redirect URI, which is why `port` exists.
     """
     verifier, challenge = generate_pkce()
     state = secrets.token_urlsafe(24)

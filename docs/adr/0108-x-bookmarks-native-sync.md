@@ -92,6 +92,14 @@ from a code defect.
 - **This path is metered**, so a 402 says so in those words rather than
   reading as a bug, and it stays opt-in behind `--auth oauth`. The cookie path
   costs nothing and remains the default.
+- **It is unverified against live X, and will stay unverified.** Proving it
+  needs a registered developer app on a paid plan, which the maintainer has
+  declined to buy to validate a fallback. The tests inject the network and the
+  browser, so they prove the logic is self-consistent and prove nothing about
+  whether X accepts it. This is recorded in the module docstrings, the two
+  `--auth oauth` help strings, `docs/cli.md` and `docs/adapters.md`, so the
+  gap is discoverable before use rather than at 3am. Anyone holding an app is
+  invited to verify it and amend those notes.
 
 ### The volatile surface, named where it lives
 

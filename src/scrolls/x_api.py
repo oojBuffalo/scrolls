@@ -10,6 +10,24 @@ capture the same fields, and both record `saved_at_source: "synced_at"` —
 because the official endpoint exposes no bookmark timestamp either. Only
 `provenance.extraction_method` distinguishes them, which is exactly the
 distinction custody should keep: same artifact, different route.
+
+UNVERIFIED AGAINST LIVE X, AND EXPECTED TO STAY THAT WAY
+--------------------------------------------------------
+This module has never seen a real X API v2 response. The field lists, the
+`includes` side-loading, the `meta.next_token` pagination and the error
+mapping were all written from X's published documentation, and the fixtures in
+`tests/test_x_api.py` were written from the same reading — so the tests cannot
+catch a place where the documentation and the live payload disagree, which is
+exactly where a parser written this way tends to be wrong.
+
+Reaching a real response needs a registered X developer app on a paid plan,
+which the maintainer deliberately does not hold. See `x_oauth.py` for the full
+reasoning. The cookie default is verified live against 479 real bookmarks.
+
+If you exercise this path, the parity test in `tests/test_x_api.py` is the one
+to trust: it pins this parser and the GraphQL parser to identical items for
+the same bookmark. A live payload that breaks parity is the bug worth
+reporting, because it means the route changed the artifact.
 """
 
 from __future__ import annotations
@@ -96,6 +114,13 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
     Returns:
         A BookmarksPage. A malformed entry becomes a failure rather than
         aborting the page, matching the GraphQL parser and `scrolls fetch`.
+
+    Note:
+        Unverified against live X — see the module docstring. This function
+        carries the most documentation-derived guesswork in the module: the
+        shape of `includes`, which fields arrive expanded, and how media
+        attaches to a record. The lenient failure handling above is deliberate
+        insurance against exactly that.
     """
     payload = payload or {}
     includes = payload.get("includes") or {}
@@ -284,6 +309,9 @@ def resolve_user_id(access_token: str, *, get: Getter | None = None) -> str:
 
     Raises:
         XAPIError: X returned no user id.
+
+    Note:
+        Unverified against live X — see the module docstring.
     """
     payload = (get or _http_get)(ME_URL, build_headers(access_token))
     user_id = ((payload or {}).get("data") or {}).get("id")
@@ -322,6 +350,12 @@ def fetch_bookmarks(
 
     Raises:
         XAPIError: A request failed and `stop_on_error` is False.
+
+    Note:
+        Unverified against live X — see the module docstring. The cookie
+        default's equivalent walk was proven live against a 479-bookmark
+        collection; this one's `meta.next_token` termination has only ever
+        been driven by fixtures.
     """
     fetcher = get or _http_get
     headers = build_headers(access_token)
@@ -371,7 +405,11 @@ def fetch_bookmarks(
 
 
 def _http_get(url: str, headers: dict) -> dict:
-    """GET one page, mapping X's status codes to typed errors."""
+    """GET one page, mapping X's status codes to typed errors.
+
+    Unverified against live X — see the module docstring. This is the only
+    function here that opens a socket.
+    """
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
@@ -383,7 +421,13 @@ def _http_get(url: str, headers: dict) -> dict:
 
 
 def _map_http_error(exc: urllib.error.HTTPError) -> XAPIError:
-    """Turn an HTTP status into the error that tells the user what to do."""
+    """Turn an HTTP status into the error that tells the user what to do.
+
+    Unverified against live X — see the module docstring. The status codes are
+    from X's documented error table; the 402 branch in particular has never
+    been observed, and exists so a billing wall reads as a bill rather than as
+    a bug in Scrolls.
+    """
     if exc.code == 429:
         return XAPIRateLimited(retry_after=_retry_after(exc))
     if exc.code in (401, 403):

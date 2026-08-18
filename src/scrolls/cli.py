@@ -212,7 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     x_sub = x_parser.add_subparsers(dest="x_command", required=True)
     x_login = x_sub.add_parser(
         "login",
-        help="Authorize Scrolls against X over OAuth 2.0 + PKCE (JSON output)",
+        help="Authorize Scrolls against X over OAuth 2.0 + PKCE — UNVERIFIED, "
+        "needs a paid X developer app (JSON output)",
     )
     x_login.add_argument(
         "--port",
@@ -1583,8 +1584,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="browser",
         choices=("browser", "oauth"),
         help="Which X credential to use: `browser` reads the session cookies "
-        "(free, the default), `oauth` uses the grant from `scrolls x login` "
-        "(official API, billed per resource)",
+        "(free, verified, the default), `oauth` uses the grant from "
+        "`scrolls x login` (official API, billed per resource, and never "
+        "tested against live X — see ADR 0108)",
     )
     sync_parser.add_argument(
         "--profile",
