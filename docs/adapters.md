@@ -24,10 +24,47 @@ readability; content unchanged.*
 ### wikipedia
 
 A saved Wikipedia article becomes a scroll through the MediaWiki action API, with
-no dependencies.
+no dependencies. It is also the one source with **both** a fetch adapter and a
+collection on-ramp.
 
 - **Captured:** visible page categories become `concepts`.
-- **Decision:** `docs/adr/0002-first-fetch-adapter-wikipedia.md`.
+- **Collection — `scrolls sync wikipedia --reading-lists`.** Pulls every article
+  across the account's reading lists: what you tapped "Save" on in the Wikipedia
+  app or while signed in. Not the watchlist, which means "notify me when this
+  changes".
+- **Custody shape — enumerate-only.** A reading-list entry carries a project, a
+  title and a save time, and no article text, so items enter at stage `detected`
+  and `scrolls fetch` captures them afterwards. This is the honest contrast with
+  the `x` collection, which arrives already captured; claiming stage `fetched`
+  for a row holding no prose would be a promise the response cannot back.
+- **Drift detection works here.** Because `wikipedia` is in `FETCH_ADAPTERS`,
+  `scrolls verify` re-captures a pulled article and reports drift — the thing
+  the `x` collection cannot do.
+- **Identity:** the entry's project and title build the article URL, which is
+  detected exactly as `scrolls add` detects it, so a pulled article and an added
+  one converge on `wikipedia:<lang>:<Title>` by construction. The API returns
+  display titles with spaces; URLs use underscores.
+- **Auth:** the CentralAuth cookies already in the user's browser
+  (`centralauth_User` and `centralauth_Session`), read live per run and never
+  stored. Reading lists are a global feature, so the global session is what
+  authenticates — a valid per-wiki `enwikiSession` alone answers `notloggedin`.
+  `--browser` and `--profile` pin one source, and
+  `SCROLLS_WIKIPEDIA_USER`/`SCROLLS_WIKIPEDIA_SESSION` skip browser access.
+- **`saved_at` is the entry's own `created` time** — when the user saved the
+  article, never the article's publication date, and never the sync time.
+- **List membership survives as `tags`.** A named list becomes a tag; the
+  default list does not, because it is where an article goes when it was filed
+  nowhere. An article in two lists is one item carrying both tags, with the
+  earliest save kept.
+- **Other Wikimedia projects are reported, not guessed.** A Commons or
+  Wiktionary entry in a reading list has no adapter here, so it is counted as a
+  failure naming its project rather than minted into an unfetchable item.
+- **Volatility:** MediaWiki flags both reading-list API modules `internal`, so
+  they carry no stability promise. A withdrawn extension is reported by name,
+  never as an empty collection. Verified against live Wikipedia on 2026-08-18:
+  2 lists, 586 entries, 6 pages, 566 distinct articles, no failures.
+- **Decisions:** `docs/adr/0002-first-fetch-adapter-wikipedia.md`, and
+  `docs/adr/0109-wikipedia-reading-lists-collection.md` for the collection.
 
 ### wikidata
 

@@ -4761,6 +4761,92 @@ $ scrolls sync x --bookmarks
 [exit 1]
 ```
 
+### `scrolls sync` — the Wikipedia reading-lists collection
+
+`scrolls sync wikipedia --reading-lists [--limit N] [--browser B] [--profile P]`
+
+Pull the Wikipedia reading-lists **collection** — every article you tapped
+"Save" on in the Wikipedia app or while signed in, across every list. Not the
+watchlist, which means "notify me when this changes" (ADR 0109).
+
+**This collection indexes; it does not capture.** A reading-list entry is a
+title and a save time with no article text behind it, so items land at stage
+`detected` and `scrolls fetch` captures them afterwards. That is the honest
+difference from `sync x --bookmarks`, which arrives already `fetched`. The
+upside is that `scrolls verify` works on these: Wikipedia has a fetch adapter,
+so drift on a saved article is detectable.
+
+- **Auth is the browser's own session** — the `centralauth_User` and
+  `centralauth_Session` cookies, read live per run and never stored. Reading
+  lists are a *global* feature, so the CentralAuth session is what
+  authenticates; a valid per-wiki `enwikiSession` alone is not enough.
+- **`--browser`** pins one (`chrome`, `brave`, `arc`, `edge`, `vivaldi`,
+  `chromium`, `firefox`, or `env`), so a failure names the thing that actually
+  failed. **`--profile`** pins one profile directory by name.
+- **`--browser env`** reads `SCROLLS_WIKIPEDIA_USER` /
+  `SCROLLS_WIKIPEDIA_SESSION` and never touches the Keychain. Setting only one
+  of the pair is an error, not a silent fallthrough.
+- **A missing credential fails the whole run**, on stderr, rather than
+  importing whatever happened to be reachable.
+- **Named lists become `tags`** — the default list does not, because it is
+  where an article goes when you filed it nowhere. An article in two lists is
+  one item carrying both tags, keeping the earliest save.
+- **Idempotent** — `INSERT OR IGNORE`, so a re-sync counts held articles as
+  `skipped` and never overwrites one you edited.
+- **Dedupes against `add`** — ids are `wikipedia:<lang>:<Title>`, the same id
+  `scrolls add https://en.wikipedia.org/wiki/…` mints.
+
+| field | meaning |
+| --- | --- |
+| `imported` / `skipped` | articles newly held, and those already in the library |
+| `failed` | entries that could not become items (counted in `failures[]`) |
+| `pages` | entry pages fetched from the API |
+| `session` | which browser the session came from, or `env` |
+| `account` | the Wikipedia account the pull ran as |
+| `lists` | every reading list found, by name |
+| `failures[]` | per-entry problems that did not abort the walk |
+| `error` | present only on a partial pull, alongside what was captured |
+
+```console
+$ scrolls sync wikipedia --reading-lists
+{"imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+[exit 0]
+
+$ scrolls sync wikipedia --reading-lists       # nothing new saved since
+{"imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+[exit 0]
+
+$ scrolls sync wikipedia --reading-lists --limit 2
+{"imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+[exit 0]
+```
+
+The articles arrive as references; `scrolls fetch` turns them into full
+custody:
+
+```console
+$ scrolls fetch --limit 3
+{"fetched": 3, "skipped": 0, "failed": 0, "results": [{"id": "wikipedia:en:Privacy-Enhanced_Mail", "status": "fetched", "title": "Privacy-Enhanced Mail", "stage": "fetched"}, …]}
+[exit 0]
+
+$ scrolls verify wikipedia:en:Privacy-Enhanced_Mail
+{"checked": 1, "unchanged": 1, "drifted": 0, "rotted": 0, "error": 0, "results": [{"id": "wikipedia:en:Privacy-Enhanced_Mail", "status": "unchanged", …}]}
+[exit 0]
+```
+
+Failures name what to do, and a withdrawn API is never reported as an empty
+reading list:
+
+```console
+$ scrolls sync wikipedia --reading-lists --browser env   # neither variable set
+{"error": "SCROLLS_WIKIPEDIA_USER and SCROLLS_WIKIPEDIA_SESSION are not set"}
+[exit 1]
+
+$ scrolls sync --reading-lists                           # no collection source named
+{"error": "--reading-lists needs a source that has reading lists: `scrolls sync wikipedia --reading-lists`"}
+[exit 1]
+```
+
 ### `scrolls x login`
 
 Authorize Scrolls against X over OAuth 2.0 + PKCE — the **opt-in fallback** to
