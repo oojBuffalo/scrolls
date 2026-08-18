@@ -176,6 +176,11 @@ from scrolls.x_oauth import (
     run_login_flow,
     save_tokens,
 )
+from scrolls.wikipedia_lists import (
+    WikipediaListsError,
+    collect_reading_lists,
+    load_wikipedia_session,
+)
 from scrolls.x_session import BROWSER_CHOICES, XSessionError, load_session
 
 
@@ -1557,8 +1562,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "id",
         nargs="?",
-        help="Sync one subscription by id, or the source `x` with "
-        "--bookmarks; default is every followed feed",
+        help="Sync one subscription by id, or a source that has a saved "
+        "collection (`x` with --bookmarks, `wikipedia` with --reading-lists); "
+        "default is every followed feed",
     )
     sync_parser.add_argument(
         "--bookmarks",
@@ -1566,18 +1572,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="With source `x`: pull your X bookmarks collection",
     )
     sync_parser.add_argument(
+        "--reading-lists",
+        action="store_true",
+        help="With source `wikipedia`: pull the articles you saved to your "
+        "Wikipedia reading lists",
+    )
+    sync_parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Stop after this many bookmarks; default walks the collection",
+        help="Stop after this many saved items; default walks the collection",
     )
     sync_parser.add_argument(
         "--browser",
         default="auto",
         choices=BROWSER_CHOICES,
-        help="Where to read the X session from; `auto` searches every "
-        "installed browser, and `env` uses SCROLLS_X_AUTH_TOKEN/SCROLLS_X_CT0 "
-        "and never touches the Keychain",
+        help="Where to read the logged-in session from; `auto` searches every "
+        "installed browser, and `env` uses the service's cookie environment "
+        "variables and never touches the Keychain",
     )
     sync_parser.add_argument(
         "--auth",
@@ -1926,6 +1938,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.bookmarks:
             return _cmd_sync_x_bookmarks(
                 args.id, args.limit, args.browser, args.profile, args.auth
+            )
+        if args.reading_lists:
+            return _cmd_sync_wikipedia_lists(
+                args.id, args.limit, args.browser, args.profile
             )
         return _cmd_sync(args.id)
     if args.command == "unfollow":
@@ -2413,6 +2429,81 @@ def _cmd_sync_x_bookmarks(
         **counts,
         "pages": result.pages,
         "session": origin,
+        "failures": list(result.failures),
+    }
+    if result.error:
+        payload["error"] = result.error
+    print(json.dumps(payload))
+    return 1 if counts["failed"] or result.error else 0
+
+
+def _cmd_sync_wikipedia_lists(
+    source: str | None,
+    limit: int | None,
+    browser: str,
+    profile: str | None = None,
+) -> int:
+    """Pull the Wikipedia reading-lists collection into the library.
+
+    The same on-ramp shape as `sync x --bookmarks` — the user's own saved
+    collection, copied out of the service they saved it in — but a collection
+    that indexes rather than captures. A reading-list entry is a title and a
+    save time with no article text behind it, so items land at stage
+    'detected' and the Wikipedia fetch adapter (ADR 0002) captures them on the
+    next `scrolls fetch` (ADR 0109).
+    """
+    if source != "wikipedia":
+        print(
+            json.dumps(
+                {
+                    "error": "--reading-lists needs a source that has reading "
+                    "lists: `scrolls sync wikipedia --reading-lists`"
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    imported_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        session = load_wikipedia_session(browser, profile=profile)
+    except XSessionError as exc:
+        # A credential problem fails the whole run: a partial import that
+        # silently dropped the un-authorized half would be worse than nothing.
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    try:
+        # stop_on_error: a partial pull is still custody, so entries already
+        # collected are kept and the error is reported alongside them
+        result = collect_reading_lists(
+            session, imported_at=imported_at, limit=limit, stop_on_error=True
+        )
+    except WikipediaListsError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    if result.error and not result.items:
+        print(json.dumps({"error": result.error}), file=sys.stderr)
+        return 1
+
+    paths = get_paths()
+    ensure_library(paths)
+    counts = {"imported": 0, "skipped": 0, "failed": len(result.failures)}
+    for item in result.items:
+        # INSERT OR IGNORE: an article added by URL earlier, or edited by the
+        # user, is never overwritten — re-syncing stays cheap and lossless
+        if insert_item(paths.db_path, item):
+            counts["imported"] += 1
+        else:
+            counts["skipped"] += 1
+
+    payload = {
+        **counts,
+        "pages": result.pages,
+        "session": session.origin,
+        "account": session.display_name,
+        "lists": sorted((result.lists or {}).values()),
         "failures": list(result.failures),
     }
     if result.error:
