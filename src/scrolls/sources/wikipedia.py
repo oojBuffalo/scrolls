@@ -59,8 +59,16 @@ _IMAGE_PARAMS = {
     "generator": "images",
     "gimlimit": "max",
     "prop": "imageinfo",
-    "iiprop": "url|mime",
+    "iiprop": "url|mime|size",
+    "iiurlwidth": "1280",
 }
+
+# Widest raster kept whole. Above it MediaWiki's own thumbnail is taken
+# instead: a 3857px press photo is not more useful to an agent than a
+# 1280px one, and the original costs an order of magnitude more disk.
+# Below it the original always wins — a vector diagram's "thumbnail" is a
+# rasterization that is both larger and lossier than the SVG it came from.
+_MAX_IMAGE_WIDTH = 1600
 
 # MediaWiki reports every file a page renders, so an article's figures arrive
 # mixed with the encyclopedia's own furniture. These are matched against the
@@ -202,11 +210,36 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
     for file_page in (payload or {}).get("query", {}).get("pages") or ():
         name = (file_page.get("title") or "").partition(":")[2]
         info = (file_page.get("imageinfo") or [{}])[0]
-        url = info.get("url")
+        url = _clean_media_url(info.get("url"))
         if not name or not url or _is_chrome(name):
             continue
-        refs.append({"type": "image", "url": url, "title": name})
+        ref = {"type": "image", "url": url, "title": name}
+        thumb = _clean_media_url(info.get("thumburl"))
+        if thumb and (info.get("width") or 0) > _MAX_IMAGE_WIDTH:
+            # keep the full-resolution address: the capture is a choice, and
+            # custody should record what was passed over, not hide it
+            ref["url"], ref["original_url"] = thumb, url
+        refs.append(ref)
     return tuple(refs)
+
+
+def _clean_media_url(url: str | None) -> str | None:
+    """Drop the `utm_*` analytics parameters Wikimedia appends to imageinfo URLs.
+
+    They describe the API call that produced the answer, not the file, and
+    two captures of the same image must not differ by a campaign tag.
+    """
+    if not url:
+        return None
+    base, sep, query = url.partition("?")
+    if not sep:
+        return url
+    kept = [
+        pair
+        for pair in query.split("&")
+        if pair and not pair.startswith("utm_")
+    ]
+    return f"{base}?{'&'.join(kept)}" if kept else base
 
 
 def _is_chrome(name: str) -> bool:

@@ -314,3 +314,73 @@ def test_a_failed_page_request_still_raises():
 
     with pytest.raises(FetchError):
         fetch_item(make_item(), get_json=get_json)
+
+
+def image_page(title, url, *, width=None, thumburl=None, thumbwidth=None):
+    info = {"url": url, "mime": "image/jpeg"}
+    if width is not None:
+        info["width"] = width
+    if thumburl is not None:
+        info["thumburl"] = thumburl
+        info["thumbwidth"] = thumbwidth
+    return {"title": title, "imageinfo": [info]}
+
+
+def test_analytics_parameters_are_stripped_from_media_urls():
+    """Wikimedia appends utm_* to imageinfo URLs; they belong to the API call."""
+    images = {
+        "query": {
+            "pages": [
+                image_page(
+                    "File:Diagram.svg",
+                    "https://upload.wikimedia.org/a/Diagram.svg"
+                    "?utm_source=en.wikipedia.org&utm_campaign=imageinfo",
+                )
+            ]
+        }
+    }
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert fetched.media[0]["url"] == "https://upload.wikimedia.org/a/Diagram.svg"
+
+
+def test_an_oversized_photo_is_captured_at_its_capped_width():
+    images = {
+        "query": {
+            "pages": [
+                image_page(
+                    "File:Package.jpg",
+                    "https://upload.wikimedia.org/a/Package.jpg",
+                    width=3857,
+                    thumburl="https://upload.wikimedia.org/thumb/a/Package.jpg/1280px.jpg",
+                    thumbwidth=1280,
+                )
+            ]
+        }
+    }
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    ref = fetched.media[0]
+    assert ref["url"] == "https://upload.wikimedia.org/thumb/a/Package.jpg/1280px.jpg"
+    assert ref["original_url"] == "https://upload.wikimedia.org/a/Package.jpg"
+
+
+def test_a_small_figure_is_captured_whole():
+    """A vector diagram's 'thumbnail' is a bigger raster; the original wins."""
+    images = {
+        "query": {
+            "pages": [
+                image_page(
+                    "File:Skeletal.svg",
+                    "https://upload.wikimedia.org/a/Skeletal.svg",
+                    width=460,
+                    thumburl="https://upload.wikimedia.org/thumb/a/Skeletal.svg/1280px.png",
+                    thumbwidth=1280,
+                )
+            ]
+        }
+    }
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert fetched.media[0]["url"] == "https://upload.wikimedia.org/a/Skeletal.svg"
+    assert "original_url" not in fetched.media[0]
