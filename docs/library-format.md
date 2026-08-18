@@ -89,6 +89,7 @@ always present, because the model cannot represent an item without them.
 | `domain` | once assigned | string | finer topic area; today only the Field Theory import sets it |
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
 | `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories, arXiv taxonomy names |
+| `links` | when non-empty | array of strings | outbound URLs found in the item, resolved into edges by `scrolls graph` |
 | `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file |
 | `content_hash` | once fetched | string | `sha256:<hex>` over the fetched content |
 | `provenance` | once fetched | object | `adapter`, `fetched_at`, `extraction_method` |
@@ -140,6 +141,7 @@ published_at: "2017-06-12T17:57:34+00:00"
 saved_at: "2026-06-12T08:00:00+00:00"
 category: "paper"
 tags: ["cs.CL", "cs.LG"]
+links: ["https://arxiv.org/pdf/1706.03762"]
 media: [{"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": "media/arxiv/1706-03762-1.pdf"}]
 content_hash: "sha256:6d2e1066c2f3aae40f4ea846cebee5ee5cdc77a2f9bb582a0f5a526f70b48aaa"
 provenance: {"adapter": "arxiv", "fetched_at": "2026-06-12T08:00:05+00:00", "extraction_method": "arxiv-atom+pypdf"}

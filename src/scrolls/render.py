@@ -33,6 +33,7 @@ _FRONTMATTER_FIELDS = (
     "domain",
     "tags",
     "concepts",
+    "links",
     "media",
     "content_hash",
     "provenance",
