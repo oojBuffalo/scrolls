@@ -13,9 +13,11 @@ re-downloaded from the recorded URLs.
 from __future__ import annotations
 
 import re
+import time
+import urllib.error
 from dataclasses import replace
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from scrolls.items import ScrollItem
@@ -35,12 +37,29 @@ _TYPE_EXTENSIONS = {
     "video": ".mp4",
 }
 _DEFAULT_EXTENSION = ".bin"
+
+# A bulk capture is the one place this tool can look like a scraper. Wikimedia
+# answers a fast run with HTTP 429 ("your bot is making too many requests"),
+# and the honest reading of that is not "456 files failed" — the files are
+# there, we asked too quickly. So downloads are paced, and a 429 is waited out
+# rather than counted as a loss.
+_DEFAULT_DELAY_SECONDS = 0.25
+_DEFAULT_MAX_ATTEMPTS = 5
+_BACKOFF_BASE_SECONDS = 2
+_BACKOFF_CAP_SECONDS = 60
+_RATE_LIMIT_STATUS = 429
 # short, and at least one letter: ".jpg" yes, arXiv's version tail ".03762" no
 _SAFE_SUFFIX = re.compile(r"^\.(?=[^.]*[A-Za-z])[A-Za-z0-9]{1,5}$")
 
 
 def capture_media(
-    paths: LibraryPaths, item: ScrollItem, force: bool = False
+    paths: LibraryPaths,
+    item: ScrollItem,
+    force: bool = False,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    delay: float = _DEFAULT_DELAY_SECONDS,
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
 ) -> tuple[ScrollItem, list[dict[str, Any]]]:
     """Download the item's media refs; return (updated item, per-ref results).
 
@@ -49,6 +68,16 @@ def capture_media(
     disk are skipped unless `force`; refs without a `url` (including
     legacy non-dict refs) are skipped; one failed download never stops
     the others, and refs captured before a failure keep their paths.
+
+    Args:
+        paths: The library layout to write into.
+        item: The item whose media refs to capture.
+        force: Re-download refs that already have a file on disk.
+        sleep: Injected sleep, for tests.
+        delay: Seconds to pause after each download attempt, so a bulk run
+            does not earn a rate limit in the first place.
+        max_attempts: Attempts per file before a rate limit is reported as
+            a failure.
     """
     refs = [dict(ref) if isinstance(ref, dict) else ref for ref in item.media]
     results: list[dict[str, Any]] = []
@@ -64,7 +93,9 @@ def capture_media(
             results.append({"url": url, "status": "skipped", "path": relpath})
             continue
         try:
-            payload = _get_bytes(url)
+            payload = _fetch_with_backoff(
+                url, sleep=sleep, delay=delay, max_attempts=max_attempts
+            )
         except (OSError, ValueError) as exc:  # URLError is an OSError
             results.append({"url": url, "status": "failed", "error": str(exc)})
             continue
@@ -76,6 +107,53 @@ def capture_media(
         results.append({"url": url, "status": "captured", "path": relpath})
     updated = replace(item, media=tuple(refs)) if changed else item
     return updated, results
+
+
+def _fetch_with_backoff(
+    url: str,
+    *,
+    sleep: Callable[[float], None],
+    delay: float,
+    max_attempts: int,
+) -> bytes:
+    """Download one file, waiting out rate limits.
+
+    Raises:
+        ValueError: The host kept rate-limiting us past `max_attempts`. The
+            message says so in those words, because "rate limited" and
+            "the file is gone" want different responses from the operator.
+        OSError: Any other transport failure, unretried — a 404 will not
+            become a 200 by asking again.
+    """
+    for attempt in range(max_attempts):
+        try:
+            payload = _get_bytes(url)
+        except urllib.error.HTTPError as exc:
+            if exc.code != _RATE_LIMIT_STATUS:
+                raise
+            if attempt == max_attempts - 1:
+                raise ValueError(
+                    f"rate limited by the host after {max_attempts} attempts; "
+                    "the file is still there — re-run the capture later"
+                ) from exc
+            sleep(_retry_wait(exc, attempt))
+            continue
+        if delay:
+            sleep(delay)
+        return payload
+    raise ValueError("exhausted attempts")  # pragma: no cover - loop always returns
+
+
+def _retry_wait(exc: urllib.error.HTTPError, attempt: int) -> float:
+    """Seconds to wait: the host's own `Retry-After` when it named one."""
+    headers = getattr(exc, "headers", None)
+    raw = headers.get("retry-after") if headers else None
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return float(min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_CAP_SECONDS))
 
 
 def has_pending_media(paths: LibraryPaths, item: ScrollItem) -> bool:

@@ -211,3 +211,99 @@ def test_has_pending_media_when_recorded_file_was_deleted(paths):
         )
     )
     assert has_pending_media(paths, item)
+
+
+# --- rate limiting -----------------------------------------------------------
+#
+# Wikimedia answers a bulk capture with HTTP 429 once the request rate climbs.
+# A capture that reports 456 of 473 items "failed" against a host that was only
+# asking us to slow down is not a failure of custody, it is a failure of
+# manners: the files are still there, we just asked too fast.
+
+
+def _http_error(code, headers=None):
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "https://u.w/a.jpg", code, "rate limited", headers or {}, None
+    )
+
+
+def test_a_rate_limited_download_is_retried_rather_than_failed(paths, monkeypatch):
+    item = make_item()
+    calls = []
+    slept = []
+
+    def flaky(url, *args, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise _http_error(429)
+        return b"payload"
+
+    monkeypatch.setattr(media, "_get_bytes", flaky)
+    updated, results = capture_media(paths, item, sleep=slept.append)
+
+    assert [r["status"] for r in results] == ["captured"]
+    assert len(calls) == 2
+    assert slept, "a 429 must be waited out, not hammered"
+
+
+def test_a_persistent_rate_limit_fails_saying_so(paths, monkeypatch):
+    item = make_item()
+
+    def always_limited(url, *args, **kwargs):
+        raise _http_error(429)
+
+    monkeypatch.setattr(media, "_get_bytes", always_limited)
+    _, results = capture_media(paths, item, sleep=lambda _s: None, max_attempts=2)
+
+    assert results[0]["status"] == "failed"
+    assert "rate limit" in results[0]["error"].lower()
+
+
+def test_retry_after_is_honored_when_the_host_names_a_wait(paths, monkeypatch):
+    item = make_item()
+    slept = []
+    calls = []
+
+    def flaky(url, *args, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise _http_error(429, {"retry-after": "7"})
+        return b"payload"
+
+    monkeypatch.setattr(media, "_get_bytes", flaky)
+    capture_media(paths, item, sleep=slept.append)
+
+    assert slept[0] == 7.0
+
+
+def test_downloads_are_paced_between_files(paths, monkeypatch):
+    """Politeness is what keeps a bulk capture from earning the 429."""
+    item = make_item(
+        media=(
+            {"type": "pdf", "url": "https://u.w/a.pdf"},
+            {"type": "pdf", "url": "https://u.w/b.pdf"},
+        )
+    )
+    slept = []
+    monkeypatch.setattr(media, "_get_bytes", lambda *a, **k: b"payload")
+
+    capture_media(paths, item, sleep=slept.append, delay=0.25)
+
+    assert slept == [0.25, 0.25]
+
+
+def test_a_non_rate_limit_error_is_not_retried(paths, monkeypatch):
+    item = make_item()
+    calls = []
+
+    def gone(url, *args, **kwargs):
+        calls.append(url)
+        raise _http_error(404)
+
+    monkeypatch.setattr(media, "_get_bytes", gone)
+    _, results = capture_media(paths, item, sleep=lambda _s: None)
+
+    assert results[0]["status"] == "failed"
+    assert len(calls) == 1
