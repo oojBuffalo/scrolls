@@ -75,6 +75,11 @@ _MAX_IMAGE_WIDTH = 1600
 # file name with the "File:" prefix stripped. Substring, not prefix: the icons
 # appear as "OOjs UI icon edit-ltr-progressive.svg" and "Symbol support vote.svg"
 # alike. Adding a pattern is the maintenance path when a new icon leaks through.
+#
+# Patterns are kept narrow on purpose. A pattern that is too broad drops a real
+# figure silently, which is worse than an icon leaking in: "padlock-" spares an
+# article's photograph of a padlock, and the vote symbols are named rather than
+# matched as "symbol ".
 _CHROME_PATTERNS = (
     "ambox",
     "commons-logo",
@@ -84,16 +89,20 @@ _CHROME_PATTERNS = (
     "emblem-",
     "folder hexagonal",
     "increase2.svg",
-    "loudspeaker",
+    "loudspeaker.svg",
     "merge-arrow",
     "nuvola",
     "oojs ui icon",
-    "padlock",
+    "padlock-",
     "portal-puzzle",
     "question book",
     "red pog",
     "star full",
-    "symbol ",
+    "symbol comment",
+    "symbol neutral vote",
+    "symbol oppose vote",
+    "symbol question",
+    "symbol support vote",
     "text document",
     "wiki letter",
     "wikidata-logo",
@@ -200,7 +209,7 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
     """The page's figures as media refs, or empty when they cannot be had.
 
     Never raises: an article whose figure list failed to load is still the
-    article, and `scrolls fetch --force` can pick the figures up later.
+    article, and re-fetching it by id picks the figures up later.
     """
     try:
         payload = get_json(_image_api_url(lang, title))
@@ -213,7 +222,7 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
         url = _clean_media_url(info.get("url"))
         if not name or not url or _is_chrome(name):
             continue
-        ref = {"type": "image", "url": url, "title": name}
+        ref = {"type": _media_type(info.get("mime")), "url": url, "title": name}
         thumb = _clean_media_url(info.get("thumburl"))
         if thumb and (info.get("width") or 0) > _MAX_IMAGE_WIDTH:
             # keep the full-resolution address: the capture is a choice, and
@@ -221,6 +230,21 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
             ref["url"], ref["original_url"] = thumb, url
         refs.append(ref)
     return tuple(refs)
+
+
+def _media_type(mime: str | None) -> str:
+    """The ref's media type, from the file's MIME type.
+
+    A Wikipedia page carries spoken-word recordings and video as readily as
+    diagrams, and calling an `.ogg` an image would be a claim the response
+    does not support.
+    """
+    kind, _, _ = (mime or "").partition("/")
+    if kind in ("image", "audio", "video"):
+        return kind
+    if mime == "application/pdf":
+        return "pdf"
+    return "file"
 
 
 def _clean_media_url(url: str | None) -> str | None:

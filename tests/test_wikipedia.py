@@ -384,3 +384,51 @@ def test_a_small_figure_is_captured_whole():
 
     assert fetched.media[0]["url"] == "https://upload.wikimedia.org/a/Skeletal.svg"
     assert "original_url" not in fetched.media[0]
+
+
+def typed_page(title, url, mime):
+    return {"title": title, "imageinfo": [{"url": url, "mime": mime}]}
+
+
+def test_media_type_follows_the_files_mime_not_a_blanket_image():
+    """Wikipedia pages carry audio and video; calling an .ogg an image is a lie."""
+    images = {
+        "query": {
+            "pages": [
+                typed_page("File:Diagram.svg", "https://u.w/a.svg", "image/svg+xml"),
+                typed_page("File:Speech.ogg", "https://u.w/a.ogg", "audio/ogg"),
+                typed_page("File:Launch.webm", "https://u.w/a.webm", "video/webm"),
+                typed_page("File:Report.pdf", "https://u.w/a.pdf", "application/pdf"),
+            ]
+        }
+    }
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert [ref["type"] for ref in fetched.media] == ["image", "audio", "video", "pdf"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Loudspeaker at the concert hall.jpg",
+        "Padlock on a canal gate.jpg",
+        "Symbol of the Olympic Games.jpg",
+    ],
+)
+def test_a_figure_is_not_dropped_for_merely_resembling_an_icon(name):
+    """A false drop loses real content silently — worse than an icon leaking in."""
+    images = {"query": {"pages": [typed_page(f"File:{name}", "https://u.w/a.jpg", "image/jpeg")]}}
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert [ref["title"] for ref in fetched.media] == [name]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Loudspeaker.svg", "Padlock-silver.svg", "Symbol support vote.svg"],
+)
+def test_the_icons_those_names_resemble_are_still_dropped(name):
+    images = {"query": {"pages": [typed_page(f"File:{name}", "https://u.w/a.svg", "image/svg+xml")]}}
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert fetched.media == ()
