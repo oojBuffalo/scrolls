@@ -432,3 +432,36 @@ def test_the_icons_those_names_resemble_are_still_dropped(name):
     fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
 
     assert fetched.media == ()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Symbol list class.svg",
+        "Symbol category class.svg",
+        "Symbol template class pink.svg",
+    ],
+)
+def test_namespace_class_icons_are_chrome(name):
+    """Wikipedia's own namespace badges — the shape a bare 'symbol ' match caught."""
+    images = {"query": {"pages": [typed_page(f"File:{name}", "https://u.w/a.svg", "image/svg+xml")]}}
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert fetched.media == ()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Diode symbol.svg",
+        "Antenna schematic symbol.svg",
+        "IEEE 315 Fundamental Items Symbols (56).svg",
+        "Radiation warning symbol.svg",
+    ],
+)
+def test_symbols_that_are_the_subject_survive(name):
+    """A circuit diagram is what the article is about, not furniture around it."""
+    images = {"query": {"pages": [typed_page(f"File:{name}", "https://u.w/a.svg", "image/svg+xml")]}}
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert [ref["title"] for ref in fetched.media] == [name]

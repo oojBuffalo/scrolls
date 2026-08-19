@@ -267,8 +267,16 @@ def _clean_media_url(url: str | None) -> str | None:
 
 
 def _is_chrome(name: str) -> bool:
-    """Whether a file name is Wikipedia's own furniture rather than a figure."""
+    """Whether a file name is Wikipedia's own furniture rather than a figure.
+
+    The namespace badges ("Symbol list class.svg", "Symbol template class
+    pink.svg") get their own rule rather than a bare "symbol " pattern,
+    which would also discard a diode's schematic symbol or IEEE 315's
+    circuit symbols — figures that are the article's whole subject.
+    """
     lowered = name.lower()
+    if lowered.startswith("symbol ") and " class" in lowered:
+        return True
     return any(pattern in lowered for pattern in _CHROME_PATTERNS)
 
 
