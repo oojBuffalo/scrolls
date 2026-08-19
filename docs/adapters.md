@@ -27,7 +27,14 @@ A saved Wikipedia article becomes a scroll through the MediaWiki action API, wit
 no dependencies. It is also the one source with **both** a fetch adapter and a
 collection on-ramp.
 
-- **Captured:** visible page categories become `concepts`.
+- **Captured:** the full plain-text article, plus visible page categories as
+  `concepts`, the article's outbound links, and its figures as media refs.
+- **Links are the point of a wiki.** Mainspace links become article URLs and
+  external links become the citations, so `scrolls graph` draws an edge whenever
+  one saved article links to another — a wiki's backlinks, answered from your
+  library rather than from Wikipedia. `scrolls media` downloads the figures;
+  they are the bulk of the bytes, so skipping that step gives you the text
+  knowledgebase alone (ADR [0110](adr/0110-wikipedia-article-links-and-figures.md)).
 - **Collection — `scrolls sync wikipedia --reading-lists`.** Pulls every article
   across the account's reading lists: what you tapped "Save" on in the Wikipedia
   app or while signed in. Not the watchlist, which means "notify me when this
