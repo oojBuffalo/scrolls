@@ -85,10 +85,24 @@ scroll — the durable artifact — showed none of them.
 
 - **Verified against live Wikipedia on 2026-08-18**, over the 566 articles of
   a real reading-list library: 566 fetched, 0 failures, 15 MB of prose,
-  222,895 links and 5,416 figure refs, of which 1,383 were capped photos.
-- **Media capture is now the expensive step.** Text is 15 MB; the figures are
-  roughly 1.5 GB. `scrolls media` stays a separate opt-in command, so a user
-  who wants the knowledgebase without the pictures simply does not run it.
+  222,893 links and 5,416 figure refs, of which 1,383 were capped photos.
+  The links produce **3,815 graph edges across 546 connected articles**, where
+  the same library previously had none.
+- **Media capture is the expensive step, by two orders of magnitude.** The
+  prose is 15 MB and the rendered scrolls 44 MB; the 5,416 figures are
+  **5.7 GB**. `scrolls media` stays a separate opt-in command, so a user who
+  wants the knowledgebase without the pictures simply does not run it.
+- **The size is dominated by a handful of files.** 24 files exceed 20 MB and a
+  single `.webm` on one article is 2.6 GB — the 1600px rule caps rasters by
+  pixel width and says nothing about video. A byte-size cap for non-image
+  media is the obvious follow-up, deferred rather than guessed at here.
+- **A bulk capture is where this tool looks like a scraper.** The first full
+  media run earned HTTP 429 from Wikimedia and reported 456 of 473 items
+  "failed" — a wrong reading, since the files were there and the request rate
+  was the problem. `scrolls media` now paces its downloads and waits out a 429
+  with backoff honouring `Retry-After`, and a persistent limit says it was
+  rate-limited rather than implying the file is gone. This is a property of
+  bulk capture generally, not of Wikipedia.
 - **The chrome filter is a maintenance surface**, in the same family as X's
   rotating query id: it works, and when Wikipedia adds an icon the fix is one
   pattern.
