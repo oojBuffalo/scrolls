@@ -47,6 +47,15 @@ from scrolls.items_export import dump_items_export
 from scrolls.render import write_scroll
 
 
+def _as_download(fake):
+    """Adapt a `url -> bytes` fake to the `(payload, size)` download seam."""
+
+    def download(url, *, max_bytes=None):
+        payload = fake(url)
+        return payload, len(payload)
+
+    return download
+
 @pytest.fixture
 def scrolls_home(monkeypatch, tmp_path):
     """Point the library root at a temp dir so tests never touch ~/.scrolls."""
@@ -9324,7 +9333,7 @@ def test_media_batch_captures_pending_refs_and_rerenders(scrolls_home, monkeypat
     _seed_fetched_item_with_media()
     main(["md"])
     capsys.readouterr()
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"%PDF-1.4 fake")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"%PDF-1.4 fake"))
 
     exit_code = main(["media"])
     assert exit_code == 0
@@ -9356,14 +9365,14 @@ def test_media_batch_is_idempotent(scrolls_home, monkeypatch, capsys):
 
     main(["init"])
     _seed_fetched_item_with_media()
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"%PDF-1.4 fake")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"%PDF-1.4 fake"))
     main(["media"])
     capsys.readouterr()
 
     def boom(url):
         raise AssertionError("captured refs must not be re-downloaded")
 
-    monkeypatch.setattr(media, "_get_bytes", boom)
+    monkeypatch.setattr(media, "_download", _as_download(boom))
     exit_code = main(["media"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -9375,11 +9384,11 @@ def test_media_by_id_recaptures_explicitly(scrolls_home, monkeypatch, capsys):
 
     main(["init"])
     _seed_fetched_item_with_media()
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"version 1")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"version 1"))
     main(["media"])
     capsys.readouterr()
 
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"version 2")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"version 2"))
     exit_code = main(["media", "arxiv:1706.03762"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -9437,7 +9446,7 @@ def test_media_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypat
             raise OSError("connection refused")
         return b"good bytes"
 
-    monkeypatch.setattr(media, "_get_bytes", get_bytes)
+    monkeypatch.setattr(media, "_download", _as_download(get_bytes))
     exit_code = main(["media"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)

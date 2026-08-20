@@ -58,6 +58,53 @@ def get_bytes(
         return b"".join(chunks)
 
 
+def get_bytes_within(
+    url: str,
+    headers: dict[str, str] | None = None,
+    *,
+    max_bytes: int | None = None,
+) -> tuple[bytes | None, int | None]:
+    """GET the URL, abandoning the body when it is larger than `max_bytes`.
+
+    Unlike `get_bytes(max_bytes=...)`, which raises once the read overruns,
+    this reads `Content-Length` first, so declining a 2.5 GB file costs one
+    set of response headers rather than a cap's worth of downloaded bytes.
+
+    Args:
+        url: The URL to GET.
+        headers: Extra request headers.
+        max_bytes: Refuse a body larger than this; None captures any size.
+
+    Returns:
+        A `(payload, size)` pair. `payload` is None when the file was declined,
+        in which case `size` is the declared size, or None when the host never
+        declared one and the overrun was only discovered while reading.
+    """
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, **(headers or {})}
+    )
+    with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        declared = response.headers.get("Content-Length")
+        size = int(declared) if declared and declared.isdigit() else None
+        if max_bytes is None:
+            return response.read(), size
+        if size is not None:
+            if size > max_bytes:
+                return None, size
+            return response.read(), size
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                return None, None  # host declared no size; we know only that it exceeds
+            chunks.append(chunk)
+        return b"".join(chunks), total
+
+
 def get_text(url: str, headers: dict[str, str] | None = None) -> str:
     return get_bytes(url, headers).decode("utf-8", errors="replace")
 

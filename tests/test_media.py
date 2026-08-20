@@ -10,6 +10,15 @@ from scrolls.media import capture_media, has_pending_media
 from scrolls.paths import get_paths
 
 
+def _as_download(fake):
+    """Adapt a `url -> bytes` fake to the `(payload, size)` download seam."""
+
+    def download(url, *, max_bytes=None):
+        payload = fake(url)
+        return payload, len(payload)
+
+    return download
+
 @pytest.fixture
 def paths(tmp_path):
     p = get_paths(tmp_path / "home")
@@ -31,7 +40,7 @@ def make_item(**overrides):
 
 
 def test_capture_downloads_ref_and_records_root_relative_path(paths, monkeypatch):
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"%PDF-1.4 fake")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"%PDF-1.4 fake"))
     item = make_item()
 
     updated, results = capture_media(paths, item)
@@ -53,7 +62,7 @@ def test_capture_downloads_ref_and_records_root_relative_path(paths, monkeypatch
 
 
 def test_capture_extension_comes_from_url_path(paths, monkeypatch):
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"jpeg-bytes")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"jpeg-bytes"))
     item = make_item(
         id="youtube:abc123",
         source="youtube",
@@ -69,7 +78,7 @@ def test_capture_extension_comes_from_url_path(paths, monkeypatch):
 
 
 def test_capture_extension_falls_back_to_ref_type(paths, monkeypatch):
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"bytes")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"bytes"))
     item = make_item(
         id="x:1111",
         source="x",
@@ -92,7 +101,7 @@ def test_capture_skips_already_captured_refs(paths, monkeypatch):
     def boom(url):
         raise AssertionError("network must not be touched")
 
-    monkeypatch.setattr(media, "_get_bytes", boom)
+    monkeypatch.setattr(media, "_download", _as_download(boom))
     relpath = "media/arxiv/1706-03762-1.pdf"
     target = paths.root / relpath
     target.parent.mkdir(parents=True)
@@ -110,7 +119,7 @@ def test_capture_skips_already_captured_refs(paths, monkeypatch):
 
 
 def test_capture_redownloads_to_recorded_path_when_file_missing(paths, monkeypatch):
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"healed")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"healed"))
     relpath = "media/arxiv/1706-03762-1.pdf"
     item = make_item(
         media=({"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": relpath},)
@@ -124,7 +133,7 @@ def test_capture_redownloads_to_recorded_path_when_file_missing(paths, monkeypat
 
 
 def test_capture_force_overwrites_existing_file(paths, monkeypatch):
-    monkeypatch.setattr(media, "_get_bytes", lambda url: b"version 2")
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"version 2"))
     relpath = "media/arxiv/1706-03762-1.pdf"
     target = paths.root / relpath
     target.parent.mkdir(parents=True)
@@ -145,7 +154,7 @@ def test_capture_failure_keeps_other_refs(paths, monkeypatch):
             raise urllib.error.URLError("connection refused")
         return b"good bytes"
 
-    monkeypatch.setattr(media, "_get_bytes", get_bytes)
+    monkeypatch.setattr(media, "_download", _as_download(get_bytes))
     item = make_item(
         id="x:2222",
         source="x",
@@ -171,7 +180,7 @@ def test_capture_skips_refs_without_a_url(paths, monkeypatch):
     def boom(url):
         raise AssertionError("network must not be touched")
 
-    monkeypatch.setattr(media, "_get_bytes", boom)
+    monkeypatch.setattr(media, "_download", _as_download(boom))
     # a typeless dict and a legacy bare string must not crash capture
     item = make_item(media=({"type": "thumbnail"}, "https://example.com/legacy.jpg"))
 
@@ -240,7 +249,7 @@ def test_a_rate_limited_download_is_retried_rather_than_failed(paths, monkeypatc
             raise _http_error(429)
         return b"payload"
 
-    monkeypatch.setattr(media, "_get_bytes", flaky)
+    monkeypatch.setattr(media, "_download", _as_download(flaky))
     updated, results = capture_media(paths, item, sleep=slept.append)
 
     assert [r["status"] for r in results] == ["captured"]
@@ -254,7 +263,7 @@ def test_a_persistent_rate_limit_fails_saying_so(paths, monkeypatch):
     def always_limited(url, *args, **kwargs):
         raise _http_error(429)
 
-    monkeypatch.setattr(media, "_get_bytes", always_limited)
+    monkeypatch.setattr(media, "_download", _as_download(always_limited))
     _, results = capture_media(paths, item, sleep=lambda _s: None, max_attempts=2)
 
     assert results[0]["status"] == "failed"
@@ -272,7 +281,7 @@ def test_retry_after_is_honored_when_the_host_names_a_wait(paths, monkeypatch):
             raise _http_error(429, {"retry-after": "7"})
         return b"payload"
 
-    monkeypatch.setattr(media, "_get_bytes", flaky)
+    monkeypatch.setattr(media, "_download", _as_download(flaky))
     capture_media(paths, item, sleep=slept.append)
 
     assert slept[0] == 7.0
@@ -287,7 +296,7 @@ def test_downloads_are_paced_between_files(paths, monkeypatch):
         )
     )
     slept = []
-    monkeypatch.setattr(media, "_get_bytes", lambda *a, **k: b"payload")
+    monkeypatch.setattr(media, "_download", _as_download(lambda *a, **k: b"payload"))
 
     capture_media(paths, item, sleep=slept.append, delay=0.25)
 
@@ -302,8 +311,78 @@ def test_a_non_rate_limit_error_is_not_retried(paths, monkeypatch):
         calls.append(url)
         raise _http_error(404)
 
-    monkeypatch.setattr(media, "_get_bytes", gone)
+    monkeypatch.setattr(media, "_download", _as_download(gone))
     _, results = capture_media(paths, item, sleep=lambda _s: None)
 
     assert results[0]["status"] == "failed"
     assert len(calls) == 1
+
+
+# --- size limits --------------------------------------------------------------
+#
+# The first full Wikipedia capture put 4.1 GB into 23 of 5,416 files, one `.webm`
+# alone holding 2.5 GB — 43% of the library in a single file no agent can read.
+# A declined file keeps its ref and records what was passed over, so the skip is
+# custody rather than loss.
+
+
+def test_a_file_over_its_cap_is_declined_and_recorded(paths, monkeypatch):
+    item = make_item(media=({"type": "video", "url": "https://u.w/big.webm"},))
+    calls = []
+
+    def within(url, *, max_bytes):
+        calls.append(max_bytes)
+        return None, 2_653_847_552
+
+    monkeypatch.setattr(media, "_download", within)
+    updated, results = capture_media(
+        paths, item, sleep=lambda _s: None, limit_for=lambda t: 26_214_400
+    )
+
+    assert calls == [26_214_400]
+    assert results[0]["status"] == "skipped"
+    assert results[0]["reason"] == "oversize"
+    assert results[0]["bytes"] == 2_653_847_552
+    # the reference survives: the URL is still there to fetch later
+    assert updated.media[0]["url"] == "https://u.w/big.webm"
+    assert updated.media[0]["bytes"] == 2_653_847_552
+    assert "path" not in updated.media[0]
+
+
+def test_a_declined_file_is_not_reported_as_pending_forever(paths):
+    item = make_item(
+        media=(
+            {
+                "type": "video",
+                "url": "https://u.w/big.webm",
+                "oversize": 26_214_400,
+                "bytes": 2_653_847_552,
+            },
+        )
+    )
+
+    assert not has_pending_media(paths, item)
+
+
+def test_a_type_may_be_uncapped_so_documents_are_not_dropped_for_being_big(
+    paths, monkeypatch
+):
+    """A PDF is the one large class that is text — an agent can read it."""
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"%PDF-1.4"))
+    item = make_item(media=({"type": "pdf", "url": "https://u.w/report.pdf"},))
+    limits = {"pdf": None, "video": 26_214_400}
+
+    _, results = capture_media(
+        paths, item, sleep=lambda _s: None, limit_for=lambda t: limits.get(t, 26_214_400)
+    )
+
+    assert results[0]["status"] == "captured"
+
+
+def test_no_limit_function_captures_every_size(paths, monkeypatch):
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: b"payload"))
+    item = make_item(media=({"type": "video", "url": "https://u.w/big.webm"},))
+
+    _, results = capture_media(paths, item, sleep=lambda _s: None)
+
+    assert results[0]["status"] == "captured"

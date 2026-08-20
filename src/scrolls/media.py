@@ -26,7 +26,10 @@ from scrolls.render import slugify
 from scrolls.sources import http
 
 # patchable seam, mirroring the source adapters: tests never touch the network
-_get_bytes = http.get_bytes
+# The single network seam. It returns `(payload, size)` and declines a file
+# larger than `max_bytes`, because "download this, but not if it is huge" is
+# one operation — splitting it in two left the capped path untestable.
+_download = http.get_bytes_within
 
 # extension fallback when the URL path has none (pbs.twimg.com puts the
 # format in the query; arXiv PDF links have no suffix at all)
@@ -60,6 +63,7 @@ def capture_media(
     sleep: Callable[[float], None] = time.sleep,
     delay: float = _DEFAULT_DELAY_SECONDS,
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+    limit_for: Callable[[str | None], int | None] | None = None,
 ) -> tuple[ScrollItem, list[dict[str, Any]]]:
     """Download the item's media refs; return (updated item, per-ref results).
 
@@ -78,6 +82,10 @@ def capture_media(
             does not earn a rate limit in the first place.
         max_attempts: Attempts per file before a rate limit is reported as
             a failure.
+        limit_for: Maps a ref's `type` to its byte cap, or None for no cap;
+            omit to capture every file whatever its size. A declined file
+            keeps its ref and records what was passed over, so the skip is
+            custody rather than loss.
     """
     refs = [dict(ref) if isinstance(ref, dict) else ref for ref in item.media]
     results: list[dict[str, Any]] = []
@@ -92,13 +100,27 @@ def capture_media(
         if not force and ref.get("path") and target.exists():
             results.append({"url": url, "status": "skipped", "path": relpath})
             continue
+        cap = limit_for(ref.get("type")) if limit_for else None
         try:
-            payload = _fetch_with_backoff(
-                url, sleep=sleep, delay=delay, max_attempts=max_attempts
+            payload, size = _fetch_with_backoff(
+                url, sleep=sleep, delay=delay, max_attempts=max_attempts, max_bytes=cap
             )
         except (OSError, ValueError) as exc:  # URLError is an OSError
             results.append({"url": url, "status": "failed", "error": str(exc)})
             continue
+        if payload is None:  # declined on size — recorded, not lost
+            if ref.get("oversize") != cap or ref.get("bytes") != size:
+                ref["oversize"], ref["bytes"] = cap, size
+                ref.pop("path", None)
+                changed = True
+            results.append(
+                {"url": url, "status": "skipped", "reason": "oversize", "bytes": size}
+            )
+            continue
+        if "oversize" in ref:  # the cap was raised since the last run
+            ref.pop("oversize", None)
+            ref.pop("bytes", None)
+            changed = True
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
         if ref.get("path") != relpath:
@@ -115,8 +137,13 @@ def _fetch_with_backoff(
     sleep: Callable[[float], None],
     delay: float,
     max_attempts: int,
-) -> bytes:
+    max_bytes: int | None = None,
+) -> tuple[bytes | None, int | None]:
     """Download one file, waiting out rate limits.
+
+    Returns:
+        A `(payload, size)` pair; `payload` is None when the file was declined
+        for exceeding `max_bytes`.
 
     Raises:
         ValueError: The host kept rate-limiting us past `max_attempts`. The
@@ -127,7 +154,7 @@ def _fetch_with_backoff(
     """
     for attempt in range(max_attempts):
         try:
-            payload = _get_bytes(url)
+            payload, size = _download(url, max_bytes=max_bytes)
         except urllib.error.HTTPError as exc:
             if exc.code != _RATE_LIMIT_STATUS:
                 raise
@@ -140,8 +167,9 @@ def _fetch_with_backoff(
             continue
         if delay:
             sleep(delay)
-        return payload
+        return payload, size
     raise ValueError("exhausted attempts")  # pragma: no cover - loop always returns
+
 
 
 def _retry_wait(exc: urllib.error.HTTPError, attempt: int) -> float:
@@ -160,6 +188,8 @@ def has_pending_media(paths: LibraryPaths, item: ScrollItem) -> bool:
     """True if any media ref has a URL but no captured file on disk."""
     for ref in item.media:
         if not isinstance(ref, dict) or not ref.get("url"):
+            continue
+        if ref.get("oversize"):  # declined on size, recorded, not pending
             continue
         relpath = ref.get("path")
         if not relpath or not (paths.root / relpath).exists():

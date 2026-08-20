@@ -1208,6 +1208,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download items' media references into media/ (JSON output)",
     )
     media_parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Decline files larger than N bytes this run, overriding "
+        "[media] max_bytes in config.toml; 0 captures every size",
+    )
+    media_parser.add_argument(
         "id",
         nargs="?",
         help="Capture one item's media by id or URL, re-downloading even if captured; "
@@ -1903,7 +1911,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "md":
         return _cmd_md(args.id)
     if args.command == "media":
-        return _cmd_media(args.id)
+        return _cmd_media(args.id, args.max_bytes)
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "related":
@@ -4090,8 +4098,18 @@ def _cmd_md(item_id: str | None) -> int:
     return 1 if counts["failed"] else 0
 
 
-def _cmd_media(item_id: str | None) -> int:
+def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
     paths = get_paths()
+    try:
+        config = load_config(paths.config_path)
+    except ConfigError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    if max_bytes is not None:  # the per-invocation override always wins
+        override = max_bytes or None
+        limit_for = lambda media_type: override  # noqa: E731
+    else:
+        limit_for = config.media_limit
     if item_id is not None:
         item, error = _find_item(paths, item_id)
         if item is None:
@@ -4107,9 +4125,12 @@ def _cmd_media(item_id: str | None) -> int:
     results = []
     counts = {"captured": 0, "skipped": 0, "failed": 0}
     for item in items:
-        updated, ref_results = capture_media(paths, item, force=force)
+        updated, ref_results = capture_media(
+            paths, item, force=force, limit_for=limit_for
+        )
         files = [r["path"] for r in ref_results if r["status"] == "captured"]
         errors = [r["error"] for r in ref_results if r["status"] == "failed"]
+        declined = [r for r in ref_results if r.get("reason") == "oversize"]
         if updated is not item:
             update_item(paths.db_path, updated)
             if updated.markdown_path:
@@ -4123,7 +4144,15 @@ def _cmd_media(item_id: str | None) -> int:
             )
         elif files:
             counts["captured"] += 1
-            results.append({"id": item.id, "status": "captured", "files": files})
+            entry = {"id": item.id, "status": "captured", "files": files}
+            if declined:
+                entry["declined"] = declined
+            results.append(entry)
+        elif declined:
+            counts["declined"] = counts.get("declined", 0) + 1
+            results.append(
+                {"id": item.id, "status": "declined", "declined": declined}
+            )
         else:
             counts["skipped"] += 1
             results.append(
