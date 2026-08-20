@@ -6,6 +6,11 @@ Frontmatter lines are `key: <JSON value>` — JSON scalars, arrays, and
 objects are valid YAML (YAML 1.2 is a JSON superset), so files stay
 parseable by standard tooling with zero dependencies. SQLite remains the
 index; scrolls can always be rebuilt from it (IDEAS.md §3).
+
+The body is a *view* of the captured text, not a second copy of it: math
+is normalized to KaTeX `$`/`$$` delimiters on the way out (see
+`scrolls.mathtext`) while SQLite keeps the capture verbatim, so a
+re-render never moves a `content_hash`.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import unicodedata
 from dataclasses import replace
 
 from scrolls.items import ScrollItem
+from scrolls.mathtext import normalize_math
 from scrolls.paths import LibraryPaths
 
 _FRONTMATTER_FIELDS = (
@@ -56,9 +62,9 @@ def render_markdown(item: ScrollItem) -> str:
 
     sections = [f"# {item.title or item.id}"]
     if item.summary:
-        sections += ["## Summary", item.summary]
+        sections += ["## Summary", normalize_math(item.summary)]
     if item.extracted_text:
-        sections += ["## Extracted Content", item.extracted_text]
+        sections += ["## Extracted Content", normalize_math(item.extracted_text)]
     links = [f"- Source: {item.url}"]
     if item.canonical_url and item.canonical_url != item.url:
         links.append(f"- Canonical: {item.canonical_url}")
