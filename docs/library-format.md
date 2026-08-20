@@ -90,7 +90,7 @@ always present, because the model cannot represent an item without them.
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
 | `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories, arXiv taxonomy names |
 | `links` | when non-empty | array of strings | outbound URLs found in the item, resolved into edges by `scrolls graph` |
-| `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file |
+| `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file, or `oversize`/`bytes` when the file was declined for exceeding its size limit |
 | `content_hash` | once fetched | string | `sha256:<hex>` over the fetched content |
 | `provenance` | once fetched | object | `adapter`, `fetched_at`, `extraction_method` |
 
@@ -745,6 +745,33 @@ photos — to `media/<source>/<id-slug>-<n><ext>`
   re-capture, so locations are as stable as scroll paths.
 - **Cache, not canon.** Files are plain downloads — no transformation —
   and can always be re-fetched from the recorded `url`.
+
+### Size limits
+
+Capture is bounded, because the cost is wildly uneven: the first full
+Wikipedia run put 4.1 GB into 23 of 5,416 files, one `.webm` alone
+holding 2.5 GB — 43% of the library in a single file no agent can read.
+
+The limits are configuration, not policy baked into the code:
+
+```toml
+[media]
+max_bytes = 26214400        # 25 MB; 0 means no limit
+max_image_width = 1600      # rasters wider than this capture as a thumbnail
+
+[media.max_bytes_by_type]
+pdf = 0                     # documents are text — size is a bad reason to drop one
+```
+
+- **`--max-bytes` beats the file**, the same way `--engine` beats
+  `default_engine`. `0` captures every size.
+- **A declined file is recorded, not lost.** The ref keeps its `type`,
+  `url` and `title`, and gains `oversize` (the cap that rejected it) and
+  `bytes` (its real size). Raising the limit and re-running captures it.
+- **`scrolls media` treats a declined ref as settled**, so a bounded
+  library is a clean no-op rather than a permanently pending one.
+- **Size is read from `Content-Length` before the body**, so declining a
+  2.5 GB file costs one set of response headers.
 
 ## Agent instruction files: `agents/`
 
