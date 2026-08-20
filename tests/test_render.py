@@ -72,7 +72,7 @@ def test_render_markdown_body_sections():
     assert "## Extracted Content" in body
     assert "== History ==" in body
     assert "## Links" in body
-    assert "- Source: https://en.wikipedia.org/wiki/SQLite" in body
+    assert "- Source: <https://en.wikipedia.org/wiki/SQLite>" in body
 
 
 def test_render_markdown_shows_canonical_link_only_when_different():
@@ -82,7 +82,7 @@ def test_render_markdown_shows_canonical_link_only_when_different():
     different = render_markdown(
         make_item(url="https://en.wikipedia.org/wiki/Sqlite")
     )
-    assert "- Canonical: https://en.wikipedia.org/wiki/SQLite" in different
+    assert "- Canonical: <https://en.wikipedia.org/wiki/SQLite>" in different
 
 
 def test_render_markdown_lists_item_links_in_links_section():
@@ -91,9 +91,9 @@ def test_render_markdown_lists_item_links_in_links_section():
     )
     body = markdown.split("---\n")[2]
     links_section = body.split("## Links")[1]
-    assert "- Source: https://en.wikipedia.org/wiki/SQLite" in links_section
-    assert "- https://sqlite.org/fts5.html" in links_section
-    assert "- https://example.com/post" in links_section
+    assert "- Source: <https://en.wikipedia.org/wiki/SQLite>" in links_section
+    assert "- <https://sqlite.org/fts5.html>" in links_section
+    assert "- <https://example.com/post>" in links_section
 
 
 def test_render_markdown_media_round_trips_in_frontmatter():
@@ -106,7 +106,7 @@ def test_render_markdown_omits_empty_links_and_media():
     markdown = render_markdown(make_item(links=(), media=()))
     assert "media" not in parse_frontmatter(markdown)
     links_section = markdown.split("## Links")[1]
-    assert links_section.strip().splitlines() == ["- Source: https://en.wikipedia.org/wiki/SQLite"]
+    assert links_section.strip().splitlines() == ["- Source: <https://en.wikipedia.org/wiki/SQLite>"]
 
 
 @pytest.fixture
@@ -147,3 +147,16 @@ def test_write_scroll_disambiguates_slug_collisions(library):
 def test_write_scroll_slug_falls_back_to_id_when_title_unusable(library):
     rendered = write_scroll(library, make_item(title=None))
     assert rendered.markdown_path == "scrolls/wikipedia/wikipedia-en-sqlite.md"
+
+
+def test_render_markdown_autolinks_urls_so_a_dollar_is_not_a_delimiter():
+    """12 captured URLs carry a `$`; one carries `$$`, which would open math.
+
+    An autolink keeps the URL byte-exact and takes it out of math scope, which
+    matters now that scroll bodies use `$`/`$$` as KaTeX delimiters.
+    """
+    url = "http://www.st.com/p.html?querycriteria=productId=SC2185$$1=ESDCAN*"
+    body = render_markdown(make_item(links=(url,))).split("---\n")[2]
+
+    assert f"- <{url}>" in body
+    assert f"- {url}" not in body.replace(f"- <{url}>", "")

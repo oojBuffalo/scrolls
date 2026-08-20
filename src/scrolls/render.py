@@ -10,7 +10,10 @@ index; scrolls can always be rebuilt from it (IDEAS.md §3).
 The body is a *view* of the captured text, not a second copy of it: math
 is normalized to KaTeX `$`/`$$` delimiters on the way out (see
 `scrolls.mathtext`) while SQLite keeps the capture verbatim, so a
-re-render never moves a `content_hash`.
+re-render never moves a `content_hash`. URLs in the `## Links` section are
+written as CommonMark autolinks (`<url>`) for the same reason: 12 captured
+URLs contain a `$`, one of them a `$$` that would otherwise open a display
+math block, and an autolink keeps the URL exact and out of math scope.
 """
 
 from __future__ import annotations
@@ -65,10 +68,10 @@ def render_markdown(item: ScrollItem) -> str:
         sections += ["## Summary", normalize_math(item.summary)]
     if item.extracted_text:
         sections += ["## Extracted Content", normalize_math(item.extracted_text)]
-    links = [f"- Source: {item.url}"]
+    links = [f"- Source: <{item.url}>"]
     if item.canonical_url and item.canonical_url != item.url:
-        links.append(f"- Canonical: {item.canonical_url}")
-    links += [f"- {link}" for link in item.links]
+        links.append(f"- Canonical: <{item.canonical_url}>")
+    links += [f"- <{link}>" for link in item.links]
     sections += ["## Links", "\n".join(links)]
 
     return "\n".join(lines) + "\n\n" + "\n\n".join(sections) + "\n"

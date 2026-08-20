@@ -103,13 +103,41 @@ In order (`test_render_markdown_body_sections`):
    classified gist). Omitted when there is none.
 3. `## Extracted Content` — the extracted full text (article body,
    transcript, PDF text). Omitted when there is none.
-4. `## Links` — always present:
-   - The first line is `- Source: <url>`.
-   - A `- Canonical: <canonical_url>` line follows only when it differs
-     from the source URL
+4. `## Links` — always present. Every URL is written as a CommonMark
+   autolink, angle brackets included, so that a `$` inside a URL cannot
+   act as a KaTeX delimiter (12 captured URLs contain one, and one
+   contains `$$`):
+   - The first line is `- Source: ` plus the autolinked `url`.
+   - A `- Canonical: ` line plus the autolinked `canonical_url` follows
+     only when it differs from the source URL
      (`test_render_markdown_shows_canonical_link_only_when_different`).
-   - Then one `- <url>` line per link extracted from the content
+   - Then one autolinked line per link extracted from the content
      (`test_render_markdown_lists_item_links_in_links_section`).
+
+### Math in a body
+
+Scroll bodies carry math in KaTeX delimiters, so a formula reads as a
+formula in any Markdown viewer that renders math and as plain TeX
+everywhere else.
+
+- **`$$…$$`** — a formula that stood alone as its own paragraph.
+- **`$…$`** — a formula that sat inside a sentence. The sentence is
+  rejoined onto one line around it.
+- **`\$`** — a literal dollar in prose. Every one is escaped, so the only
+  live delimiters in a body are the ones the renderer emitted.
+
+The source of this is `scrolls.mathtext.normalize_math`, applied to the
+summary and the extracted text on the way out. It runs at render time,
+not fetch time: the index keeps the captured text verbatim, which is what
+`content_hash` covers and `verify` re-checks, so re-rendering a scroll
+never moves a custody hash.
+
+Wikipedia is the case that forced it. MediaWiki's `explaintext` extract
+cannot render a `<math>` tag, so it emits the MathML fallback — one symbol
+per indented line — followed by the real TeX in a `{\displaystyle …}`
+wrapper. The fallback is dropped and the TeX is kept. Nothing in the
+normalizer is Wikipedia-specific; any source using the same convention
+gets the same treatment, and text with no formula is returned unchanged.
 
 Not in a scroll, by design — ask `scrolls show <id>` when you need
 these:
@@ -159,9 +187,9 @@ The dominant sequence transduction models are based on complex recurrent or conv
 
 ## Links
 
-- Source: https://arxiv.org/abs/1706.03762
-- Canonical: http://arxiv.org/abs/1706.03762v7
-- https://arxiv.org/pdf/1706.03762
+- Source: <https://arxiv.org/abs/1706.03762>
+- Canonical: <http://arxiv.org/abs/1706.03762v7>
+- <https://arxiv.org/pdf/1706.03762>
 ```
 
 ## Compiled library pages: `library/`
