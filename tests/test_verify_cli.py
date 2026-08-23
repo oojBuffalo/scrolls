@@ -1208,3 +1208,39 @@ def test_history_status_is_a_closed_vocabulary(paths, capsys):
     with pytest.raises(SystemExit) as excinfo:
         main(["history", item.id, "--status", "verified"])
     assert excinfo.value.code == 2
+
+
+def test_a_sweep_interrupted_midway_keeps_the_verdicts_it_already_earned(
+    paths, monkeypatch, capsys
+):
+    """A crash partway through a batch must not discard the completed checks.
+
+    Every verdict costs a live round-trip, so a sweep over a real library is
+    minutes of network work. Recording the whole batch only after the loop
+    finished meant one failure at the end threw away every check before it --
+    the expensive part -- and left the ledger claiming those items had never
+    been looked at.
+    """
+    for index in range(7):
+        insert_item(paths.db_path, _item(f"https://e.com/{index}"))
+
+    checked = []
+
+    def recapture(item):
+        if len(checked) == 5:
+            raise KeyboardInterrupt("operator stopped the sweep")
+        checked.append(item.id)
+        return item  # unchanged
+
+    _stub_recapture(monkeypatch, recapture)
+
+    with pytest.raises(KeyboardInterrupt):
+        main(["verify", "--all"])
+
+    # The five completed checks survive the interrupt.
+    recorded = {
+        event.item_id
+        for item_id in checked
+        for event in item_events(paths.db_path, item_id)
+    }
+    assert recorded == set(checked)

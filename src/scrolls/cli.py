@@ -3706,6 +3706,12 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
     return 1 if counts["failed"] else 0
 
 
+# How many verdicts a batch sweep buffers before appending them to the ledger.
+# Small enough that an interrupt loses at most a few live round-trips, large
+# enough that a 566-item sweep costs ~23 transactions instead of 566.
+_VERIFY_CHECKPOINT = 25
+
+
 def _cmd_verify(
     ref: str | None,
     verify_all: bool,
@@ -3850,26 +3856,42 @@ def _cmd_verify(
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     counts = {"unchanged": 0, "drifted": 0, "rotted": 0, "error": 0}
-    events = []
     results = []
     attempted = 0
-    for item in items:
-        if limit is not None and attempted >= limit:
-            break
-        attempted += 1
-        event = verify_item(item, live_recapture, now=now)
-        events.append(event)
-        counts[event.status] += 1
-        results.append(
-            {
-                "id": event.item_id,
-                "status": event.status,
-                "prior_hash": event.prior_hash,
-                "observed_hash": event.observed_hash,
-                "detail": event.detail,
-            }
-        )
-    record_events(paths.db_path, events)
+
+    # Each verdict costs a live round-trip, so a whole-library sweep is minutes
+    # of network work. The ledger is append-only, so checkpointing it mid-run is
+    # free of ordering risk and means an interrupt (or a crash on item 500 of
+    # 566) keeps every check already paid for, instead of leaving the ledger
+    # claiming those items were never looked at.
+    pending: list[CustodyEvent] = []
+
+    def flush() -> None:
+        if pending:
+            record_events(paths.db_path, pending)
+            pending.clear()
+
+    try:
+        for item in items:
+            if limit is not None and attempted >= limit:
+                break
+            attempted += 1
+            event = verify_item(item, live_recapture, now=now)
+            pending.append(event)
+            counts[event.status] += 1
+            results.append(
+                {
+                    "id": event.item_id,
+                    "status": event.status,
+                    "prior_hash": event.prior_hash,
+                    "observed_hash": event.observed_hash,
+                    "detail": event.detail,
+                }
+            )
+            if len(pending) >= _VERIFY_CHECKPOINT:
+                flush()
+    finally:
+        flush()
     print(json.dumps({"checked": len(results), **counts, "results": results}))
     return 1 if counts["error"] else 0
 
