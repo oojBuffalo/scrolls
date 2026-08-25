@@ -1,14 +1,15 @@
 """Bluesky fetch adapter (IDEAS.md §6, ADR 0048).
 
 IDEAS.md §6 deliberately deferred X/Twitter because its auth/session
-complexity is annoying, and to this day `x` items arrive only through the
-Field Theory import (ADR 0009) — there is no native `x` fetch adapter, so
-a pasted tweet URL registers but never enriches. Bluesky is the open
-social network that solves exactly that problem: the AT Protocol exposes a
-fully public, keyless *AppView* (`public.api.bsky.app`), so a saved
-`bsky.app/profile/<actor>/post/<rkey>` post becomes a clean scroll without
-a login, a cookie, or a token — the social-post sibling Scrolls could
-never get from X.
+complexity is annoying, and when this adapter landed `x` items arrived only
+through the Field Theory import (ADR 0009), with no native `x` fetch adapter,
+so a pasted tweet URL registered but never enriched. X has since grown both a
+native collection sync and a fetch adapter (ADR 0108), each borrowing the
+browser's own session. Bluesky remains the open social network that needs none
+of that: the AT Protocol exposes a fully public, keyless *AppView*
+(`public.api.bsky.app`), so a saved `bsky.app/profile/<actor>/post/<rkey>` post
+becomes a clean scroll without a login, a cookie, or a token — no session to
+borrow, and none to expire.
 
 It is also the cheapest of the discussion-aggregator adapters in spirit:
 one `app.bsky.feed.getPostThread` call returns the post *and* its reply

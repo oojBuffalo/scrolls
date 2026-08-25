@@ -3137,10 +3137,16 @@ still registered (stage `detected`) and the same payload gains an
 `test_ingest_fetch_failure_leaves_item_detected`):
 
 ```console
-$ scrolls ingest https://x.com/karpathy/status/3333
-{"id": "x:3333", "source": "x", "url": "https://x.com/karpathy/status/3333", "created": false, "stage": "detected", "error": "no fetch adapter for source 'x'"}
+$ scrolls ingest https://example.com/paywalled
+{"id": "web:...", "source": "web", "url": "https://example.com/paywalled", "created": false, "stage": "detected", "error": "fetch failed: HTTP 403"}
 [exit 1]
 ```
+
+Every source `scrolls add` currently detects has a fetch adapter, so the
+adapterless half of that branch is reached only by an item whose source *this*
+build does not know — one imported from a library built on a newer release.
+Such an item registers, reports `no fetch adapter for source '<name>'`, and
+waits; nothing held is discarded.
 
 ### `scrolls import bookmarks <path>`
 
@@ -4713,9 +4719,10 @@ and quoted-tweet body from the same response that enumerated them
   reached live X — verifying it needs a paid developer app the maintainer does
   not hold. It is tested only with the network injected. The cookie default
   was verified live against a 479-bookmark collection; prefer it.
-- **No drift detection** — there is no `x` fetch adapter, so `scrolls verify`
-  on a bookmark fails with `no fetch adapter for source 'x'` rather than
-  reporting a false clean verdict. See [`adapters.md`](adapters.md#x).
+- **Drift detection works on bookmarks.** `scrolls verify --source x` re-reads
+  each post through the same browser session, so a changed post reads
+  `drifted` and a deleted one `rotted` — an expired session stays `error`
+  rather than claiming 482 posts vanished. See [`adapters.md`](adapters.md#x).
 
 | Key | Meaning |
 | --- | --- |
@@ -4961,12 +4968,12 @@ No argument: run the source adapter for every item at stage `detected`
 | `results[]` | per-item `{id, status, ...}`; `title`+`stage` on success, `reason` on skip, `error` on failure |
 
 ```console
-$ scrolls fetch                       # only an x item is detected
-{"fetched": 0, "skipped": 1, "failed": 0, "results": [{"id": "x:3333", "status": "skipped", "reason": "no fetch adapter for source 'x'"}]}
+$ scrolls fetch                       # only an item of an unknown source is detected
+{"fetched": 0, "skipped": 1, "failed": 0, "results": [{"id": "gopher:3333", "status": "skipped", "reason": "no fetch adapter for source 'gopher'"}]}
 [exit 0]
 
-$ scrolls fetch x:3333                # by id: same situation is a failure
-{"fetched": 0, "skipped": 0, "failed": 1, "results": [{"id": "x:3333", "status": "failed", "error": "no fetch adapter for source 'x'"}]}
+$ scrolls fetch gopher:3333           # by id: same situation is a failure
+{"fetched": 0, "skipped": 0, "failed": 1, "results": [{"id": "gopher:3333", "status": "failed", "error": "no fetch adapter for source 'gopher'"}]}
 [exit 1]
 
 $ scrolls fetch arxiv:1706.03762      # by id, with network

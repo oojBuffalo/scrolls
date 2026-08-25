@@ -1346,10 +1346,11 @@ with no JSON:API envelope, stdlib only).
 
 ### x
 
-**The one source with a capture path but no fetch adapter.** X bookmarks are a
-*collection*: not a file someone exported and not a feed delta, but the user's
-own saved set, copied out of the service they saved it in. So `x` arrives
-through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
+**The one source with two capture paths.** X bookmarks are a *collection*: not
+a file someone exported and not a feed delta, but the user's own saved set,
+copied out of the service they saved it in. So `x` normally arrives through
+`scrolls sync x --bookmarks` rather than through `scrolls fetch`. A second,
+per-item adapter re-reads one post so custody can re-check it.
 
 - **Custody shape — capture-at-pull.** Items enter at stage `fetched` with
   content taken from the same response that enumerated them. This is a third
@@ -1374,15 +1375,23 @@ through `scrolls sync x --bookmarks` rather than through `scrolls fetch`.
   bookmark timestamp on either the internal or the official path, so
   `provenance.saved_at_source` records `"synced_at"` and says so rather than
   minting a plausible one from X's opaque ordering key.
-- **No drift detection.** Because there is no `x` entry in `FETCH_ADAPTERS`,
-  `scrolls verify` cannot re-capture a bookmarked post and fails with `no
-  fetch adapter for source 'x'`. An x item is captured once and held; Scrolls
-  does not claim to know whether the post has since changed or been deleted.
-  This is deliberate and recorded, not an oversight.
+- **Drift detection re-reads one post over the same session.** The `x` entry in
+  `FETCH_ADAPTERS` (`sources/x.py`) calls `TweetResultByRestId` with the same
+  browser cookies the collection walk uses — deliberately not X's anonymous
+  syndication CDN, which cannot see a protected account you follow and would
+  report drift that never happened. Both paths run the same parser, so a
+  re-capture's `content_hash` is comparable to the original's by construction.
+- **A deleted post reads as `rotted`, not as an error.** X answers a deleted,
+  suspended or withheld post with a normal HTTP 200 whose `data.tweetResult` is
+  empty, so there is no 404 to read. The adapter raises `SourceGone`, the
+  `FetchError` subtype that carries "the source says this is gone" as a type.
+  An expired session or a rotated query id stays `error` — never rot, which
+  would claim the post is gone when only our access is.
 - **Volatility:** the default route uses X's internal GraphQL API, pinned to a
   build hash that X rotates on deploy. A rotated id is reported as such, never
-  as an empty collection. The pinned id and feature flags were confirmed
-  working against live X on 2026-08-18.
+  as an empty collection. The single-post query id carries the same risk and is
+  pinned beside it. The bookmarks id and feature flags were confirmed working
+  against live X on 2026-08-18, the single-post id on 2026-08-24.
 - **The OAuth route is unverified and will stay that way.** Verifying it needs
   a registered X developer app on a paid plan, which the maintainer does not
   hold. It is code-reviewed and covered by tests with the network injected,

@@ -2,6 +2,7 @@
 
 *Amended: 2026-07-26 — vision, inspiration, and priority pointers consolidated
 (see `docs/vision.md` and `docs/inspiration/`). 2026-07-27 — doc-style rule
+added. 2026-08-24 — browser-session-first rule for reaching online accounts
 added.*
 
 Scrolls is a local-first custody system for saved internet artifacts: it holds
@@ -94,6 +95,39 @@ enumerations, tables for catalogs, no multi-line parenthetical asides. Shipped
 facts go to the roadmap's one-line ledger; dated narration goes to
 `docs/agents/progress/<YYMMDD>/`; design docs state the current contract and
 leave slice-by-slice history to git.
+
+## Reaching an online account
+
+**The logged-in browser session is the primary route. Always.** Any capability
+that reaches a user's account borrows the session already sitting in their
+browser, the way `fieldtheory-cli` does. Stored credentials — OAuth grants, API
+keys, tokens — are a **secondary, optional** fallback, never the default and
+never required.
+
+This is a standing architectural constraint across the whole repository, not a
+per-adapter preference. It binds new sources, new sync shapes, and re-fetch or
+verify paths just as much as first capture.
+
+**Why:** it avoids storing credentials at all, and many platforms either do not
+support third-party API use or do not hand out API keys. Requiring a developer
+account makes the on-ramp cost money and locks out every platform without a
+public API.
+
+Applying it:
+
+- **Route it through `browser_cookies.py`** with a per-service `CookieSpec`
+  (hosts, required cookie names, login URL). That module is already generic —
+  do not write a second cookie reader.
+- **Keep credential paths behind an explicit opt-in flag**, the shape
+  `scrolls sync x --auth oauth` already uses, and document them as optional and
+  (where true) billed.
+- **An anonymous public endpoint is not a substitute.** It is a *different*
+  surface that sees less than the signed-in user does. Rejected on exactly
+  those grounds while designing the `x` fetch adapter (ADR 0108): a keyless CDN
+  cannot see a protected account you follow, so a re-capture through it would
+  report drift that never happened.
+- **Env-var cookie overrides** (`SCROLLS_X_AUTH_TOKEN` / `SCROLLS_X_CT0`) are
+  part of the primary route, not the secondary one — the same session, pasted.
 
 ## Project decision posture
 

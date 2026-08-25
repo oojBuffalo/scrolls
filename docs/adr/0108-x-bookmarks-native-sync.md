@@ -6,6 +6,9 @@ Status: accepted
 
 Supersedes: [0009](0009-fieldtheory-import.md)
 
+*Amended: 2026-08-24 — the `x` fetch adapter now exists. The section below
+records why it was originally left out and what changed.*
+
 ## Context
 
 ADR 0009 routed X bookmarks through `scrolls import fieldtheory` and closed
@@ -138,7 +141,7 @@ from a code defect.
   timestamp from an ordering key is fabrication (vision §2.8).
 - **Re-syncing never overwrites.** `INSERT OR IGNORE`, the 0009 rule.
 
-### There is no `x` fetch adapter, and `verify` says so
+### The `x` fetch adapter, deferred then built
 
 0009 established the boundary that fetch adapters pull one item from the
 network while importers bulk-read local archives. Bookmarks sync is a third
@@ -147,16 +150,46 @@ items enter at stage `fetched` with content captured from the GraphQL
 response, because entering at `detected` would strand them in every
 `scrolls fetch` run.
 
-**No `x` entry is added to `FETCH_ADAPTERS`.** The consequence is deliberate
-and must be stated rather than discovered: `scrolls verify` **cannot detect
-drift on a bookmarked post**. It fails with the existing honest error, `no
-fetch adapter for source 'x'`, rather than silently reporting a clean
-verdict. An x item is captured once and held; Scrolls does not claim to know
-whether the post has since changed or been deleted.
+**Originally, no `x` entry joined `FETCH_ADAPTERS`.** The stated consequence
+was that `scrolls verify` could not detect drift on a bookmarked post: it
+failed with the honest `no fetch adapter for source 'x'` rather than a false
+clean verdict, on the reasoning that re-running the whole sync was the only
+re-capture path X offered.
 
-This is the honest position given the surface. Re-running the sync is the
-only re-capture path X offers, and it currently skips held items rather than
-comparing them.
+**That reasoning was wrong, and dogfooding is what showed it.** Pulling the
+collection into the live library put 482 posts — 46% of it — permanently
+beyond verification, and a sweep stamped every one of them `error`. The
+premise failed on inspection: X's web client reads a single post through
+`TweetResultByRestId`, the same internal GraphQL API, over the same session
+cookie. There was a re-capture path all along.
+
+`src/scrolls/sources/x.py` now registers `"x"` in `FETCH_ADAPTERS`. Three
+properties keep the verdicts honest:
+
+- **The same session, not an easier one.** X's public syndication CDN would
+  have been simpler to call and needs no cookies, but it is anonymous: it
+  cannot see a protected account you follow, so a re-capture would see less
+  than the capture did and report drift that never happened. The adapter
+  borrows the browser session, exactly as the bookmarks walk does. Stored
+  credentials remain the optional path, never the default.
+- **The same parser, so hashes are comparable by construction.** Both
+  endpoints return the identical tweet subtree, so both route through
+  `x_bookmarks.item_from_tweet_result`. Were the two extractions allowed to
+  drift apart, every unchanged post would start reporting drift.
+- **A deleted post is rot, not an error.** X reports deletion as a normal 200
+  with an empty `data.tweetResult`, so there is no 404 for `custody._is_gone`
+  to read. The adapter raises `SourceGone` — a new `FetchError` subtype that
+  carries "the source says this is gone" structurally, rather than inventing an
+  HTTP status that never came over the wire or letting a message string decide
+  custody.
+
+A re-capture keeps the held `saved_at`, and carries `saved_at_source` and
+`sort_index` across unchanged. X still exposes no bookmark timestamp; a second
+read knows no more about when you saved something than the first one did.
+
+The pinned `TweetResultByRestId` query id carries the same rotation risk as the
+bookmarks one and is dated in the source beside it. It was read out of x.com's
+own JavaScript bundle rather than guessed.
 
 ## Consequences
 
@@ -176,8 +209,11 @@ comparing them.
   world-readable, keyed by service so other credentials survive an X rewrite.
   If the #2 contract later settles on a different store, this is the shape it
   has to beat, not a blocker it has to unblock.
-- **Deferred: drift detection for x**, which needs a re-capture path — most
-  likely a re-sync that compares instead of skipping.
+- **Shipped 2026-08-24: drift detection for x.** The guessed re-capture path
+  here — "most likely a re-sync that compares instead of skipping" — was not
+  the one that existed. `TweetResultByRestId` reads a single post over the same
+  session, so the adapter is per-item like every other, and no special re-sync
+  mode was needed. See *The `x` fetch adapter, deferred then built* above.
 - **Not supported: Safari.** Its cookies live in a proprietary
   `binarycookies` format outside the Chromium and Firefox schemes. The env-var
   path covers it.
