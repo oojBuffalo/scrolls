@@ -15,6 +15,22 @@ class FetchError(Exception):
     """A source adapter could not fetch or normalize an item."""
 
 
+class SourceGone(FetchError):
+    """The source says this item no longer exists.
+
+    The definitive-loss signal for adapters whose upstream reports deletion
+    *without* a 404. `custody._is_gone` reads an HTTP status off the failure's
+    cause precisely so a message string never decides rot; some APIs answer
+    "this is gone" inside a 200 envelope instead, and an adapter that has read
+    that envelope knows the same fact a 404 would have carried. Raising this
+    says so structurally, keeping the rot/error split honest without inventing
+    an HTTP status that never came over the wire.
+
+    X is the first: a deleted post returns HTTP 200 with an empty
+    `data.tweetResult`.
+    """
+
+
 # Imported below the FetchError definition because adapter modules import it
 # back from this package.
 from scrolls.sources import (  # noqa: E402
@@ -58,6 +74,7 @@ from scrolls.sources import (  # noqa: E402
     web,
     wikidata,
     wikipedia,
+    x,
     youtube,
     zenodo,
 )
@@ -168,6 +185,12 @@ FETCH_ADAPTERS = {
     # to the Wikipedia article about it (the Wikidata↔Wikipedia edge, ADR 0075).
     "wikidata": wikidata.fetch_item,
     "wikipedia": wikipedia.fetch_item,
+    # X is the one source whose items arrive already captured — the bookmarks
+    # walk reads the body straight out of the GraphQL page (ADR 0108). This
+    # adapter is the *re*-capture: one post at a time, over the same browser
+    # session, so `scrolls verify` can tell a drifted post from a deleted one
+    # instead of reporting that x items cannot be checked at all.
+    "x": x.fetch_item,
     "youtube": youtube.fetch_item,
     # Zenodo is CERN's open-science repository for datasets, software, and
     # preprints; the landing-page URL fetches the keyless InvenioRDM record and

@@ -220,7 +220,13 @@ def test_ingest_url_returns_the_cli_payload(scrolls_home, fake_wikipedia_api):
     assert "error" not in payload
 
 
-def test_ingest_url_without_adapter_reports_error_as_data(scrolls_home):
+def test_ingest_url_without_adapter_reports_error_as_data(scrolls_home, monkeypatch):
+    # `x` gained a fetch adapter, so the adapterless case is now only reachable
+    # for a source this build does not know. Dropping the entry reproduces it
+    # and keeps the test off the network.
+    from scrolls.sources import FETCH_ADAPTERS
+
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     payload = mcp_server.ingest_url("https://x.com/karpathy/status/1111")
     assert payload["stage"] == "detected"
     assert "no fetch adapter" in payload["error"]

@@ -45,6 +45,7 @@ from scrolls.items import (
 )
 from scrolls.items_export import dump_items_export
 from scrolls.render import write_scroll
+from scrolls.sources import FETCH_ADAPTERS
 
 
 def _as_download(fake):
@@ -985,7 +986,15 @@ def test_fetch_all_fetches_detected_wikipedia_item(scrolls_home, fake_wikipedia_
     assert stored.extracted_text.startswith("SQLite is a database engine.")
 
 
-def test_fetch_all_skips_sources_without_adapter(scrolls_home, fake_wikipedia_api, capsys):
+def test_fetch_all_skips_sources_without_adapter(
+    scrolls_home, fake_wikipedia_api, monkeypatch, capsys
+):
+    # `x` was the last detected source without a fetch adapter; now that it has
+    # one, the adapterless case is reached only by a source this build does not
+    # know (an imported bundle from a newer one). Dropping the entry reproduces
+    # that without pretending x is unfetchable -- and keeps the test offline,
+    # since the adapter would otherwise reach live X over the browser session.
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     main(["add", "https://x.com/karpathy/status/1234567890123456789"])
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     capsys.readouterr()
@@ -1039,8 +1048,14 @@ def test_fetch_limit_caps_attempts_and_resumes(scrolls_home, fake_wikipedia_api,
 
 
 def test_fetch_limit_does_not_count_adapterless_skips(
-    scrolls_home, fake_wikipedia_api, capsys
+    scrolls_home, fake_wikipedia_api, monkeypatch, capsys
 ):
+    # `x` was the last detected source without a fetch adapter; now that it has
+    # one, the adapterless case is reached only by a source this build does not
+    # know (an imported bundle from a newer one). Dropping the entry reproduces
+    # that without pretending x is unfetchable -- and keeps the test offline,
+    # since the adapter would otherwise reach live X over the browser session.
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     main(["init"])
     insert_item(
         get_paths().db_path,
@@ -1112,7 +1127,13 @@ def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_
     assert payload["results"][0]["id"] == "wikipedia:en:SQLite"
 
 
-def test_fetch_by_id_without_adapter_fails(scrolls_home, capsys):
+def test_fetch_by_id_without_adapter_fails(scrolls_home, monkeypatch, capsys):
+    # `x` was the last detected source without a fetch adapter; now that it has
+    # one, the adapterless case is reached only by a source this build does not
+    # know (an imported bundle from a newer one). Dropping the entry reproduces
+    # that without pretending x is unfetchable -- and keeps the test offline,
+    # since the adapter would otherwise reach live X over the browser session.
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     main(["add", "https://x.com/karpathy/status/1234567890123456789"])
     capsys.readouterr()
 
@@ -2735,7 +2756,15 @@ def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, caps
     assert payload["markdown_path"] == "scrolls/wikipedia/sqlite.md"  # stable path
 
 
-def test_ingest_without_adapter_registers_but_reports_failure(scrolls_home, capsys):
+def test_ingest_without_adapter_registers_but_reports_failure(
+    scrolls_home, monkeypatch, capsys
+):
+    # `x` was the last detected source without a fetch adapter; now that it has
+    # one, the adapterless case is reached only by a source this build does not
+    # know (an imported bundle from a newer one). Dropping the entry reproduces
+    # that without pretending x is unfetchable -- and keeps the test offline,
+    # since the adapter would otherwise reach live X over the browser session.
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     exit_code = main(["ingest", "https://x.com/karpathy/status/1234567890123456789"])
     assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
@@ -9914,7 +9943,13 @@ def test_show_unknown_url_reports_the_resolved_id(scrolls_home, capsys):
     assert "(from https://example.com/never-saved)" in error
 
 
-def test_fetch_accepts_item_url(scrolls_home, capsys):
+def test_fetch_accepts_item_url(scrolls_home, monkeypatch, capsys):
+    # `x` was the last detected source without a fetch adapter; now that it has
+    # one, the adapterless case is reached only by a source this build does not
+    # know (an imported bundle from a newer one). Dropping the entry reproduces
+    # that without pretending x is unfetchable -- and keeps the test offline,
+    # since the adapter would otherwise reach live X over the browser session.
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     main(["add", "https://x.com/karpathy/status/1111"])
     capsys.readouterr()
 

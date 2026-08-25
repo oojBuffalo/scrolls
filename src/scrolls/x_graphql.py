@@ -43,6 +43,14 @@ X_PUBLIC_BEARER = (
 # rotated since; the date is what tells you that rather than a code bug.
 BOOKMARKS_QUERY_ID = "Z9GWmP0kP2dajyckAaDUBw"
 BOOKMARKS_OPERATION = "Bookmarks"
+
+# The single-post read behind the `x` fetch adapter, so a bookmarked post can be
+# re-captured one at a time and `scrolls verify` can tell drift from rot. Same
+# rotation risk as the bookmarks id above, and read out of x.com's own JS bundle
+# rather than guessed. Last confirmed working against live X on 2026-08-24.
+TWEET_QUERY_ID = "GZsN2Pc4knAoit6pXa4HSA"
+TWEET_OPERATION = "TweetResultByRestId"
+
 _ENDPOINT = "https://x.com/i/api/graphql/{query_id}/{operation}"
 
 _CHROME_UA = (
@@ -81,6 +89,15 @@ GRAPHQL_FEATURES: dict[str, bool] = {
     "longform_notetweets_rich_text_read_enabled": True,
     "longform_notetweets_inline_media_enabled": True,
     "responsive_web_enhance_cards_enabled": False,
+}
+
+
+# A 404 from a rotated query id looks exactly like the emptiest possible honest
+# answer, and the two lead somewhere completely different. Each operation says
+# which wrong conclusion not to draw.
+_ROTATION_NOTE = {
+    BOOKMARKS_OPERATION: "This is not an empty bookmark collection.",
+    TWEET_OPERATION: "This is not a deleted post.",
 }
 
 
@@ -163,6 +180,65 @@ def build_url(*, cursor: str | None = None, count: int = _DEFAULT_PAGE_SIZE) -> 
         query_id=BOOKMARKS_QUERY_ID, operation=BOOKMARKS_OPERATION
     )
     return f"{endpoint}?{query}"
+
+
+def build_tweet_url(tweet_id: str) -> str:
+    """The single-post URL for one tweet id."""
+    variables: dict[str, Any] = {
+        "tweetId": tweet_id,
+        "withCommunity": False,
+        "includePromotedContent": False,
+        "withVoice": False,
+    }
+    query = urllib.parse.urlencode(
+        {
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "features": json.dumps(GRAPHQL_FEATURES, separators=(",", ":")),
+        }
+    )
+    endpoint = _ENDPOINT.format(query_id=TWEET_QUERY_ID, operation=TWEET_OPERATION)
+    return f"{endpoint}?{query}"
+
+
+def fetch_tweet(
+    session: XSession,
+    tweet_id: str,
+    *,
+    get_page: PageFetcher | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+) -> dict:
+    """Read one post by id, over the same session the bookmarks walk uses.
+
+    The re-capture half of the collection on-ramp: `fetch_bookmarks` learns
+    which posts you saved, this reads one of them again so custody can say
+    whether it still says what it said. Both authenticate with the browser
+    session, so a protected account you follow re-reads exactly as it captured.
+
+    Args:
+        session: The browser session to authenticate with.
+        tweet_id: X's numeric post id.
+        get_page: Injected fetcher, for tests. Defaults to a real request.
+        sleep: Injected sleep, for tests.
+        max_attempts: Attempts before giving up on rate limits.
+
+    Returns:
+        The decoded GraphQL payload. A post that no longer exists is a normal
+        200 whose `data.tweetResult` is empty, so the caller — not the
+        transport — decides what an empty result means.
+
+    Raises:
+        XGraphQLError: The request failed, the session expired, or the pinned
+            query id has rotated.
+    """
+    fetcher = get_page or _http_get_tweet
+    return _fetch_with_backoff(
+        fetcher,
+        build_tweet_url(tweet_id),
+        build_headers(session),
+        sleep=sleep,
+        max_attempts=max_attempts,
+    )
 
 
 def fetch_bookmarks(
@@ -266,19 +342,40 @@ def _fetch_with_backoff(
     raise XGraphQLError("exhausted attempts")  # pragma: no cover - loop always returns
 
 
-def _http_get_page(url: str, headers: dict) -> dict:
-    """Fetch one page over HTTPS, mapping X's status codes to typed errors."""
+def _http_get(
+    url: str, headers: dict, *, query_id: str, operation: str
+) -> dict:
+    """Fetch one GraphQL response over HTTPS, mapping X's codes to typed errors."""
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise _map_http_error(exc) from exc
+        raise _map_http_error(exc, query_id=query_id, operation=operation) from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise XGraphQLError(f"bookmarks request failed: {exc}") from exc
+        raise XGraphQLError(f"{operation} request failed: {exc}") from exc
 
 
-def _map_http_error(exc: urllib.error.HTTPError) -> XGraphQLError:
+def _http_get_page(url: str, headers: dict) -> dict:
+    """Fetch one bookmarks page."""
+    return _http_get(
+        url, headers, query_id=BOOKMARKS_QUERY_ID, operation=BOOKMARKS_OPERATION
+    )
+
+
+def _http_get_tweet(url: str, headers: dict) -> dict:
+    """Fetch one single-post response."""
+    return _http_get(
+        url, headers, query_id=TWEET_QUERY_ID, operation=TWEET_OPERATION
+    )
+
+
+def _map_http_error(
+    exc: urllib.error.HTTPError,
+    *,
+    query_id: str = BOOKMARKS_QUERY_ID,
+    operation: str = BOOKMARKS_OPERATION,
+) -> XGraphQLError:
     """Turn an HTTP status into the error that tells the user what to do."""
     if exc.code == 429:
         return XRateLimited(retry_after=_retry_after(exc))
@@ -289,11 +386,11 @@ def _map_http_error(exc: urllib.error.HTTPError) -> XGraphQLError:
         )
     if exc.code == 404:
         return XQueryIdRotated(
-            "X no longer recognizes the pinned bookmarks query id "
-            f"({BOOKMARKS_QUERY_ID}); it rotates on X deploys and needs "
-            "refreshing. This is not an empty bookmark collection."
+            f"X no longer recognizes the pinned {operation.lower()} query id "
+            f"({query_id}); it rotates on X deploys and needs refreshing. "
+            + _ROTATION_NOTE.get(operation, "")
         )
-    return XGraphQLError(f"bookmarks request failed with HTTP {exc.code}")
+    return XGraphQLError(f"{operation} request failed with HTTP {exc.code}")
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:

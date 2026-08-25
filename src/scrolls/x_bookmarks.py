@@ -125,7 +125,53 @@ def _tweet_result(entry: dict) -> dict | None:
     return result
 
 
-def _to_item(result: dict, entry: dict, synced_at: str) -> ScrollItem:
+def tweet_result(payload: dict) -> dict | None:
+    """The tweet subtree of a single-post response, or None if the post is gone.
+
+    The `TweetResultByRestId` counterpart of `_tweet_result`. X answers a
+    deleted or suspended post with a normal 200 whose `data.tweetResult` is
+    empty, and a withheld one with a non-Tweet `__typename`; both mean the post
+    is no longer readable, which is a fact about X rather than a parse failure.
+    """
+    result = ((payload.get("data") or {}).get("tweetResult") or {}).get("result")
+    if not isinstance(result, dict):
+        return None
+    typename = result.get("__typename")
+    if typename == _VISIBILITY_TYPENAME:
+        result = result.get("tweet") or result
+    elif typename is not None and typename not in _TWEET_TYPENAMES:
+        return None
+    return result
+
+
+def item_from_tweet_result(
+    result: dict, *, synced_at: str, adapter: str = "x-bookmarks"
+) -> ScrollItem:
+    """Build one fetched `x` item from a tweet subtree.
+
+    The shared extraction behind both X on-ramps. The bookmarks walk and the
+    single-post re-capture read the *same* subtree shape out of the *same*
+    GraphQL API, so routing both through here is what makes a re-capture
+    hash-comparable to the original capture by construction rather than by
+    coincidence — the property `scrolls verify` rests on.
+
+    Args:
+        result: The tweet subtree, already unwrapped of any visibility envelope.
+        synced_at: UTC ISO-8601 timestamp for this capture.
+        adapter: Which on-ramp is calling, recorded in provenance.
+
+    Returns:
+        A fetched `x` item.
+
+    Raises:
+        ValueError: The subtree carries no usable tweet id.
+    """
+    return _to_item(result, {}, synced_at, adapter=adapter)
+
+
+def _to_item(
+    result: dict, entry: dict, synced_at: str, *, adapter: str = "x-bookmarks"
+) -> ScrollItem:
     """Build one fetched `x` item from a tweet subtree.
 
     Raises:
@@ -150,7 +196,7 @@ def _to_item(result: dict, entry: dict, synced_at: str) -> ScrollItem:
 
     sort_index = entry.get("sortIndex")
     provenance: dict[str, Any] = {
-        "adapter": "x-bookmarks",
+        "adapter": adapter,
         "fetched_at": synced_at,
         "extraction_method": "x:graphql-internal",
         # X exposes no bookmark timestamp; say so rather than imply one.

@@ -40,7 +40,7 @@ from typing import Any, Callable, Collection, Iterable
 
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, get_fidelity, get_item
-from scrolls.sources import FETCH_ADAPTERS, FetchError
+from scrolls.sources import FETCH_ADAPTERS, FetchError, SourceGone
 
 CUSTODY_STATUSES = ("unchanged", "drifted", "rotted", "error")
 
@@ -167,13 +167,23 @@ class CustodyEvent:
 
 
 def _is_gone(exc: BaseException) -> bool:
-    """Did this fetch failure carry a definitive HTTP 'gone' status?
+    """Did this fetch failure carry a definitive 'the source is gone' signal?
 
-    Adapters wrap transport errors as ``raise FetchError(...) from exc``, so the
-    original ``urllib`` ``HTTPError`` (which carries ``.code``) survives as the
-    cause. Reading the real status keeps the rot/error split honest — a string
-    like "not found" in a message never decides custody.
+    Two forms count, and a message string is neither of them — keeping the
+    rot/error split honest means never letting the text "not found" decide
+    custody:
+
+    - Adapters wrap transport errors as ``raise FetchError(...) from exc``, so
+      the original ``urllib`` ``HTTPError`` (which carries ``.code``) survives
+      as the cause; a 404/410 there is the usual signal.
+    - `SourceGone` is the same fact from an upstream that reports deletion
+      inside a 200 envelope, read by the adapter and re-raised as a type.
     """
+    if isinstance(exc, SourceGone):
+        # The adapter read "this is gone" out of a 200 envelope (X reports a
+        # deleted post that way). It knows the same fact a 404 would carry, and
+        # said so with a type rather than a message.
+        return True
     cause = getattr(exc, "__cause__", None)
     return getattr(cause, "code", None) in _GONE_CODES
 
