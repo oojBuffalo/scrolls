@@ -1188,10 +1188,12 @@ def test_md_bulk_run_is_idempotent(scrolls_home, fake_wikipedia_api, capsys):
     exit_code = main(["md"])  # nothing left at stage 'fetched'
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"rendered": 0, "failed": 0, "results": []}
+    assert payload == {"rendered": 0, "unchanged": 0, "failed": 0, "results": []}
 
 
-def test_md_by_id_rerenders_a_rendered_item(scrolls_home, fake_wikipedia_api, capsys):
+def test_md_by_id_reports_an_identical_rerender_unchanged(
+    scrolls_home, fake_wikipedia_api, capsys
+):
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     main(["fetch"])
     main(["md"])
@@ -1200,8 +1202,152 @@ def test_md_by_id_rerenders_a_rendered_item(scrolls_home, fake_wikipedia_api, ca
     exit_code = main(["md", "wikipedia:en:SQLite"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 0
+    assert payload["unchanged"] == 1
+    assert payload["results"][0] == {
+        "id": "wikipedia:en:SQLite",
+        "status": "unchanged",
+        "path": "scrolls/wikipedia/sqlite.md",
+    }
+
+
+@pytest.fixture
+def fake_wikipedia_pair(monkeypatch):
+    """Serve per-title MediaWiki payloads so two articles can coexist."""
+
+    def _get_json(url):
+        title = "Redis" if "Redis" in url else "SQLite"
+        return {
+            "query": {
+                "pages": [
+                    {
+                        "pageid": 100 if title == "Redis" else 200,
+                        "title": title,
+                        "fullurl": f"https://en.wikipedia.org/wiki/{title}",
+                        "canonicalurl": f"https://en.wikipedia.org/wiki/{title}",
+                        "extract": f"{title} is a database engine.",
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(wikipedia, "_get_json", _get_json)
+
+
+def test_md_all_takes_fetched_and_rendered_never_unfetched(
+    scrolls_home, fake_wikipedia_pair, capsys
+):
+    # SQLite: rendered already; Redis: fetched but never rendered;
+    # PostgreSQL: only detected, so there is nothing to render from.
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["fetch"])
+    main(["md"])
+    main(["add", "https://en.wikipedia.org/wiki/Redis"])
+    main(["fetch"])
+    main(["add", "https://en.wikipedia.org/wiki/PostgreSQL"])
+    capsys.readouterr()
+
+    exit_code = main(["md", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
     assert payload["rendered"] == 1
-    assert payload["results"][0]["path"] == "scrolls/wikipedia/sqlite.md"
+    assert payload["unchanged"] == 1
+    assert payload["failed"] == 0
+    by_id = {r["id"]: r["status"] for r in payload["results"]}
+    assert by_id == {
+        "wikipedia:en:SQLite": "unchanged",
+        "wikipedia:en:Redis": "rendered",
+    }
+    assert get_item(get_paths().db_path, "wikipedia:en:Redis").stage == "rendered"
+    assert get_item(get_paths().db_path, "wikipedia:en:PostgreSQL").stage == "detected"
+
+
+def test_md_all_rewrites_a_scroll_the_current_renderer_would_write_differently(
+    scrolls_home, fake_wikipedia_pair, capsys
+):
+    # A renderer improvement is indistinguishable from a stale file on disk:
+    # the stored capture re-renders to different bytes than the scroll holds.
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["add", "https://en.wikipedia.org/wiki/Redis"])
+    main(["fetch"])
+    main(["md"])
+    capsys.readouterr()
+    stale = scrolls_home / "scrolls" / "wikipedia" / "redis.md"
+    stale.write_text("an older renderer wrote this\n", encoding="utf-8")
+
+    exit_code = main(["md", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1
+    assert payload["unchanged"] == 1
+    assert "# Redis" in stale.read_text(encoding="utf-8")
+
+
+def test_md_all_second_pass_is_a_total_noop_and_custody_stays_put(
+    scrolls_home, fake_wikipedia_pair, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["add", "https://en.wikipedia.org/wiki/Redis"])
+    main(["fetch"])
+    main(["md", "--all"])
+    capsys.readouterr()
+    before = {
+        item_id: get_item(get_paths().db_path, item_id)
+        for item_id in ("wikipedia:en:SQLite", "wikipedia:en:Redis")
+    }
+
+    exit_code = main(["md", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 0
+    assert payload["unchanged"] == 2
+    assert payload["failed"] == 0
+    for item_id, held in before.items():
+        after = get_item(get_paths().db_path, item_id)
+        assert after == held  # no DB write, no custody movement
+        assert after.content_hash == held.content_hash
+
+
+def test_md_all_settles_each_item_so_a_failure_costs_only_that_item(
+    scrolls_home, fake_wikipedia_pair, monkeypatch, capsys
+):
+    main(["add", "https://en.wikipedia.org/wiki/SQLite"])
+    main(["add", "https://en.wikipedia.org/wiki/Redis"])
+    main(["fetch"])
+    capsys.readouterr()
+
+    import scrolls.cli as cli_module
+
+    real_refresh = cli_module.refresh_scroll
+
+    def failing_refresh(paths, item):
+        if item.id == "wikipedia:en:Redis":
+            raise OSError("disk full")
+        return real_refresh(paths, item)
+
+    monkeypatch.setattr(cli_module, "refresh_scroll", failing_refresh)
+    exit_code = main(["md", "--all"])
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1
+    assert payload["failed"] == 1
+    # the finished item settled: file on disk, stage advanced in the DB
+    assert get_item(get_paths().db_path, "wikipedia:en:SQLite").stage == "rendered"
+
+    monkeypatch.setattr(cli_module, "refresh_scroll", real_refresh)
+    exit_code = main(["md", "--all"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rendered"] == 1  # only the item the failure cost
+    assert payload["unchanged"] == 1
+
+
+def test_md_all_with_an_id_is_an_error(scrolls_home, capsys):
+    exit_code = main(["md", "--all", "wikipedia:en:SQLite"])
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error" in json.loads(captured.err)
 
 
 def test_md_by_id_fails_for_unfetched_item(scrolls_home, capsys):

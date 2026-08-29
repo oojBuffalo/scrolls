@@ -104,7 +104,9 @@ valid LaTeX, KaTeX renders it, and it is not an unprocessed block.
 **A re-render has no bulk CLI path.** `scrolls md` with no argument renders
 only items at stage `fetched`, and `maintain` regenerates KB views rather than
 scrolls, so improving the renderer means looping over ids. Left as-is here and
-recorded as the next gap to close.
+recorded as the next gap to close. *Closed 2026-08-29:* `scrolls md --all`
+re-renders every held scroll from the store, rewriting only the files the
+current renderer would write differently (issue #9, H434).
 
 **Deferred**: inline link anchors remain out of reach for the same reason ADR
 0110 gave — `explaintext` strips link markup — and the fallback shape heuristic

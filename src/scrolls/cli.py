@@ -157,7 +157,7 @@ from scrolls.related import (
     tally_relation_strength,
 )
 from scrolls.remove import remove_item
-from scrolls.render import write_scroll
+from scrolls.render import refresh_scroll, write_scroll
 from scrolls.scope import scope_envelope
 from scrolls.search import count_matches, hit_payload, search_items, tally_strength
 from scrolls.sources import FETCH_ADAPTERS, FetchError
@@ -1203,6 +1203,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Render one item by id or URL, re-rendering even if already rendered; "
         "default is every item at stage 'fetched'",
     )
+    md_parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="md_all",
+        help="Re-render every held scroll from the store — items at stage "
+        "'fetched' or 'rendered' — rewriting only the files the current "
+        "renderer would write differently",
+    )
     media_parser = subparsers.add_parser(
         "media",
         help="Download items' media references into media/ (JSON output)",
@@ -1909,7 +1917,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "md":
-        return _cmd_md(args.id)
+        return _cmd_md(args.id, args.md_all)
     if args.command == "media":
         return _cmd_media(args.id, args.max_bytes)
     if args.command == "paths":
@@ -4080,19 +4088,31 @@ def _cmd_classify(
     return 1 if counts["failed"] else 0
 
 
-def _cmd_md(item_id: str | None) -> int:
+def _cmd_md(item_id: str | None, render_all: bool = False) -> int:
     paths = get_paths()
+    if item_id is not None and render_all:
+        print(
+            json.dumps({"error": "--all re-renders every held scroll; drop the id"}),
+            file=sys.stderr,
+        )
+        return 2
     if item_id is not None:
         item, error = _find_item(paths, item_id)
         if item is None:
             print(json.dumps({"error": error}), file=sys.stderr)
             return 1
         items = [item]
+    elif render_all:
+        everything = list_items(paths.db_path) if paths.db_path.exists() else []
+        items = [item for item in everything if item.stage in ("fetched", "rendered")]
     else:
         items = list_items(paths.db_path, stage="fetched") if paths.db_path.exists() else []
 
     results = []
-    counts = {"rendered": 0, "failed": 0}
+    counts = {"rendered": 0, "unchanged": 0, "failed": 0}
+    # Each item settles on its own (scroll file, then DB row), so a failure
+    # or interrupt costs at most the item in flight; a re-run skips the rest
+    # as unchanged.
     for item in items:
         if not item.extracted_text and not item.title:
             counts["failed"] += 1
@@ -4105,15 +4125,17 @@ def _cmd_md(item_id: str | None) -> int:
             )
             continue
         try:
-            rendered = write_scroll(paths, item)
+            rendered, wrote = refresh_scroll(paths, item)
         except OSError as exc:
             counts["failed"] += 1
             results.append({"id": item.id, "status": "failed", "error": str(exc)})
             continue
-        update_item(paths.db_path, rendered)
-        counts["rendered"] += 1
+        if rendered != item:
+            update_item(paths.db_path, rendered)
+        status = "rendered" if wrote else "unchanged"
+        counts[status] += 1
         results.append(
-            {"id": rendered.id, "status": "rendered", "path": rendered.markdown_path}
+            {"id": rendered.id, "status": status, "path": rendered.markdown_path}
         )
 
     print(json.dumps({**counts, "results": results}))

@@ -32,6 +32,13 @@ claim cites the test that locks it; unless noted, tests live in
     `test_fetch_all_skips_sources_without_adapter`,
     `test_media_continues_past_failures_and_exits_nonzero`,
     `test_sync_continues_past_feed_failures_and_exits_nonzero`).
+- **Re-rendering is honest about motion.** `md` renders from the stored
+  capture and byte-compares against the file on disk before writing: a
+  result says `rendered` only when the file changed, `unchanged` otherwise.
+  `md --all` sweeps every held scroll (stages `fetched` + `rendered`) so a
+  renderer improvement lands with one command; a second pass is a total
+  no-op and custody hashes never move
+  (`test_md_all_second_pass_is_a_total_noop_and_custody_stays_put`).
 - **`ingest` is the asymmetry to know about:** its failure payload goes to
   *stdout* (with an `error` key merged into the normal payload) plus
   exit 1, because the item was still registered

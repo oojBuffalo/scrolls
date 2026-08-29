@@ -84,12 +84,44 @@ def write_scroll(paths: LibraryPaths, item: ScrollItem) -> ScrollItem:
     even when the title changes; otherwise the path is slugged from the
     title with an id-derived suffix on collision.
     """
+    rendered, _ = _render_to_disk(paths, item, only_if_changed=False)
+    return rendered
+
+
+def refresh_scroll(paths: LibraryPaths, item: ScrollItem) -> tuple[ScrollItem, bool]:
+    """Re-render the item's scroll from the store, writing only on change.
+
+    The render is compared byte-for-byte against the file already on disk,
+    so a pass over an unchanged library is a total no-op. Only the scroll
+    view moves; the stored capture and its custody hashes are never touched.
+
+    Args:
+        paths: The library layout to render into.
+        item: The held item, at any stage with fetched content.
+
+    Returns:
+        A tuple of the item at stage 'rendered' and True when the scroll
+        file was written, False when the render matched the file on disk.
+    """
+    return _render_to_disk(paths, item, only_if_changed=True)
+
+
+def _render_to_disk(
+    paths: LibraryPaths, item: ScrollItem, *, only_if_changed: bool
+) -> tuple[ScrollItem, bool]:
     relpath = item.markdown_path or _new_relpath(paths, item)
     rendered = replace(item, markdown_path=relpath, stage="rendered")
     target = paths.root / relpath
+    content = render_markdown(rendered)
+    if (
+        only_if_changed
+        and target.is_file()
+        and target.read_text(encoding="utf-8") == content
+    ):
+        return rendered, False
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_markdown(rendered), encoding="utf-8")
-    return rendered
+    target.write_text(content, encoding="utf-8")
+    return rendered, True
 
 
 def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
