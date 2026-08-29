@@ -85,6 +85,9 @@ was always one operation.
 resolve further, and the container genuinely is ambiguous. The default cap
 still applies, so the capture is bounded correctly; only a per-type override
 for those files would misfire. Left as a known gap rather than guessed at.
+*Closed 2026-08-29:* the extension carries the kind for the bare container —
+`.ogv` video; `.ogg`/`.oga`/`.opus` audio — while the multiplexed `.ogx`
+honestly stays `file` (issue #13, H436).
 
 **Deferred**: extracting text from captured PDFs into the scroll. The repo
 already does this for arXiv (`extraction_method: arxiv-atom+pypdf`), so a

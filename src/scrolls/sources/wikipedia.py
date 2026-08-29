@@ -30,7 +30,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from scrolls.items import ScrollItem
 from scrolls.sources import FetchError
@@ -222,7 +222,7 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
         url = _clean_media_url(info.get("url"))
         if not name or not url or _is_chrome(name):
             continue
-        ref = {"type": _media_type(info.get("mime")), "url": url, "title": name}
+        ref = {"type": _media_type(info.get("mime"), url), "url": url, "title": name}
         thumb = _clean_media_url(info.get("thumburl"))
         if thumb and (info.get("width") or 0) > _MAX_IMAGE_WIDTH:
             # keep the full-resolution address: the capture is a choice, and
@@ -232,18 +232,41 @@ def _media(get_json: GetJson, lang: str, title: str) -> tuple[dict[str, Any], ..
     return tuple(refs)
 
 
-def _media_type(mime: str | None) -> str:
+# The Ogg profiles that pin a kind by extension; the multiplexed `.ogx`
+# deliberately stays out — it can hold anything, so `file` is the honest type.
+_OGG_SUFFIX_TYPES = {
+    ".ogv": "video",
+    ".ogg": "audio",  # Wikimedia's spoken-word and music files
+    ".oga": "audio",
+    ".opus": "audio",
+}
+
+
+def _media_type(mime: str | None, url: str = "") -> str:
     """The ref's media type, from the file's MIME type.
 
     A Wikipedia page carries spoken-word recordings and video as readily as
     diagrams, and calling an `.ogg` an image would be a claim the response
-    does not support.
+    does not support. MediaWiki reports the bare container `application/ogg`
+    for Ogg media (ADR 0112's named gap), so there the extension carries the
+    kind and the per-type size caps apply as an operator would expect.
+
+    Args:
+        mime: The MIME type MediaWiki reported for the file, if any.
+        url: The file's URL; consulted only for `application/ogg`.
+
+    Returns:
+        One of 'image', 'audio', 'video', 'pdf', or 'file'.
     """
     kind, _, _ = (mime or "").partition("/")
     if kind in ("image", "audio", "video"):
         return kind
     if mime == "application/pdf":
         return "pdf"
+    if mime == "application/ogg":
+        path = urlsplit(url).path
+        suffix = "." + path.rpartition(".")[2].lower() if "." in path else ""
+        return _OGG_SUFFIX_TYPES.get(suffix, "file")
     return "file"
 
 

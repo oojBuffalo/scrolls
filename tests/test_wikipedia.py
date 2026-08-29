@@ -407,6 +407,28 @@ def test_media_type_follows_the_files_mime_not_a_blanket_image():
     assert [ref["type"] for ref in fetched.media] == ["image", "audio", "video", "pdf"]
 
 
+def test_ogg_container_mime_is_typed_by_extension_not_left_a_file():
+    """MediaWiki reports the bare container `application/ogg` for `.ogv` and
+    `.ogg` alike (ADR 0112's named gap), so the extension carries the kind;
+    a multiplexed `.ogx` honestly stays a `file`."""
+    images = {
+        "query": {
+            "pages": [
+                typed_page("File:Launch.ogv", "https://u.w/a.ogv", "application/ogg"),
+                typed_page("File:Speech.ogg", "https://u.w/a.ogg", "application/ogg"),
+                typed_page("File:Anthem.oga", "https://u.w/a.oga", "application/ogg"),
+                typed_page("File:Talk.opus", "https://u.w/a.opus", "application/ogg"),
+                typed_page("File:Mixed.ogx", "https://u.w/a.ogx", "application/ogg"),
+            ]
+        }
+    }
+    fetched = fetch_item(make_item(), get_json=routed(make_payload(), images))
+
+    assert [ref["type"] for ref in fetched.media] == [
+        "video", "audio", "audio", "audio", "file",
+    ]
+
+
 @pytest.mark.parametrize(
     "name",
     [
