@@ -4090,7 +4090,14 @@ def test_get_tag_page_missing_raises_with_remedy(scrolls_home):
         mcp_server.get_tag_page("nonexistent tag")
 
 
-def test_list_sources_counts_items(scrolls_home, fake_wikipedia_api):
+def test_list_sources_counts_items(scrolls_home, fake_wikipedia_api, monkeypatch):
+    # Written when `x` had no fetch adapter ("stays detected"); once H433
+    # shipped one, this ingest began reaching live X — the seventh stale
+    # adapterless-x assumption, caught by the network guard. Dropping the
+    # entry restores the intent and keeps the test off the network.
+    from scrolls.sources import FETCH_ADAPTERS
+
+    monkeypatch.delitem(FETCH_ADAPTERS, "x")
     mcp_server.ingest_url("https://en.wikipedia.org/wiki/SQLite")
     mcp_server.ingest_url("https://x.com/karpathy/status/1111")  # stays detected
     assert mcp_server.list_sources() == {"wikipedia": 1, "x": 1}
