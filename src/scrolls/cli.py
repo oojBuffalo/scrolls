@@ -1584,6 +1584,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_parser.add_argument(
         "--collection",
+        # append, not store: a repeated flag must reach the one-collection
+        # check rather than silently keeping only its last occurrence
+        action="append",
         default=None,
         metavar="NAME",
         help="Pull the named saved collection of the source given as `id` "
@@ -1967,10 +1970,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         if args.list_collections:
             return _cmd_list_collections(args.id)
-        named = [
+        named = list(args.collection or []) + [
             name
             for name, given in (
-                (args.collection, args.collection is not None),
                 ("bookmarks", args.bookmarks),
                 ("reading-lists", args.reading_lists),
             )

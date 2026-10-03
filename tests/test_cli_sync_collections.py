@@ -115,6 +115,22 @@ def test_two_collection_flags_at_once_are_refused(scrolls_home, capsys):
     assert "one collection" in json.loads(capsys.readouterr().err)["error"]
 
 
+def test_a_repeated_collection_flag_is_refused_before_any_pull(
+    scrolls_home, monkeypatch, capsys
+):
+    """argparse's default store would keep only the last occurrence."""
+
+    def must_not_pull(*_):
+        raise AssertionError("a pull started despite two collections named")
+
+    monkeypatch.setattr("scrolls.saved_collections.load_session", must_not_pull)
+    assert (
+        main(["sync", "x", "--collection", "likes", "--collection", "bookmarks"])
+        == 1
+    )
+    assert "one collection" in json.loads(capsys.readouterr().err)["error"]
+
+
 def test_list_collections_names_every_declared_collection(scrolls_home, capsys):
     assert main(["sync", "--list-collections"]) == 0
     payload = json.loads(capsys.readouterr().out)
