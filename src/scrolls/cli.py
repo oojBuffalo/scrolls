@@ -164,24 +164,24 @@ from scrolls.sources import FETCH_ADAPTERS, FetchError
 from scrolls.sources.detect import detect_source
 from scrolls.takeout import ImportSourceError as TakeoutSourceError
 from scrolls.takeout import load_watch_history
-from scrolls.x_graphql import XGraphQLError, fetch_bookmarks
-from scrolls.x_api import XAPIError
-from scrolls.x_api import fetch_bookmarks as api_fetch_bookmarks
 from scrolls.x_oauth import SCOPES as OAUTH_SCOPES
 from scrolls.x_oauth import (
     XOAuthError,
     client_id_from_env,
     forget_tokens,
-    resolve_access_token,
     run_login_flow,
     save_tokens,
 )
-from scrolls.wikipedia_lists import (
-    WikipediaListsError,
-    collect_reading_lists,
-    load_wikipedia_session,
+from scrolls.saved_collections import (
+    COLLECTIONS,
+    CollectionUnavailable,
+    PullOptions,
+    UnknownCollection,
+    collections_for,
+    now_iso,
+    resolve_collection,
 )
-from scrolls.x_session import BROWSER_CHOICES, XSessionError, load_session
+from scrolls.x_session import BROWSER_CHOICES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1578,20 +1578,33 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "id",
         nargs="?",
-        help="Sync one subscription by id, or a source that has a saved "
-        "collection (`x` with --bookmarks, `wikipedia` with --reading-lists); "
+        help="Sync one subscription by id, or name a source to pull one of "
+        "its saved collections with --collection (see --list-collections); "
         "default is every followed feed",
+    )
+    sync_parser.add_argument(
+        "--collection",
+        default=None,
+        metavar="NAME",
+        help="Pull the named saved collection of the source given as `id` "
+        "(e.g. `scrolls sync x --collection bookmarks`)",
+    )
+    sync_parser.add_argument(
+        "--list-collections",
+        action="store_true",
+        help="List the saved collections Scrolls can pull — every declared "
+        "one, or only the source given as `id` (an empty list is an honest "
+        "answer, not an error)",
     )
     sync_parser.add_argument(
         "--bookmarks",
         action="store_true",
-        help="With source `x`: pull your X bookmarks collection",
+        help="Alias for `--collection bookmarks` (source `x`)",
     )
     sync_parser.add_argument(
         "--reading-lists",
         action="store_true",
-        help="With source `wikipedia`: pull the articles you saved to your "
-        "Wikipedia reading lists",
+        help="Alias for `--collection reading-lists` (source `wikipedia`)",
     )
     sync_parser.add_argument(
         "--limit",
@@ -1611,10 +1624,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--auth",
         default="browser",
         choices=("browser", "oauth"),
-        help="Which X credential to use: `browser` reads the session cookies "
-        "(free, verified, the default), `oauth` uses the grant from "
-        "`scrolls x login` (official API, billed per resource, and never "
-        "tested against live X — see ADR 0108)",
+        help="Which credential route a collection pull uses: `browser` reads "
+        "the logged-in session cookies (free, the default for every "
+        "collection), `oauth` uses a stored grant where the collection offers "
+        "one — today only X bookmarks, from `scrolls x login` (official API, "
+        "billed per resource, never tested against live X — see ADR 0108)",
     )
     sync_parser.add_argument(
         "--profile",
@@ -1951,14 +1965,42 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         return _cmd_status(args.source)
     if args.command == "sync":
-        if args.bookmarks:
-            return _cmd_sync_x_bookmarks(
-                args.id, args.limit, args.browser, args.profile, args.auth
+        if args.list_collections:
+            return _cmd_list_collections(args.id)
+        named = [
+            name
+            for name, given in (
+                (args.collection, args.collection is not None),
+                ("bookmarks", args.bookmarks),
+                ("reading-lists", args.reading_lists),
             )
-        if args.reading_lists:
-            return _cmd_sync_wikipedia_lists(
-                args.id, args.limit, args.browser, args.profile
+            if given
+        ]
+        if len(named) > 1:
+            print(
+                json.dumps({"error": "name one collection per sync, not several"}),
+                file=sys.stderr,
             )
+            return 1
+        if named:
+            options = PullOptions(
+                limit=args.limit,
+                browser=args.browser,
+                profile=args.profile,
+                route=args.auth,
+            )
+            return _cmd_sync_collection(args.id, named[0], options)
+        if args.id is not None and collections_for(args.id):
+            # A collection source is not a feed subscription; say which flag
+            # pulls it rather than reporting "no such subscription".
+            commands = "; ".join(f"`{c.command}`" for c in collections_for(args.id))
+            print(
+                json.dumps(
+                    {"error": f"{args.id} is a collection source: {commands}"}
+                ),
+                file=sys.stderr,
+            )
+            return 1
         return _cmd_sync(args.id)
     if args.command == "unfollow":
         return _cmd_unfollow(args.id)
@@ -2308,30 +2350,6 @@ def _cmd_sync(sub_id: str | None) -> int:
     return 1 if payload["failed"] else 0
 
 
-def _pull_x_bookmarks_oauth(synced_at: str, limit: int | None):
-    """Walk the collection over the official API under the stored grant.
-
-    Returns:
-        (result, origin, error). `error` is set when the pull could not
-        start at all; a mid-walk failure rides on `result.error` instead so
-        whatever was captured is still kept.
-    """
-    try:
-        client_id = client_id_from_env()
-        token = resolve_access_token(
-            get_paths().credentials_path, client_id=client_id
-        )
-    except XOAuthError as exc:
-        return None, "oauth", str(exc)
-    try:
-        result = api_fetch_bookmarks(
-            token, synced_at=synced_at, limit=limit, stop_on_error=True
-        )
-    except XAPIError as exc:
-        return None, "oauth", str(exc)
-    return result, "oauth", None
-
-
 def _cmd_x_login(port: int) -> int:
     """Authorize Scrolls against X once and store the rotating grant."""
     try:
@@ -2370,58 +2388,77 @@ def _cmd_x_logout() -> int:
     return 0
 
 
-def _cmd_sync_x_bookmarks(
-    source: str | None,
-    limit: int | None,
-    browser: str,
-    profile: str | None = None,
-    auth: str = "browser",
-) -> int:
-    """Pull the X bookmarks collection into the library.
+def _cmd_list_collections(source: str | None) -> int:
+    """Print the declared saved collections, for one source or all of them.
 
-    The fourth on-ramp shape: not a file someone exported and not a feed
-    delta, but the user's own saved collection, copied out of the service
-    they saved it in.
-
-    Two routes reach the same items (ADR 0108): the browser session against
-    X's internal GraphQL (free, the default) and the official API under an
-    OAuth grant (billed). Which route was taken rides in `session` and in
-    each item's `provenance.extraction_method`.
+    A source with nothing declared prints an empty list and exits 0: having
+    no collection is a fact about the source, not a failure (ADR 0113).
     """
-    if source != "x":
+    if source is None:
+        print(json.dumps({"collections": [c.describe() for c in COLLECTIONS]}))
+    else:
+        described = [c.describe() for c in collections_for(source)]
+        print(json.dumps({"source": source, "collections": described}))
+    return 0
+
+
+# The pre-0113 per-source flags, still valid spellings of `--collection`
+_COLLECTION_ALIASES = {"bookmarks": "--bookmarks", "reading-lists": "--reading-lists"}
+
+
+def _cmd_sync_collection(
+    source: str | None, name: str, options: PullOptions
+) -> int:
+    """Pull one declared saved collection into the library (ADR 0113).
+
+    The fourth on-ramp: not a file someone exported and not a feed delta,
+    but the user's own saved collection, copied out of the service they saved
+    it in. Every collection runs this one loop; what differs per source (the
+    session, the walk, the custody shape) lives in its declaration in
+    `saved_collections.py`.
+    """
+    if source is None:
+        offering = [c for c in COLLECTIONS if c.name == name] or list(COLLECTIONS)
+        commands = "; ".join(
+            f"`{c.command}`"
+            + (
+                f" (alias `scrolls sync {c.source} {_COLLECTION_ALIASES[c.name]}`)"
+                if c.name in _COLLECTION_ALIASES
+                else ""
+            )
+            for c in offering
+        )
+        print(
+            json.dumps({"error": f"name the source whose collection to pull: {commands}"}),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        collection = resolve_collection(source, name)
+    except UnknownCollection as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    if options.route not in collection.routes:
+        offered = ", ".join(collection.routes)
         print(
             json.dumps(
                 {
-                    "error": "--bookmarks needs a source that has a bookmark "
-                    "collection: `scrolls sync x --bookmarks`"
+                    "error": f"{source} {name} has no `{options.route}` route; "
+                    f"it offers: {offered}"
                 }
             ),
             file=sys.stderr,
         )
         return 1
 
-    synced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    if auth == "oauth":
-        result, origin, error = _pull_x_bookmarks_oauth(synced_at, limit)
-        if error is not None:
-            print(json.dumps({"error": error}), file=sys.stderr)
-            return 1
-    else:
-        try:
-            session = load_session(browser, profile=profile)
-        except XSessionError as exc:
-            print(json.dumps({"error": str(exc)}), file=sys.stderr)
-            return 1
-        origin = session.origin
-        try:
-            # stop_on_error: a partial pull is still custody, so items already
-            # collected are kept and the error is reported alongside them
-            result = fetch_bookmarks(
-                session, synced_at=synced_at, limit=limit, stop_on_error=True
-            )
-        except XGraphQLError as exc:
-            print(json.dumps({"error": str(exc)}), file=sys.stderr)
-            return 1
+    try:
+        # A start-up failure (no session, expired session, missing grant)
+        # fails the whole run: a partial import that silently dropped the
+        # un-authorized half would be worse than nothing.
+        result = collection.pull(options, now_iso())
+    except CollectionUnavailable as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
 
     # Nothing captured and the walk failed is a plain failure, not a partial
     # pull — it belongs in the error envelope on stderr, where an expired
@@ -2442,84 +2479,12 @@ def _cmd_sync_x_bookmarks(
             counts["skipped"] += 1
 
     payload = {
+        "source": collection.source,
+        "collection": collection.name,
         **counts,
         "pages": result.pages,
-        "session": origin,
-        "failures": list(result.failures),
-    }
-    if result.error:
-        payload["error"] = result.error
-    print(json.dumps(payload))
-    return 1 if counts["failed"] or result.error else 0
-
-
-def _cmd_sync_wikipedia_lists(
-    source: str | None,
-    limit: int | None,
-    browser: str,
-    profile: str | None = None,
-) -> int:
-    """Pull the Wikipedia reading-lists collection into the library.
-
-    The same on-ramp shape as `sync x --bookmarks` — the user's own saved
-    collection, copied out of the service they saved it in — but a collection
-    that indexes rather than captures. A reading-list entry is a title and a
-    save time with no article text behind it, so items land at stage
-    'detected' and the Wikipedia fetch adapter (ADR 0002) captures them on the
-    next `scrolls fetch` (ADR 0109).
-    """
-    if source != "wikipedia":
-        print(
-            json.dumps(
-                {
-                    "error": "--reading-lists needs a source that has reading "
-                    "lists: `scrolls sync wikipedia --reading-lists`"
-                }
-            ),
-            file=sys.stderr,
-        )
-        return 1
-
-    imported_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    try:
-        session = load_wikipedia_session(browser, profile=profile)
-    except XSessionError as exc:
-        # A credential problem fails the whole run: a partial import that
-        # silently dropped the un-authorized half would be worse than nothing.
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
-
-    try:
-        # stop_on_error: a partial pull is still custody, so entries already
-        # collected are kept and the error is reported alongside them
-        result = collect_reading_lists(
-            session, imported_at=imported_at, limit=limit, stop_on_error=True
-        )
-    except WikipediaListsError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
-
-    if result.error and not result.items:
-        print(json.dumps({"error": result.error}), file=sys.stderr)
-        return 1
-
-    paths = get_paths()
-    ensure_library(paths)
-    counts = {"imported": 0, "skipped": 0, "failed": len(result.failures)}
-    for item in result.items:
-        # INSERT OR IGNORE: an article added by URL earlier, or edited by the
-        # user, is never overwritten — re-syncing stays cheap and lossless
-        if insert_item(paths.db_path, item):
-            counts["imported"] += 1
-        else:
-            counts["skipped"] += 1
-
-    payload = {
-        **counts,
-        "pages": result.pages,
-        "session": session.origin,
-        "account": session.display_name,
-        "lists": sorted((result.lists or {}).values()),
+        "session": result.session,
+        **result.extra,
         "failures": list(result.failures),
     }
     if result.error:

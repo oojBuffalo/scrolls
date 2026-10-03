@@ -85,8 +85,9 @@ scrolls unfollow <id>         # remove a subscription
 Pull a saved collection (the on-ramp that is neither a file export nor a feed):
 
 ```text
-scrolls sync x --bookmarks    # pull your X bookmarks over the browser session
-scrolls sync wikipedia --reading-lists   # pull your saved Wikipedia articles
+scrolls sync --list-collections                   # what can be pulled, per source
+scrolls sync x --collection bookmarks             # your X bookmarks, over the browser session
+scrolls sync wikipedia --collection reading-lists # your saved Wikipedia articles
 scrolls x login               # optional: official API instead (paid, unverified)
 scrolls x logout              # forget the stored X grant
 ```
