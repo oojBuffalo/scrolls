@@ -4686,9 +4686,65 @@ $ scrolls sync          # full response again; the same entries are known
 [exit 0]
 ```
 
+### `scrolls sync` — saved collections
+
+`scrolls sync <source> --collection <name> [--limit N] [--browser B] [--profile P] [--auth R]`
+
+Pull a **saved collection**: the user's own saved set, copied out of the
+service they saved it in. This is the fourth on-ramp, beside `add`, `import`
+and feed `sync` (ADR 0113). Each collection is declared once in
+`src/scrolls/saved_collections.py`, and every one runs the same loop.
+
+- **`--list-collections`** prints every declared collection, or only the
+  source given as `id`. A source with none prints an empty list and exits 0,
+  because having no collection is a fact about the source, not a failure.
+- **Aliases:** `--bookmarks` is `--collection bookmarks` and
+  `--reading-lists` is `--collection reading-lists`. Naming two at once is
+  refused.
+- **`--auth`** picks the credential route. `browser` (the logged-in
+  session) is the default for every collection. Any other route works only
+  where the collection declares it.
+- **The report** leads with `source` and `collection`, then the counts every
+  collection shares, then the source's own facts.
+
+| Collection | Shape | Enters at | `saved_at` from | Routes |
+| --- | --- | --- | --- | --- |
+| `x bookmarks` | capture-at-pull | `fetched` | sync time | `browser`, `oauth` |
+| `wikipedia reading-lists` | enumerate-only | `detected` | the service | `browser` |
+
+```console
+$ scrolls sync --list-collections
+{"collections": [{"source": "x", "collection": "bookmarks", "summary": "Posts you bookmarked on X", "shape": "capture-at-pull", "entry_stage": "fetched", "saved_at": "sync-time", "routes": ["browser", "oauth"], "adr": "0108", "command": "scrolls sync x --collection bookmarks"}, {"source": "wikipedia", "collection": "reading-lists", …}]}
+[exit 0]
+
+$ scrolls sync youtube --list-collections
+{"source": "youtube", "collections": []}
+[exit 0]
+```
+
+Asking for something that is not declared names what is:
+
+```console
+$ scrolls sync youtube --collection playlists
+{"error": "youtube offers no saved collection Scrolls can pull. Declared collections: `scrolls sync x --collection bookmarks`; `scrolls sync wikipedia --collection reading-lists`"}
+[exit 1]
+
+$ scrolls sync x --collection likes
+{"error": "x has no collection named 'likes'; it offers: bookmarks"}
+[exit 1]
+
+$ scrolls sync wikipedia --collection reading-lists --auth oauth
+{"error": "wikipedia reading-lists has no `oauth` route; it offers: browser"}
+[exit 1]
+
+$ scrolls sync x                                 # a collection source is not a feed
+{"error": "x is a collection source: `scrolls sync x --collection bookmarks`"}
+[exit 1]
+```
+
 ### `scrolls sync` — the X bookmarks collection
 
-`scrolls sync x --bookmarks [--limit N] [--browser B] [--profile P]`
+`scrolls sync x --collection bookmarks` (alias `--bookmarks`) `[--limit N] [--browser B] [--profile P] [--auth R]`
 
 Pull the X bookmarks **collection** — the user's own saved set, copied out of
 X. Unlike a feed sync, which only discovers URLs, this arrives already
@@ -4733,6 +4789,7 @@ and quoted-tweet body from the same response that enumerated them
 
 | Key | Meaning |
 | --- | --- |
+| `source` / `collection` | which declared collection was pulled |
 | `imported` / `skipped` / `failed` | items newly held, already held, and per-entry parse failures |
 | `pages` | how many GraphQL pages were walked |
 | `session` | where the session came from (`chrome`, `firefox`, `env`, …) — provenance for the pull |
@@ -4741,15 +4798,15 @@ and quoted-tweet body from the same response that enumerated them
 
 ```console
 $ scrolls sync x --bookmarks
-{"imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": []}
 [exit 0]
 
 $ scrolls sync x --bookmarks          # nothing new saved since
-{"imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": []}
 [exit 0]
 
 $ scrolls sync x --bookmarks --limit 1
-{"imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": []}
 [exit 0]
 ```
 
@@ -4762,7 +4819,7 @@ $ scrolls sync x --bookmarks --browser env      # neither variable set
 [exit 1]
 
 $ scrolls sync --bookmarks                      # no collection source named
-{"error": "--bookmarks needs a source that has a bookmark collection: `scrolls sync x --bookmarks`"}
+{"error": "name the source whose collection to pull: `scrolls sync x --collection bookmarks` (alias `scrolls sync x --bookmarks`)"}
 [exit 1]
 ```
 
@@ -4777,7 +4834,7 @@ $ scrolls sync x --bookmarks
 
 ### `scrolls sync` — the Wikipedia reading-lists collection
 
-`scrolls sync wikipedia --reading-lists [--limit N] [--browser B] [--profile P]`
+`scrolls sync wikipedia --collection reading-lists` (alias `--reading-lists`) `[--limit N] [--browser B] [--profile P]`
 
 Pull the Wikipedia reading-lists **collection** — every article you tapped
 "Save" on in the Wikipedia app or while signed in, across every list. Not the
@@ -4812,6 +4869,7 @@ so drift on a saved article is detectable.
 
 | field | meaning |
 | --- | --- |
+| `source` / `collection` | which declared collection was pulled |
 | `imported` / `skipped` | articles newly held, and those already in the library |
 | `failed` | entries that could not become items (counted in `failures[]`) |
 | `pages` | entry pages fetched from the API |
@@ -4823,15 +4881,15 @@ so drift on a saved article is detectable.
 
 ```console
 $ scrolls sync wikipedia --reading-lists
-{"imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists       # nothing new saved since
-{"imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists --limit 2
-{"imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
 [exit 0]
 ```
 
@@ -4857,7 +4915,7 @@ $ scrolls sync wikipedia --reading-lists --browser env   # neither variable set
 [exit 1]
 
 $ scrolls sync --reading-lists                           # no collection source named
-{"error": "--reading-lists needs a source that has reading lists: `scrolls sync wikipedia --reading-lists`"}
+{"error": "name the source whose collection to pull: `scrolls sync wikipedia --collection reading-lists` (alias `scrolls sync wikipedia --reading-lists`)"}
 [exit 1]
 ```
 
