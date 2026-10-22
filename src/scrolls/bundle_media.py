@@ -113,10 +113,15 @@ def export_media(
             source = paths.root / relpath
             if not _is_safe(relpath) or not source.is_file():
                 missing.add(relpath)
-            elif not _resolves_within(source, media_root):
-                outside.add(relpath)
-            else:
+                continue
+            try:
+                inside = _resolves_within(source, media_root)
+            except (OSError, RuntimeError):  # unresolvable, e.g. a symlink loop
+                inside = False
+            if inside:
                 held.setdefault(relpath, (item.id, source))
+            else:
+                outside.add(relpath)
     dest.mkdir(parents=True, exist_ok=True)
     lines, total = [], 0
     for relpath in sorted(held):
@@ -204,7 +209,7 @@ def adopt_media(
         try:
             outcome = _adopt_one(sidecar / entry.path, sidecar, target, media_root,
                                  entry.sha256, dry_run=dry_run)
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop, pre-3.13
             outcome = f"cannot copy: {exc}"
         if outcome == _ADOPTED:
             report["adopted"] += 1
@@ -270,7 +275,12 @@ def _is_safe(relpath: str) -> bool:
 
 
 def _resolves_within(path: Path, root: Path) -> bool:
-    """True when `path`, symlinks followed, lies inside `root`."""
+    """True when `path`, symlinks followed, lies inside `root`.
+
+    Raises:
+        OSError, RuntimeError: The path cannot be resolved — a symlink loop is
+            a RuntimeError before Python 3.13 and an OSError after.
+    """
     return path.resolve().is_relative_to(root.resolve())
 
 

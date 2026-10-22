@@ -560,3 +560,34 @@ def test_a_manifest_that_is_not_utf8_is_a_structured_error(
     assert code == 1
     assert captured.out == ""
     assert "MANIFEST.jsonl" in json.loads(captured.err)["error"]
+
+
+def test_a_symlink_loop_is_one_rejected_file_on_every_python(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    # review round 4: before 3.13, Path.resolve() raises RuntimeError on a loop
+    from pathlib import Path
+
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    looped = sidecar / "media/wikipedia/station-2.png"
+    looped.unlink()
+    looped.symlink_to(looped)
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    real_resolve = Path.resolve
+
+    def resolve(self, strict=False):
+        if self.name == "station-2.png" and self.is_symlink():
+            raise RuntimeError(f"Symlink loop from {str(self)!r}")
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    media = json.loads(capsys.readouterr().out)["media"]
+    assert media["adopted"] == 1  # the other file still lands
+    [rejected] = media["rejected"]
+    assert rejected["path"] == "media/wikipedia/station-2.png"
+    assert "Symlink loop" in rejected["reason"]
+    assert (library_b.root / "media/wikipedia/station-1.pdf").read_bytes() == PDF_BYTES
