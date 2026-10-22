@@ -315,16 +315,6 @@ def _act_import_takeout(capsys):
     assert main(["import", "google-takeout", str(target)]) == 0
 
 
-def _act_import_fieldtheory(capsys):
-    root = Path(tempfile.mkdtemp()) / "ft"
-    (root / "bookmarks").mkdir(parents=True)
-    (root / "bookmarks" / "bookmarks.jsonl").write_text(
-        '{"tweetId":"1","url":"https://x.com/i/status/1","text":"a thread"}\n',
-        encoding="utf-8",
-    )
-    assert main(["import", "fieldtheory", "--root", str(root)]) == 0
-
-
 # --- raw-writer drivers (the named exemptions) -------------------------------
 
 
@@ -370,7 +360,6 @@ _RAW_PRESERVING_ACTS = {
     ("import", "opml"): _act_import_opml,
     ("import", "pocket"): _act_import_pocket,
     ("import", "google-takeout"): _act_import_takeout,
-    ("import", "fieldtheory"): _act_import_fieldtheory,
 }
 
 # The named raw-writers: the four acts that legitimately mutate the scroll tree,

@@ -25,8 +25,9 @@ each command moves items between stages or derives artifacts from them.
                   │ ▲                   ▲                  │
                   │ ├ import google-takeout                │
                   │ ├ import bookmarks                     │
-                  │ └ import pocket                        │
-                  │   import fieldtheory┘                  ▼
+                  │ ├ import pocket                        │
+                  │ └ sync wikipedia --collection          │
+                  │  sync x --collection┘                  ▼
                   │            classify (stage-neutral, sets category)
                   │            media    (stage-neutral, downloads media refs)
                   │            kb       (stage-neutral, compiles library/)
@@ -286,9 +287,6 @@ each command moves items between stages or derives artifacts from them.
   the clusters S participates in), and an item in several stale concepts appears
   once.
 - `scrolls ingest <url>` chains add → fetch → classify → md for one URL.
-- `scrolls import fieldtheory` bulk-inserts X bookmarks directly at stage
-  `fetched`, since the archive already contains the content
-  (`src/scrolls/fieldtheory.py`, ADR 0009).
 - `scrolls import google-takeout` bulk-inserts YouTube watch history at
   stage `detected` — Takeout is a spine with no content, so the export's
   title/channel/watch-time seed items the way feed entries do and
@@ -749,9 +747,9 @@ graph edges (`links`, `media`), and bookkeeping (`content_hash`,
 Item ids are stable and deduplicating: `source:source_id` when the URL
 carries a source-local id (`wikipedia:en:SQLite`, `arxiv:1706.03762`,
 `x:1234567890`), else `source:` plus a 12-hex-char SHA-256 of the URL
-(`make_item_id`). `scrolls add` of a tweet URL and a Field Theory import
+(`make_item_id`). `scrolls add` of a tweet URL and an X bookmarks sync
 of the same tweet therefore collide on purpose — `INSERT OR IGNORE`
-keeps the existing row (`tests/test_items.py`, `tests/test_fieldtheory.py`).
+keeps the existing row (`tests/test_items.py`, `tests/test_x_bookmarks.py`).
 
 Because the URL string itself is the identity of `web`/`pdf` items,
 registration normalizes it first (`normalize_url` in
@@ -1748,10 +1746,9 @@ Next steps already identified in decision records, in no required order:
   covered by *two* adapters split by client API, not host — and a future
   Fediverse software with a third API (a Lemmy/PieFed post) would split off
   the same way. `x`
-  itself still arrives only through `import fieldtheory` (ADR 0009): a
-  native `x` fetch adapter would let a pasted or synced tweet URL enrich
-  on its own, but X's read API is now paywalled, so it cannot be keyless
-  like every other adapter. The remaining tightening is DID-canonical
+  itself has both a native collection sync and a fetch adapter (ADR 0108),
+  each borrowing the browser's logged-in session rather than X's paywalled
+  API. The remaining tightening is DID-canonical
   Bluesky / home-instance-canonical Mastodon/Misskey identity (resolve a
   post's true id at fetch time so it dedupes across the routes that reach
   it — ADRs 0048–0051 all defer it as the only fetch-time id rewrite any

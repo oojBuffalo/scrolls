@@ -13,7 +13,7 @@ this directory carries the narrative.
 
 | Inspiration | What it is | What it contributed | Reference checkout | Key ADRs |
 | --- | --- | --- | --- | --- |
-| [Field Theory CLI](fieldtheory-cli-inspiration.md) | The original X-bookmarks pipeline — the project's spark | The 6-stage pipeline spirit; raw-record preservation; `import`/`sync`/`add` verbs; rules-first classification; Markdown-first durable artifacts | none — lineage travels via `scrolls import fieldtheory` | 0009, 0001 |
+| [Field Theory CLI](fieldtheory-cli-inspiration.md) | The original X-bookmarks pipeline — the project's spark | The 6-stage pipeline spirit; raw-record preservation; `import`/`sync`/`add` verbs; rules-first classification; Markdown-first durable artifacts | none local — the upstream `afar1/fieldtheory-cli` source was read for ADR 0108 | 0009, 0108, 0001 |
 | [last30days-skill](last30days-inspiration.md) | `mvanhorn/last30days-skill` — an agent-facing research skill | The product bar: agent contract + engine separation; fanout with graceful degradation; clustering/dedupe; explainable ranking; shareable artifacts; fixtures/evals; dogfood workflows | `/Users/claw/.hermes/gh-repos/last30days-skill` | 0093 |
 | [obsidian-second-brain](obsidian-second-brain-inspiration.md) | `eugeniughelbur/obsidian-second-brain` — a self-mutating Obsidian vault system | Mechanisms only: sentinel-fenced regeneration; anti-fabrication/completeness contract; progressive context budgets; portable bundles; bi-temporal drift framing; scheduled custody maintenance. Its self-mutating-vault philosophy is **rejected**. | `/Users/claw/.hermes/gh-repos/obsidian-second-brain` | 0102, 0103 |
 

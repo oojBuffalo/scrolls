@@ -1,11 +1,11 @@
 """Google Takeout YouTube watch-history import (IDEAS.md §13, ADR 0029).
 
 `scrolls import google-takeout <path>` turns a Takeout export's
-`watch-history.json` into youtube items — the bulk-archive counterpart
-to `import fieldtheory`, but for a spine with no content: Takeout
-records only video URL, title, channel, and watch time, so items enter
-at stage 'detected' (like feed sync, ADR 0021) and `scrolls fetch`
-enriches them through the youtube adapter. The watch time becomes
+`watch-history.json` into youtube items — a bulk-archive import, but
+for a spine with no content: Takeout records only video URL, title,
+channel, and watch time, so items enter at stage 'detected' (like feed
+sync, ADR 0021) and `scrolls fetch` enriches them through the youtube
+adapter. The watch time becomes
 `saved_at` (when the video entered the user's life, mirroring Field
 Theory's `bookmarkedAt`), never `published_at` — Takeout doesn't know
 when a video was published. `path` may be the Takeout .zip, an

@@ -25,7 +25,7 @@ When making consequential decisions, prefer adding a short ADR under `docs/adr/`
 
 Terminology:
 
-- **Source** — a platform or archive adapter such as YouTube, Wikipedia, X/Twitter, Google Takeout, Field Theory, web pages, GitHub, PDFs.
+- **Source** — a platform or archive adapter such as YouTube, Wikipedia, X/Twitter, Google Takeout, web pages, GitHub, PDFs.
 - **Item** — a normalized internal record from any source.
 - **Scroll** — a durable Markdown artifact generated from an item.
 - **Library** — a compiled interlinked knowledge base from scrolls.

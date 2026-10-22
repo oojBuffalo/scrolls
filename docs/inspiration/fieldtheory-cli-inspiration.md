@@ -8,10 +8,13 @@ them remains there.*
 
 Field Theory CLI is the project's origin spark: the original X-bookmarks
 pipeline whose shape Scrolls generalized. Unlike the other two inspiration
-sources it is also *live lineage* — Scrolls ships a first-class importer for
-Field Theory archives (`scrolls import fieldtheory`, ADR 0009). There is no
-reference checkout; the lineage travels through the import format and the
-notes below.
+sources it was once also a *runtime* dependency: Scrolls shipped an importer
+for Field Theory archives (`scrolls import fieldtheory`, ADR 0009).
+
+That importer was removed on 2026-10-22 (issue #5). X bookmarks now arrive
+natively over the browser session (ADR 0108), and Scrolls no longer reads
+another application's private store. What remains is lineage: the notes
+below, and the upstream `afar1/fieldtheory-cli` source that ADR 0108 read.
 
 ## The spark
 
@@ -71,9 +74,10 @@ Borrow these regardless of stack:
 
 - **Literal browser driving.** Never adopted; Scrolls uses session-backed
   APIs, feeds, or local archives instead.
-- **Native X sync.** Deferred indefinitely — the X read API is paywalled, so
-  X bookmarks arrive via the Field Theory archive import rather than a live
-  adapter (ADR 0009; `docs/architecture.md`).
+- **Native X sync.** Deferred while the paywalled X API looked like the only
+  route, so X bookmarks first arrived via the Field Theory archive import
+  (ADR 0009). Reversed by ADR 0108: reading Field Theory's own source showed
+  it borrows the browser session, and Scrolls now does the same.
 
 ## The original import proposal
 
@@ -97,21 +101,23 @@ It could read:
 Then convert Field Theory items into Scrolls' normalized format. That gives
 Scrolls an immediate path to X bookmarks while letting Field Theory keep
 doing what it already does well. Later, `scrolls sync x --bookmarks` could
-be native — the "later" path that stayed deferred (the X read API is
-paywalled).
+be native — the "later" path ADR 0108 eventually took.
 
 ## Concrete legacy in Scrolls
 
-- `scrolls import fieldtheory` bulk-imports X bookmarks from a Field Theory
-  archive (`~/.fieldtheory/`: raw `bookmarks.jsonl` plus classified library
-  pages). The proposal is above, the decision ADR 0009, the command
-  contract `docs/cli.md`.
-- Field Theory remains a first-class *source* in the domain vocabulary
-  (`docs/agents/domain.md`).
+- **The `x:<tweetId>` identity.** ADR 0009 fixed it so an import and
+  `scrolls add` dedupe; ADR 0108 carried it across, so rows imported before
+  the removal dedupe against the native sync too.
+- **The `@handle: <text…>` title.** The 80-character derived title the
+  importer introduced is the one the native sync still mints.
+- **The importer itself is gone.** `scrolls import fieldtheory` and
+  the `scrolls.fieldtheory` module were deleted (issue #5); ADR 0009 records
+  the decision as history.
 
 ## Pointers
 
-- ADR 0009 (Field Theory import), ADR 0001 (implementation stack).
+- ADR 0009 (Field Theory import, superseded), ADR 0108 (native X sync),
+  ADR 0001 (implementation stack).
 - IDEAS.md §8 and §13 remain living design notes this lineage fed into (the
   layered-classification vocabulary; the import/sync/add split and the stack
   trade-off ADR 0001 resolved) — cited inline above.

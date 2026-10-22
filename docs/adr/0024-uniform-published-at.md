@@ -4,6 +4,10 @@
 - Date: 2026-06-12
 - Deciders: autonomous agent (per project decision posture in `CLAUDE.md`)
 
+*Amended: 2026-10-22 — the Field Theory importer this record names, and its
+tests, were deleted (issue #5; see ADR 0009's amendment). The verification
+note below names that suite in words rather than citing the removed file.*
+
 ## Context
 
 ADR 0021 normalized feed-seeded dates to UTC ISO 8601 but left
@@ -54,5 +58,5 @@ the README named this the remaining "next candidate".
 normalization pinned by the updated `published_at` assertions in
 `tests/test_web.py`, `tests/test_github.py`, `tests/test_arxiv.py`,
 `tests/test_pdf.py`; feeds and import behavior unchanged
-(`tests/test_feeds.py`, `tests/test_fieldtheory.py` untouched and
-green); 471 passing.
+(`tests/test_feeds.py` and the since-deleted Field Theory importer
+suite untouched and green); 471 passing.
