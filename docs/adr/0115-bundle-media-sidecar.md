@@ -37,7 +37,9 @@ boundary. Elijah chose the sidecar.
 3. **Honest about what did not travel.** The export summary (stderr, since
    stdout is the bundle) names refs whose recorded file is gone from disk
    (`missing`) and counts refs that travel as references only
-   (`uncaptured`: never captured, or declined on size).
+   (`uncaptured`: never captured, or declined on size). A file that
+   resolves outside the library's `media/` — a symlink to somewhere else —
+   is named (`outside`) and never shipped: a sidecar is made to be shared.
 4. **Found by convention, or named.** `import bundle ml.md` adopts
    `ml.media/` when it sits beside the bundle; `--media DIR` names one
    kept elsewhere.

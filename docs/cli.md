@@ -4073,10 +4073,13 @@ the files themselves.
 - **Exactly the custody block's files:** an out-of-scope item's media
   never travels (`test_the_sidecar_holds_the_in_scope_files_and_a_manifest`).
 - **A summary on stderr:** `{"media": {sidecar, files, bytes, missing,
-  uncaptured}}`. `missing` names refs whose recorded file is gone from
-  disk; `uncaptured` counts refs that travel as references only — never
-  captured, or declined on size
-  (`test_a_recorded_file_gone_from_disk_is_named_not_shipped`).
+  outside, uncaptured}}`. `missing` names refs whose recorded file is gone
+  from disk; `outside` names refs whose file resolves outside the library's
+  `media/` — a symlink elsewhere — which are never shipped, since a sidecar
+  is made to be shared; `uncaptured` counts refs that travel as references
+  only — never captured, or declined on size
+  (`test_a_recorded_file_gone_from_disk_is_named_not_shipped`,
+  `test_a_held_file_that_links_outside_the_library_is_never_shipped`).
 - **Never into someone else's directory:** a DIR that is a file or a
   non-empty directory is refused before anything is written, stdout
   included (`test_a_non_empty_destination_is_refused_before_anything_is_written`);
@@ -4086,7 +4089,7 @@ the files themselves.
 
 ```console
 $ scrolls export bundle "database engine" --with-media briefing.media > briefing.md
-{"media": {"sidecar": "briefing.media", "files": 2, "bytes": 48213, "missing": [], "uncaptured": 1}}   # stderr
+{"media": {"sidecar": "briefing.media", "files": 2, "bytes": 48213, "missing": [], "outside": [], "uncaptured": 1}}   # stderr
 
 $ scrolls import bundle briefing.md      # in the other library: finds briefing.media/
 ```

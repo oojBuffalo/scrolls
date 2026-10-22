@@ -87,8 +87,10 @@ def export_media(
     Returns:
         The export summary: `sidecar`, `files`, `bytes`, `missing` (refs whose
         recorded file is gone from disk, named rather than silently dropped),
-        and `uncaptured` (refs that travel as references only — never captured,
-        or declined on size).
+        `outside` (refs whose file resolves outside the library's `media/` —
+        a symlink to somewhere else — named and never shipped, since the
+        sidecar is made to be shared), and `uncaptured` (refs that travel as
+        references only — never captured, or declined on size).
 
     Raises:
         SidecarError: `dest` is a file or a non-empty directory.
@@ -97,6 +99,8 @@ def export_media(
         raise SidecarError(f"--with-media destination is not empty: {dest}")
     held: dict[str, tuple[str, Path]] = {}
     missing: set[str] = set()
+    outside: set[str] = set()
+    media_root = paths.root / "media"
     uncaptured = 0
     for item in items:
         for ref in item.media:
@@ -107,10 +111,12 @@ def export_media(
                 uncaptured += 1 if ref.get("url") else 0
                 continue
             source = paths.root / relpath
-            if _is_safe(relpath) and source.is_file():
-                held.setdefault(relpath, (item.id, source))
-            else:
+            if not _is_safe(relpath) or not source.is_file():
                 missing.add(relpath)
+            elif not _resolves_within(source, media_root):
+                outside.add(relpath)
+            else:
+                held.setdefault(relpath, (item.id, source))
     dest.mkdir(parents=True, exist_ok=True)
     lines, total = [], 0
     for relpath in sorted(held):
@@ -129,6 +135,7 @@ def export_media(
         "files": len(lines),
         "bytes": total,
         "missing": sorted(missing),
+        "outside": sorted(outside),
         "uncaptured": uncaptured,
     }
 
@@ -143,7 +150,7 @@ def load_manifest(sidecar: Path) -> list[ManifestEntry]:
     manifest = sidecar / MANIFEST_NAME
     try:
         text = manifest.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise SidecarError(f"no readable {MANIFEST_NAME} in {sidecar}: {exc}") from exc
     entries = []
     for number, line in enumerate(text.splitlines(), start=1):

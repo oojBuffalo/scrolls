@@ -136,6 +136,7 @@ def test_the_sidecar_holds_the_in_scope_files_and_a_manifest(library_a, tmp_path
         "files": 2,
         "bytes": len(PDF_BYTES) + len(PNG_BYTES),
         "missing": [],
+        "outside": [],
         "uncaptured": 1,  # the declined video travels as a reference only
     }
 
@@ -518,3 +519,44 @@ def test_a_nul_in_a_manifest_path_fails_before_anything_lands(
     assert "MANIFEST.jsonl line 3" in json.loads(captured.err)["error"]
     assert main(["list"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+# --- review round 3: export containment, undecodable manifests ---------------
+
+
+def test_a_held_file_that_links_outside_the_library_is_never_shipped(
+    library_a, tmp_path, capsys
+):
+    private = tmp_path / "private.txt"
+    private.write_bytes(b"not for sharing")
+    linked = library_a.root / "media/wikipedia/station-2.png"
+    linked.unlink()
+    linked.symlink_to(private)
+    sidecar = tmp_path / "ml.media"
+
+    code, captured = _export(tmp_path, capsys, "--with-media", str(sidecar))
+
+    assert code == 0
+    summary = json.loads(captured.err)["media"]
+    assert summary["outside"] == ["media/wikipedia/station-2.png"]
+    assert summary["files"] == 1
+    assert not (sidecar / "media/wikipedia/station-2.png").exists()
+    assert b"not for sharing" not in b"".join(
+        p.read_bytes() for p in sidecar.rglob("*") if p.is_file()
+    )
+
+
+def test_a_manifest_that_is_not_utf8_is_a_structured_error(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    (sidecar / "MANIFEST.jsonl").write_bytes(b"\xff\xfe not utf-8\n")
+    _library_b(monkeypatch, tmp_path, capsys)
+
+    code = main(["import", "bundle", str(tmp_path / "ml.md")])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "MANIFEST.jsonl" in json.loads(captured.err)["error"]
