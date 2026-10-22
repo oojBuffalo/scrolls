@@ -47,12 +47,20 @@ boundary. Elijah chose the sidecar.
 6. **Files land only where a held ref expects them.** A file is adopted
    when the row it names, after the import, records that exact `path`.
    Anything else is `unattached` and left in the sidecar.
-7. **Hash-checked, never overwriting.** Each file is copied through a
-   temporary name and renamed only if its SHA-256 matches. A mismatch, or a
-   file missing from the sidecar, is `rejected` and fails the run, while
-   the rows and the other files still land. A file the library already
-   holds is never touched — the importer's `INSERT OR IGNORE`, applied to
-   bytes.
+7. **Hash-checked, never overwriting.** Each file is copied into a fresh,
+   exclusively created temporary file and renamed in only if its SHA-256
+   matches, so no file already in the directory is ever opened for writing.
+   A file the library already holds is never touched — the importer's
+   `INSERT OR IGNORE`, applied to bytes.
+8. **Contained as the filesystem resolves it.** Lexical checks are not
+   enough: a symlinked directory under the library's `media/` must not
+   carry a write elsewhere, and a symlink in the sidecar must not pull a
+   file in from outside it. Both are checked on resolved paths before
+   anything is created.
+9. **One bad file never stops the rest.** A hash mismatch, a file missing
+   from the sidecar, a path that resolves outside its root, or an I/O
+   error is `rejected` with its reason and fails the run, while the rows
+   and every other file still land and the summary still prints.
 
 ## Consequences
 

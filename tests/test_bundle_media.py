@@ -360,3 +360,89 @@ def test_a_dry_run_predicts_the_adoption_without_writing(
 
     assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 0
     assert json.loads(capsys.readouterr().out)["media"] == preview["media"]
+
+
+# --- review round 1: file safety on adoption ---------------------------------
+
+
+def test_a_held_file_named_like_a_temporary_file_is_never_touched(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    lookalike = library_b.root / "media/wikipedia/station-1.pdf.part"
+    _hold(library_b, "media/wikipedia/station-1.pdf.part", b"someone's held bytes")
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 0
+
+    assert json.loads(capsys.readouterr().out)["media"]["adopted"] == 2
+    assert lookalike.read_bytes() == b"someone's held bytes"
+    assert (library_b.root / "media/wikipedia/station-1.pdf").read_bytes() == PDF_BYTES
+    leftovers = [p.name for p in (library_b.root / "media/wikipedia").iterdir()]
+    assert sorted(leftovers) == ["station-1.pdf", "station-1.pdf.part", "station-2.png"]
+
+
+def test_a_symlinked_directory_cannot_carry_a_file_outside_media(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (library_b.root / "media").mkdir(exist_ok=True)
+    (library_b.root / "media/wikipedia").symlink_to(outside, target_is_directory=True)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    rejected = json.loads(capsys.readouterr().out)["media"]["rejected"]
+    assert {r["reason"] for r in rejected} == {"outside the library's media directory"}
+    assert list(outside.iterdir()) == []
+
+
+def test_a_symlink_in_the_sidecar_cannot_pull_in_a_file_from_elsewhere(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(PNG_BYTES)  # same bytes, so only containment can stop it
+    carried = sidecar / "media/wikipedia/station-2.png"
+    carried.unlink()
+    carried.symlink_to(secret)
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    assert json.loads(capsys.readouterr().out)["media"]["rejected"] == [
+        {"path": "media/wikipedia/station-2.png", "reason": "outside the sidecar"}
+    ]
+    assert not (library_b.root / "media/wikipedia/station-2.png").exists()
+
+
+def test_a_file_that_cannot_be_copied_is_rejected_and_the_rest_still_land(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    import scrolls.bundle_media as bundle_media
+
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    real_copy = bundle_media._copy_into
+
+    def copy_into(source, handle):
+        if source.name == "station-1.pdf":
+            raise PermissionError(13, "Permission denied", str(source))
+        return real_copy(source, handle)
+
+    monkeypatch.setattr(bundle_media, "_copy_into", copy_into)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["media"]["adopted"] == 1
+    [rejected] = payload["media"]["rejected"]
+    assert rejected["path"] == "media/wikipedia/station-1.pdf"
+    assert "Permission denied" in rejected["reason"]
+    assert (library_b.root / "media/wikipedia/station-2.png").read_bytes() == PNG_BYTES
+    assert sorted(p.name for p in (library_b.root / "media/wikipedia").iterdir()) == [
+        "station-2.png"
+    ]

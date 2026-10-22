@@ -17,6 +17,9 @@ Import adopts a file only where a held row's media ref records that path, so a
 file always lands where the library already expects it. Every file is checked
 against its manifest hash on the way in, and a file the library already holds
 is never overwritten — the bundle importer's INSERT OR IGNORE, applied to bytes.
+Paths are checked as the filesystem resolves them, not only as written: a
+symlink cannot carry a write outside the library's `media/`, nor pull a file in
+from outside the sidecar.
 
 The manifest is validated before anything lands: a malformed line, or a path
 outside `media/`, fails the whole import naming the line (a backup that lies
@@ -31,6 +34,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -111,7 +115,10 @@ def export_media(
     lines, total = [], 0
     for relpath in sorted(held):
         item_id, source = held[relpath]
-        digest, size = _copy(source, dest / relpath)
+        target = dest / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as handle:
+            digest, size = _copy_into(source, handle)
         lines.append({"path": relpath, "sha256": digest, "bytes": size, "item_id": item_id})
         total += size
     (dest / MANIFEST_NAME).write_text(
@@ -171,9 +178,12 @@ def adopt_media(
     Returns:
         The import's media block: `sidecar`, `adopted`, `already_held`,
         `unattached` (files no held ref points at) and `rejected` (`{path,
-        reason}` for a hash mismatch or a file missing from the sidecar).
+        reason}` for a hash mismatch, a file missing from the sidecar, a path
+        that resolves outside its root, or an I/O failure — each file on its
+        own, so one bad file never stops the rest).
     """
     report = {**empty_report(), "sidecar": str(sidecar)}
+    media_root = paths.root / "media"
     for entry in entries:
         row = held_row(entry.item_id)
         recorded = {ref.get("path") for ref in row.media if isinstance(ref, dict)} if row else set()
@@ -181,19 +191,41 @@ def adopt_media(
             report["unattached"].append(entry.path)
             continue
         target = paths.root / entry.path
-        if target.exists():
+        if target.exists() or target.is_symlink():  # never touch what is held
             report["already_held"] += 1
             continue
-        source = sidecar / entry.path
-        if not source.is_file():
-            report["rejected"].append({"path": entry.path, "reason": "missing from the sidecar"})
-            continue
-        landed = _verify(source, entry.sha256) if dry_run else _adopt(source, target, entry.sha256)
-        if landed:
+        try:
+            outcome = _adopt_one(sidecar / entry.path, sidecar, target, media_root,
+                                 entry.sha256, dry_run=dry_run)
+        except OSError as exc:
+            outcome = f"cannot copy: {exc}"
+        if outcome is None:
             report["adopted"] += 1
         else:
-            report["rejected"].append({"path": entry.path, "reason": "sha256 mismatch"})
+            report["rejected"].append({"path": entry.path, "reason": outcome})
     return report
+
+
+def _adopt_one(
+    source: Path,
+    sidecar: Path,
+    target: Path,
+    media_root: Path,
+    expected: str,
+    *,
+    dry_run: bool,
+) -> str | None:
+    """Bring one file in; return None on success, else why it was rejected."""
+    if not _resolves_within(source, sidecar):
+        return "outside the sidecar"
+    if not source.is_file():
+        return "missing from the sidecar"
+    if not _lands_within(target, media_root):
+        return "outside the library's media directory"
+    if dry_run:
+        return None if _verify(source, expected) else "sha256 mismatch"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return None if _adopt(source, target, expected) else "sha256 mismatch"
 
 
 def _entry(raw: Any) -> ManifestEntry:
@@ -224,14 +256,34 @@ def _is_safe(relpath: str) -> bool:
     )
 
 
-def _copy(source: Path, target: Path) -> tuple[str, int]:
-    """Stream `source` to `target`; return its (sha256 hex, size)."""
-    target.parent.mkdir(parents=True, exist_ok=True)
+def _resolves_within(path: Path, root: Path) -> bool:
+    """True when `path`, symlinks followed, lies inside `root`."""
+    return path.resolve().is_relative_to(root.resolve())
+
+
+def _lands_within(target: Path, media_root: Path) -> bool:
+    """True when writing `target` cannot be redirected outside `media_root`.
+
+    Checks the nearest ancestor that exists, as the filesystem resolves it:
+    a symlinked directory under `media/` pointing elsewhere fails here, before
+    any directory or file is created. When `media/` itself does not exist yet,
+    no link under it can redirect the write.
+    """
+    if not media_root.exists():
+        return not media_root.is_symlink()
+    probe = target.parent
+    while not probe.exists():
+        probe = probe.parent
+    return probe.resolve().is_relative_to(media_root.resolve())
+
+
+def _copy_into(source: Path, handle: Any) -> tuple[str, int]:
+    """Stream `source` into an open binary `handle`; return (sha256 hex, size)."""
     digest, size = hashlib.sha256(), 0
-    with source.open("rb") as src, target.open("wb") as dst:
+    with source.open("rb") as src:
         while chunk := src.read(_CHUNK):
             digest.update(chunk)
-            dst.write(chunk)
+            handle.write(chunk)
             size += len(chunk)
     return digest.hexdigest(), size
 
@@ -245,13 +297,22 @@ def _verify(source: Path, expected: str) -> bool:
 
 
 def _adopt(source: Path, target: Path, expected: str) -> bool:
-    """Copy through a `.part` file and rename only if the hash matches."""
-    partial = target.with_name(target.name + ".part")
+    """Copy through a fresh temporary file; rename it in only if the hash matches.
+
+    The temporary file is created exclusively under a unique name, so no file
+    already in the directory — whatever it is called — is ever opened for
+    writing or cleaned up; only the file this call created is removed.
+    """
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".incoming")
+    partial: Path | None = Path(name)
     try:
-        digest, _ = _copy(source, partial)
+        with os.fdopen(fd, "wb") as handle:
+            digest, _ = _copy_into(source, handle)
         if digest != expected:
             return False
         os.replace(partial, target)
+        partial = None
         return True
     finally:
-        partial.unlink(missing_ok=True)
+        if partial is not None:
+            partial.unlink(missing_ok=True)

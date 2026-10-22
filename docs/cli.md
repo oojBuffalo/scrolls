@@ -4305,13 +4305,21 @@ exist is an error.
   when the row it names, after the import, records that `path`; any other
   is `unattached` and left behind
   (`test_a_file_no_held_ref_points_at_is_unattached`).
-- **Hash-checked, never overwriting:** each file is copied through a
-  temporary name and kept only if its SHA-256 matches; a mismatch or a
-  file missing from the sidecar is `rejected` and the run exits 1, while
-  the rows and the other files still land
-  (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`). A file
+- **Hash-checked, never overwriting:** each file is copied into a fresh,
+  exclusively created temporary file and kept only if its SHA-256 matches
+  (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`,
+  `test_a_held_file_named_like_a_temporary_file_is_never_touched`). A file
   the library already holds is counted `already_held` and never touched
   (`test_a_file_the_library_already_holds_is_never_overwritten`).
+- **Contained as resolved, not just as written:** a symlinked directory
+  under `media/` cannot carry a write elsewhere, and a symlink in the
+  sidecar cannot pull a file in from outside it
+  (`test_a_symlinked_directory_cannot_carry_a_file_outside_media`,
+  `test_a_symlink_in_the_sidecar_cannot_pull_in_a_file_from_elsewhere`).
+- **One bad file never stops the rest:** a mismatch, a missing file, an
+  escaping path or an I/O error is `rejected` with its reason and the run
+  exits 1, while the rows and every other file still land
+  (`test_a_file_that_cannot_be_copied_is_rejected_and_the_rest_still_land`).
 - **Lossless for media:** after a sidecar import the fresh library's
   `doctor` reports no missing media
   (`test_a_sidecar_beside_the_bundle_restores_the_files_byte_for_byte`),
