@@ -498,6 +498,8 @@ The buffer rots if nobody refreshes it. The rule:
 
 | H438 | The Field Theory runtime dependency removed (production, `src/scrolls/cli.py`; `fieldtheory.py` deleted) — issue #5: X bookmarks have had a native browser-session on-ramp since 0108 and the collection contract since 0113, yet `import fieldtheory` still read another application's private store; module, subcommand, and tests deleted outright (no shim, per the 2026-07-29 decision), the five CLI completeness registries pruned, the `docs/cli.md` demo re-seeded through `import items` with rows shaped like the native sync's, ADR 0009 amended as history, and the inspiration doc corrected to past-tense lineage | cap 4 |
 
+| H439 | Every adapter answers how a user's collection gets in (docs + guard, `docs/adapters.md` + `tests/test_docs.py`) — issue #3: the catalog judged adapters on capture alone, which is how the collection gap went unnoticed; each of the 42 sections now carries a **Collections** verdict (`reachable`/`gap`/`none`) scored in an at-a-glance table — 4 reachable, 22 gap, 16 none, re-verified against each service rather than copied from the 2026-07-29 audit (npm stars, crates follows, RubyGems subscriptions, pub.dev likes and PubMed collections are gaps the original N/A list missed; the wikipedia/wikidata watchlist is a notification, not a save, per ADR 0109) — and `test_every_adapter_answers_how_its_collection_gets_in` ties sections, table, counts, `FETCH_ADAPTERS` and `COLLECTIONS` together, so a new adapter cannot land without answering | cap 4 |
+
 ## How this maps to the PRD/MVP
 
 | Theme | PRD capability | MVP slice |

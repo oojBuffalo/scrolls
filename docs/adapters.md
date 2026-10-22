@@ -3,12 +3,13 @@
 Scrolls captures each saved item through a source-specific **adapter**. `scrolls
 fetch` runs the adapter for each detected item, filling in title, extracted text,
 summary, canonical URL, content hash, and provenance, and moving the item to stage
-`fetched`. Items from sources without an adapter yet (today only `x`) are skipped,
-and per-item failures don't abort the batch.
+`fetched`. Items from a source without a fetch adapter are skipped, and
+per-item failures don't abort the batch.
 
-`x` is the one source that has a capture path but no *fetch* adapter: bookmarks
-arrive already-captured through `scrolls sync x --bookmarks`. See
-[`x`](#x) below for what that costs.
+`x` and `wikipedia` also have a *collection* on-ramp: the user's own saves,
+pulled by `scrolls sync <source> --collection <name>` (ADR 0113). The
+[collections audit](#collections-at-a-glance) below scores every adapter on
+that axis.
 
 This page catalogs the adapters that exist today and the custody shape each one
 captures. For the adapter *contract* (identity rules, fidelity tiers, and how to
@@ -18,6 +19,77 @@ add one), see [`architecture.md`](architecture.md) — "The source adapter model
 
 *Amended: 2026-07-27 — catalog restructured into per-adapter sections for
 readability; content unchanged.*
+
+## Collections at a glance
+
+Capture is half of an adapter's story. The other half is how a user's
+*existing* saved collection gets **in**: the stars, bookmarks, and reading
+lists they already keep in the service. Judged on capture alone, every
+adapter looks complete, which is how that gap went unnoticed (issue #3).
+
+Every adapter section below carries a **Collections** field with one of
+three verdicts:
+
+- **reachable** — at least one collection has an on-ramp today; a
+  collection still missing one is named after it as a gap.
+- **gap** — a collection exists upstream, and Scrolls has no on-ramp to it.
+- **none** — no per-user collection exists; the source is something you
+  point at.
+
+**4 reachable · 22 gap · 16 none, across 42 adapters.**
+Feeds sit outside the catalog: anything with an RSS/Atom feed is reachable
+through `scrolls follow` + `scrolls sync`, whatever source its entries
+detect as.
+
+The count is the argument for depth over breadth (vision §2.7): 22
+adapters already capture a service whose users keep a collection Scrolls
+cannot reach. Closing one of those gaps through the collection contract
+(ADR 0113) adds more custody than another near-identical adapter would.
+
+| Adapter | Verdict | Reachable now | Gap upstream |
+| --- | --- | --- | --- |
+| [wikipedia](#wikipedia) | reachable | reading lists, via `scrolls sync wikipedia --collection reading-lists` | — |
+| [wikidata](#wikidata) | none | — | — |
+| [web](#web) | reachable | browser bookmarks (`scrolls import bookmarks`) and Pocket saves (`scrolls import pocket`), from file exports | — |
+| [youtube](#youtube) | reachable | watch history (`scrolls import google-takeout`) and public playlists (`scrolls follow` + `scrolls sync`) | liked videos, Watch Later, private playlists, and subscriptions |
+| [github](#github) | gap | — | starred and watched repositories |
+| [gist](#gist) | gap | — | starred gists |
+| [gitlab](#gitlab) | gap | — | starred projects |
+| [gitea](#gitea) | gap | — | starred repositories, per instance |
+| [bitbucket](#bitbucket) | gap | — | watched repositories (upstream offers no endpoint listing them) |
+| [arxiv](#arxiv) | none | — | — |
+| [biorxiv and medrxiv](#biorxiv-and-medrxiv) | none | — | — |
+| [pdf](#pdf) | none | — | — |
+| [hackernews](#hackernews) | gap | — | favorites (public) and upvoted stories (private) |
+| [stackexchange](#stackexchange) | gap | — | saves (formerly bookmarks) |
+| [lobsters](#lobsters) | gap | — | saved stories |
+| [pypi](#pypi) | none | — | — |
+| [npm](#npm) | gap | — | starred packages (`npm stars`) |
+| [crates](#crates) | gap | — | followed crates |
+| [crossref](#crossref) | none | — | — |
+| [pubmed](#pubmed) | gap | — | My NCBI collections |
+| [packagist](#packagist) | none | — | — |
+| [rubygems](#rubygems) | gap | — | subscribed gems |
+| [huggingface](#huggingface) | gap | — | likes and collections |
+| [go](#go) | none | — | — |
+| [pub](#pub) | gap | — | liked packages |
+| [hex](#hex) | none | — | — |
+| [nuget](#nuget) | none | — | — |
+| [hackage](#hackage) | none | — | — |
+| [maven](#maven) | none | — | — |
+| [datacite](#datacite) | none | — | — |
+| [content-negotiation](#content-negotiation) | none | — | — |
+| [bluesky](#bluesky) | gap | — | likes, bookmarks, and lists |
+| [mastodon](#mastodon) | gap | — | bookmarks and favourites |
+| [misskey](#misskey) | gap | — | favorites and clips |
+| [lemmy](#lemmy) | gap | — | saved posts and comments |
+| [piefed](#piefed) | gap | — | saved posts |
+| [discourse](#discourse) | gap | — | bookmarks |
+| [devto](#devto) | gap | — | the reading list |
+| [rfc](#rfc) | none | — | — |
+| [openlibrary](#openlibrary) | gap | — | the reading log and lists |
+| [zenodo](#zenodo) | none | — | — |
+| [x](#x) | reachable | bookmarks, via `scrolls sync x --collection bookmarks` | likes |
 
 ## Adapters so far
 
@@ -45,8 +117,7 @@ collection on-ramp.
   the `x` collection, which arrives already captured; claiming stage `fetched`
   for a row holding no prose would be a promise the response cannot back.
 - **Drift detection works here.** Because `wikipedia` is in `FETCH_ADAPTERS`,
-  `scrolls verify` re-captures a pulled article and reports drift — the thing
-  the `x` collection cannot do.
+  `scrolls verify` re-captures a pulled article and reports drift.
 - **Identity:** the entry's project and title build the article URL, which is
   detected exactly as `scrolls add` detects it, so a pulled article and an added
   one converge on `wikipedia:<lang>:<Title>` by construction. The API returns
@@ -72,6 +143,8 @@ collection on-ramp.
   2 lists, 586 entries, 6 pages, 566 distinct articles, no failures.
 - **Decisions:** `docs/adr/0002-first-fetch-adapter-wikipedia.md`, and
   `docs/adr/0109-wikipedia-reading-lists-collection.md` for the collection.
+- **Collections:** reachable — reading lists, via `scrolls sync wikipedia
+  --collection reading-lists`.
 
 ### wikidata
 
@@ -107,6 +180,8 @@ instead of a `trafilatura` scrape of a concept-poor JS-rendered page.
   have no entity to fetch.
 - **Classification:** a Wikidata entity classifies as `reference`, like the
   article about it.
+- **Collections:** none — its watchlist means "notify me when this changes", not
+  a save (ADR 0109).
 - **Decision:** `docs/adr/0075-wikidata-adapter.md`.
 
 ### web
@@ -114,12 +189,18 @@ instead of a `trafilatura` scrape of a concept-poor JS-rendered page.
 Readable article extraction via `trafilatura` — the project's first per-adapter
 dependency, per ADR 0001 (`docs/adr/0001-implementation-stack.md`).
 
+- **Collections:** reachable — browser bookmarks (`scrolls import bookmarks`)
+  and Pocket saves (`scrolls import pocket`), from file exports.
+
 ### youtube
 
 Keyless oEmbed metadata plus an optional transcript via `youtube-transcript-api`.
 
 - **Degrades:** caption-less videos and playlists degrade to metadata-only
   scrolls.
+- **Collections:** reachable — watch history (`scrolls import google-takeout`)
+  and public playlists (`scrolls follow` + `scrolls sync`); gap — liked videos,
+  Watch Later, private playlists, and subscriptions.
 - **Decision:** `docs/adr/0003-youtube-adapter-oembed-transcripts.md`.
 
 ### github
@@ -145,6 +226,7 @@ content kind on the same source — a discussion thread distinct from the repo.
   request, and a design discussion are too heterogeneous for one label — so it
   stays unclassified like a Hacker News post until a title rule or the LLM
   engine names it.
+- **Collections:** gap — starred and watched repositories upstream, no on-ramp.
 - **Decision:** `docs/adr/0007-github-adapter-topics-as-concepts.md` (repos)
   and `docs/adr/0084-github-issue-pr-adapter.md` (threads).
 
@@ -172,6 +254,7 @@ a JS-rendered DOM scrape.
 - **Classification:** *no* category default — a snippet is heterogeneous (a
   config, a script, a repro), so it stays unclassified like a Hacker News post
   until a title rule or the LLM engine names it.
+- **Collections:** gap — starred gists upstream, no on-ramp.
 - **Decision:** `docs/adr/0078-github-gist-adapter.md`.
 
 ### gitlab
@@ -204,6 +287,7 @@ second content kind — the github thread template applied to GitLab.
   degrades to body-only and `GITLAB_TOKEN` is what reaches the conversation.
 - **Classification:** like a github thread, an issue/MR gets *no* category
   default and stays unclassified until a title rule or the LLM engine names it.
+- **Collections:** gap — starred projects upstream, no on-ramp.
 - **Decision:** `docs/adr/0055-gitlab-adapter.md` (projects) and
   `docs/adr/0085-gitlab-issue-mr-adapter.md` (threads).
 
@@ -228,6 +312,8 @@ an optional README.
   that finds a differently-named README (`README.rst`).
 - **Degrades:** set `GITEA_TOKEN`/`FORGEJO_TOKEN` to lift the rate limit and
   reach private repos; degrades to a metadata-only scroll.
+- **Collections:** gap — starred repositories, per instance upstream, no
+  on-ramp.
 - **Decision:** `docs/adr/0056-gitea-forgejo-adapter.md`.
 
 ### bitbucket
@@ -259,6 +345,8 @@ The fourth code host — Bitbucket Cloud's keyless `/2.0` API:
   `Authorization: Bearer` and lift the rate limit; Bitbucket Server/Data
   Center, the self-hosted product on a different API, is deferred like
   self-hosted GitLab; degrades to a metadata-only scroll.
+- **Collections:** gap — watched repositories (upstream offers no endpoint
+  listing them) upstream, no on-ramp.
 - **Decision:** `docs/adr/0057-bitbucket-adapter.md`.
 
 ### arxiv
@@ -271,6 +359,7 @@ Keyless Atom export API, stdlib XML, with full text pulled from the paper's PDF.
   recorded as `media`, and the paper's full text is extracted from the PDF with
   `pypdf` into searchable extracted text.
 - **Degrades:** any PDF failure degrades to the abstract-only scroll.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0008-arxiv-adapter-atom-abstracts.md`,
   `docs/adr/0010-arxiv-pdf-full-text-pypdf.md`, and
   `docs/adr/0012-arxiv-taxonomy-names-as-concepts.md`.
@@ -289,6 +378,7 @@ because a medRxiv paper does not live on bioRxiv.
   published-journal DOI becomes a `doi.org` link to its Crossref scroll, the
   preprint↔published edge arXiv and PubMed also carry.
 - **Degrades:** degrades to a metadata-only scroll.
+- **Collections:** none — the servers offer alerts, not saved articles.
 - **Decision:** `docs/adr/0068-biorxiv-medrxiv-adapter.md`.
 
 ### pdf
@@ -299,6 +389,8 @@ Any other `.pdf` URL: text and document metadata via `pypdf`.
   honest summary, and the document itself as a media ref for `scrolls media`.
 - **Degrades:** a non-PDF payload fails the fetch, while a textless-but-real
   PDF degrades to a metadata-only scroll.
+- **Collections:** none — a raw shape; the collection is whatever page or
+  bookmark pointed at it.
 - **Decision:** `docs/adr/0013-generic-pdf-adapter.md`.
 
 ### hackernews
@@ -314,6 +406,8 @@ The keyless Firebase API in one request.
 - **Identity:** only `news.ycombinator.com/item?id=…` pages fetch — the front
   page and profiles register but have no item to fetch.
 - **Degrades:** a link story degrades to a metadata-only scroll.
+- **Collections:** gap — favorites (public) and upvoted stories (private)
+  upstream, no on-ramp.
 - **Decision:** `docs/adr/0031-hacker-news-adapter.md`.
 
 ### stackexchange
@@ -330,6 +424,7 @@ Math.SE, Super User, or MathOverflow question enriches with no extra code.
   become `concepts` like github repo topics.
 - **Degrades:** the answers are an optional second request, so a question with
   none, or a failed answers fetch, still produces a question-only scroll.
+- **Collections:** gap — saves (formerly bookmarks) upstream, no on-ramp.
 - **Decision:** `docs/adr/0033-stack-exchange-adapter.md`.
 
 ### lobsters
@@ -362,6 +457,7 @@ comments (a fetch per node) and Stack Exchange spends a second GET on answers.
   names it.
 - **Degrades:** honestly keyless, where Reddit's `.json` now 403s
   unauthenticated clients.
+- **Collections:** gap — saved stories upstream, no on-ramp.
 - **Decision:** `docs/adr/0046-lobsters-adapter.md`.
 
 ### pypi
@@ -380,6 +476,7 @@ clean scroll from the project's latest-release metadata instead of a
 - **Classification:** a PyPI package classifies as `tool`, the first rule to
   produce that category; search/user/help pages register but have no package to
   fetch.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0034-pypi-adapter.md`.
 
 ### npm
@@ -403,6 +500,7 @@ of the PyPI adapter.
   connects to it in `scrolls related`.
 - **Classification:** an npm package classifies as `tool` like a PyPI one;
   search/user/org pages register but have no package to fetch.
+- **Collections:** gap — starred packages (`npm stars`) upstream, no on-ramp.
 - **Decision:** `docs/adr/0035-npm-adapter.md`.
 
 ### crates
@@ -427,6 +525,7 @@ the PyPI and npm adapters.
 - **Degrades:** every tarball failure degrades to a metadata-only scroll.
 - **Classification:** a crate classifies as `tool` like a PyPI or npm package;
   search/user/category pages register but have no crate to fetch.
+- **Collections:** gap — followed crates upstream, no on-ramp.
 - **Decision:** `docs/adr/0036-crates-io-adapter.md`.
 
 ### crossref
@@ -452,6 +551,7 @@ whatever publisher page — often a paywall — the DOI resolves to.
 - **Classification:** a Crossref work classifies as `paper` like an arXiv
   preprint, so Scrolls covers both halves of the literature; the bare resolver
   and non-DOI paths register but have no work to fetch.
+- **Collections:** none — DOI resolution, not a service you save into.
 - **Decision:** `docs/adr/0037-crossref-doi-adapter.md`.
 
 The same `doi.org` detection carries a **datacite** fallback
@@ -502,6 +602,7 @@ returns the record as XML, parsed with stdlib ElementTree.
   preprint↔published edge.
 - **Degrades:** a record with no abstract is an honest metadata-only scroll.
 - **Classification:** a PubMed record classifies as `paper`.
+- **Collections:** gap — My NCBI collections upstream, no on-ramp.
 - **Decision:** `docs/adr/0065-pubmed-adapter.md`.
 
 ### packagist
@@ -529,6 +630,7 @@ sibling of the PyPI, npm, and crates adapters.
 - **Classification:** a Composer package classifies as `tool` like a PyPI, npm,
   or crates one; the packages list, vendor pages, and search register but have
   no package to fetch.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0039-packagist-adapter.md`.
 
 ### rubygems
@@ -549,6 +651,7 @@ returns the latest version inline, so there is no version to select.
   `scrolls related` even when it points at a tagged tree.
 - **Classification:** a gem classifies as `tool` like the other packages; the
   gems list and search register but have no gem to fetch.
+- **Collections:** gap — subscribed gems upstream, no on-ramp.
 - **Decision:** `docs/adr/0040-rubygems-adapter.md`.
 
 ### huggingface
@@ -597,6 +700,7 @@ network.
   site routes and bare profiles register but have no repo to fetch.
 - **Classification:** a model and a Space classify as `tool` like a package, a
   dataset as `dataset` — the IDEAS.md §8 vocabulary term.
+- **Collections:** gap — likes and collections upstream, no on-ramp.
 - **Decision:** `docs/adr/0041-huggingface-hub-adapter.md`.
 
 ### go
@@ -630,6 +734,7 @@ JSON-metadata pattern.
 - **Classification:** a Go module classifies as `tool` like the other packages;
   the standard library, search, and site routes register but have no module to
   fetch.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0042-go-modules-adapter.md`.
 
 ### pub
@@ -669,6 +774,7 @@ its `pubspec.yaml` as JSON, so there is no version to select.
   posture).
 - **Classification:** a pub package classifies as `tool` like every other
   package.
+- **Collections:** gap — liked packages upstream, no on-ramp.
 - **Decision:** `docs/adr/0088-pub-dev-adapter.md`.
 
 ### hex
@@ -702,6 +808,7 @@ object holding the description, the licenses, and a links map. One keyless
   `latest_stable_version`, robust to a pre-release topping the list; the author
   is left unset, since Hex exposes only an owner list with emails and no clean
   byline.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0089-hex-adapter.md`.
 
 ### nuget
@@ -744,6 +851,7 @@ ecosystem it had not reached.
   metadata-only scroll, unlike Go's optional go.mod.
 - **Classification:** a NuGet package classifies as `tool` like every other
   package.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0090-nuget-adapter.md`.
 
 ### hackage
@@ -787,6 +895,7 @@ the package family and the one that breaks the JSON mold.
   left as the feed seed (Go's and NuGet's honest gap); a cabal with no `name`
   field is a fetch error rather than a junk scroll.
 - **Classification:** a Hackage package classifies as `tool`.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0091-hackage-adapter.md`.
 
 ### maven
@@ -844,6 +953,7 @@ tool resolves against, rather than the rate-limited Solr search API or a
   go.mod); parent-POM inheritance — a multi-module child that inherits its
   description/licenses/scm from a `<parent>` — is deferred.
 - **Classification:** a Maven artifact classifies as `tool` like every package.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0092-maven-central-adapter.md`.
 
 ### datacite
@@ -861,6 +971,7 @@ agency.
 - **Provenance:** the source stays `crossref` because identity is fixed at
   `add` time before the agency is knowable, with
   `provenance.adapter="datacite"` recording the truth.
+- **Collections:** none — DOI resolution, not a service you save into.
 - **Decision:** `docs/adr/0045-datacite-doi-fallback.md`.
 
 ### content-negotiation
@@ -889,6 +1000,7 @@ reaches them all at once through DOI **content negotiation**.
 - **Provenance and degrades:** the source stays `crossref`,
   `provenance.adapter="content-negotiation"` is honest, and a
   parsed-but-non-CSL body raises rather than minting a junk scroll.
+- **Collections:** none — DOI resolution, not a service you save into.
 - **Decision:** `docs/adr/0081-doi-content-negotiation-fallback.md`.
 
 ### bluesky
@@ -932,6 +1044,7 @@ scroll instead of a `trafilatura` scrape of a JS-rendered page.
   engine names it.
 - **Degrades:** the whole thread stays in `raw_text` for a future nested
   render, and profile/feed/list/home routes register but have no post to fetch.
+- **Collections:** gap — likes, bookmarks, and lists upstream, no on-ramp.
 - **Decision:** `docs/adr/0048-bluesky-adapter.md`.
 
 ### mastodon
@@ -974,6 +1087,7 @@ to claim.
   social post gets *no* category default.
 - **Degrades:** the whole `{status, context}` stays in `raw_text`, and profile,
   timeline, and tag routes carry no status id to fetch.
+- **Collections:** gap — bookmarks and favourites upstream, no on-ramp.
 - **Decision:** `docs/adr/0049-mastodon-adapter.md`.
 
 The same `mastodon` source and adapter now also serve its API-compatible forks
@@ -1026,6 +1140,7 @@ URL shape.
   else "N reactions, M renotes, K replies") mirror Bluesky and Mastodon.
 - **Classification:** like them it gets *no* category default.
 - **Degrades:** the whole `{note, children}` stays in `raw_text`.
+- **Collections:** gap — favorites and clips upstream, no on-ramp.
 - **Decision:** `docs/adr/0051-misskey-adapter.md`.
 
 ### lemmy
@@ -1069,6 +1184,7 @@ the *third* Fediverse split by client API rather than host.
 - **Classification:** like Hacker News, Lobsters, and the social posts, it gets
   *no* category default.
 - **Degrades:** the whole `{post, comments}` stays in `raw_text`.
+- **Collections:** gap — saved posts and comments upstream, no on-ramp.
 - **Decision:** `docs/adr/0052-lemmy-adapter.md`.
 
 ### piefed
@@ -1105,6 +1221,7 @@ field names (`post.title` not `post.name`, `creator.user_name` not `name`,
 - **Classification:** no category default.
 - **Degrades:** the `Poll`/`Event` payloads are kept in `raw_text` for a future
   render.
+- **Collections:** gap — saved posts upstream, no on-ramp.
 - **Decision:** `docs/adr/0053-piefed-adapter.md`.
 
 ### discourse
@@ -1143,6 +1260,7 @@ generalizes beyond ActivityPub.
 - **Degrades:** a long thread is bounded to the first page, the full post-id
   `stream` surviving in `raw_text` for a later paged render; category/user/tag
   routes carry no topic id to fetch.
+- **Collections:** gap — bookmarks upstream, no on-ramp.
 - **Decision:** `docs/adr/0054-discourse-adapter.md`.
 
 ### devto
@@ -1179,6 +1297,7 @@ One keyless `GET /api/articles/<user>/<slug>` returns the whole article.
 - **Degrades:** self-hosted Forem instances have no shape tell and are deferred
   like self-hosted GitLab, and bare profiles and reserved site routes register
   but have no article to fetch.
+- **Collections:** gap — the reading list upstream, no on-ramp.
 - **Decision:** `docs/adr/0061-devto-adapter.md`.
 
 ### rfc
@@ -1230,6 +1349,7 @@ bibliographic record.
   Internet-Drafts are deferred.
 - **Classification:** an RFC classifies as `reference` — a normative spec to
   consult, like a Wikipedia article, not a paper to cite.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0066-rfc-adapter.md` and
   `docs/adr/0067-rfc-full-text.md`.
 
@@ -1292,6 +1412,7 @@ an ISBN (`/isbn/<isbn>`, which names an edition).
   stays honestly unclassified, like a Hacker News post.
 - **Deferred:** author-bio enrichment, `identifiers` cross-references
   (Wikidata/Goodreads), and a true work↔edition scroll merge.
+- **Collections:** gap — the reading log and lists upstream, no on-ramp.
 - **Decision:** `docs/adr/0073-openlibrary-adapter.md`.
 
 ### zenodo
@@ -1342,6 +1463,7 @@ with no JSON:API envelope, stdlib only).
     period (the RFC rule).
 - **Deferred:** version↔concept consolidation, the deposit's files as captured
   media, and self-hosted InvenioRDM.
+- **Collections:** none — no user collection exists.
 - **Decision:** `docs/adr/0083-zenodo-adapter.md`.
 
 ### x
@@ -1398,5 +1520,7 @@ per-item adapter re-reads one post so custody can re-check it.
   but no request on that path has ever reached X. Use `--auth oauth` only if
   you have an app and are willing to debug it; the cookie default is the
   proven one.
+- **Collections:** reachable — bookmarks, via `scrolls sync x --collection
+  bookmarks`; gap — likes.
 - **Decision:** `docs/adr/0108-x-bookmarks-native-sync.md`, superseding
   `docs/adr/0009-fieldtheory-import.md`.
