@@ -106,7 +106,14 @@ def capture_media(
         if not force and ref.get("path") and target.exists():
             result = {"url": url, "status": "skipped", "path": relpath}
             if documents.wants_text(item, ref) and "text" not in ref:
-                result["text"] = _read_document(ref, target.read_bytes())
+                try:
+                    held = target.read_bytes()
+                except OSError as exc:  # left unread, so a later run retries
+                    results.append(
+                        {"url": url, "status": "failed", "error": f"cannot read {relpath}: {exc}"}
+                    )
+                    continue
+                result["text"] = _read_document(ref, held)
                 changed = True
             results.append(result)
             continue
@@ -200,6 +207,42 @@ def _retry_wait(exc: urllib.error.HTTPError, attempt: int) -> float:
 
 
 _UNREAD = object()
+
+# What `scrolls media` learns about a ref: where its file is held, why it was
+# declined, and what the held document says. None of it is the adapter's to know.
+_CAPTURE_STATE = ("path", "oversize", "bytes", "text", "text_method")
+
+
+def carry_capture_state(held: ScrollItem, fetched: ScrollItem) -> ScrollItem:
+    """Keep each media ref's capture state across a re-fetch, matched by URL.
+
+    An adapter rebuilds an item's media refs from the source every time, so a
+    re-fetch would otherwise forget the held file — and the document text read
+    from it (ADR 0114) — until `scrolls media` downloaded the file again. The
+    adapter's own fields still win; a ref whose URL is new carries nothing.
+
+    Args:
+        held: The stored item, before the re-fetch.
+        fetched: What the adapter returned.
+
+    Returns:
+        `fetched`, with the matching refs' capture state restored; `fetched`
+        itself when there is nothing to carry.
+    """
+    state = {
+        ref["url"]: {key: ref[key] for key in _CAPTURE_STATE if key in ref}
+        for ref in held.media
+        if isinstance(ref, dict) and ref.get("url")
+    }
+    refs, changed = [], False
+    for ref in fetched.media:
+        carried = state.get(ref.get("url")) if isinstance(ref, dict) else None
+        missing = {k: v for k, v in (carried or {}).items() if k not in ref}
+        if missing:
+            ref = {**ref, **missing}
+            changed = True
+        refs.append(ref)
+    return replace(fetched, media=tuple(refs)) if changed else fetched
 
 
 def _read_document(ref: dict[str, Any], payload: bytes) -> str:

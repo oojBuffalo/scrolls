@@ -14,6 +14,7 @@ from typing import Any
 from scrolls.classify import classify_item
 from scrolls.db import init_db
 from scrolls.items import ScrollItem, get_item, insert_item, make_item_id, update_item
+from scrolls.media import carry_capture_state
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.render import write_scroll
 from scrolls.sources import FETCH_ADAPTERS, FetchError
@@ -113,6 +114,7 @@ def ingest_url(url: str) -> dict[str, Any]:
     except FetchError as exc:
         payload.update({"stage": item.stage, "error": str(exc)})
         return payload
+    fetched = carry_capture_state(item, fetched)
     update_item(paths.db_path, fetched)
 
     # classify before the first render so frontmatter carries the category

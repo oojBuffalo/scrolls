@@ -141,6 +141,7 @@ from scrolls.maintain import (
 )
 from scrolls.media import (
     capture_media,
+    carry_capture_state,
     has_pending_document_text,
     has_pending_media,
 )
@@ -3632,6 +3633,7 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
             counts["failed"] += 1
             results.append({"id": item.id, "status": "failed", "error": str(exc)})
             continue
+        fetched = carry_capture_state(item, fetched)
         update_item(paths.db_path, fetched)
         counts["fetched"] += 1
         results.append(

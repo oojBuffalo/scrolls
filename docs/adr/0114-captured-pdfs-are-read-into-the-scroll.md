@@ -31,24 +31,29 @@ The capability already existed. The `pdf` adapter (ADR 0013) and the
 2. **The text lives on the media ref.** `text` holds it and `text_method`
    names the extractor (`pypdf-<version>`), so the method is recorded like
    every other enrichment. It does not go into `extracted_text`: that is
-   the adapter's capture, rewritten by every re-fetch and every adopted
-   re-capture, and document text kept there would vanish on the next one.
-3. **Three states, never confused.** Per the completeness contract
+   the adapter's output, and a re-fetch rightly replaces it.
+3. **A re-fetch keeps the ref's capture state.** An adapter rebuilds media
+   refs from the source every time, so `scrolls fetch` and `ingest` carry
+   each ref's `path`, size decline (`oversize`/`bytes`) and `text`/
+   `text_method` across by URL (`media.carry_capture_state`). The adapter's
+   own fields still win. Without this a re-fetch forgot the held file and
+   its reading until `scrolls media` downloaded it again.
+4. **Three states, never confused.** Per the completeness contract
    (ADR 0102 §3), "nothing there" must not read as "never looked":
    - `text` is a string — read;
    - `text` is null — read, and nothing extractable (a scanned or encrypted
      PDF); the file stays held;
    - no `text` key — not read yet.
-4. **The scroll renders it under `## Documents`.** One `###` heading per
+5. **The scroll renders it under `## Documents`.** One `###` heading per
    held document, named by its original file name, between
    `## Extracted Content` and `## Links`. A null reads as an honest absence
    line; an unread file points at `scrolls media`. Frontmatter keeps the
    ref but drops its `text`, which can run to megabytes.
-5. **No double reading.** An item whose own adapter already read its PDF
+6. **No double reading.** An item whose own adapter already read its PDF
    into `extracted_text` (a pypdf extraction method and text present — the
    `pdf` adapter, a normal arXiv paper) is skipped. An arXiv paper whose
    PDF text failed at fetch gets a second reading here.
-6. **A derived view, outside the hash.** Like a summary, the text is
+7. **A derived view, outside the hash.** Like a summary, the text is
    regenerated from the held file. `content_hash` never moves, so verify
    and drift are untouched.
 
@@ -59,6 +64,8 @@ The capability already existed. The `pdf` adapter (ADR 0013) and the
   `documents: [{path, text: "extracted" | "none"}]`; a download that read
   a PDF carries the same `documents` list.
 - **Existing libraries backfill offline** on the next `scrolls media` run.
+  A held file that cannot be read fails its own ref and stays unread for
+  the next run; it never stops the batch.
 - **The round-trip stays lossless.** Media refs travel whole through
   `export items` and bundles, text included; `show` and MCP `get_scroll`
   return it too.

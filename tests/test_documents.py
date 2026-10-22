@@ -270,3 +270,94 @@ def test_scrolls_media_reads_held_documents_and_rerenders_the_scroll(
     assert stored.media[0]["text"] == REPORT_TEXT
     scroll = (paths.root / stored.markdown_path).read_text(encoding="utf-8")
     assert REPORT_TEXT in scroll.split("## Documents", 1)[1]
+
+
+# --- review round 1: refresh survival and isolated read failures -------------
+
+
+def _read_ref(**extra):
+    return {
+        "type": "pdf",
+        "url": REPORT_URL,
+        "path": "media/wikipedia/station-1.pdf",
+        "text": REPORT_TEXT,
+        "text_method": METHOD,
+        **extra,
+    }
+
+
+def test_a_refetch_keeps_what_scrolls_media_learned_about_each_ref():
+    held = make_item(media=(_read_ref(), {"type": "image", "url": "https://u/x.png",
+                                          "oversize": 10, "bytes": 99}))
+    fresh = make_item(
+        title="Station (revised)",
+        media=(
+            {"type": "pdf", "url": REPORT_URL},  # the same file, rebuilt from scratch
+            {"type": "image", "url": "https://u/x.png"},
+            {"type": "image", "url": "https://u/new.png"},  # new since last fetch
+        ),
+    )
+
+    kept = media.carry_capture_state(held, fresh)
+
+    assert kept.title == "Station (revised)"  # the fetch itself still wins
+    assert kept.media[0] == _read_ref()
+    assert list(kept.media[0])[:2] == ["type", "url"]  # adapter keys first
+    assert kept.media[1] == {"type": "image", "url": "https://u/x.png",
+                             "oversize": 10, "bytes": 99}
+    assert kept.media[2] == {"type": "image", "url": "https://u/new.png"}
+
+
+def test_a_refetch_with_nothing_to_carry_returns_the_fetch_unchanged():
+    fresh = make_item()
+
+    assert media.carry_capture_state(make_item(), fresh) is fresh
+
+
+@pytest.mark.parametrize("command", ["fetch", "ingest"])
+def test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh(
+    tmp_path, monkeypatch, capsys, command
+):
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "home"))
+    from scrolls.sources import FETCH_ADAPTERS
+
+    paths = get_paths()
+    main(["init"])
+    insert_item(paths.db_path, make_item(media=(_read_ref(),)))
+    capsys.readouterr()
+
+    def refetch(item):  # what wikipedia.fetch_item does: fresh refs, no state
+        return replace(make_item(), media=({"type": "pdf", "url": REPORT_URL},))
+
+    monkeypatch.setitem(FETCH_ADAPTERS, "wikipedia", refetch)
+    target = "wikipedia:en:Station" if command == "fetch" else "https://en.wikipedia.org/wiki/Station"
+    assert main([command, target]) == 0
+    capsys.readouterr()
+
+    stored = get_item(paths.db_path, "wikipedia:en:Station")
+    assert stored.media[0]["path"] == "media/wikipedia/station-1.pdf"
+    assert stored.media[0]["text"] == REPORT_TEXT
+
+
+def test_an_unreadable_held_pdf_fails_its_ref_and_not_the_others(paths, monkeypatch):
+    item = _held(paths, make_item())
+    second = {"type": "pdf", "url": "https://u.example/Annex.pdf",
+              "path": "media/wikipedia/station-2.pdf"}
+    (paths.root / second["path"]).write_bytes(REPORT)
+    item = replace(item, media=(item.media[0], second))
+    unreadable = paths.root / item.media[0]["path"]
+    real_read_bytes = type(unreadable).read_bytes
+
+    def read_bytes(self):
+        if self == unreadable:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(type(unreadable), "read_bytes", read_bytes)
+
+    updated, results = capture_media(paths, item)
+
+    assert results[0]["status"] == "failed"
+    assert "Permission denied" in results[0]["error"]
+    assert "text" not in updated.media[0]  # still unread, so a later run retries
+    assert updated.media[1]["text"] == REPORT_TEXT
