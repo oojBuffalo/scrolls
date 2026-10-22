@@ -1,6 +1,7 @@
 """Tests for media capture (`src/scrolls/media.py`, ADR 0011)."""
 
 import urllib.error
+from dataclasses import replace
 
 import pypdf
 import pytest
@@ -399,3 +400,34 @@ def test_no_limit_function_captures_every_size(paths, monkeypatch):
     _, results = capture_media(paths, item, sleep=lambda _s: None)
 
     assert results[0]["status"] == "captured"
+
+
+def test_a_new_ref_never_takes_a_path_a_carried_ref_still_holds(paths, monkeypatch):
+    # review round 2: a re-fetch keeps a held ref's path (ADR 0114), so a ref
+    # inserted ahead of it must not be allocated that same file name
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: url.encode()))
+    original = make_item(
+        id="wikipedia:en:Station",
+        source="wikipedia",
+        media=({"type": "image", "url": "https://u.example/A.png"},),
+    )
+    held, _ = capture_media(paths, original)
+    assert held.media[0]["path"] == "media/wikipedia/en-station-1.png"
+    refreshed = media.carry_capture_state(
+        held,
+        replace(
+            held,
+            media=(
+                {"type": "image", "url": "https://u.example/B.png"},
+                {"type": "image", "url": "https://u.example/A.png"},
+            ),
+        ),
+    )
+
+    updated, _ = capture_media(paths, refreshed)
+
+    b_ref, a_ref = updated.media
+    assert a_ref["path"] == "media/wikipedia/en-station-1.png"
+    assert b_ref["path"] != a_ref["path"]
+    assert (paths.root / a_ref["path"]).read_bytes() == b"https://u.example/A.png"
+    assert (paths.root / b_ref["path"]).read_bytes() == b"https://u.example/B.png"

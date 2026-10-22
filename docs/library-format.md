@@ -740,7 +740,10 @@ downloads items' media references — arXiv PDFs, youtube thumbnails, x
 photos — to `media/<source>/<id-slug>-<n><ext>`
 (`tests/test_media.py`):
 
-- **`<n>`** is the ref's 1-based position in the item's `media` array.
+- **`<n>`** is the ref's 1-based position in the item's `media` array,
+  or the next free number when another ref already holds that name — a
+  re-fetch keeps a held ref's path (ADR 0114), so a ref inserted ahead of
+  it must not take its file.
 - **The extension** comes from the URL path, else from the ref's
   `type`.
 - **Locations are recorded and stable.** The file's root-relative

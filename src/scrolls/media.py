@@ -94,6 +94,9 @@ def capture_media(
             custody rather than loss.
     """
     refs = [dict(ref) if isinstance(ref, dict) else ref for ref in item.media]
+    # paths refs already hold — kept across a re-fetch — are never handed to
+    # another ref, or a ref inserted ahead of one would overwrite its file
+    reserved = {ref["path"] for ref in refs if isinstance(ref, dict) and ref.get("path")}
     results: list[dict[str, Any]] = []
     changed = False
     for index, ref in enumerate(refs, start=1):
@@ -101,7 +104,8 @@ def capture_media(
         if not url:
             results.append({"url": None, "status": "skipped"})
             continue
-        relpath = ref.get("path") or _media_relpath(paths, item, index, ref)
+        relpath = ref.get("path") or _free_relpath(paths, item, index, ref, reserved)
+        reserved.add(relpath)
         target = paths.root / relpath
         if not force and ref.get("path") and target.exists():
             result = {"url": url, "status": "skipped", "path": relpath}
@@ -294,6 +298,20 @@ def _media_relpath(
     slug = slugify(local_id) or "item"
     name = f"{slug}-{index}{_extension(ref)}"
     return str((paths.media_dir / item.source / name).relative_to(paths.root))
+
+
+def _free_relpath(
+    paths: LibraryPaths,
+    item: ScrollItem,
+    index: int,
+    ref: dict[str, Any],
+    reserved: set[str],
+) -> str:
+    """The ref's own `-<index>` name, else the next `-<n>` no other ref holds."""
+    n = index
+    while (relpath := _media_relpath(paths, item, n, ref)) in reserved:
+        n += 1
+    return relpath
 
 
 def _extension(ref: dict[str, Any]) -> str:
