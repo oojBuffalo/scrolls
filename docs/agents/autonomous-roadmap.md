@@ -502,6 +502,8 @@ The buffer rots if nobody refreshes it. The rule:
 
 | H440 | Captured PDFs are read into the scroll (production, `src/scrolls/documents.py` + `media.py` + `render.py` + `cli.py`) — issue #10 / ADR 0112's deferral: the live library held 63 MB of PDFs as media files whose text no scroll or agent could read, though the `pdf`/`arxiv` adapters already shared a pypdf seam; `scrolls media` now reads every held PDF through that seam (fresh downloads as they land, older files from disk without re-downloading), records `text`/`text_method` on the media ref rather than in `extracted_text` (which every re-fetch rewrites), keeps read / read-but-empty / unread distinct (string, null, absent key), and renders a `## Documents` section kept out of frontmatter and outside `content_hash`; a PDF the adapter already read is skipped; FTS indexing and OCR deferred (ADR 0114) | cap 8 |
 
+| H441 | Bundles carry media in an opt-in sidecar (production, `src/scrolls/bundle_media.py` + `cli.py`) — issue #12 / H432's named boundary: the carry leg was byte-perfect for 109 scrolls but left 1,479 media refs as re-fetchable references, so whatever rotted upstream was gone from a fresh library; `export bundle --with-media DIR` now writes the custody block's held files beside the bundle with a SHA-256 manifest (the Markdown byte-identical either way), and `import bundle` finds `<bundle>.media/`, validates the manifest before anything lands, adopts a file only where a held ref records its path, hash-checks it through a temp name, never overwrites, and reports an always-present `media` block that `--dry-run` predicts (ADR 0115, the option Elijah chose) | M4/M5, cap 4 |
+
 ## How this maps to the PRD/MVP
 
 | Theme | PRD capability | MVP slice |

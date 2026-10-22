@@ -2725,6 +2725,11 @@ def test_import_bundle_dry_run_counts_match_a_real_import(
         # a lean default bundle (no `--with-archive`) carries no archive block —
         # the honest "we checked, none travelled" (H280)
         "archive": {"imported": 0, "skipped": 0},
+        # no media sidecar travelled beside it either (ADR 0115)
+        "media": {
+            "sidecar": None, "adopted": 0, "already_held": 0,
+            "unattached": [], "rejected": [],
+        },
     }
 
     # the dry-run wrote nothing — B still holds only the one pre-seeded scroll
@@ -3146,6 +3151,10 @@ def test_import_bundle_dry_run_whole_summary_matches_a_real_import_under_both_co
             "orphaned_items": ["arxiv:2401.00001", "wikipedia:en:Ghost"],
         },
         "archive": {"imported": 0, "skipped": 0},
+        "media": {
+            "sidecar": None, "adopted": 0, "already_held": 0,
+            "unattached": [], "rejected": [],
+        },
     }
     _DRY_RUN_ONLY = {"dry_run", "new", "held"}
     assert {k: v for k, v in preview.items() if k not in _DRY_RUN_ONLY} == expected

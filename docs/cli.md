@@ -3962,7 +3962,7 @@ $ scrolls export archive --since 2026-06-22 > priors-since-last-sweep.jsonl   # 
 [exit 0]
 ```
 
-### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--strength {strong|moderate|weak}] [--content-duplicate] [--format markdown|html] [--with-archive]`
+### `scrolls export bundle <query> [--source S] [--category C] [--stage ST] [--tag T] [--concept K] [--fidelity T] [--drift P] [--strength {strong|moderate|weak}] [--content-duplicate] [--format markdown|html] [--with-archive] [--with-media DIR]`
 
 A scoped, self-contained **custody bundle** for a topic — one Markdown
 file an agent can hand to a person or another library (ADR 0103, MVP M4,
@@ -4059,6 +4059,37 @@ item to its custody record.
   flag is an export concern only); a default bundle's absent block
   restores as a clean `{imported: 0, skipped: 0}`. The whole-library
   JSONL sibling is `scrolls export archive`.
+
+**The media sidecar (`--with-media DIR`)** — the carry leg for files
+(ADR 0115). A bundle holds media only as references a fresh library must
+re-fetch, and whatever rotted upstream since is gone; the sidecar carries
+the files themselves.
+
+- **Beside the bundle, never inside it:** DIR receives the in-scope items'
+  captured files at their library-relative paths plus a
+  `MANIFEST.jsonl` of `{path, sha256, bytes, item_id}`, sorted by path.
+  The Markdown on stdout is byte-identical with or without the flag
+  (`test_the_default_bundle_is_unchanged_by_the_sidecar`).
+- **Exactly the custody block's files:** an out-of-scope item's media
+  never travels (`test_the_sidecar_holds_the_in_scope_files_and_a_manifest`).
+- **A summary on stderr:** `{"media": {sidecar, files, bytes, missing,
+  uncaptured}}`. `missing` names refs whose recorded file is gone from
+  disk; `uncaptured` counts refs that travel as references only — never
+  captured, or declined on size
+  (`test_a_recorded_file_gone_from_disk_is_named_not_shipped`).
+- **Never into someone else's directory:** a DIR that is a file or a
+  non-empty directory is refused before anything is written, stdout
+  included (`test_a_non_empty_destination_is_refused_before_anything_is_written`);
+  `--format html` has no custody block to attach files to and is refused
+  too (`test_the_html_briefing_cannot_carry_a_sidecar`).
+- **Name it `<bundle>.media`** and `import bundle` finds it on its own:
+
+```console
+$ scrolls export bundle "database engine" --with-media briefing.media > briefing.md
+{"media": {"sidecar": "briefing.media", "files": 2, "bytes": 48213, "missing": [], "uncaptured": 1}}   # stderr
+
+$ scrolls import bundle briefing.md      # in the other library: finds briefing.media/
+```
 
 **Where it sits, and what it carries:**
 
@@ -4261,6 +4292,32 @@ flow. `path` is a bundle file `export bundle` wrote.
   across a fresh library is verified end to end
   (`test_export_import_round_trips_across_a_fresh_library`).
 
+**A media sidecar comes along when one travelled** (ADR 0115). The
+`<bundle>.media/` directory beside `path` is found on its own;
+`--media DIR` names one kept elsewhere, and a named DIR that does not
+exist is an error.
+
+- **Validated before anything lands:** a malformed manifest line, or a
+  path outside `media/` (`../`, absolute, `scrolls/…`), fails the whole
+  import naming the line, with nothing written
+  (`test_an_unsafe_manifest_path_fails_the_import_before_anything_lands`).
+- **Files land where a held ref expects them:** a file is adopted only
+  when the row it names, after the import, records that `path`; any other
+  is `unattached` and left behind
+  (`test_a_file_no_held_ref_points_at_is_unattached`).
+- **Hash-checked, never overwriting:** each file is copied through a
+  temporary name and kept only if its SHA-256 matches; a mismatch or a
+  file missing from the sidecar is `rejected` and the run exits 1, while
+  the rows and the other files still land
+  (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`). A file
+  the library already holds is counted `already_held` and never touched
+  (`test_a_file_the_library_already_holds_is_never_overwritten`).
+- **Lossless for media:** after a sidecar import the fresh library's
+  `doctor` reports no missing media
+  (`test_a_sidecar_beside_the_bundle_restores_the_files_byte_for_byte`),
+  and `--dry-run` predicts the same `media` block without writing
+  (`test_a_dry_run_predicts_the_adoption_without_writing`).
+
 **But a skip is not opaque.** Like `import items` (the H272 partition
 lifted here by roadmap H273), the bundle importer splits every skip on
 the captured-content `content_hash`.
@@ -4453,6 +4510,7 @@ freshly-inserted bundle row that lands **byte-identical** to a
 | `held` | (dry-run only) the already-held item ids the merge would skip — sorted, deduped |
 | `events` | `{imported, skipped, orphaned, orphaned_items}` — events restored / deduped from the events block, plus those skipped as orphans (no held-or-imported item, H217); `orphaned_items` names the distinct orphan ids (sorted, deduped, uncapped — H230) |
 | `archive` | `{imported, skipped}` — prior-content archive rows restored / deduped from the optional `--with-archive` block (H280); `{0, 0}` when no archive block travelled |
+| `media` | `{sidecar, adopted, already_held, unattached, rejected}` — the media sidecar's files (ADR 0115); `sidecar` is null with zeros when none travelled, `rejected` lists `{path, reason}` and makes the run exit 1 |
 | `dry_run` | present and `true` only under `--dry-run`; the summary is a preview and nothing was written |
 
 ```console

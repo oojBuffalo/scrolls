@@ -25,6 +25,14 @@ from scrolls.bundle import (
     parse_bundle_archive,
     parse_bundle_events,
 )
+from scrolls.bundle_media import (
+    SidecarError,
+    adopt_media,
+    empty_report,
+    export_media,
+    load_manifest,
+    sidecar_beside,
+)
 from scrolls.classify import classify_item, stale_classifications
 from scrolls.config import ConfigError, load_config, resolve_llm_model
 from scrolls.custody import (
@@ -651,6 +659,14 @@ def build_parser() -> argparse.ArgumentParser:
         "`superseded` event (ADR 0106). Composes with --dry-run, which then predicts "
         "the held→incoming adoptions without writing. Opt-in",
     )
+    import_bundle_parser.add_argument(
+        "--media",
+        default=None,
+        metavar="DIR",
+        help="The bundle's media sidecar (ADR 0115), when it is not the "
+        "`<bundle>.media/` directory beside the bundle, which is found on its own. "
+        "Files are hash-checked and never overwrite a held file",
+    )
     import_events_parser = import_sub.add_parser(
         "events",
         help="Restore custody events from a JSONL export, deduped (JSON output)",
@@ -960,6 +976,16 @@ def build_parser() -> argparse.ArgumentParser:
         "stays lean by default (the `superseded` event already travels documenting "
         "that an adoption happened); `import bundle` restores any archive block it "
         "finds. The whole-library JSONL sibling is `scrolls export archive`",
+    )
+    export_bundle_parser.add_argument(
+        "--with-media",
+        dest="with_media",
+        default=None,
+        metavar="DIR",
+        help="Also copy the in-scope items' captured media files into a sidecar "
+        "directory DIR, with a SHA-256 MANIFEST.jsonl (ADR 0115). The bundle on "
+        "stdout is unchanged; name DIR `<bundle>.media` and `import bundle` finds "
+        "it beside the bundle. DIR must be new or empty. A summary goes to stderr",
     )
 
     ingest_parser = subparsers.add_parser(
@@ -1813,6 +1839,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.path,
                 dry_run=args.dry_run,
                 accept_incoming=args.accept_incoming,
+                media_dir=args.media,
             )
         if args.import_command == "events":
             return _cmd_import_events(args.path)
@@ -1854,6 +1881,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.strength,
                 args.with_archive,
                 args.content_duplicate,
+                args.with_media,
             )
         return _cmd_export_opml()
     if args.command == "ingest":
@@ -3256,8 +3284,14 @@ def _cmd_export_bundle(
     strength: str | None = None,
     with_archive: bool = False,
     content_duplicate: bool = False,
+    with_media: str | None = None,
 ) -> int:
     paths = get_paths()
+    if with_media is not None and fmt == "html":
+        print(json.dumps({"error": "--with-media needs the markdown bundle: the html "
+                          "briefing carries no custody block to attach files to"}),
+              file=sys.stderr)
+        return 1
     # markdown (default) is the canonical, lossless, re-importable bundle; html
     # is a browser-readable, export-only briefing (roadmap H39). Both tolerate a
     # missing library (a valid empty document, no library created — like
@@ -3292,10 +3326,21 @@ def _cmd_export_bundle(
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
+    media = None
+    if with_media is not None:
+        # the sidecar (ADR 0115) carries exactly the custody block's rows' files,
+        # written before the bundle so a refused destination leaves stdout empty
+        try:
+            media = export_media(paths, parse_bundle(bundle), Path(with_media).expanduser())
+        except (SidecarError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 1
     # the bundle *is* the artifact (the `context`/scroll exception to the
     # JSON-on-stdout rule) — `scrolls export bundle "<q>" > briefing.md`, or
     # `… --format html > briefing.html`
     sys.stdout.write(bundle)
+    if media is not None:
+        print(json.dumps({"media": media}), file=sys.stderr)
     return 0
 
 
@@ -3348,7 +3393,10 @@ def _warn_orphan_events(orphan_events: list) -> None:
 
 
 def _cmd_import_bundle(
-    path: str, dry_run: bool = False, accept_incoming: bool = False
+    path: str,
+    dry_run: bool = False,
+    accept_incoming: bool = False,
+    media_dir: str | None = None,
 ) -> int:
     try:
         text = Path(path).expanduser().read_text(encoding="utf-8")
@@ -3359,6 +3407,14 @@ def _cmd_import_bundle(
         print(json.dumps({"error": f"cannot read {path}: {exc}"}), file=sys.stderr)
         return 1
     except BundleError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    # the media sidecar (ADR 0115) is found and its manifest validated before
+    # anything lands: a manifest that lies about where a file goes is corrupt
+    try:
+        sidecar = _bundle_sidecar(Path(path).expanduser(), media_dir)
+        manifest = load_manifest(sidecar) if sidecar else []
+    except SidecarError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
 
@@ -3372,6 +3428,8 @@ def _cmd_import_bundle(
             imported_events,
             imported_archive,
             accept_incoming=accept_incoming,
+            sidecar=sidecar,
+            manifest=manifest,
         )
 
     # INSERT OR IGNORE per row (ADR 0082): a scroll the target library already
@@ -3418,6 +3476,12 @@ def _cmd_import_bundle(
     # The archive is a standalone recovery store: this only appends to
     # `item_archive`, never touching a held row (no orphan concept needed).
     ar_imported, ar_skipped = import_archive(paths.db_path, imported_archive)
+    # the files last, once the rows they attach to are in place (ADR 0115)
+    media = (
+        adopt_media(paths, manifest, sidecar, lambda i: get_item(paths.db_path, i))
+        if sidecar
+        else empty_report()
+    )
     print(json.dumps({
         **counts,
         # the distinct ids whose held copy diverged from the incoming bundle row
@@ -3457,8 +3521,22 @@ def _cmd_import_bundle(
         # `{imported: 0, skipped: 0}` ("we checked, none travelled"), a
         # `--with-archive` bundle restores its recovery store (deduped).
         "archive": {"imported": ar_imported, "skipped": ar_skipped},
+        # the media sidecar (ADR 0115) — always present, like `archive`: no
+        # sidecar is `sidecar: null` with zeros; a rejected file fails the run
+        "media": media,
     }))
-    return 0
+    return 1 if media["rejected"] else 0
+
+
+def _bundle_sidecar(bundle_path: Path, media_dir: str | None) -> Path | None:
+    """The sidecar to adopt: the one named, else `<bundle>.media/` if present."""
+    if media_dir is not None:
+        named = Path(media_dir).expanduser()
+        if not named.is_dir():
+            raise SidecarError(f"no media sidecar directory at {named}")
+        return named
+    beside = sidecar_beside(bundle_path)
+    return beside if beside.is_dir() else None
 
 
 def _preview_import_bundle(
@@ -3467,6 +3545,8 @@ def _preview_import_bundle(
     imported_events,
     imported_archive,
     accept_incoming: bool = False,
+    sidecar: Path | None = None,
+    manifest=(),
 ) -> int:
     """The read-only sibling of the bundle import (roadmap H220, H273).
 
@@ -3526,6 +3606,21 @@ def _preview_import_bundle(
     # for the same recovery store, so the dry-run never drifts from the real import
     # (the H220/H233 preview-fidelity discipline on the archive axis).
     ar_imported, ar_skipped = preview_import_archive(paths.db_path, imported_archive)
+    # the row each file would attach to after the write: the incoming row where
+    # the import inserts or adopts it, else the held one (ADR 0115)
+    incoming = {item.id: item for item in imported_items}
+    replaced = set(new_ids) | set(adopted)
+
+    def predicted_row(item_id: str) -> ScrollItem | None:
+        if item_id in replaced:
+            return incoming[item_id]
+        return get_item(paths.db_path, item_id)
+
+    media = (
+        adopt_media(paths, manifest, sidecar, predicted_row, dry_run=True)
+        if sidecar
+        else empty_report()
+    )
     print(json.dumps({
         "dry_run": True,
         **counts,
@@ -3556,8 +3651,9 @@ def _preview_import_bundle(
         # the archive-restore prediction (H280), the same shape the live import
         # carries — `{imported: 0, skipped: 0}` for a lean default bundle.
         "archive": {"imported": ar_imported, "skipped": ar_skipped},
+        "media": media,
     }))
-    return 0
+    return 1 if media["rejected"] else 0
 
 
 def _find_item(paths: LibraryPaths, ref: str) -> tuple[ScrollItem | None, str]:
