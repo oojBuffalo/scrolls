@@ -1386,7 +1386,9 @@ choice (ADRs 0004, 0005).
   root-relative `path` on the ref (reused on re-capture, so locations
   are stable), and re-renders the scroll so frontmatter points at local
   files. Batch runs capture only refs missing from disk; `media <id>`
-  re-captures explicitly (`tests/test_media.py`).
+  re-captures explicitly (`tests/test_media.py`). A held PDF is also read
+  through the `pdf` adapter's `extract_text` seam onto its ref, and the
+  scroll renders it under `## Documents` (`documents.py`, ADR 0114).
 - **Context bundles** (`context.py`, IDEAS.md §11) — `scrolls context`
   emits Markdown (the bundle *is* the artifact agents drop into
   context), unlike the data commands; errors stay JSON on stderr. Each

@@ -2,6 +2,7 @@
 
 import urllib.error
 
+import pypdf
 import pytest
 
 import scrolls.media as media
@@ -51,12 +52,16 @@ def test_capture_downloads_ref_and_records_root_relative_path(paths, monkeypatch
         "type": "pdf",
         "url": "https://arxiv.org/pdf/1706.03762",
         "path": "media/arxiv/1706-03762-1.pdf",
+        # a captured PDF is read too (ADR 0114); fake bytes hold no text
+        "text": None,
+        "text_method": f"pypdf-{pypdf.__version__}",
     }
     assert results == [
         {
             "url": "https://arxiv.org/pdf/1706.03762",
             "status": "captured",
             "path": "media/arxiv/1706-03762-1.pdf",
+            "text": "none",
         }
     ]
 
@@ -106,8 +111,16 @@ def test_capture_skips_already_captured_refs(paths, monkeypatch):
     target = paths.root / relpath
     target.parent.mkdir(parents=True)
     target.write_bytes(b"already here")
+    already_read = {"text": None, "text_method": "pypdf-5.0.0"}  # see test_documents
     item = make_item(
-        media=({"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": relpath},)
+        media=(
+            {
+                "type": "pdf",
+                "url": "https://arxiv.org/pdf/1706.03762",
+                "path": relpath,
+                **already_read,
+            },
+        )
     )
 
     updated, results = capture_media(paths, item)

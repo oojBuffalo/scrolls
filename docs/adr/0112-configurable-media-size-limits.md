@@ -92,4 +92,5 @@ honestly stays `file` (issue #13, H436).
 **Deferred**: extracting text from captured PDFs into the scroll. The repo
 already does this for arXiv (`extraction_method: arxiv-atom+pypdf`), so a
 62.6 MB document sitting in `media/` with its text unread is a real gap — but
-it is a capture-depth change, not a size-limit one.
+it is a capture-depth change, not a size-limit one. **Settled by
+[ADR 0114](0114-captured-pdfs-are-read-into-the-scroll.md)** (2026-10-22).

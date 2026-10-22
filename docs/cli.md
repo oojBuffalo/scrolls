@@ -5260,11 +5260,19 @@ ref and re-rendering its scroll so frontmatter points at the local file
 - **Failure isolation** — one failed download fails its item but never the
   batch, and refs captured before the failure keep their files
   (`test_media_continues_past_failures_and_exits_nonzero`).
+- **Held PDFs are read** (ADR 0114) — each PDF the run holds is read into
+  its media ref, so its text renders under the scroll's `## Documents`.
+  A file already on disk is read without being downloaded again, which is
+  how a library captured before this backfills; a PDF the item's adapter
+  already read into the body is skipped
+  (`test_scrolls_media_reads_held_documents_and_rerenders_the_scroll`,
+  `tests/test_documents.py`).
 
 | Key | Meaning |
 | --- | --- |
 | `captured` / `skipped` / `failed` | batch counts (per item) |
-| `results[]` | per-item `{id, status, ...}`; `files` lists captured root-relative paths, `error` is the first failed ref's message, `reason` explains a skip |
+| `extracted` | items whose held PDFs were only read, nothing downloaded; present when non-zero |
+| `results[]` | per-item `{id, status, ...}`; `files` lists captured root-relative paths, `error` is the first failed ref's message, `reason` explains a skip, `documents` lists each PDF read as `{path, text}` with `text` `extracted` or `none` |
 
 ```console
 $ scrolls media                       # one fetched arXiv item is pending

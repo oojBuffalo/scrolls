@@ -8,6 +8,11 @@ root-relative convention as `markdown_path` — so scrolls and the index
 point at local files. A recorded `path` is reused on re-capture, keeping
 file locations stable. SQLite stays canonical: files can always be
 re-downloaded from the recorded URLs.
+
+A captured PDF is also *read*: its text goes onto the ref (`text`,
+`text_method`) so the scroll can render it (ADR 0114, `scrolls.documents`).
+A held PDF that predates that is read from disk on the next run, never
+downloaded again.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from pathlib import PurePosixPath
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from scrolls import documents
 from scrolls.items import ScrollItem
 from scrolls.paths import LibraryPaths
 from scrolls.render import slugify
@@ -98,7 +104,11 @@ def capture_media(
         relpath = ref.get("path") or _media_relpath(paths, item, index, ref)
         target = paths.root / relpath
         if not force and ref.get("path") and target.exists():
-            results.append({"url": url, "status": "skipped", "path": relpath})
+            result = {"url": url, "status": "skipped", "path": relpath}
+            if documents.wants_text(item, ref) and "text" not in ref:
+                result["text"] = _read_document(ref, target.read_bytes())
+                changed = True
+            results.append(result)
             continue
         cap = limit_for(ref.get("type")) if limit_for else None
         try:
@@ -126,7 +136,12 @@ def capture_media(
         if ref.get("path") != relpath:
             ref["path"] = relpath
             changed = True
-        results.append({"url": url, "status": "captured", "path": relpath})
+        result = {"url": url, "status": "captured", "path": relpath}
+        if documents.wants_text(item, ref):  # a fresh file is always read afresh
+            before = (ref.get("text", _UNREAD), ref.get("text_method"))
+            result["text"] = _read_document(ref, payload)
+            changed = changed or before != (ref["text"], ref["text_method"])
+        results.append(result)
     updated = replace(item, media=tuple(refs)) if changed else item
     return updated, results
 
@@ -182,6 +197,37 @@ def _retry_wait(exc: urllib.error.HTTPError, attempt: int) -> float:
         except (TypeError, ValueError):
             pass
     return float(min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_CAP_SECONDS))
+
+
+_UNREAD = object()
+
+
+def _read_document(ref: dict[str, Any], payload: bytes) -> str:
+    """Read a PDF's text onto its ref; return `"extracted"` or `"none"`.
+
+    The one extraction seam the `pdf` and `arxiv` adapters already share, so
+    a document reads the same whichever route held it. A file pypdf cannot
+    read, or one with no text layer, records `text: None` — read, and
+    honestly empty — rather than leaving it looking unread.
+    """
+    import pypdf
+
+    from scrolls.sources.pdf import extract_text
+
+    ref["text"] = extract_text(payload)
+    ref["text_method"] = f"pypdf-{pypdf.__version__}"
+    return "extracted" if ref["text"] else "none"
+
+
+def has_pending_document_text(paths: LibraryPaths, item: ScrollItem) -> bool:
+    """True if a held PDF on disk has never been read (ADR 0114)."""
+    return any(
+        documents.wants_text(item, ref)
+        and documents.is_held(ref)
+        and "text" not in ref
+        and (paths.root / ref["path"]).exists()
+        for ref in item.media
+    )
 
 
 def has_pending_media(paths: LibraryPaths, item: ScrollItem) -> bool:
