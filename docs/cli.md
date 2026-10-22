@@ -4998,7 +4998,10 @@ No argument: run the source adapter for every item at stage `detected`
 - **A re-fetch keeps what `scrolls media` learned** — the adapter rebuilds
   each media ref from the source, so a ref's held `path`, size decline and
   document text (ADR 0114) are carried across by URL rather than forgotten
-  (`test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh`).
+  (`test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh`) —
+  as long as the capture itself is unchanged. A new `content_hash` starts
+  the refs over, so the next `scrolls media` fetches and reads them afresh
+  (`test_a_refetch_that_changed_the_capture_starts_its_refs_over`).
 
 | Key | Meaning |
 | --- | --- |

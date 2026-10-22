@@ -37,7 +37,10 @@ The capability already existed. The `pdf` adapter (ADR 0013) and the
    each ref's `path`, size decline (`oversize`/`bytes`) and `text`/
    `text_method` across by URL (`media.carry_capture_state`). The adapter's
    own fields still win. Without this a re-fetch forgot the held file and
-   its reading until `scrolls media` downloaded it again.
+   its reading until `scrolls media` downloaded it again. The state belongs
+   to a capture, so it carries only when the re-fetch reports the same
+   `content_hash`; a changed capture — the `pdf` adapter hashes the document
+   itself — starts its refs over, and `scrolls media` reads them afresh.
 4. **Three states, never confused.** Per the completeness contract
    (ADR 0102 §3), "nothing there" must not read as "never looked":
    - `text` is a string — read;

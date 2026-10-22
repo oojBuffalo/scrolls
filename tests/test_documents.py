@@ -361,3 +361,16 @@ def test_an_unreadable_held_pdf_fails_its_ref_and_not_the_others(paths, monkeypa
     assert "Permission denied" in results[0]["error"]
     assert "text" not in updated.media[0]  # still unread, so a later run retries
     assert updated.media[1]["text"] == REPORT_TEXT
+
+
+def test_a_refetch_that_changed_the_capture_starts_its_refs_over():
+    # review round 3: the pdf adapter hashes the document itself, so a new
+    # content_hash at the same URL means the held file is the *old* document
+    held = make_item(content_hash="sha256:old", media=(_read_ref(),))
+    changed = make_item(content_hash="sha256:new",
+                        media=({"type": "pdf", "url": REPORT_URL},))
+    same = make_item(content_hash="sha256:old",
+                     media=({"type": "pdf", "url": REPORT_URL},))
+
+    assert media.carry_capture_state(held, changed) is changed
+    assert media.carry_capture_state(held, same).media[0] == _read_ref()

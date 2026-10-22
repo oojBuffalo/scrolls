@@ -225,6 +225,12 @@ def carry_capture_state(held: ScrollItem, fetched: ScrollItem) -> ScrollItem:
     from it (ADR 0114) — until `scrolls media` downloaded the file again. The
     adapter's own fields still win; a ref whose URL is new carries nothing.
 
+    The state belongs to a capture, so it carries only when the re-fetch
+    reports the same `content_hash`. A changed capture — the `pdf` adapter
+    hashes the document itself — starts its refs over, and `scrolls media`
+    downloads and reads them afresh rather than pairing old bytes with new
+    capture metadata.
+
     Args:
         held: The stored item, before the re-fetch.
         fetched: What the adapter returned.
@@ -233,6 +239,8 @@ def carry_capture_state(held: ScrollItem, fetched: ScrollItem) -> ScrollItem:
         `fetched`, with the matching refs' capture state restored; `fetched`
         itself when there is nothing to carry.
     """
+    if held.content_hash != fetched.content_hash:
+        return fetched
     state = {
         ref["url"]: {key: ref[key] for key in _CAPTURE_STATE if key in ref}
         for ref in held.media
