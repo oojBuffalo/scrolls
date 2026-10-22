@@ -4306,7 +4306,10 @@ exist is an error.
   is `unattached` and left behind
   (`test_a_file_no_held_ref_points_at_is_unattached`).
 - **Hash-checked, never overwriting:** each file is copied into a fresh,
-  exclusively created temporary file and kept only if its SHA-256 matches
+  exclusively created temporary file and published by hard link only if
+  its SHA-256 matches, so a file another writer lands mid-copy is kept
+  and counted `already_held`
+  (`test_a_file_that_appears_mid_copy_is_never_clobbered`)
   (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`,
   `test_a_held_file_named_like_a_temporary_file_is_never_touched`). A file
   the library already holds is counted `already_held` and never touched
@@ -4323,8 +4326,10 @@ exist is an error.
 - **Lossless for media:** after a sidecar import the fresh library's
   `doctor` reports no missing media
   (`test_a_sidecar_beside_the_bundle_restores_the_files_byte_for_byte`),
-  and `--dry-run` predicts the same `media` block without writing
-  (`test_a_dry_run_predicts_the_adoption_without_writing`).
+  and `--dry-run` predicts the same `media` block without writing,
+  attaching files to the rows the merge would keep
+  (`test_a_dry_run_predicts_the_adoption_without_writing`,
+  `test_the_preview_attaches_files_to_the_row_the_merge_keeps`).
 
 **But a skip is not opaque.** Like `import items` (the H272 partition
 lifted here by roadmap H273), the bundle importer splits every skip on

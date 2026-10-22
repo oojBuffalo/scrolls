@@ -446,3 +446,75 @@ def test_a_file_that_cannot_be_copied_is_rejected_and_the_rest_still_land(
     assert sorted(p.name for p in (library_b.root / "media/wikipedia").iterdir()) == [
         "station-2.png"
     ]
+
+
+# --- review round 2: no-clobber publish, merge-faithful preview, NUL paths ---
+
+
+def test_a_file_that_appears_mid_copy_is_never_clobbered(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    import scrolls.bundle_media as bundle_media
+
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    racer = library_b.root / "media/wikipedia/station-1.pdf"
+    real_copy = bundle_media._copy_into
+
+    def copy_into(source, handle):
+        result = real_copy(source, handle)
+        if source.name == "station-1.pdf":  # another writer lands it meanwhile
+            racer.write_bytes(b"the concurrent capture")
+        return result
+
+    monkeypatch.setattr(bundle_media, "_copy_into", copy_into)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 0
+
+    media = json.loads(capsys.readouterr().out)["media"]
+    assert (media["adopted"], media["already_held"]) == (1, 1)
+    assert racer.read_bytes() == b"the concurrent capture"
+    assert sorted(p.name for p in racer.parent.iterdir()) == ["station-1.pdf", "station-2.png"]
+
+
+def test_the_preview_attaches_files_to_the_row_the_merge_keeps(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    bundle = tmp_path / "ml.md"
+    lines = bundle.read_text(encoding="utf-8").splitlines(keepends=True)
+    [first] = [i for i, line in enumerate(lines) if line.startswith('{"id": "wikipedia:en:Station"')]
+    repeat = lines[first].replace("station-1.pdf", "station-8.pdf").replace(
+        "station-2.png", "station-9.png"
+    )
+    lines.insert(first + 1, repeat)  # same id again: INSERT OR IGNORE keeps the first
+    bundle.write_text("".join(lines), encoding="utf-8")
+    _library_b(monkeypatch, tmp_path, capsys)
+
+    assert main(["import", "bundle", str(bundle), "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)["media"]
+    assert main(["import", "bundle", str(bundle)]) == 0
+    real = json.loads(capsys.readouterr().out)["media"]
+
+    assert real["adopted"] == 2
+    assert preview == real
+
+
+def test_a_nul_in_a_manifest_path_fails_before_anything_lands(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    line = {"path": "media/wikipedia/bad\u0000.png", "sha256": _sha(b"x"), "bytes": 1,
+            "item_id": "wikipedia:en:Station"}
+    with (sidecar / "MANIFEST.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+    _library_b(monkeypatch, tmp_path, capsys)
+
+    code = main(["import", "bundle", str(tmp_path / "ml.md")])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "MANIFEST.jsonl line 3" in json.loads(captured.err)["error"]
+    assert main(["list"]) == 0
+    assert json.loads(capsys.readouterr().out) == []

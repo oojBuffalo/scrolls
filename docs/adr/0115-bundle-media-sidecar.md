@@ -42,15 +42,18 @@ boundary. Elijah chose the sidecar.
    `ml.media/` when it sits beside the bundle; `--media DIR` names one
    kept elsewhere.
 5. **The manifest is validated before anything lands.** A malformed line,
-   or a path outside `media/`, fails the whole import naming the line. A
+   or a path outside `media/` (or carrying a NUL), fails the whole import
+   naming the line. A
    backup that lies about where a file goes is corrupt, not partly usable.
 6. **Files land only where a held ref expects them.** A file is adopted
    when the row it names, after the import, records that exact `path`.
    Anything else is `unattached` and left in the sidecar.
 7. **Hash-checked, never overwriting.** Each file is copied into a fresh,
-   exclusively created temporary file and renamed in only if its SHA-256
+   exclusively created temporary file and published only if its SHA-256
    matches, so no file already in the directory is ever opened for writing.
-   A file the library already holds is never touched — the importer's
+   Publishing is a hard link, which refuses an existing name, so even a
+   file another writer lands mid-copy is kept and counted as held. A file
+   the library already holds is never touched — the importer's
    `INSERT OR IGNORE`, applied to bytes.
 8. **Contained as the filesystem resolves it.** Lexical checks are not
    enough: a symlinked directory under the library's `media/` must not
@@ -69,7 +72,9 @@ boundary. Elijah chose the sidecar.
 - **The import's JSON gains an always-present `media` block**
   (`{sidecar, adopted, already_held, unattached, rejected}`), null and
   zeros when nothing travelled, like the `archive` block. `--dry-run`
-  predicts it, hashing without writing.
+  predicts it, hashing without writing, against the rows the merge itself
+  would keep — the first occurrence of a repeated id, or the incoming one
+  under `--accept-incoming`.
 - **`--format html` refuses the flag:** the HTML briefing has no custody
   block for files to attach to.
 - **Deferred:** a single-file archive variant (a tarball of bundle plus

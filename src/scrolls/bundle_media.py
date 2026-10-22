@@ -199,11 +199,17 @@ def adopt_media(
                                  entry.sha256, dry_run=dry_run)
         except OSError as exc:
             outcome = f"cannot copy: {exc}"
-        if outcome is None:
+        if outcome == _ADOPTED:
             report["adopted"] += 1
+        elif outcome == _HELD:  # another writer landed it first
+            report["already_held"] += 1
         else:
             report["rejected"].append({"path": entry.path, "reason": outcome})
     return report
+
+
+_ADOPTED = "adopted"
+_HELD = "already_held"
 
 
 def _adopt_one(
@@ -214,8 +220,8 @@ def _adopt_one(
     expected: str,
     *,
     dry_run: bool,
-) -> str | None:
-    """Bring one file in; return None on success, else why it was rejected."""
+) -> str:
+    """Bring one file in: `_ADOPTED`, `_HELD`, or why it was rejected."""
     if not _resolves_within(source, sidecar):
         return "outside the sidecar"
     if not source.is_file():
@@ -223,9 +229,9 @@ def _adopt_one(
     if not _lands_within(target, media_root):
         return "outside the library's media directory"
     if dry_run:
-        return None if _verify(source, expected) else "sha256 mismatch"
+        return _ADOPTED if _verify(source, expected) else "sha256 mismatch"
     target.parent.mkdir(parents=True, exist_ok=True)
-    return None if _adopt(source, target, expected) else "sha256 mismatch"
+    return _adopt(source, target, expected)
 
 
 def _entry(raw: Any) -> ManifestEntry:
@@ -245,7 +251,7 @@ def _entry(raw: Any) -> ManifestEntry:
 
 def _is_safe(relpath: str) -> bool:
     """A library-relative path under `media/` that cannot climb out of it."""
-    if "\\" in relpath:
+    if "\\" in relpath or "\x00" in relpath:
         return False
     parts = PurePosixPath(relpath).parts
     return (
@@ -296,23 +302,29 @@ def _verify(source: Path, expected: str) -> bool:
     return digest.hexdigest() == expected
 
 
-def _adopt(source: Path, target: Path, expected: str) -> bool:
-    """Copy through a fresh temporary file; rename it in only if the hash matches.
+def _adopt(source: Path, target: Path, expected: str) -> str:
+    """Copy through a fresh temporary file; publish it only if the hash matches.
 
     The temporary file is created exclusively under a unique name, so no file
     already in the directory — whatever it is called — is ever opened for
-    writing or cleaned up; only the file this call created is removed.
+    writing or cleaned up; only the file this call created is removed. It is
+    published with a hard link, which refuses an existing name: a file another
+    writer landed while this one copied is kept, and counted as held.
+
+    Returns:
+        `_ADOPTED`, `_HELD`, or `"sha256 mismatch"`.
     """
     fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".incoming")
-    partial: Path | None = Path(name)
+    partial = Path(name)
     try:
         with os.fdopen(fd, "wb") as handle:
             digest, _ = _copy_into(source, handle)
         if digest != expected:
-            return False
-        os.replace(partial, target)
-        partial = None
-        return True
+            return "sha256 mismatch"
+        try:
+            os.link(partial, target)
+        except FileExistsError:
+            return _HELD
+        return _ADOPTED
     finally:
-        if partial is not None:
-            partial.unlink(missing_ok=True)
+        partial.unlink(missing_ok=True)

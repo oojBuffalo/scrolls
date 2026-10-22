@@ -10,6 +10,7 @@ import argparse
 import dataclasses
 import json
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2837,6 +2838,28 @@ def _simulated_post_import_items(
     return list_items(db_path) + list(added.values())
 
 
+def _predicted_row(
+    db_path: Path, items: list[ScrollItem], *, accept_incoming: bool = False
+) -> Callable[[str], ScrollItem | None]:
+    """The row each id would hold after `_merge_items`, without writing (ADR 0115).
+
+    Walks the batch with the live merge's rules: INSERT OR IGNORE keeps the
+    held row, or the *first* occurrence of a new id; under `accept_incoming` a
+    later occurrence with a different `content_hash` replaces the kept one. The
+    media-sidecar preview attaches files to exactly these rows, so it predicts
+    the same adoption the import performs, within-batch repeats included. Ids
+    not in the batch fall through to the held row.
+    """
+    rows: dict[str, ScrollItem | None] = {}
+    for item in items:
+        if item.id not in rows:
+            rows[item.id] = get_item(db_path, item.id)
+        kept = rows[item.id]
+        if kept is None or (accept_incoming and kept.content_hash != item.content_hash):
+            rows[item.id] = item
+    return lambda item_id: rows[item_id] if item_id in rows else get_item(db_path, item_id)
+
+
 def _preview_merge_items(
     db_path: Path, items: list[ScrollItem], *, accept_incoming: bool = False
 ) -> tuple[dict[str, int], list[str], list[str], list[str], list[str]]:
@@ -3606,16 +3629,10 @@ def _preview_import_bundle(
     # for the same recovery store, so the dry-run never drifts from the real import
     # (the H220/H233 preview-fidelity discipline on the archive axis).
     ar_imported, ar_skipped = preview_import_archive(paths.db_path, imported_archive)
-    # the row each file would attach to after the write: the incoming row where
-    # the import inserts or adopts it, else the held one (ADR 0115)
-    incoming = {item.id: item for item in imported_items}
-    replaced = set(new_ids) | set(adopted)
-
-    def predicted_row(item_id: str) -> ScrollItem | None:
-        if item_id in replaced:
-            return incoming[item_id]
-        return get_item(paths.db_path, item_id)
-
+    # the row each file would attach to after the write (ADR 0115)
+    predicted_row = _predicted_row(
+        paths.db_path, imported_items, accept_incoming=accept_incoming
+    )
     media = (
         adopt_media(paths, manifest, sidecar, predicted_row, dry_run=True)
         if sidecar
