@@ -4300,9 +4300,10 @@ flow. `path` is a bundle file `export bundle` wrote.
 `--media DIR` names one kept elsewhere, and a named DIR that does not
 exist is an error.
 
-- **Validated before anything lands:** a malformed manifest line, or a
-  path outside `media/` (`../`, absolute, `scrolls/…`), fails the whole
-  import naming the line, with nothing written
+- **Validated before anything lands:** a malformed manifest line, a
+  path outside `media/` (`../`, absolute, `scrolls/…`), or a repeated
+  path fails the whole import naming the line, with nothing written
+  (`test_a_manifest_that_repeats_a_path_fails_before_anything_lands`)
   (`test_an_unsafe_manifest_path_fails_the_import_before_anything_lands`).
 - **Files land where a held ref expects them:** a file is adopted only
   when the row it names, after the import, records that `path`; any other

@@ -44,8 +44,8 @@ boundary. Elijah chose the sidecar.
    `ml.media/` when it sits beside the bundle; `--media DIR` names one
    kept elsewhere.
 5. **The manifest is validated before anything lands.** A malformed line,
-   or a path outside `media/` (or carrying a NUL), fails the whole import
-   naming the line. A
+   a path outside `media/` (or carrying a NUL), or a path the manifest
+   already named, fails the whole import naming the line. A
    backup that lies about where a file goes is corrupt, not partly usable.
 6. **Files land only where a held ref expects them.** A file is adopted
    when the row it names, after the import, records that exact `path`.

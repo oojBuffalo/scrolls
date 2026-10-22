@@ -149,8 +149,9 @@ def load_manifest(sidecar: Path) -> list[ManifestEntry]:
     """Read and validate a sidecar's manifest.
 
     Raises:
-        SidecarError: The manifest is missing, or a line is not a well-formed
-            entry with a safe `media/` path — named by line number.
+        SidecarError: The manifest is missing or undecodable, or a line is not
+            a well-formed entry with a safe `media/` path, or repeats a path —
+            named by line number.
     """
     manifest = sidecar / MANIFEST_NAME
     try:
@@ -158,13 +159,20 @@ def load_manifest(sidecar: Path) -> list[ManifestEntry]:
     except (OSError, UnicodeDecodeError) as exc:
         raise SidecarError(f"no readable {MANIFEST_NAME} in {sidecar}: {exc}") from exc
     entries = []
+    seen: dict[str, int] = {}  # path -> the line that first named it
     for number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
         try:
-            entries.append(_entry(json.loads(line)))
+            entry = _entry(json.loads(line))
         except (json.JSONDecodeError, ValueError) as exc:
             raise SidecarError(f"{MANIFEST_NAME} line {number}: {exc}") from exc
+        if entry.path in seen:  # an export never repeats a path
+            raise SidecarError(
+                f"{MANIFEST_NAME} line {number}: {entry.path} repeats line {seen[entry.path]}"
+            )
+        seen[entry.path] = number
+        entries.append(entry)
     return entries
 
 
@@ -203,12 +211,12 @@ def adopt_media(
             report["unattached"].append(entry.path)
             continue
         target = paths.root / entry.path
-        if target.exists() or target.is_symlink():  # never touch what is held
-            report["already_held"] += 1
-            continue
         try:
-            outcome = _adopt_one(sidecar / entry.path, sidecar, target, media_root,
-                                 entry.sha256, dry_run=dry_run)
+            if target.exists() or target.is_symlink():  # never touch what is held
+                outcome = _HELD
+            else:
+                outcome = _adopt_one(sidecar / entry.path, sidecar, target, media_root,
+                                     entry.sha256, dry_run=dry_run)
         except (OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop, pre-3.13
             outcome = f"cannot copy: {exc}"
         if outcome == _ADOPTED:

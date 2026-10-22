@@ -591,3 +591,53 @@ def test_a_symlink_loop_is_one_rejected_file_on_every_python(
     assert rejected["path"] == "media/wikipedia/station-2.png"
     assert "Symlink loop" in rejected["reason"]
     assert (library_b.root / "media/wikipedia/station-1.pdf").read_bytes() == PDF_BYTES
+
+
+# --- review round 5: guarded destination checks, unique manifest paths ------
+
+
+def test_a_destination_that_cannot_be_checked_is_one_rejected_file(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    from pathlib import Path
+
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    blocked = library_b.root / "media/wikipedia/station-1.pdf"
+    real_exists = Path.exists
+
+    def exists(self, *args, **kwargs):
+        if self == blocked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", exists)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    media = json.loads(capsys.readouterr().out)["media"]
+    assert media["adopted"] == 1
+    [rejected] = media["rejected"]
+    assert rejected["path"] == "media/wikipedia/station-1.pdf"
+    assert "Permission denied" in rejected["reason"]
+
+
+def test_a_manifest_that_repeats_a_path_fails_before_anything_lands(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    manifest = sidecar / "MANIFEST.jsonl"
+    first = manifest.read_text(encoding="utf-8").splitlines()[0]
+    with manifest.open("a", encoding="utf-8") as fh:
+        fh.write(first + "\n")
+    _library_b(monkeypatch, tmp_path, capsys)
+
+    code = main(["import", "bundle", str(tmp_path / "ml.md")])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    error = json.loads(captured.err)["error"]
+    assert "MANIFEST.jsonl line 3" in error and "line 1" in error
+    assert main(["list"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
