@@ -641,3 +641,48 @@ def test_a_manifest_that_repeats_a_path_fails_before_anything_lands(
     assert "MANIFEST.jsonl line 3" in error and "line 1" in error
     assert main(["list"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+# --- final PR pass: non-file destinations, long file names -------------------
+
+
+@pytest.mark.parametrize("kind", ["directory", "dangling symlink"])
+def test_a_destination_that_is_not_a_file_is_rejected_not_counted_as_held(
+    library_a, monkeypatch, tmp_path, capsys, kind
+):
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    occupied = library_b.root / "media/wikipedia/station-1.pdf"
+    occupied.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "directory":
+        occupied.mkdir()
+    else:
+        occupied.symlink_to(tmp_path / "nowhere.pdf")
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+
+    media = json.loads(capsys.readouterr().out)["media"]
+    assert media["already_held"] == 0
+    assert media["rejected"] == [
+        {"path": "media/wikipedia/station-1.pdf", "reason": "held path is not a regular file"}
+    ]
+    assert occupied.is_dir() if kind == "directory" else occupied.is_symlink()  # untouched
+
+
+def test_a_file_name_near_the_length_limit_round_trips(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library-a"))
+    main(["init"])
+    paths = get_paths()
+    long_path = "media/wikipedia/" + "f" * 240 + ".png"  # a 244-character file name
+    _hold(paths, long_path, PNG_BYTES)
+    insert_item(paths.db_path, _item("wikipedia:en:Long", "Long database",
+                                     media=({"type": "image", "url": "https://u/l.png",
+                                             "path": long_path},)))
+    capsys.readouterr()
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 0
+
+    assert json.loads(capsys.readouterr().out)["media"]["adopted"] == 1
+    assert (library_b.root / long_path).read_bytes() == PNG_BYTES

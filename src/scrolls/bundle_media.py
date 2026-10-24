@@ -213,7 +213,7 @@ def adopt_media(
         target = paths.root / entry.path
         try:
             if target.exists() or target.is_symlink():  # never touch what is held
-                outcome = _HELD
+                outcome = _held_outcome(target)
             else:
                 outcome = _adopt_one(sidecar / entry.path, sidecar, target, media_root,
                                      entry.sha256, dry_run=dry_run)
@@ -221,7 +221,7 @@ def adopt_media(
             outcome = f"cannot copy: {exc}"
         if outcome == _ADOPTED:
             report["adopted"] += 1
-        elif outcome == _HELD:  # another writer landed it first
+        elif outcome == _HELD:  # held already, or landed by another writer meanwhile
             report["already_held"] += 1
         else:
             report["rejected"].append({"path": entry.path, "reason": outcome})
@@ -230,6 +230,19 @@ def adopt_media(
 
 _ADOPTED = "adopted"
 _HELD = "already_held"
+_NOT_A_FILE = "held path is not a regular file"
+# Short and fixed, so a held name near the filesystem's 255-byte limit still
+# leaves room for the temporary file it is copied through.
+_TEMP_PREFIX, _TEMP_SUFFIX = ".scrolls-", ".incoming"
+
+
+def _held_outcome(target: Path) -> str:
+    """Something already sits at `target`: held if it is a usable file.
+
+    A directory or a dangling symlink there is left exactly as it is, but it is
+    no held copy of the file, so the entry is rejected rather than counted.
+    """
+    return _HELD if target.is_file() else _NOT_A_FILE
 
 
 def _adopt_one(
@@ -337,9 +350,9 @@ def _adopt(source: Path, target: Path, expected: str) -> str:
     writer landed while this one copied is kept, and counted as held.
 
     Returns:
-        `_ADOPTED`, `_HELD`, or `"sha256 mismatch"`.
+        `_ADOPTED`, `_HELD`, `_NOT_A_FILE`, or `"sha256 mismatch"`.
     """
-    fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".incoming")
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX)
     partial = Path(name)
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -349,7 +362,7 @@ def _adopt(source: Path, target: Path, expected: str) -> str:
         try:
             os.link(partial, target)
         except FileExistsError:
-            return _HELD
+            return _held_outcome(target)
         return _ADOPTED
     finally:
         partial.unlink(missing_ok=True)

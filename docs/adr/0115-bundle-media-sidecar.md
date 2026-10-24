@@ -56,7 +56,10 @@ boundary. Elijah chose the sidecar.
    Publishing is a hard link, which refuses an existing name, so even a
    file another writer lands mid-copy is kept and counted as held. A file
    the library already holds is never touched — the importer's
-   `INSERT OR IGNORE`, applied to bytes.
+   `INSERT OR IGNORE`, applied to bytes. Something at that path that is not
+   a regular file — a directory, a dangling symlink — is left as it is but
+   rejected, since it is no held copy. The temporary name is short and
+   fixed, so a held name near the 255-byte limit still round-trips.
 8. **Contained as the filesystem resolves it.** Lexical checks are not
    enough: a symlinked directory under the library's `media/` must not
    carry a write elsewhere, and a symlink in the sidecar must not pull a

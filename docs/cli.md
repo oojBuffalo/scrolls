@@ -4313,7 +4313,10 @@ exist is an error.
   exclusively created temporary file and published by hard link only if
   its SHA-256 matches, so a file another writer lands mid-copy is kept
   and counted `already_held`
-  (`test_a_file_that_appears_mid_copy_is_never_clobbered`)
+  (`test_a_file_that_appears_mid_copy_is_never_clobbered`). A directory or
+  dangling symlink already at that path is left untouched but `rejected`,
+  since it is no held copy
+  (`test_a_destination_that_is_not_a_file_is_rejected_not_counted_as_held`)
   (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`,
   `test_a_held_file_named_like_a_temporary_file_is_never_touched`). A file
   the library already holds is counted `already_held` and never touched
