@@ -7,6 +7,15 @@ Status: superseded by [0108](0108-x-bookmarks-native-sync.md)
 IDEAS.md brainstorm into `docs/inspiration/fieldtheory-cli-inspiration.md`;
 the references below were updated. Decision content unchanged.*
 
+*Amended: 2026-10-22 — the importer this record chose was deleted (issue
+#5): the `scrolls.fieldtheory` module, `scrolls import fieldtheory`, and their
+tests are gone. The premise changed twice. ADR 0108 gave X bookmarks a
+native on-ramp over the browser session, and ADR 0113 made every saved
+collection one `sync --collection` contract, so reading another
+application's private store was a dependency Scrolls no longer needed.
+Rows already imported are unaffected: their `x:<tweetId>` ids dedupe
+against the native sync. The decision text below is history.*
+
 ## Context
 
 The Field Theory import proposal

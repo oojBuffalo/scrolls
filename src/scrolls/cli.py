@@ -77,8 +77,6 @@ from scrolls.feeds import (
     sync_many,
     to_feed_url,
 )
-from scrolls.fieldtheory import DEFAULT_ROOT as FIELDTHEORY_ROOT
-from scrolls.fieldtheory import ImportSourceError, load_bookmarks
 from scrolls.graph import (
     build_graph,
     content_duplicate_subgraph,
@@ -579,15 +577,6 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="exported bookmarks .html file (Netscape format: Chrome, "
         "Firefox, Safari, Edge)",
-    )
-    fieldtheory_parser = import_sub.add_parser(
-        "fieldtheory",
-        help="Import X bookmarks from a local Field Theory archive (JSON output)",
-    )
-    fieldtheory_parser.add_argument(
-        "--root",
-        default=None,
-        help=f"Field Theory archive root (default {FIELDTHEORY_ROOT})",
     )
     takeout_parser = import_sub.add_parser(
         "google-takeout",
@@ -1822,9 +1811,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.import_command == "events":
             return _cmd_import_events(args.path)
-        if args.import_command == "archive":
-            return _cmd_import_archive(args.path)
-        return _cmd_import_fieldtheory(args.root)
+        return _cmd_import_archive(args.path)
     if args.command == "export":
         if args.export_command == "bookmarks":
             return _cmd_export_bookmarks(args.source, args.category, args.tag)
@@ -2493,31 +2480,6 @@ def _cmd_sync_collection(
         payload["error"] = result.error
     print(json.dumps(payload))
     return 1 if counts["failed"] or result.error else 0
-
-
-def _cmd_import_fieldtheory(root: str | None) -> int:
-    ft_root = Path(root).expanduser() if root else FIELDTHEORY_ROOT
-    try:
-        imported_items, failures = load_bookmarks(ft_root)
-    except ImportSourceError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
-
-    paths = get_paths()
-    ensure_library(paths)
-    counts = {"imported": 0, "skipped": 0, "failed": len(failures)}
-    for item in imported_items:
-        # INSERT OR IGNORE: an existing item (earlier import, or a manual
-        # `add`/user edit) is never overwritten — re-imports stay cheap
-        if insert_item(paths.db_path, item):
-            counts["imported"] += 1
-        else:
-            counts["skipped"] += 1
-
-    # bulk imports can cover hundreds of bookmarks, so per-item success
-    # entries are omitted; only line-level failures are detailed
-    print(json.dumps({**counts, "failures": failures}))
-    return 1 if counts["failed"] else 0
 
 
 def _cmd_import_bookmarks(path: str) -> int:

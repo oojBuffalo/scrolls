@@ -1,7 +1,7 @@
 """Tests for the shared `published_at` normalizer (ADR 0024).
 
 Every writer of `published_at` — feed sync, the web/github/arxiv/pdf
-adapters, the Field Theory import — funnels source date dialects
+adapters, the spine importers — funnels source date dialects
 through `to_utc_iso`, so the field is one vocabulary: UTC ISO 8601 at
 seconds precision, or an honest None.
 """

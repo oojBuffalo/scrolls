@@ -23,7 +23,7 @@ claim cites the test that locks it; unless noted, tests live in
   Nothing is printed to stdout in that case
   (`test_detect_rejects_non_http_url`, `test_show_unknown_id_is_an_error`).
 - **Batch commands report per-item results.** `fetch`, `classify`, `md`,
-  `media`, `rm`, `sync`, `import fieldtheory`, and `kb --engine llm`
+  `media`, `rm`, `sync`, and `kb --engine llm`
   process every unit and never abort mid-batch:
   - The unit is every item — for `rm`, every ref; for `sync`, every
     subscription; for `kb --engine llm`, every qualifying concept.
@@ -1416,8 +1416,8 @@ $ scrolls status        # after the imports and adds below
 [exit 0]
 ```
 
-*(x:1111 is already classified here — the Field Theory import's frontmatter
-join carries `category` over — which is why `unclassified` is 3 of 4.)*
+*(x:1111 is already classified here — the seeded X bookmark row carries its
+`category` over — which is why `unclassified` is 3 of 4.)*
 
 *(`attention` is `null` because nothing has drifted yet — every item is still
 `unverified`; once a source carries `drifted`/`rotted` loss across a
@@ -3215,37 +3215,6 @@ $ scrolls import bookmarks /tmp/scrolls-demo.BgrqMO/bookmarks.html
 [exit 0]
 ```
 
-### `scrolls import fieldtheory [--root PATH]`
-
-Bulk-import X bookmarks from a local Field Theory archive (default root
-`~/.fieldtheory`; ADR 0009) — items arrive directly at stage `fetched`.
-
-- **Idempotent:** existing items are never overwritten, so re-imports
-  are cheap and safe (`test_import_fieldtheory_end_to_end`,
-  `test_import_fieldtheory_is_idempotent`).
-- **Failures, not successes, are detailed:** per-item success entries
-  are omitted (imports can cover hundreds of bookmarks); only
-  line-level failures are listed, and any failure exits 1
-  (`test_import_fieldtheory_reports_bad_lines`).
-- **Missing archive:** an error envelope on stderr
-  (`test_import_fieldtheory_missing_archive_is_an_error`).
-
-| Key | Meaning |
-| --- | --- |
-| `imported` | new items inserted |
-| `skipped` | already existed (id collision is the dedupe working) |
-| `failed` / `failures` | unparseable JSONL lines, with line numbers |
-
-```console
-$ scrolls import fieldtheory --root /tmp/scrolls-demo.BgrqMO/fieldtheory
-{"imported": 2, "skipped": 0, "failed": 0, "failures": []}
-[exit 0]
-
-$ scrolls import fieldtheory --root /tmp/scrolls-demo.BgrqMO/fieldtheory
-{"imported": 0, "skipped": 2, "failed": 0, "failures": []}
-[exit 0]
-```
-
 ### `scrolls import google-takeout <path>`
 
 Bulk-import YouTube watch history from a Google Takeout export
@@ -3259,7 +3228,7 @@ Bulk-import YouTube watch history from a Google Takeout export
   envelope on stderr
   (`test_import_google_takeout_missing_export_is_an_error`,
   `tests/test_takeout.py`).
-- **Spine-only:** unlike `import fieldtheory`, Takeout carries no
+- **Spine-only:** unlike `sync x --collection bookmarks`, Takeout carries no
   content — only video URL, title, channel, and watch time — so items
   enter at stage `detected` and `scrolls fetch` enriches them through
   the youtube adapter, exactly like feed-synced entries.
@@ -5755,7 +5724,7 @@ wherever it appears (`test_show_surfaces_the_classification_method`).
 
 ```console
 $ scrolls show x:1111
-{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "1111", "canonical_url": null, "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "author": "Andrej Karpathy (@karpathy)", "published_at": "2026-06-01T15:34:00+00:00", "raw_text": "{\"id\": \"1111\", \"tweetId\": \"1111\", …}", "extracted_text": "SQLite FTS5 is criminally underrated for local search.", "summary": null, "category": "technique", "domain": "databases", "tags": [], "concepts": [], "links": ["https://sqlite.org/fts5.html"], "media": [], "content_hash": "sha256:da27b0…", "markdown_path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "provenance": {"adapter": "fieldtheory-import", "fetched_at": "2026-06-12T20:29:15+00:00", "extraction_method": "fieldtheory:bookmarks.jsonl"}, "stage": "rendered"}
+{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "1111", "canonical_url": null, "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "author": "Andrej Karpathy (@karpathy)", "published_at": "2026-06-01T15:34:00+00:00", "raw_text": "{\"legacy\": {…}, \"rest_id\": \"1111\"}", "extracted_text": "SQLite FTS5 is criminally underrated for local search.", "summary": null, "category": "technique", "domain": "databases", "tags": [], "concepts": [], "links": ["https://sqlite.org/fts5.html"], "media": [], "content_hash": "sha256:da27b0…", "markdown_path": "scrolls/x/karpathy-sqlite-fts5-is-criminally-underrated-for-local-search.md", "provenance": {"adapter": "x-bookmarks", "fetched_at": "2026-06-04T04:27:46+00:00", "extraction_method": "x:graphql-internal", "saved_at_source": "synced_at"}, "stage": "rendered"}
 [exit 1 if no such item, else 0]
 ```
 
@@ -7416,17 +7385,11 @@ cat > "$DEMO/site/feed.xml" <<'EOF'
 EOF
 (cd "$DEMO/site" && python3 -m http.server 8943 &)
 
-mkdir -p "$DEMO/fieldtheory/bookmarks" "$DEMO/fieldtheory/library/bookmarks"
-cat > "$DEMO/fieldtheory/bookmarks/bookmarks.jsonl" <<'EOF'
-{"id": "1111", "tweetId": "1111", "url": "https://x.com/karpathy/status/1111", "text": "SQLite FTS5 is criminally underrated for local search.", "authorHandle": "karpathy", "authorName": "Andrej Karpathy", "postedAt": "Mon Jun 01 15:34:00 +0000 2026", "syncedAt": "2026-06-04T04:27:46.057Z", "media": [], "links": ["https://sqlite.org/fts5.html"], "tags": []}
-{"id": "2222", "tweetId": "2222", "url": "https://x.com/simonw/status/2222", "text": "Attention Is All You Need still holds up - a guide to reading it properly.", "authorHandle": "simonw", "authorName": "Simon Willison", "postedAt": "Tue Jun 02 09:12:00 +0000 2026", "syncedAt": "2026-06-04T04:27:46.057Z", "media": [], "links": ["https://arxiv.org/abs/1706.03762"], "tags": []}
-EOF
-cat > "$DEMO/fieldtheory/library/bookmarks/2026-06-01-karpathy.md" <<'EOF'
----
-category: technique
-domain: databases
-tweet_id: "1111"
----
+# two X bookmarks as `scrolls sync x --collection bookmarks` would have pulled
+# them (that sync needs a logged-in browser, so the demo restores the rows)
+cat > "$DEMO/x-bookmarks.jsonl" <<'EOF'
+{"id": "x:1111", "source": "x", "url": "https://x.com/karpathy/status/1111", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "1111", "canonical_url": null, "title": "@karpathy: SQLite FTS5 is criminally underrated for local search.", "author": "Andrej Karpathy (@karpathy)", "published_at": "2026-06-01T15:34:00+00:00", "raw_text": "{\"legacy\": {\"full_text\": \"SQLite FTS5 is criminally underrated for local search.\"}, \"rest_id\": \"1111\"}", "extracted_text": "SQLite FTS5 is criminally underrated for local search.", "summary": null, "category": "technique", "domain": "databases", "tags": [], "concepts": [], "links": ["https://sqlite.org/fts5.html"], "media": [], "content_hash": "sha256:da27b0dbd1689da3b966a25f693aa72f8a8214de8395bbaa754e50e76b26538a", "markdown_path": null, "provenance": {"adapter": "x-bookmarks", "fetched_at": "2026-06-04T04:27:46+00:00", "extraction_method": "x:graphql-internal", "saved_at_source": "synced_at"}, "stage": "fetched"}
+{"id": "x:2222", "source": "x", "url": "https://x.com/simonw/status/2222", "saved_at": "2026-06-04T04:27:46+00:00", "source_id": "2222", "canonical_url": null, "title": "@simonw: Attention Is All You Need still holds up - a guide to reading it prope\u2026", "author": "Simon Willison (@simonw)", "published_at": "2026-06-02T09:12:00+00:00", "raw_text": "{\"legacy\": {\"full_text\": \"Attention Is All You Need still holds up - a guide to reading it properly.\"}, \"rest_id\": \"2222\"}", "extracted_text": "Attention Is All You Need still holds up - a guide to reading it properly.", "summary": null, "category": null, "domain": null, "tags": [], "concepts": [], "links": ["https://arxiv.org/abs/1706.03762"], "media": [], "content_hash": "sha256:800c35b2ba2321e1c7d8d0e9b1bae0bec606cacfa219d94240383ac63598c4a2", "markdown_path": null, "provenance": {"adapter": "x-bookmarks", "fetched_at": "2026-06-04T04:27:46+00:00", "extraction_method": "x:graphql-internal", "saved_at_source": "synced_at"}, "stage": "fetched"}
 EOF
 
 cat > "$DEMO/bookmarks.html" <<'EOF'
@@ -7487,8 +7450,8 @@ scrolls add https://x.com/karpathy/status/3333
 scrolls ingest https://x.com/karpathy/status/3333  # no adapter: exit 1
 scrolls fetch                                      # skips the x item
 scrolls fetch x:3333                               # by-id: fails, exit 1
-scrolls import fieldtheory --root "$DEMO/fieldtheory"
-scrolls import fieldtheory --root "$DEMO/fieldtheory"   # idempotent
+scrolls import items "$DEMO/x-bookmarks.jsonl"
+scrolls import items "$DEMO/x-bookmarks.jsonl"          # idempotent
 scrolls import google-takeout "$DEMO/takeout.zip"
 scrolls import google-takeout "$DEMO/takeout.zip"       # idempotent
 scrolls import bookmarks "$DEMO/bookmarks.html"

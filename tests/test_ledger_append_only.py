@@ -344,7 +344,6 @@ _DRIVE_EXEMPT = {
     "import bookmarks": "foreign-format ingest; records no custody event",
     "import opml": "foreign-format ingest; records no custody event",
     "import pocket": "foreign-format ingest; records no custody event",
-    "import fieldtheory": "foreign-format ingest; records no custody event",
     "import google-takeout": "foreign-format ingest; records no custody event",
 }
 

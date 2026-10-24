@@ -86,7 +86,7 @@ always present, because the model cannot represent an item without them.
 | `published_at` | when known | string | UTC ISO 8601 publication time, one shape from every writer (ADR 0024) |
 | `saved_at` | always | string | ISO 8601 time the item entered the library |
 | `category` | once classified | string | classification from the rules engine or an import join |
-| `domain` | once assigned | string | finer topic area; today only the Field Theory import sets it |
+| `domain` | once assigned | string | finer topic area; set by `classify --engine llm` or by hand with `scrolls set` |
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
 | `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories, arXiv taxonomy names |
 | `links` | when non-empty | array of strings | outbound URLs found in the item, resolved into edges by `scrolls graph` |

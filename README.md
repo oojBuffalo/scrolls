@@ -31,7 +31,7 @@ Sources → Items → Scrolls → Library → Agents
 
 ```bash
 scrolls ingest https://en.wikipedia.org/wiki/SQLite  # add + fetch + classify + md
-scrolls import fieldtheory          # bulk-import X bookmarks from Field Theory
+scrolls sync x --collection bookmarks  # pull your X bookmarks over the browser session
 scrolls follow https://www.youtube.com/playlist?list=PL12345  # subscribe to a feed
 scrolls sync                        # register new items from followed feeds
 scrolls search "distributed systems"
@@ -130,7 +130,6 @@ scrolls maintain              # one scheduled custody pass (recheck → regen �
 Import / export (lossless round-trip):
 
 ```text
-scrolls import fieldtheory        # X bookmarks from a Field Theory archive
 scrolls import google-takeout <p> # YouTube watch history from a Google Takeout export
 scrolls import bookmarks <p>      # a browser bookmarks HTML export
 scrolls import pocket <p>         # a Pocket CSV export

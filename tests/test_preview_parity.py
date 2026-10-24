@@ -273,7 +273,6 @@ _NO_PREVIEW = {
     ("import", "archive"): "recovery-store restore; idempotent dedupe, no --dry-run flag",
     ("import", "bookmarks"): "foreign-format ingest; no preview mode",
     ("import", "events"): "ledger restore; idempotent dedupe, no --dry-run flag",
-    ("import", "fieldtheory"): "foreign-format ingest; no preview mode",
     ("import", "google-takeout"): "foreign-format ingest; no preview mode",
     ("import", "items"): "items restore; no --dry-run flag (bundle is the previewable importer)",
     ("import", "opml"): "foreign-format ingest; no preview mode",

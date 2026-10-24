@@ -1193,7 +1193,7 @@ def test_round_trip_contract_has_teeth(home, capsys, monkeypatch):
 # precedent — the sabotage below proves the row-count axis has teeth).
 #
 # The interchange-exempt set is the foreign-format imports (`bookmarks`/`opml`/
-# `pocket`/`google-takeout`/`fieldtheory`): each ingests an external file format
+# `pocket`/`google-takeout`): each ingests an external file format
 # with no lossless `export <kind>` custody transport that produces it, so the
 # export→import-twice round-trip-settle shape does not apply (their own
 # import-the-same-file-twice idempotency stays guarded per-format in
@@ -1280,7 +1280,6 @@ _IMPORT_INTERCHANGE_EXEMPT = {
     "opml": "OPML feed-subscription interchange import, no lossless custody store",
     "pocket": "Pocket CSV interchange import, no lossless export transport",
     "google-takeout": "Google Takeout interchange import, no lossless export transport",
-    "fieldtheory": "Field Theory archive interchange import, no lossless export transport",
 }
 
 

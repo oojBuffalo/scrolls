@@ -96,7 +96,7 @@ _CLI_WRITE_COMMANDS = frozenset({
     ("x", "login"), ("x", "logout"),
     ("archive", "prune"), ("archive", "restore"),
     ("import", "archive"), ("import", "bookmarks"), ("import", "bundle"),
-    ("import", "events"), ("import", "fieldtheory"), ("import", "google-takeout"),
+    ("import", "events"), ("import", "google-takeout"),
     ("import", "items"), ("import", "opml"), ("import", "pocket"),
 })
 _CLI_EXEMPT_READS = {
