@@ -261,6 +261,8 @@ def _adopt_one(
         return "missing from the sidecar"
     if not _lands_within(target, media_root):
         return "outside the library's media directory"
+    if not _nearest_existing(target.parent).is_dir():  # mkdir would fail on it
+        return "a file sits where its directory should be"
     if dry_run:
         return _ADOPTED if _verify(source, expected) else "sha256 mismatch"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +287,10 @@ def _entry(raw: Any) -> ManifestEntry:
 def _is_safe(relpath: str) -> bool:
     """A library-relative path under `media/` that cannot climb out of it."""
     if "\\" in relpath or "\x00" in relpath:
+        return False
+    try:
+        os.fsencode(relpath)  # a lone surrogate cannot name a file
+    except UnicodeEncodeError:
         return False
     parts = PurePosixPath(relpath).parts
     return (
@@ -315,10 +321,14 @@ def _lands_within(target: Path, media_root: Path) -> bool:
     """
     if not media_root.exists():
         return not media_root.is_symlink()
-    probe = target.parent
-    while not probe.exists():
-        probe = probe.parent
-    return probe.resolve().is_relative_to(media_root.resolve())
+    return _nearest_existing(target.parent).resolve().is_relative_to(media_root.resolve())
+
+
+def _nearest_existing(path: Path) -> Path:
+    """`path`, or its closest ancestor that exists."""
+    while not path.exists():
+        path = path.parent
+    return path
 
 
 def _copy_into(source: Path, handle: Any) -> tuple[str, int]:

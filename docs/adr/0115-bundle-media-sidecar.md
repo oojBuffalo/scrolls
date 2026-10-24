@@ -44,8 +44,9 @@ boundary. Elijah chose the sidecar.
    `ml.media/` when it sits beside the bundle; `--media DIR` names one
    kept elsewhere.
 5. **The manifest is validated before anything lands.** A malformed line,
-   a path outside `media/` (or carrying a NUL), or a path the manifest
-   already named, fails the whole import naming the line. A
+   a path outside `media/` (or carrying a NUL, or one the filesystem
+   cannot encode), or a path the manifest already named, fails the whole
+   import naming the line. A
    backup that lies about where a file goes is corrupt, not partly usable.
 6. **Files land only where a held ref expects them.** A file is adopted
    when the row it names, after the import, records that exact `path`.
@@ -58,7 +59,8 @@ boundary. Elijah chose the sidecar.
    the library already holds is never touched — the importer's
    `INSERT OR IGNORE`, applied to bytes. Something at that path that is not
    a regular file — a directory, a dangling symlink — is left as it is but
-   rejected, since it is no held copy. The temporary name is short and
+   rejected, since it is no held copy, as is a file sitting where a
+   destination's directory should be. The temporary name is short and
    fixed, so a held name near the 255-byte limit still round-trips.
 8. **Contained as the filesystem resolves it.** Lexical checks are not
    enough: a symlinked directory under the library's `media/` must not

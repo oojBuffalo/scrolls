@@ -686,3 +686,39 @@ def test_a_file_name_near_the_length_limit_round_trips(monkeypatch, tmp_path, ca
 
     assert json.loads(capsys.readouterr().out)["media"]["adopted"] == 1
     assert (library_b.root / long_path).read_bytes() == PNG_BYTES
+
+
+def test_a_file_where_a_directory_should_be_is_predicted_as_the_import_finds_it(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    library_b = _library_b(monkeypatch, tmp_path, capsys)
+    (library_b.root / "media").mkdir(exist_ok=True)
+    (library_b.root / "media/wikipedia").write_bytes(b"a file, not a directory")
+
+    assert main(["import", "bundle", str(tmp_path / "ml.md"), "--dry-run"]) == 1
+    preview = json.loads(capsys.readouterr().out)["media"]
+    assert main(["import", "bundle", str(tmp_path / "ml.md")]) == 1
+    real = json.loads(capsys.readouterr().out)["media"]
+
+    assert preview == real
+    assert {r["reason"] for r in real["rejected"]} == {"a file sits where its directory should be"}
+
+
+def test_an_unencodable_manifest_path_fails_before_anything_lands(
+    library_a, monkeypatch, tmp_path, capsys
+):
+    sidecar = tmp_path / "ml.media"
+    _export(tmp_path, capsys, "--with-media", str(sidecar))
+    with (sidecar / "MANIFEST.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write('{"path": "media/\\ud800.png", "sha256": "%s", "bytes": 1, '
+                 '"item_id": "wikipedia:en:Station"}\n' % _sha(b"x"))
+    _library_b(monkeypatch, tmp_path, capsys)
+
+    code = main(["import", "bundle", str(tmp_path / "ml.md")])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "MANIFEST.jsonl line 3" in json.loads(captured.err)["error"]
+    assert main(["list"]) == 0
+    assert json.loads(capsys.readouterr().out) == []

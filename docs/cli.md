@@ -4301,8 +4301,9 @@ flow. `path` is a bundle file `export bundle` wrote.
 exist is an error.
 
 - **Validated before anything lands:** a malformed manifest line, a
-  path outside `media/` (`../`, absolute, `scrolls/…`), or a repeated
-  path fails the whole import naming the line, with nothing written
+  path outside `media/` (`../`, absolute, `scrolls/…`) or one the
+  filesystem cannot encode, or a repeated path fails the whole import
+  naming the line, with nothing written
   (`test_a_manifest_that_repeats_a_path_fails_before_anything_lands`)
   (`test_an_unsafe_manifest_path_fails_the_import_before_anything_lands`).
 - **Files land where a held ref expects them:** a file is adopted only
@@ -4315,7 +4316,8 @@ exist is an error.
   and counted `already_held`
   (`test_a_file_that_appears_mid_copy_is_never_clobbered`). A directory or
   dangling symlink already at that path is left untouched but `rejected`,
-  since it is no held copy
+  since it is no held copy, as is a file sitting where its directory
+  should be — predicted the same by `--dry-run`
   (`test_a_destination_that_is_not_a_file_is_rejected_not_counted_as_held`)
   (`test_a_file_that_fails_its_hash_is_rejected_and_not_written`,
   `test_a_held_file_named_like_a_temporary_file_is_never_touched`). A file
