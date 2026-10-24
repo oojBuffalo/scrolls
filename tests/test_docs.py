@@ -23,6 +23,8 @@ from scrolls.items import ScrollItem, insert_item
 from scrolls.kb import _GENERATED_DIRS, _GENERATED_FILES, compile_kb
 from scrolls.paths import get_paths
 from scrolls.render import _FRONTMATTER_FIELDS, render_markdown
+from scrolls.saved_collections import COLLECTIONS
+from scrolls.sources import FETCH_ADAPTERS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -369,3 +371,52 @@ def test_cli_reference_capture_pin_matches_code():
         f"(schema {SCHEMA_VERSION}); re-run the doc's reproduction appendix "
         "and update the pin"
     )
+
+
+_COLLECTION_VERDICTS = ("reachable", "gap", "none")
+
+
+def _adapter_sections() -> dict[str, str]:
+    """`docs/adapters.md` catalog sections, keyed by their `###` heading."""
+    text = (REPO_ROOT / "docs" / "adapters.md").read_text(encoding="utf-8")
+    catalog = text.split("## Adapters so far\n", 1)[1].split("\n## ", 1)[0]
+    parts = re.split(r"(?m)^### (.+)\n", catalog)[1:]
+    return {parts[i].strip(): parts[i + 1] for i in range(0, len(parts), 2)}
+
+
+def _collections_verdict(heading: str, section: str) -> str:
+    fields = re.findall(r"(?m)^- \*\*Collections:\*\* (\w+)", section)
+    assert len(fields) == 1, f"adapters.md `{heading}` needs one Collections field"
+    assert fields[0] in _COLLECTION_VERDICTS, f"`{heading}`: unknown verdict {fields[0]!r}"
+    return fields[0]
+
+
+def test_every_adapter_answers_how_its_collection_gets_in():
+    """Issue #3: no adapter is complete until it says how a user's saves get in.
+
+    Each catalog section carries one Collections verdict; the summary table and
+    its counts agree with the sections; every registered fetch adapter has a
+    section; and every declared saved collection reads as reachable through its
+    own `--collection` flag.
+    """
+    sections = _adapter_sections()
+    verdicts = {h: _collections_verdict(h, body) for h, body in sections.items()}
+
+    text = (REPO_ROOT / "docs" / "adapters.md").read_text(encoding="utf-8")
+    glance = text.split("## Collections at a glance\n", 1)[1].split("\n## ", 1)[0]
+    table = dict(re.findall(r"(?m)^\| \[([^\]]+)\]\(#[^)]+\) \| (\w+) \|", glance))
+    assert table == verdicts
+
+    counts = re.search(r"\*\*(\d+) reachable · (\d+) gap · (\d+) none, across (\d+) adapters\.\*\*", glance)
+    assert counts, "the at-a-glance counts line is missing"
+    tally = [sum(v == verdict for v in verdicts.values()) for verdict in _COLLECTION_VERDICTS]
+    assert [int(n) for n in counts.groups()] == [*tally, len(verdicts)]
+
+    covered = {name for heading in sections for name in heading.split(" and ")}
+    assert not set(FETCH_ADAPTERS) - covered, "registered adapters missing from adapters.md"
+
+    for collection in COLLECTIONS:
+        assert verdicts[collection.source] == "reachable", collection.source
+        prose = " ".join(sections[collection.source].split())  # wrap-insensitive
+        assert f"--collection {collection.name}" in prose
+

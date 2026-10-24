@@ -1012,6 +1012,13 @@ it, so its items are `detected` and the source's fetch adapter captures them.
 `browser_cookies.py` with a per-service `CookieSpec`. Stored credentials are
 an opt-in route a collection may also declare.
 
+**Every adapter answers the collection question.** `docs/adapters.md` gives
+each adapter a **Collections** verdict — `reachable`, `gap` (a collection
+exists upstream with no on-ramp), or `none` — and scores them all in one
+table. The gap count is where vision §2.7's depth-over-breadth argument gets
+its number: a new collection on an existing adapter usually beats a new
+adapter.
+
 Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
 urllib, descriptive User-Agent). Adapters take the fetcher as an
 injectable parameter, which is why no test touches the network.
@@ -1034,6 +1041,12 @@ The pattern every existing adapter followed:
    `classify.py` (e.g. arxiv → paper, github → project; ADR 0004).
 6. Note the adapter in `README.md` and record non-obvious choices in an
    ADR (`docs/adr/`).
+7. Answer how a user's existing saves get in: give the adapter's
+   `docs/adapters.md` section a **Collections** verdict (`reachable`, `gap`,
+   or `none`) and its row in the at-a-glance table. A collection with an
+   on-ramp is declared in `saved_collections.py` (above).
+   `test_every_adapter_answers_how_its_collection_gets_in` fails until both
+   are in place.
 
 ## Downstream engines
 
