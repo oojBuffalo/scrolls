@@ -981,10 +981,38 @@ Implemented fetch adapters, all keyless:
 | openlibrary | `sources/openlibrary.py` | keyless Open Library `.json` view, stdlib only; bounded GETs for author names + an edition's work | **books**, a content type with no prior home (the dev.to/RFC island, ADR 0061/0066); the Internet Archive's open catalog, books' Crossref, modeling them in the same **FRBR** sense `scrolls works` uses (ADR 0069) — a *work* (`/works/OL…W`), an *edition* (`/books/OL…M`), an ISBN (`/isbn/<isbn>` naming an edition); all three claimed, the kind in the id (the OLID's own `W`/`M` letter encodes work-vs-edition, only ISBN needs an `isbn:` prefix — huggingface kind-in-id without the prefix), OLID uppercased to canonical (route-insensitive, crates/gitlab fold), the adapter routing on the id (`/isbn` 302-redirects to the edition, urllib follows); curated `subjects` → `concepts` (github-topics/MeSH role — the whole point), admin flags + LC/Dewey call numbers filtered, deduped + capped; subjects live on the work so an edition follows its `works` ref for them (the two-request shape); `description` (string or `{value}`) → `summary`, **no `extracted_text`** (catalog metadata not the body — Crossref/PubMed shape), `tags` empty by design (no controlled facet — go/rubygems posture); authors named by key, resolved with bounded GETs (`et al.` truncation, failures skipped); edition → `/works/<OLID>` `link` (edition↔work edge), work external `links` → edges, first present `covers` id (`-1` skipped) → `thumbnail` media; free-form dates padded (RFC rule); **no category default** — fiction + non-fiction, so forcing `reference` would be dishonest (the medRxiv honesty); degrades to metadata-only | 0073 |
 | zenodo | `sources/zenodo.py` | keyless InvenioRDM REST API (`zenodo.org/api/records/<id>`), stdlib only, one request | **research datasets and software**, a content type left a `web` scrape (the dev.to/Open Library island, ADR 0061/0073); CERN's open-science repository, the citable-DOI snapshot of every released GitHub repo; the record JSON has top-level fields + descriptive `metadata` (**no JSON:API envelope** unlike DataCite); identity is the version-specific recid the URL carries (after a `record`/`records` segment, deeper links dedupe — the Discourse slug-drop), the `conceptdoi` naming the all-versions concept (the Open Library edition rule, not a fetch-time rewrite); Zenodo's DOIs are **DataCite**-registered, so the record **DOI → `doi.org` link** ties the landing page to its DataCite DOI scroll and clusters them as one work in `scrolls works` (ADR 0045/0069) — the landing-page form complementing the `doi.org` form already covered (ADR 0045); HTML `description` → plain `summary`, **no `extracted_text`** (the files are the body — the Crossref/DataCite metadata-only shape, kept consistent with the DOI twin); `resource_type.type` → `provenance.resource_type` → category (`dataset → dataset`, `software → tool`, `publication → paper`, `image`/`video → media`, ambiguous types unclassified — the DataCite fetch-time-fact mechanism, ADR 0045); `keywords` + `subjects` → `concepts`, `type`+`subtype`+`license.id` → `tags`; `related_identifiers` → links by scheme (`doi`/`arxiv`/`url`, the preprint edge ADR 0038); partial dates padded (RFC rule); degrades to metadata-only | 0083 |
 
-X items arrive through `scrolls import fieldtheory` rather than a fetch
-adapter (ADR 0009): the Field Theory JSONL cache is the raw-record spine
-(each line preserved verbatim in `raw_text`), and classified pages join
-`category`/`domain` by tweet id.
+### Saved collections: the third contract
+
+Detection and fetch take one URL at a time. A source may also offer a
+**saved collection**: the user's own set of saves, kept in the service
+(ADR 0113). That is the fourth on-ramp, beside `add`, `import` and feed
+`sync`, and it has its own small contract in `src/scrolls/saved_collections.py`.
+
+- **Declaration:** each collection is one `SavedCollection` in
+  `COLLECTIONS`, naming its `source`, `name`, `shape`, `entry_stage`,
+  `saved_at` origin, credential `routes`, and ADR.
+- **Honest absence:** `collections_for(source)` returns an empty tuple for a
+  source with no collection. Most sources are things you point at, not places
+  you keep things.
+- **Pull:** `pull(options, pulled_at) -> CollectionPull`. A start-up failure
+  raises `CollectionUnavailable` and fails the whole run. A mid-walk failure
+  rides on `CollectionPull.error`, so what was collected is kept.
+- **One loop:** `scrolls sync <source> --collection <name>` dispatches
+  through the declaration and inserts with `INSERT OR IGNORE`, so a re-sync
+  never overwrites a held item.
+
+| Collection | Shape | Enters at | `saved_at` from | Routes | ADR |
+| --- | --- | --- | --- | --- | --- |
+| `x bookmarks` | capture-at-pull | `fetched` | sync time | `browser`, `oauth` | 0108 |
+| `wikipedia reading-lists` | enumerate-only | `detected` | the service | `browser` | 0109 |
+
+**Shape decides the entry stage.** A capture-at-pull listing carries the
+artifact, so its items are `fetched`. An enumerate-only listing only names
+it, so its items are `detected` and the source's fetch adapter captures them.
+
+**The browser session is always the first route.** Sessions are read through
+`browser_cookies.py` with a per-service `CookieSpec`. Stored credentials are
+an opt-in route a collection may also declare.
 
 Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
 urllib, descriptive User-Agent). Adapters take the fetcher as an

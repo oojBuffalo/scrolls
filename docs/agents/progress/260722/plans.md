@@ -36,6 +36,11 @@ roadmap queue stands superseded pending its next maintenance pass.*
 7. **Resume the daily 17:00 progress report** only after the push and the
    first dogfood pass, so it reports release/dogfood movement rather than
    H-slice theater.
+8. **Close the collection on-ramp gap (issue #2).** A dogfood pass hits this
+   first: a user's saves live in services Scrolls could not read. Settle the
+   contract in an ADR and prove it on two sources with different custody
+   shapes. *Done 2026-10-03:* X bookmarks (ADR 0108) and Wikipedia reading
+   lists (ADR 0109) shipped, and ADR 0113 wrote the contract they share.
 
 ## 1-day plan
 
