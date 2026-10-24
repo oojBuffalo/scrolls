@@ -355,7 +355,9 @@ each command moves items between stages or derives artifacts from them.
   appends only what is new since the last sweep; the content-5-tuple dedup makes
   the union of a full and overlapping incremental backups re-import idempotently.
 - `scrolls export bundle <query>` / `scrolls import bundle <path>` are the
-  **shareable** complement (`src/scrolls/bundle.py`, ADR 0103): one
+  **shareable** complement (`src/scrolls/bundle.py`, ADR 0103; the opt-in
+  `--with-media` sidecar carrying the files beside it is
+  `src/scrolls/bundle_media.py`, ADR 0115): one
   self-contained Markdown file that is both a readable topic *briefing* (per
   scroll: id, source, custody fidelity tier, capture timestamp, link, capped
   excerpt, its verify-ledger **drift posture**

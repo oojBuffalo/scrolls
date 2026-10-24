@@ -26,7 +26,7 @@ does, the exact commands an agent runs, and the custody story the numbers tell.
 | **Hold a topic** | `scrolls ingest <url>` (×N), then `scrolls kb` | the artifact is captured, rendered, and indexed at an honest fidelity tier |
 | **Prove custody** | `scrolls doctor` | a custody **score** and tier breakdown — what we hold and how faithfully |
 | **Detect loss** | `scrolls verify --all` | a re-check against the live source records **drift/rot** as an event, never an overwrite |
-| **Take it with me** | `scrolls export bundle <query> > briefing.md` → `scrolls import bundle briefing.md` | the topic round-trips losslessly into a fresh library |
+| **Take it with me** | `scrolls export bundle <query> --with-media briefing.media > briefing.md` → `scrolls import bundle briefing.md` | the topic round-trips losslessly into a fresh library, its captured media files included (ADR 0115) |
 
 ## Running it as commands
 
@@ -114,6 +114,9 @@ round-trip:
   byte-for-byte.
 - **Idempotent:** a second import reports `{"imported": 0, "skipped": 3}` —
   re-import never overwrites.
+- **Media travels when you ask:** without `--with-media` the files stay
+  re-fetchable references; with it, a `briefing.media/` sidecar beside the
+  bundle carries them, hash-checked on the way in (ADR 0115).
 - **Self-proving:** the fresh library then scores its own custody at `100`.
 
 ## The custody point the before/after makes visible
