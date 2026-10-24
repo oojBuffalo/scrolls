@@ -139,7 +139,12 @@ from scrolls.maintain import (
     snapshot_path,
     weakest_source,
 )
-from scrolls.media import capture_media, has_pending_media
+from scrolls.media import (
+    capture_media,
+    carry_capture_state,
+    has_pending_document_text,
+    has_pending_media,
+)
 from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.opml import ImportSourceError as OPMLSourceError
@@ -3628,6 +3633,7 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
             counts["failed"] += 1
             results.append({"id": item.id, "status": "failed", "error": str(exc)})
             continue
+        fetched = carry_capture_state(item, fetched)
         update_item(paths.db_path, fetched)
         counts["fetched"] += 1
         results.append(
@@ -4092,7 +4098,12 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
         items, force = [item], True
     else:
         everything = list_items(paths.db_path) if paths.db_path.exists() else []
-        items = [item for item in everything if has_pending_media(paths, item)]
+        # pending: a file not on disk yet, or a held PDF never read (ADR 0114)
+        items = [
+            item
+            for item in everything
+            if has_pending_media(paths, item) or has_pending_document_text(paths, item)
+        ]
         force = False
 
     results = []
@@ -4104,6 +4115,7 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
         files = [r["path"] for r in ref_results if r["status"] == "captured"]
         errors = [r["error"] for r in ref_results if r["status"] == "failed"]
         declined = [r for r in ref_results if r.get("reason") == "oversize"]
+        read = [{"path": r["path"], "text": r["text"]} for r in ref_results if "text" in r]
         if updated is not item:
             update_item(paths.db_path, updated)
             if updated.markdown_path:
@@ -4120,12 +4132,18 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
             entry = {"id": item.id, "status": "captured", "files": files}
             if declined:
                 entry["declined"] = declined
+            if read:
+                entry["documents"] = read
             results.append(entry)
         elif declined:
             counts["declined"] = counts.get("declined", 0) + 1
-            results.append(
-                {"id": item.id, "status": "declined", "declined": declined}
-            )
+            entry = {"id": item.id, "status": "declined", "declined": declined}
+            if read:
+                entry["documents"] = read
+            results.append(entry)
+        elif read:  # only held PDFs read, nothing downloaded
+            counts["extracted"] = counts.get("extracted", 0) + 1
+            results.append({"id": item.id, "status": "extracted", "documents": read})
         else:
             counts["skipped"] += 1
             results.append(

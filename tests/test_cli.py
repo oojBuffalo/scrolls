@@ -9431,6 +9431,9 @@ def test_media_batch_captures_pending_refs_and_rerenders(scrolls_home, monkeypat
                 "id": "arxiv:1706.03762",
                 "status": "captured",
                 "files": ["media/arxiv/1706-03762-1.pdf"],
+                # the paper's text never reached the body, so its PDF is read
+                # (ADR 0114); these fake bytes have no text layer
+                "documents": [{"path": "media/arxiv/1706-03762-1.pdf", "text": "none"}],
             }
         ],
     }

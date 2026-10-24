@@ -24,6 +24,7 @@ import re
 import unicodedata
 from dataclasses import replace
 
+from scrolls import documents
 from scrolls.items import ScrollItem
 from scrolls.mathtext import normalize_math
 from scrolls.paths import LibraryPaths
@@ -58,6 +59,8 @@ def render_markdown(item: ScrollItem) -> str:
         value = getattr(item, name)
         if value is None or value == ():
             continue
+        if name == "media":  # document text renders in the body, not here
+            value = tuple(documents.frontmatter_ref(ref) for ref in value)
         if isinstance(value, tuple):
             value = list(value)
         lines.append(f"{name}: {json.dumps(value, ensure_ascii=False)}")
@@ -68,6 +71,11 @@ def render_markdown(item: ScrollItem) -> str:
         sections += ["## Summary", normalize_math(item.summary)]
     if item.extracted_text:
         sections += ["## Extracted Content", normalize_math(item.extracted_text)]
+    held_documents = documents.sections(item)
+    if held_documents:
+        sections.append("## Documents")
+        for heading, body in held_documents:
+            sections += [f"### {heading}", normalize_math(body)]
     links = [f"- Source: <{item.url}>"]
     if item.canonical_url and item.canonical_url != item.url:
         links.append(f"- Canonical: <{item.canonical_url}>")

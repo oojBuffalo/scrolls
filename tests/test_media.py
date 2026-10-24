@@ -1,7 +1,9 @@
 """Tests for media capture (`src/scrolls/media.py`, ADR 0011)."""
 
 import urllib.error
+from dataclasses import replace
 
+import pypdf
 import pytest
 
 import scrolls.media as media
@@ -51,12 +53,16 @@ def test_capture_downloads_ref_and_records_root_relative_path(paths, monkeypatch
         "type": "pdf",
         "url": "https://arxiv.org/pdf/1706.03762",
         "path": "media/arxiv/1706-03762-1.pdf",
+        # a captured PDF is read too (ADR 0114); fake bytes hold no text
+        "text": None,
+        "text_method": f"pypdf-{pypdf.__version__}",
     }
     assert results == [
         {
             "url": "https://arxiv.org/pdf/1706.03762",
             "status": "captured",
             "path": "media/arxiv/1706-03762-1.pdf",
+            "text": "none",
         }
     ]
 
@@ -106,8 +112,16 @@ def test_capture_skips_already_captured_refs(paths, monkeypatch):
     target = paths.root / relpath
     target.parent.mkdir(parents=True)
     target.write_bytes(b"already here")
+    already_read = {"text": None, "text_method": "pypdf-5.0.0"}  # see test_documents
     item = make_item(
-        media=({"type": "pdf", "url": "https://arxiv.org/pdf/1706.03762", "path": relpath},)
+        media=(
+            {
+                "type": "pdf",
+                "url": "https://arxiv.org/pdf/1706.03762",
+                "path": relpath,
+                **already_read,
+            },
+        )
     )
 
     updated, results = capture_media(paths, item)
@@ -386,3 +400,34 @@ def test_no_limit_function_captures_every_size(paths, monkeypatch):
     _, results = capture_media(paths, item, sleep=lambda _s: None)
 
     assert results[0]["status"] == "captured"
+
+
+def test_a_new_ref_never_takes_a_path_a_carried_ref_still_holds(paths, monkeypatch):
+    # review round 2: a re-fetch keeps a held ref's path (ADR 0114), so a ref
+    # inserted ahead of it must not be allocated that same file name
+    monkeypatch.setattr(media, "_download", _as_download(lambda url: url.encode()))
+    original = make_item(
+        id="wikipedia:en:Station",
+        source="wikipedia",
+        media=({"type": "image", "url": "https://u.example/A.png"},),
+    )
+    held, _ = capture_media(paths, original)
+    assert held.media[0]["path"] == "media/wikipedia/en-station-1.png"
+    refreshed = media.carry_capture_state(
+        held,
+        replace(
+            held,
+            media=(
+                {"type": "image", "url": "https://u.example/B.png"},
+                {"type": "image", "url": "https://u.example/A.png"},
+            ),
+        ),
+    )
+
+    updated, _ = capture_media(paths, refreshed)
+
+    b_ref, a_ref = updated.media
+    assert a_ref["path"] == "media/wikipedia/en-station-1.png"
+    assert b_ref["path"] != a_ref["path"]
+    assert (paths.root / a_ref["path"]).read_bytes() == b"https://u.example/A.png"
+    assert (paths.root / b_ref["path"]).read_bytes() == b"https://u.example/B.png"

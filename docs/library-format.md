@@ -90,7 +90,7 @@ always present, because the model cannot represent an item without them.
 | `tags` | when non-empty | array of strings | e.g. arXiv taxonomy codes (`cs.CL`) |
 | `concepts` | when non-empty | array of strings | e.g. GitHub repo topics, Wikipedia page categories, arXiv taxonomy names |
 | `links` | when non-empty | array of strings | outbound URLs found in the item, resolved into edges by `scrolls graph` |
-| `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file, or `oversize`/`bytes` when the file was declined for exceeding its size limit |
+| `media` | when non-empty | array of objects | media refs: `type` and `url` from the adapter, plus a root-relative `path` once `scrolls media` captured the file, or `oversize`/`bytes` when the file was declined for exceeding its size limit; a held PDF gains `text_method` once read (ADR 0114), and its `text` — null when there was none to extract — stays in the index, rendered in the body rather than here |
 | `content_hash` | once fetched | string | `sha256:<hex>` over the fetched content |
 | `provenance` | once fetched | object | `adapter`, `fetched_at`, `extraction_method` |
 
@@ -103,7 +103,11 @@ In order (`test_render_markdown_body_sections`):
    classified gist). Omitted when there is none.
 3. `## Extracted Content` — the extracted full text (article body,
    transcript, PDF text). Omitted when there is none.
-4. `## Links` — always present. Every URL is written as a CommonMark
+4. `## Documents` — the text of each held PDF the item's adapter did not
+   already read into the body (ADR 0114), one `### <file name>` per
+   document. A document with no extractable text, or not read yet, says so
+   instead. Omitted when the item holds no such PDF.
+5. `## Links` — always present. Every URL is written as a CommonMark
    autolink, angle brackets included, so that a `$` inside a URL cannot
    act as a KaTeX delimiter (12 captured URLs contain one, and one
    contains `$$`):
@@ -736,7 +740,10 @@ downloads items' media references — arXiv PDFs, youtube thumbnails, x
 photos — to `media/<source>/<id-slug>-<n><ext>`
 (`tests/test_media.py`):
 
-- **`<n>`** is the ref's 1-based position in the item's `media` array.
+- **`<n>`** is the ref's 1-based position in the item's `media` array,
+  or the next free number when another ref already holds that name — a
+  re-fetch keeps a held ref's path (ADR 0114), so a ref inserted ahead of
+  it must not take its file.
 - **The extension** comes from the URL path, else from the ref's
   `type`.
 - **Locations are recorded and stable.** The file's root-relative
@@ -745,6 +752,10 @@ photos — to `media/<source>/<id-slug>-<n><ext>`
   re-capture, so locations are as stable as scroll paths.
 - **Cache, not canon.** Files are plain downloads — no transformation —
   and can always be re-fetched from the recorded `url`.
+- **PDFs are read.** A held PDF's text is recorded on its ref as `text`
+  and `text_method` and rendered under the scroll's `## Documents`
+  (ADR [0114](adr/0114-captured-pdfs-are-read-into-the-scroll.md)). A
+  null `text` means read and empty; no `text` key means not read yet.
 
 ### Size limits
 

@@ -4995,6 +4995,13 @@ No argument: run the source adapter for every item at stage `detected`
   limit are not reported.
 - **`--limit` with an explicit id is an error**
   (`test_fetch_limit_with_explicit_id_is_an_error`).
+- **A re-fetch keeps what `scrolls media` learned** — the adapter rebuilds
+  each media ref from the source, so a ref's held `path`, size decline and
+  document text (ADR 0114) are carried across by URL rather than forgotten
+  (`test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh`) —
+  as long as the capture itself is unchanged. A new `content_hash` starts
+  the refs over, so the next `scrolls media` fetches and reads them afresh
+  (`test_a_refetch_that_changed_the_capture_starts_its_refs_over`).
 
 | Key | Meaning |
 | --- | --- |
@@ -5260,11 +5267,21 @@ ref and re-rendering its scroll so frontmatter points at the local file
 - **Failure isolation** — one failed download fails its item but never the
   batch, and refs captured before the failure keep their files
   (`test_media_continues_past_failures_and_exits_nonzero`).
+- **Held PDFs are read** (ADR 0114) — each PDF the run holds is read into
+  its media ref, so its text renders under the scroll's `## Documents`.
+  A file already on disk is read without being downloaded again, which is
+  how a library captured before this backfills; a PDF the item's adapter
+  already read into the body is skipped
+  (`test_scrolls_media_reads_held_documents_and_rerenders_the_scroll`,
+  `tests/test_documents.py`). A held file that cannot be read fails its own
+  ref, stays unread for the next run, and never stops the batch
+  (`test_an_unreadable_held_pdf_fails_its_ref_and_not_the_others`).
 
 | Key | Meaning |
 | --- | --- |
 | `captured` / `skipped` / `failed` | batch counts (per item) |
-| `results[]` | per-item `{id, status, ...}`; `files` lists captured root-relative paths, `error` is the first failed ref's message, `reason` explains a skip |
+| `extracted` | items whose held PDFs were only read, nothing downloaded; present when non-zero |
+| `results[]` | per-item `{id, status, ...}`; `files` lists captured root-relative paths, `error` is the first failed ref's message, `reason` explains a skip, `documents` lists each PDF read as `{path, text}` with `text` `extracted` or `none` |
 
 ```console
 $ scrolls media                       # one fetched arXiv item is pending
