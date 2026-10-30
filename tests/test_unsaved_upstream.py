@@ -325,6 +325,21 @@ def test_a_bookmark_pulled_before_this_existed_is_compared(scrolls_home, fake_x,
     assert "x:8" not in _membership()
 
 
+def test_an_item_added_by_url_has_no_provenance_and_is_not_a_member(
+    scrolls_home, fake_x, capsys
+):
+    # `scrolls add` registers an item with no provenance at all (Codex, P1).
+    capsys.readouterr()
+    assert main(["add", "https://x.com/someone/status/77"]) == 0
+    assert get_item(get_paths().db_path, "x:77").provenance is None
+
+    fake_x([_page(_posts(1))])
+    code, payload = _sync(capsys)
+    assert code == 0
+    assert payload["upstream"]["unsaved"] == []
+    assert "x:77" not in _membership()
+
+
 def test_an_item_removed_from_the_library_gets_no_event(scrolls_home, fake_x, capsys):
     fake_x([_page(_posts(1, 2))])
     _sync(capsys)
@@ -383,6 +398,15 @@ def test_reading_lists_report_every_article_they_hold():
     # with no title could be anything, so it does.
     assert result.unidentified == 1
     assert result.complete is True
+
+
+def test_a_list_enumeration_without_lists_is_not_an_empty_collection():
+    # A warning-only answer names no lists; it is not "you have none" (Codex, P2).
+    warning = {"warnings": {"main": {"*": "Unrecognized parameter"}}, "batchcomplete": ""}
+    result = collect_reading_lists(
+        _Session(), imported_at="2026-10-29T00:00:00+00:00", get_json=lambda url: warning
+    )
+    assert result.complete is False
 
 
 def test_a_truncated_list_enumeration_is_not_a_complete_walk():

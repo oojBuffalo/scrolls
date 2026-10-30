@@ -251,15 +251,21 @@ def fetch_lists(
     defaults: set[int] = set()
     params = {"meta": "readinglists", "rllimit": _LISTS_PAGE_SIZE}
     seen: set[str] = set()
+    recognized = True
     for _ in range(_MAX_PAGES):
         payload = _check(get_json(_api_url(**params)))
-        for entry in payload.get("query", {}).get("readinglists") or ():
+        listed = (payload.get("query") or {}).get("readinglists")
+        if not isinstance(listed, list):
+            # Not a lists page (a warning-only answer, say): it names no
+            # lists, which is not the same as the account holding none.
+            recognized = False
+        for entry in listed or ():
             lists[entry["id"]] = entry.get("name") or ""
             if entry.get("default"):
                 defaults.add(entry["id"])
         cursor = (payload.get("continue") or {}).get("rlcontinue")
         if not cursor:
-            return lists, defaults, True
+            return lists, defaults, recognized
         if cursor in seen:
             break
         seen.add(cursor)

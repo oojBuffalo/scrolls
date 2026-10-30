@@ -389,10 +389,9 @@ def compare_upstream(
         if last is not None and last.status == UNSAVED_UPSTREAM_STATUS:
             still_unsaved += 1
             continue
-        was_member = (
-            last is not None
-            or by_id[item_id].provenance.get("adapter") in collection.provenance_adapters
-        )
+        # `scrolls add` registers an item with no provenance at all.
+        adapter = (by_id[item_id].provenance or {}).get("adapter")
+        was_member = last is not None or adapter in collection.provenance_adapters
         if was_member:
             unsaved.append(item_id)
             events.append(event(item_id, UNSAVED_UPSTREAM_STATUS))
