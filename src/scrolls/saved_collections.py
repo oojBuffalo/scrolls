@@ -82,6 +82,10 @@ class CollectionPull:
         unidentified: Entries the walk could not name.
         complete: The walk ended on the service's own end signal, unlimited
             and unbroken, so `seen` is the whole collection (ADR 0118).
+        account: A stable name for the account whose collection was walked
+            (X's numeric user id, the Wikipedia account name), or None when
+            the route cannot say. Membership is per account, so a walk with
+            no account compares nothing.
     """
 
     items: tuple[ScrollItem, ...] = ()
@@ -93,6 +97,7 @@ class CollectionPull:
     seen: tuple[str, ...] = ()
     unidentified: int = 0
     complete: bool = False
+    account: str | None = None
 
 
 Pull = Callable[[PullOptions, str], CollectionPull]
@@ -115,10 +120,6 @@ class SavedCollection:
         routes: Credential routes, the browser session always first.
         adr: The ADR that records this collection's decisions.
         pull: Walks the collection; given options and the pull timestamp.
-        provenance_adapters: `provenance.adapter` values that prove an earlier
-            pull brought an item in, so a removal can be seen before the
-            ledger holds a membership record for it (ADR 0118). Empty when
-            an item's provenance cannot say so.
     """
 
     source: str
@@ -130,17 +131,22 @@ class SavedCollection:
     routes: tuple[str, ...]
     adr: str
     pull: Pull = field(repr=False, compare=False)
-    provenance_adapters: tuple[str, ...] = ()
 
     @property
     def command(self) -> str:
         """The command that pulls this collection."""
         return f"scrolls sync {self.source} --collection {self.name}"
 
-    @property
-    def key(self) -> str:
-        """The collection's name on the ledger's membership axis."""
-        return f"{self.source}/{self.name}"
+    def key(self, account: str) -> str:
+        """One account's copy of this collection on the ledger's membership axis.
+
+        Args:
+            account: The account the walk ran as.
+
+        Returns:
+            `<source>/<name>@<account>`, e.g. `x/bookmarks@12345`.
+        """
+        return f"{self.source}/{self.name}@{account}"
 
     def describe(self) -> dict:
         """The JSON shape `scrolls sync --list-collections` prints."""
@@ -173,12 +179,16 @@ def _pull_x_bookmarks(options: PullOptions, pulled_at: str) -> CollectionPull:
             result = api_fetch_bookmarks(
                 token, synced_at=pulled_at, limit=options.limit, stop_on_error=True
             )
+            account = result.account
         else:
             session = load_session(options.browser, profile=options.profile)
             origin = session.origin
             result = fetch_bookmarks(
                 session, synced_at=pulled_at, limit=options.limit, stop_on_error=True
             )
+            # Both routes name the same numeric user id, so one account's
+            # membership is shared across them.
+            account = session.user_id
     except (XSessionError, XGraphQLError, XOAuthError, XAPIError) as exc:
         raise CollectionUnavailable(str(exc)) from exc
     return CollectionPull(
@@ -190,6 +200,7 @@ def _pull_x_bookmarks(options: PullOptions, pulled_at: str) -> CollectionPull:
         seen=result.seen,
         unidentified=result.unidentified,
         complete=result.complete,
+        account=account,
     )
 
 
@@ -217,6 +228,7 @@ def _pull_wikipedia_reading_lists(
         seen=result.seen,
         unidentified=result.unidentified,
         complete=result.complete,
+        account=session.display_name,
     )
 
 
@@ -231,8 +243,6 @@ COLLECTIONS: tuple[SavedCollection, ...] = (
         routes=("browser", "oauth"),
         adr="0108",
         pull=_pull_x_bookmarks,
-        # Both routes stamp this; `scrolls add` of a post stamps `x`.
-        provenance_adapters=("x-bookmarks",),
     ),
     SavedCollection(
         source="wikipedia",
@@ -326,23 +336,25 @@ def compare_upstream(
 ) -> UpstreamComparison:
     """Compare a complete walk against what earlier walks found (ADR 0118).
 
-    A member is an item the ledger last recorded as `saved_upstream` in this
-    collection, or, before the ledger holds any record for it, an item whose
-    provenance names the collection's own on-ramp. A held member the walk did
-    not see was removed upstream; a held item the walk saw is a member, and a
-    first sighting or a return after a removal is recorded as one. Report-only:
-    the events never touch an item, and an item no longer held gets none.
+    Membership is per account (`collection.key(pull.account)`). A member is an
+    item the ledger last recorded as `saved_upstream` in that account's
+    collection, so the first complete walk only records the baseline. A held
+    member the walk did not see was removed upstream; a held item the walk saw
+    is a member, and a first sighting or a return after a removal is recorded
+    as one. Report-only: the events never touch an item, and an item no longer
+    held gets none.
 
-    Only a walk that saw the whole collection may say what is missing, so a
-    limited walk, one that ended early, or one with entries it could not name
-    compares nothing.
+    Only a walk that saw the whole collection, as a known account, may say
+    what is missing, so a limited walk, one that ended early, one with entries
+    it could not name, or one whose account is unknown compares nothing.
 
     Args:
         collection: The collection walked.
         pull: The walk's outcome.
         limited: Whether the user bounded the walk with `--limit`.
         held: Every item the library holds after this pull's inserts.
-        latest: Each item's latest membership event in this collection.
+        latest: Each item's latest membership event in this account's
+            collection (empty when the account is unknown).
         now: The pull timestamp, stamped on every event.
 
     Returns:
@@ -362,14 +374,19 @@ def compare_upstream(
         return UpstreamComparison(
             False, f"{pull.unidentified} collection entries could not be identified"
         )
+    if not pull.account:
+        # Membership is per account: another profile's collection is not this
+        # one's, and a comparison across them would fabricate removals.
+        return UpstreamComparison(
+            False, "the account behind the walk could not be identified"
+        )
 
+    key = collection.key(pull.account)
     by_id = {item.id: item for item in held if item.source == collection.source}
     seen = set(pull.seen)
 
     def event(item_id: str, status: str) -> CustodyEvent:
-        return CustodyEvent(
-            item_id, now, status, by_id[item_id].content_hash, None, collection.key
-        )
+        return CustodyEvent(item_id, now, status, by_id[item_id].content_hash, None, key)
 
     events: list[CustodyEvent] = []
     saved = 0
@@ -386,15 +403,13 @@ def compare_upstream(
                 resaved.append(item_id)
                 events.append(event(item_id, SAVED_UPSTREAM_STATUS))
             continue
-        if last is not None and last.status == UNSAVED_UPSTREAM_STATUS:
+        if last is None:
+            continue  # never seen in this account's collection: not a member
+        if last.status == UNSAVED_UPSTREAM_STATUS:
             still_unsaved += 1
             continue
-        # `scrolls add` registers an item with no provenance at all.
-        adapter = (by_id[item_id].provenance or {}).get("adapter")
-        was_member = last is not None or adapter in collection.provenance_adapters
-        if was_member:
-            unsaved.append(item_id)
-            events.append(event(item_id, UNSAVED_UPSTREAM_STATUS))
+        unsaved.append(item_id)
+        events.append(event(item_id, UNSAVED_UPSTREAM_STATUS))
 
     return UpstreamComparison(
         True, None, tuple(events), saved, tuple(unsaved), tuple(resaved), still_unsaved

@@ -296,6 +296,7 @@ class BookmarksSync:
         unidentified: Records the walk could not name.
         complete: The walk ended on X's own end signal, unlimited and
             unbroken, so `seen` is the whole collection (ADR 0118).
+        account: The numeric id of the account whose bookmarks were walked.
     """
 
     items: tuple[ScrollItem, ...] = ()
@@ -305,6 +306,7 @@ class BookmarksSync:
     seen: tuple[str, ...] = ()
     unidentified: int = 0
     complete: bool = False
+    account: str | None = None
 
 
 Getter = Callable[[str, dict], dict]
@@ -458,6 +460,7 @@ def fetch_bookmarks(
         tuple(seen),
         unidentified,
         complete and not partial,
+        account=resolved,
     )
 
 

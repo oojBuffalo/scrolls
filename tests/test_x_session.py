@@ -240,6 +240,22 @@ def test_a_logged_out_firefox_profile_says_so(tmp_path):
         read_firefox_session(db)
 
 
+def test_the_twid_cookie_names_the_signed_in_account(tmp_path):
+    """`twid` rides along from the session's own host; it is never required (ADR 0118)."""
+    db = tmp_path / "cookies.sqlite"
+    _firefox_db(db, [
+        (".x.com", "auth_token", "AUTH"),
+        (".x.com", "ct0", "CSRF"),
+        (".x.com", "twid", "u%3D1234567"),
+        ("twitter.com", "twid", "u%3D999"),  # another host's stale account
+    ])
+    assert read_firefox_session(db).user_id == "1234567"
+
+    bare = tmp_path / "bare.sqlite"
+    _firefox_db(bare, [(".x.com", "auth_token", "AUTH"), (".x.com", "ct0", "CSRF")])
+    assert read_firefox_session(bare).user_id is None
+
+
 # --- browser discovery ---------------------------------------------------
 
 

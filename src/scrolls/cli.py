@@ -2542,13 +2542,17 @@ def _cmd_sync_collection(
             counts["skipped"] += 1
 
     # A complete walk also says what the user removed upstream (ADR 0118):
-    # recorded on the ledger's membership axis, never acted on.
+    # recorded on the ledger's membership axis, per account, never acted on.
     upstream = compare_upstream(
         collection,
         result,
         limited=options.limit is not None,
         held=list_items(paths.db_path),
-        latest=latest_membership_events(paths.db_path, collection.key),
+        latest=(
+            latest_membership_events(paths.db_path, collection.key(result.account))
+            if result.account
+            else {}
+        ),
         now=pulled_at,
     )
     record_events(paths.db_path, upstream.events)

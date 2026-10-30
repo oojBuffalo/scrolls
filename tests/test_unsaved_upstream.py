@@ -27,15 +27,35 @@ from scrolls.paths import get_paths
 from scrolls.wikipedia_lists import collect_reading_lists
 from scrolls.x_bookmarks import parse_bookmarks_page
 
-KEY = "x/bookmarks"
+KEY = "x/bookmarks@42"
 
 
 @pytest.fixture
 def scrolls_home(monkeypatch, tmp_path):
-    """Point the library root at a temp dir so tests never touch ~/.scrolls."""
+    """Point the library root at a temp dir so tests never touch ~/.scrolls.
+
+    The session comes from the env route, as signed in as account 42: the
+    browser route reads that id from X's `twid` cookie (ADR 0118), which the
+    env route cannot supply. `as_account` switches it.
+    """
     monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "scrolls-home"))
     monkeypatch.setenv("SCROLLS_X_AUTH_TOKEN", "AUTH")
     monkeypatch.setenv("SCROLLS_X_CT0", "CSRF")
+    as_account(monkeypatch, "42")
+
+
+def as_account(monkeypatch, user_id):
+    """Make every X session in this test signed in as `user_id` (or no one)."""
+    from dataclasses import replace
+
+    import scrolls.saved_collections as collections
+    from scrolls.x_session import load_session
+
+    monkeypatch.setattr(
+        collections,
+        "load_session",
+        lambda browser, profile=None: replace(load_session(browser, profile=profile), user_id=user_id),
+    )
 
 
 def _tweet_entry(tweet_id):
@@ -303,9 +323,12 @@ def test_an_unidentified_entry_blocks_the_comparison(scrolls_home, fake_x, capsy
 # --- what counts as an earlier member --------------------------------------
 
 
-def test_a_bookmark_pulled_before_this_existed_is_compared(scrolls_home, fake_x, capsys):
-    # The live library's 482 bookmarks have no membership events; their
-    # provenance names the on-ramp that pulled them, so they are members.
+def test_the_first_walk_sets_a_baseline_and_calls_nothing_removed(
+    scrolls_home, fake_x, capsys
+):
+    # A bookmark pulled before membership was recorded has no ledger record.
+    # Its provenance cannot say which account pulled it, so it is not
+    # assumed a member: the first complete walk only records the baseline.
     main(["init"])
     db = get_paths().db_path
     insert_item(db, ScrollItem(
@@ -321,8 +344,52 @@ def test_a_bookmark_pulled_before_this_existed_is_compared(scrolls_home, fake_x,
 
     fake_x([_page(_posts(1))])
     _, payload = _sync(capsys)
-    assert payload["upstream"]["unsaved"] == ["x:9"]  # x:8 was never a bookmark
-    assert "x:8" not in _membership()
+    assert payload["upstream"]["unsaved"] == []
+    assert payload["upstream"]["saved"] == 1
+    assert set(_membership()) == {"x:1"}
+
+
+def test_membership_is_per_account(scrolls_home, fake_x, monkeypatch, capsys):
+    # Two profiles signed in as two accounts hold two collections. Walking the
+    # second is not evidence the first removed anything (Codex, round 3).
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    as_account(monkeypatch, "43")
+    fake_x([_page(_posts(3))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+    assert payload["upstream"]["saved"] == 1
+
+    as_account(monkeypatch, "42")
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"] == {
+        "compared": True, "reason": None, "saved": 0,
+        "unsaved": [], "resaved": [], "still_unsaved": 0,
+    }
+    assert _membership() == {"x:1": SAVED_UPSTREAM_STATUS, "x:2": SAVED_UPSTREAM_STATUS}
+
+
+def test_a_walk_with_no_known_account_records_nothing(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    as_account(monkeypatch, None)
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys)
+    assert payload["imported"] == 2
+    assert payload["upstream"]["compared"] is False
+    assert "account" in payload["upstream"]["reason"]
+    assert _membership() == {}
+
+
+def test_the_twid_cookie_names_the_account():
+    from scrolls.x_session import user_id_from_twid
+
+    assert user_id_from_twid("u%3D1234567") == "1234567"
+    assert user_id_from_twid('"u=89"') == "89"
+    assert user_id_from_twid("v=1") is None
+    assert user_id_from_twid(None) is None
 
 
 def test_an_item_added_by_url_has_no_provenance_and_is_not_a_member(

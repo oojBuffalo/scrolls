@@ -4819,8 +4819,13 @@ holds, so it also records what the user removed there (ADR 0118):
   never deletes custody (ADR 0113 §5).
 - **`saved_upstream`** — the walk saw the item: its first sighting, or its
   return after a removal (reported as `resaved`).
-- **Where they live** — on the custody ledger's membership axis, with the
-  collection key (`x/bookmarks`) as `detail`. `scrolls history <id>` shows
+- **Per account** — membership is keyed by the account the walk ran as
+  (`x/bookmarks@<user id>`, `wikipedia/reading-lists@<name>`), so another
+  profile's account is never compared against this one. The first complete
+  walk per account records the baseline. A walk whose account is unknown
+  (X's env-var route carries none) compares nothing.
+- **Where they live** — on the custody ledger's membership axis, with that
+  key as `detail`. `scrolls history <id>` shows
   them; they never move the drift posture.
 - **Only a complete walk compares.** A `--limit` walk, one that ended early,
   or one with entries it could not name records nothing and says why in

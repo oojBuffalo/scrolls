@@ -41,24 +41,32 @@ records nothing.**
   enumeration and the entry walk ended on MediaWiki's own signal.
 - **A membership axis on the ledger.** Two statuses beside the verify verdicts
   and the conflict axis: `saved_upstream` and `unsaved_upstream`, with the
-  collection key (`x/bookmarks`) as `detail`. Disjoint from the drift posture:
-  an un-bookmarked post is still held and its source has not moved.
+  account's collection key (`x/bookmarks@<user id>`) as `detail`. Disjoint
+  from the drift posture: an un-bookmarked post is still held and its source
+  has not moved.
 - **The comparison.** A held member the walk did not see gets
   `unsaved_upstream`. A held item the walk saw gets `saved_upstream` on its
   first sighting or its return (reported as `resaved`). A removal already
   recorded is counted (`still_unsaved`), not recorded again.
-- **Who is a member.** An item whose latest membership event is
-  `saved_upstream`, or, before the ledger holds any for it, an item whose
-  `provenance.adapter` names the collection's on-ramp (`x-bookmarks`). So the
-  live library's existing bookmarks are compared from the first walk. A
-  fetched Wikipedia article's provenance cannot say it came from a list, so
-  reading lists start comparing from their first complete walk.
+- **Membership is per account.** Two browser profiles signed in as two
+  accounts hold two collections; walking one is no evidence about the other.
+  The key carries the account: X's numeric user id (the `twid` cookie on the
+  browser route, the resolved id over OAuth, so both routes share one
+  account's record) and the Wikipedia account name. A walk whose account is
+  unknown, such as X's env-var route, compares nothing.
+- **Who is a member.** An item whose latest membership event in that
+  account's collection is `saved_upstream`. So the first complete walk per
+  account records the baseline and calls nothing removed. Provenance cannot
+  stand in for it: `provenance.adapter` says an on-ramp pulled an item, not
+  which account it pulled it for.
 - **Report-only.** No item, scroll or capture is touched, and an item no
   longer held gets no event. The sync report carries an always-present
   `upstream` block; `compared: false` names the reason.
 
 ## Consequences
 
+- **Removals before the baseline are not recovered.** The live library's
+  existing bookmarks start being compared at their first account-scoped walk.
 - **"What did I stop saving?" has an answer**: `scrolls history <id> --status
   unsaved_upstream`, and the sync report's `upstream.unsaved`.
 - **The ledger stays the one record.** No new table or sidecar file; the
@@ -66,9 +74,9 @@ records nothing.**
 - **Conservative by design.** One unnameable entry blocks a comparison
   rather than risking a false removal. A non-Wikipedia reading-list entry
   (Commons, Wiktionary) does not block it, since it can never be held.
-- **Not verified live yet.** The fixtures cover tombstones, early ends,
-  limits and the provenance bootstrap; a live pull on a copy of the library
-  is the remaining proof.
+- **Not verified live yet.** The fixtures cover tombstones, error answers,
+  early ends, limits and account switches; a live pull on a copy of the
+  library is the remaining proof.
 - **Deferred:** surfacing removals in `doctor`/`status`, and an MCP read of
   them.
 
