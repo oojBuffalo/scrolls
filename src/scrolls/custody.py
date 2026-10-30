@@ -622,9 +622,34 @@ def events_for_items(
 
 # The content key that identifies a check across libraries — the autoincrement
 # `id` is per-library (never exported) and `detail` describes the same check, so
-# neither is part of the identity. Two ledger rows with this 5-tuple equal are
+# neither is part of the identity (except on the membership axis, where `detail`
+# is the collection key — `_event_identity`). Two ledger rows with this 5-tuple equal are
 # the same custody event (roadmap H67's idempotent-restore key).
 _EVENT_IDENTITY = ("item_id", "checked_at", "status", "prior_hash", "observed_hash")
+
+
+def _event_identity(event: CustodyEvent) -> tuple[str, tuple[object, ...]]:
+    """The restore-dedup WHERE clause and its parameters for one event.
+
+    `_EVENT_IDENTITY` for every axis, plus `detail` on the membership axis: there
+    `detail` is not a description but the account-scoped collection key (ADR
+    0118), so two accounts' records of the same item in the same second are two
+    events, not one.
+
+    Args:
+        event: The event a restore is about to insert.
+
+    Returns:
+        A `col IS ? AND …` clause and the values it binds, in order.
+    """
+    columns = list(_EVENT_IDENTITY)
+    values: list[object] = [
+        event.item_id, event.checked_at, event.status, event.prior_hash, event.observed_hash
+    ]
+    if event.status in MEMBERSHIP_AXIS_STATUSES:
+        columns.append("detail")
+        values.append(event.detail)
+    return " AND ".join(f"{col} IS ?" for col in columns), tuple(values)
 
 
 def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, int]:
@@ -647,7 +672,6 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     check see it. NULL hashes compare NULL-safely (SQLite ``IS``).
     """
     ordered = sorted(events, key=lambda e: e.checked_at)
-    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
     insert_cols = ", ".join(_EVENT_COLUMNS)
     placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
     imported = skipped = 0
@@ -655,7 +679,7 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     try:
         with conn:
             for e in ordered:
-                identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+                where, identity = _event_identity(e)
                 exists = conn.execute(
                     f"SELECT 1 FROM custody_events WHERE {where} LIMIT 1", identity
                 ).fetchone()
@@ -664,7 +688,8 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
                     continue
                 conn.execute(
                     f"INSERT INTO custody_events ({insert_cols}) VALUES ({placeholders})",
-                    (*identity, e.detail),
+                    (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash,
+                     e.detail),
                 )
                 imported += 1
     finally:
@@ -686,13 +711,12 @@ def preview_import_events(
     dry-run test pins these counts equal to a real import's, so the two never
     drift apart.
     """
-    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
     imported = skipped = 0
     seen: set[tuple[object, ...]] = set()
     conn = sqlite3.connect(db_path)
     try:
         for e in sorted(events, key=lambda e: e.checked_at):
-            identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+            where, identity = _event_identity(e)
             if identity in seen:
                 skipped += 1
                 continue

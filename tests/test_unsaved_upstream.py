@@ -442,6 +442,36 @@ def test_a_membership_event_never_reads_as_a_drift_verdict(scrolls_home, fake_x,
     assert search_items(db, "post", drift="unverified") == []
 
 
+# --- restore keeps every account's record ---------------------------------
+
+
+def test_two_accounts_membership_survives_an_events_round_trip(tmp_path, monkeypatch):
+    # Same item, status, hash and second, two accounts: only `detail` tells
+    # them apart, so restore must count it as identity (Codex, round 5).
+    from scrolls.custody import CustodyEvent, import_events, preview_import_events, record_events
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "home"))
+    main(["init"])
+    db = get_paths().db_path
+    at = "2026-10-29T03:00:00+00:00"
+    pair = [
+        CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, "x/bookmarks@42"),
+        CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, "x/bookmarks@43"),
+    ]
+    assert preview_import_events(db, pair) == (2, 0)
+    assert import_events(db, pair) == (2, 0)
+    assert import_events(db, pair) == (0, 2)  # still idempotent
+    assert set(latest_membership_events(db, "x/bookmarks@43")) == {"x:1"}
+
+    # a verify verdict keeps its five-field identity: detail never splits it
+    verdicts = [
+        CustodyEvent("x:1", at, "error", "h", None, "timeout"),
+        CustodyEvent("x:1", at, "error", "h", None, "timed out"),
+    ]
+    record_events(db, verdicts[:1])
+    assert import_events(db, verdicts[1:]) == (0, 1)
+
+
 # --- the timeline ---------------------------------------------------------
 
 
