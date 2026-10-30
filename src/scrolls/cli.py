@@ -52,6 +52,7 @@ from scrolls.custody import (
     items_in_posture,
     last_checked,
     latest_events,
+    latest_membership_events,
     live_recapture,
     parse_since,
     partition_resolvable_events,
@@ -193,6 +194,7 @@ from scrolls.saved_collections import (
     PullOptions,
     UnknownCollection,
     collections_for,
+    compare_upstream,
     now_iso,
     resolve_collection,
 )
@@ -2515,7 +2517,8 @@ def _cmd_sync_collection(
         # A start-up failure (no session, expired session, missing grant)
         # fails the whole run: a partial import that silently dropped the
         # un-authorized half would be worse than nothing.
-        result = collection.pull(options, now_iso())
+        pulled_at = now_iso()
+        result = collection.pull(options, pulled_at)
     except CollectionUnavailable as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
@@ -2538,6 +2541,18 @@ def _cmd_sync_collection(
         else:
             counts["skipped"] += 1
 
+    # A complete walk also says what the user removed upstream (ADR 0118):
+    # recorded on the ledger's membership axis, never acted on.
+    upstream = compare_upstream(
+        collection,
+        result,
+        limited=options.limit is not None,
+        held=list_items(paths.db_path),
+        latest=latest_membership_events(paths.db_path, collection.key),
+        now=pulled_at,
+    )
+    record_events(paths.db_path, upstream.events)
+
     payload = {
         "source": collection.source,
         "collection": collection.name,
@@ -2546,6 +2561,7 @@ def _cmd_sync_collection(
         "session": result.session,
         **result.extra,
         "failures": list(result.failures),
+        "upstream": upstream.payload(),
     }
     if result.error:
         payload["error"] = result.error

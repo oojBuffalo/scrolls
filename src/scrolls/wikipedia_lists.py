@@ -69,6 +69,10 @@ _LISTS_PAGE_SIZE = "max"
 _ENTRIES_PAGE_SIZE = "max"
 _MAX_PAGES = 500
 
+# The one entry failure that cannot hide a held article: no adapter here
+# fetches Commons or Wiktionary, so such an entry was never held.
+_NOT_WIKIPEDIA = "not a Wikipedia project"
+
 GetJson = Callable[[str], dict[str, Any]]
 
 
@@ -155,6 +159,12 @@ class ReadingListSync:
         failures: Entries that could not become items, with the reason.
         pages: How many entry pages were fetched.
         error: The error that ended the walk early, if one did.
+        seen: The item id of every article the walk passed, before any limit.
+        unidentified: Entries that might be a held article but could not be
+            named. A non-Wikipedia project entry is not one: it can never be
+            held.
+        complete: The walk ended on MediaWiki's own end signal, unlimited and
+            unbroken, so `seen` is the whole collection (ADR 0118).
     """
 
     items: tuple[ScrollItem, ...] = ()
@@ -162,6 +172,9 @@ class ReadingListSync:
     failures: tuple[dict, ...] = ()
     pages: int = 0
     error: str | None = None
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    complete: bool = False
 
 
 def entry_url(project: str, title: str) -> str:
@@ -276,7 +289,8 @@ def collect_reading_lists(
     fetch = get_json or _session_fetcher(session)
     all_lists, defaults = fetch_lists(session, get_json=fetch)
     if not all_lists:
-        return ReadingListSync(lists={}, pages=0)
+        # The account holds no list at all: a complete, empty collection.
+        return ReadingListSync(lists={}, pages=0, complete=True)
 
     # A named list is the user's own curation and becomes a tag; the default
     # list is the absence of a choice, so it contributes none.
@@ -302,6 +316,7 @@ def collect_reading_lists(
     seen_cursors: set[str] = set()
     pages = 0
     error: str | None = None
+    complete = False
 
     for _ in range(_MAX_PAGES):
         try:
@@ -323,7 +338,10 @@ def collect_reading_lists(
         if limit is not None and len(by_id) >= limit:
             break
         cursor = (payload.get("continue") or {}).get("rlecontinue")
-        if not cursor or cursor in seen_cursors:
+        if not cursor:
+            complete = True
+            break
+        if cursor in seen_cursors:
             break
         seen_cursors.add(cursor)
         params = {**params, "rlecontinue": cursor}
@@ -335,6 +353,9 @@ def collect_reading_lists(
         failures=tuple(failures),
         pages=pages,
         error=error,
+        seen=tuple(by_id),
+        unidentified=sum(1 for f in failures if f["reason"] != _NOT_WIKIPEDIA),
+        complete=complete,
     )
 
 
@@ -369,7 +390,7 @@ def _to_item(
                 "entry": entry.get("id"),
                 "project": project,
                 "title": title,
-                "reason": "not a Wikipedia project",
+                "reason": _NOT_WIKIPEDIA,
             }
         )
         return None

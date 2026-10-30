@@ -134,12 +134,19 @@ class BookmarksSync:
         failures: Per-entry parse problems that did not abort the walk.
         pages: How many pages were fetched.
         error: The error that ended the walk early, if one did.
+        seen: The item id of every bookmark the walk passed, readable or not.
+        unidentified: Entries the walk could not name.
+        complete: The walk ended on X's own end signal, unlimited and
+            unbroken, so `seen` is the whole collection (ADR 0118).
     """
 
     items: tuple[ScrollItem, ...] = ()
     failures: tuple[dict, ...] = ()
     pages: int = 0
     error: str | None = None
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    complete: bool = False
 
 
 PageFetcher = Callable[[str, dict], dict]
@@ -278,10 +285,13 @@ def fetch_bookmarks(
 
     items: list[ScrollItem] = []
     failures: list[dict] = []
+    seen: dict[str, None] = {}
+    unidentified = 0
     seen_cursors: set[str] = set()
     cursor: str | None = None
     pages = 0
     error: str | None = None
+    complete = False
 
     while True:
         url = build_url(cursor=cursor, count=page_size)
@@ -299,13 +309,17 @@ def fetch_bookmarks(
         page = parse_bookmarks_page(payload, synced_at=synced_at)
         items.extend(page.items)
         failures.extend(page.failures)
+        seen.update(dict.fromkeys(page.seen))
+        unidentified += page.unidentified
 
         if limit is not None and len(items) >= limit:
             items = items[:limit]
             break
         # X keeps offering a cursor past the end of the collection, so an empty
-        # page — not a missing cursor — is the real terminator.
-        if not page.items or not page.next_cursor:
+        # page — not a missing cursor — is the real terminator. Empty means no
+        # bookmark entries at all: a page of deleted posts is not the end.
+        if not (page.seen or page.unidentified) or not page.next_cursor:
+            complete = True
             break
         if page.next_cursor in seen_cursors:
             break
@@ -313,7 +327,9 @@ def fetch_bookmarks(
         cursor = page.next_cursor
         sleep(delay)
 
-    return BookmarksSync(tuple(items), tuple(failures), pages, error)
+    return BookmarksSync(
+        tuple(items), tuple(failures), pages, error, tuple(seen), unidentified, complete
+    )
 
 
 def _fetch_with_backoff(

@@ -23,6 +23,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
+from scrolls.custody import (
+    SAVED_UPSTREAM_STATUS,
+    UNSAVED_UPSTREAM_STATUS,
+    CustodyEvent,
+)
 from scrolls.items import ScrollItem
 from scrolls.paths import get_paths
 from scrolls.wikipedia_lists import (
@@ -73,6 +78,10 @@ class CollectionPull:
         session: Where the credential came from (a browser, `env`, `oauth`).
         error: The error that ended the walk early, if one did.
         extra: Source-specific facts for the report (account, list names).
+        seen: The item id of every save the walk passed, readable or not.
+        unidentified: Entries the walk could not name.
+        complete: The walk ended on the service's own end signal, unlimited
+            and unbroken, so `seen` is the whole collection (ADR 0118).
     """
 
     items: tuple[ScrollItem, ...] = ()
@@ -81,6 +90,9 @@ class CollectionPull:
     session: str = ""
     error: str | None = None
     extra: dict = field(default_factory=dict)
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    complete: bool = False
 
 
 Pull = Callable[[PullOptions, str], CollectionPull]
@@ -103,6 +115,10 @@ class SavedCollection:
         routes: Credential routes, the browser session always first.
         adr: The ADR that records this collection's decisions.
         pull: Walks the collection; given options and the pull timestamp.
+        provenance_adapters: `provenance.adapter` values that prove an earlier
+            pull brought an item in, so a removal can be seen before the
+            ledger holds a membership record for it (ADR 0118). Empty when
+            an item's provenance cannot say so.
     """
 
     source: str
@@ -114,11 +130,17 @@ class SavedCollection:
     routes: tuple[str, ...]
     adr: str
     pull: Pull = field(repr=False, compare=False)
+    provenance_adapters: tuple[str, ...] = ()
 
     @property
     def command(self) -> str:
         """The command that pulls this collection."""
         return f"scrolls sync {self.source} --collection {self.name}"
+
+    @property
+    def key(self) -> str:
+        """The collection's name on the ledger's membership axis."""
+        return f"{self.source}/{self.name}"
 
     def describe(self) -> dict:
         """The JSON shape `scrolls sync --list-collections` prints."""
@@ -165,6 +187,9 @@ def _pull_x_bookmarks(options: PullOptions, pulled_at: str) -> CollectionPull:
         pages=result.pages,
         session=origin,
         error=result.error,
+        seen=result.seen,
+        unidentified=result.unidentified,
+        complete=result.complete,
     )
 
 
@@ -189,6 +214,9 @@ def _pull_wikipedia_reading_lists(
             "account": session.display_name,
             "lists": sorted((result.lists or {}).values()),
         },
+        seen=result.seen,
+        unidentified=result.unidentified,
+        complete=result.complete,
     )
 
 
@@ -203,6 +231,8 @@ COLLECTIONS: tuple[SavedCollection, ...] = (
         routes=("browser", "oauth"),
         adr="0108",
         pull=_pull_x_bookmarks,
+        # Both routes stamp this; `scrolls add` of a post stamps `x`.
+        provenance_adapters=("x-bookmarks",),
     ),
     SavedCollection(
         source="wikipedia",
@@ -249,3 +279,124 @@ def resolve_collection(source: str, name: str) -> SavedCollection:
 def now_iso() -> str:
     """The pull timestamp every item in one run shares."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@dataclass(frozen=True)
+class UpstreamComparison:
+    """What one pull learned about the collection's membership (ADR 0118).
+
+    Attributes:
+        compared: Whether the walk was complete enough to compare at all.
+        reason: Why it was not, or None when it was.
+        events: The membership events to append to the ledger.
+        saved: Items recorded as members for the first time.
+        unsaved: Ids newly found removed upstream, sorted.
+        resaved: Ids that returned after a removal, sorted.
+        still_unsaved: Items already recorded as removed and still absent.
+    """
+
+    compared: bool
+    reason: str | None = None
+    events: tuple[CustodyEvent, ...] = ()
+    saved: int = 0
+    unsaved: tuple[str, ...] = ()
+    resaved: tuple[str, ...] = ()
+    still_unsaved: int = 0
+
+    def payload(self) -> dict:
+        """The `upstream` block the sync report carries."""
+        return {
+            "compared": self.compared,
+            "reason": self.reason,
+            "saved": self.saved,
+            "unsaved": list(self.unsaved),
+            "resaved": list(self.resaved),
+            "still_unsaved": self.still_unsaved,
+        }
+
+
+def compare_upstream(
+    collection: SavedCollection,
+    pull: CollectionPull,
+    *,
+    limited: bool,
+    held: list[ScrollItem],
+    latest: dict[str, CustodyEvent],
+    now: str,
+) -> UpstreamComparison:
+    """Compare a complete walk against what earlier walks found (ADR 0118).
+
+    A member is an item the ledger last recorded as `saved_upstream` in this
+    collection, or, before the ledger holds any record for it, an item whose
+    provenance names the collection's own on-ramp. A held member the walk did
+    not see was removed upstream; a held item the walk saw is a member, and a
+    first sighting or a return after a removal is recorded as one. Report-only:
+    the events never touch an item, and an item no longer held gets none.
+
+    Only a walk that saw the whole collection may say what is missing, so a
+    limited walk, one that ended early, or one with entries it could not name
+    compares nothing.
+
+    Args:
+        collection: The collection walked.
+        pull: The walk's outcome.
+        limited: Whether the user bounded the walk with `--limit`.
+        held: Every item the library holds after this pull's inserts.
+        latest: Each item's latest membership event in this collection.
+        now: The pull timestamp, stamped on every event.
+
+    Returns:
+        The comparison, with the events still to be recorded.
+    """
+    if limited:
+        return UpstreamComparison(
+            False, "a --limit walk sees only part of the collection"
+        )
+    if pull.error:
+        return UpstreamComparison(False, f"the walk ended early: {pull.error}")
+    if not pull.complete:
+        return UpstreamComparison(
+            False, "the walk stopped before the service said it was done"
+        )
+    if pull.unidentified:
+        return UpstreamComparison(
+            False, f"{pull.unidentified} collection entries could not be identified"
+        )
+
+    by_id = {item.id: item for item in held if item.source == collection.source}
+    seen = set(pull.seen)
+
+    def event(item_id: str, status: str) -> CustodyEvent:
+        return CustodyEvent(
+            item_id, now, status, by_id[item_id].content_hash, None, collection.key
+        )
+
+    events: list[CustodyEvent] = []
+    saved = 0
+    resaved: list[str] = []
+    unsaved: list[str] = []
+    still_unsaved = 0
+    for item_id in sorted(by_id):
+        last = latest.get(item_id)
+        if item_id in seen:
+            if last is None:
+                saved += 1
+                events.append(event(item_id, SAVED_UPSTREAM_STATUS))
+            elif last.status == UNSAVED_UPSTREAM_STATUS:
+                resaved.append(item_id)
+                events.append(event(item_id, SAVED_UPSTREAM_STATUS))
+            continue
+        if last is not None and last.status == UNSAVED_UPSTREAM_STATUS:
+            still_unsaved += 1
+            continue
+        was_member = (
+            last is not None
+            or by_id[item_id].provenance.get("adapter") in collection.provenance_adapters
+        )
+        if was_member:
+            unsaved.append(item_id)
+            events.append(event(item_id, UNSAVED_UPSTREAM_STATUS))
+
+    return UpstreamComparison(
+        True, None, tuple(events), saved, tuple(unsaved), tuple(resaved), still_unsaved
+    )

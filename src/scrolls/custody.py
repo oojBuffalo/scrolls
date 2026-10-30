@@ -104,12 +104,24 @@ _SUPERSEDED_DETAIL = (
 # posture folds (`CUSTODY_STATUSES`) — ADR 0104/0105/0106.
 CONFLICT_AXIS_STATUSES = (CONFLICT_STATUS, RESOLVED_STATUS, SUPERSEDED_STATUS)
 
-# Every status that can appear in a ledger row — the four verify verdicts plus the
-# two conflict-axis events (import `conflict` and its `resolved` supersession). The
-# `scrolls history --status` filter validates against this superset (a conflict or
-# resolution event is readable on the timeline and filterable), but the drift
-# posture reads only the `CUSTODY_STATUSES` verify verdicts.
-LEDGER_STATUSES = CUSTODY_STATUSES + CONFLICT_AXIS_STATUSES
+# The collection-membership axis (roadmap H444, ADR 0118): what a complete walk
+# of a saved collection found. `saved_upstream` — the walk saw the item in the
+# collection (its first sighting, or its return after a removal);
+# `unsaved_upstream` — an earlier walk saw it and this complete one did not, so
+# the user removed it upstream. The event's `detail` is the collection key
+# (`x/bookmarks`), so one item can carry membership in several collections.
+# Report-only and disjoint from the drift posture: an un-bookmarked post is
+# still held, and its source has not moved (ADR 0113 §5).
+SAVED_UPSTREAM_STATUS = "saved_upstream"
+UNSAVED_UPSTREAM_STATUS = "unsaved_upstream"
+MEMBERSHIP_AXIS_STATUSES = (SAVED_UPSTREAM_STATUS, UNSAVED_UPSTREAM_STATUS)
+
+# Every status that can appear in a ledger row — the four verify verdicts, the
+# conflict-axis events (an import `conflict` and its resolutions), and the
+# membership-axis events. The `scrolls history --status` filter validates
+# against this superset, but the drift posture reads only the
+# `CUSTODY_STATUSES` verify verdicts.
+LEDGER_STATUSES = CUSTODY_STATUSES + CONFLICT_AXIS_STATUSES + MEMBERSHIP_AXIS_STATUSES
 
 # The custody-fidelity tiers in best-held-first order — the three `get_fidelity`
 # returns. The canonical order every custody headline renders tiers in.
@@ -803,6 +815,32 @@ def latest_conflict_events(db_path: Path) -> dict[str, CustodyEvent]:
         f"(SELECT MAX(id) FROM custody_events WHERE status IN ({placeholders}) "
         "GROUP BY item_id)",
         tuple(CONFLICT_AXIS_STATUSES),
+    )
+    return {row["item_id"]: _from_row(row) for row in rows}
+
+
+def latest_membership_events(db_path: Path, collection: str) -> dict[str, CustodyEvent]:
+    """The most recent membership event per item for one collection (ADR 0118).
+
+    The membership-axis sibling of `latest_events`/`latest_conflict_events`: the
+    MAX(id) per item over `MEMBERSHIP_AXIS_STATUSES` whose `detail` names
+    `collection`, so the latest walk's finding wins. An item with no entry here
+    was never seen by a complete walk of that collection.
+
+    Args:
+        db_path: The library database.
+        collection: The collection key, `<source>/<name>` (`x/bookmarks`).
+
+    Returns:
+        Item id to that item's latest membership event in the collection.
+    """
+    placeholders = ", ".join("?" for _ in MEMBERSHIP_AXIS_STATUSES)
+    rows = _query_events(
+        db_path,
+        "SELECT * FROM custody_events WHERE id IN "
+        f"(SELECT MAX(id) FROM custody_events WHERE status IN ({placeholders}) "
+        "AND detail = ? GROUP BY item_id)",
+        (*MEMBERSHIP_AXIS_STATUSES, collection),
     )
     return {row["item_id"]: _from_row(row) for row in rows}
 

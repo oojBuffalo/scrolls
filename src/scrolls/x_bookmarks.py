@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -35,6 +36,10 @@ from scrolls.items import ScrollItem, make_item_id
 _POSTED_AT_FORMAT = "%a %b %d %H:%M:%S %z %Y"  # "Mon Jun 01 15:34:00 +0000 2026"
 _MAX_TITLE_LENGTH = 80
 _CURSOR_PREFIX = "cursor-bottom"
+# Every pagination entry (`cursor-top-…`, `cursor-bottom-…`) is navigation,
+# not a save; a bookmarked post's entry is `tweet-<id>`.
+_PAGINATION_PREFIX = "cursor-"
+_TWEET_ENTRY = re.compile(r"tweet-(\d+)")
 
 # X wraps some posts in a visibility envelope; the real tweet hangs off `.tweet`.
 _VISIBILITY_TYPENAME = "TweetWithVisibilityResults"
@@ -52,11 +57,17 @@ class BookmarksPage:
         next_cursor: Cursor for the following page, or None at the end.
         failures: Per-entry problems that did not abort the page, each a dict
             with `entry_id` and `error`.
+        seen: The item id of every bookmark on the page, readable or not: a
+            deleted post is still bookmarked (ADR 0118).
+        unidentified: Entries that are neither pagination nor a nameable
+            post, so a comparison cannot know what they were.
     """
 
     items: tuple[ScrollItem, ...] = ()
     next_cursor: str | None = None
     failures: tuple[dict, ...] = ()
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
 
 
 def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
@@ -73,15 +84,24 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
     """
     items: list[ScrollItem] = []
     failures: list[dict] = []
+    seen: list[str] = []
+    unidentified = 0
     next_cursor: str | None = None
 
     for entry in _entries(payload):
         entry_id = entry.get("entryId") or ""
-        if entry_id.startswith(_CURSOR_PREFIX):
-            value = (entry.get("content") or {}).get("value")
-            if isinstance(value, str) and value:
-                next_cursor = value
+        if entry_id.startswith(_PAGINATION_PREFIX):
+            if entry_id.startswith(_CURSOR_PREFIX):
+                value = (entry.get("content") or {}).get("value")
+                if isinstance(value, str) and value:
+                    next_cursor = value
             continue
+
+        match = _TWEET_ENTRY.fullmatch(entry_id)
+        if match:
+            seen.append(make_item_id("x", match.group(1), ""))
+        else:
+            unidentified += 1
 
         result = _tweet_result(entry)
         if result is None:
@@ -91,7 +111,9 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             failures.append({"entry_id": entry_id, "error": str(exc)})
 
-    return BookmarksPage(tuple(items), next_cursor, tuple(failures))
+    return BookmarksPage(
+        tuple(items), next_cursor, tuple(failures), tuple(seen), unidentified
+    )
 
 
 def _entries(payload: dict) -> list[dict]:
