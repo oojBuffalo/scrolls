@@ -40,7 +40,6 @@ live-library evidence — see `docs/agents/progress/261029/plans.md`.
 
 | Slot | Slice | Issue | Maps to |
 | --- | --- | --- | --- |
-| H442 | **A cited DOI is not a work identity.** Only a representation's own DOI joins a work; citation links stay links. Clears 185 Wikipedia-only works and the false `at_risk` verdict. | #22 | cap 5 |
 | H443 | **`maintain` is safe to schedule.** A run lock so overlapping passes skip, plus a launchd/cron recipe. | #23 | cap 1/3 |
 | H444 | **Saves removed upstream are recorded.** A complete collection walk marks held members it no longer sees as `unsaved_upstream`; report-only. | #24 | cap 3/4 |
 | H445 | **Held document text is searchable.** The FTS index reads PDF text, so `search` and `context` find it. | #25 | cap 7 |
@@ -464,6 +463,7 @@ matrix, and the 2026-07-22 steer retired guard-cell families as a default.
 | H439 | Every adapter answers how a user's collection gets in (docs + guard, `docs/adapters.md` + `tests/test_docs.py`) — 42 sections scored 4 reachable / 22 gap / 16 none, tied to `FETCH_ADAPTERS` and `COLLECTIONS` by test; issue #3 | cap 4 |
 | H440 | Captured PDFs are read into the scroll (production, `src/scrolls/documents.py` + `media.py` + `render.py`) — `text`/`text_method` on the media ref, read / read-but-empty / unread kept distinct, a `## Documents` section outside `content_hash`; FTS and OCR deferred; issue #10 (ADR 0114) | cap 8 |
 | H441 | Bundles carry media in an opt-in sidecar (production, `src/scrolls/bundle_media.py` + `cli.py`) — `export bundle --with-media DIR` with a SHA-256 manifest; `import bundle` validates, hash-checks and never overwrites; issue #12 (ADR 0115) | M4/M5, cap 4 |
+| H442 | A cited DOI is not a work identity (production, `src/scrolls/works.py`) — a `doi.org` link names an item's work only when its source is a scholarly record (`WORK_SOURCES`); since ADR 0110 Wikipedia citations had forged 185 works; live copy: 185 → 0 works, posture `at_risk` → `attention`; issue #22 (ADR 0116) | cap 5 |
 
 ---
 

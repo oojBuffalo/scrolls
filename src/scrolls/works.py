@@ -29,10 +29,13 @@ the rest of the system uses:
   `crossref` items (the DOI folded lowercase, ADR 0037) and for
   `biorxiv`/`medrxiv` items (the `10.1101/<accession>` preprint DOI,
   ADR 0068), and naturally false for arXiv/PubMed/RFC integer ids; or
-- one of its `links` is a `doi.org` URL — every paper adapter emits the
-  published work's DOI as exactly such a link, and source detection reads
-  the lowercased DOI back off it (`detect_source`, the same resolution
-  `scrolls graph` and `scrolls related` use, ADR 0023).
+- it comes from a scholarly-record source (`WORK_SOURCES`) and one of its
+  `links` is a `doi.org` URL — every paper adapter emits the published
+  work's DOI as exactly such a link, and source detection reads the
+  lowercased DOI back off it (`detect_source`, the same resolution
+  `scrolls graph` and `scrolls related` use, ADR 0023). A `doi.org` link
+  from any other source — a Wikipedia article's or a post's — is a
+  citation, not an identity (ADR 0116).
 
 Only works with two or more representations are reported by default — a
 single-representation work is just a paper, with nothing to consolidate.
@@ -71,6 +74,16 @@ DEFAULT_MIN_REPRESENTATIONS = 2
 # uses to read a DOI off a doi.org URL — kept here as a local copy so a
 # work key never depends on the detector's internal regex.
 _DOI_RE = re.compile(r"^10\.\d{4,}/.+$")
+
+# The sources whose capture *is* a scholarly record, so a `doi.org` link the
+# adapter emits names the work the item represents: the preprint's published
+# DOI, the record's own or concept DOI (ADR 0038/0045/0068). Every other
+# source harvests links from a page body, where a DOI is a citation, not an
+# identity (ADR 0116): an encyclopedia article citing a paper is not that
+# paper. An allow-list, so a new adapter cannot forge works by default.
+WORK_SOURCES = frozenset(
+    {"arxiv", "biorxiv", "crossref", "medrxiv", "pubmed", "rfc", "zenodo"}
+)
 
 # Paper-source precedence for picking a work's *canonical* representation —
 # the one form that stands for the whole work (ADR 0095). The registered
@@ -872,15 +885,26 @@ def item_dois(item: ScrollItem) -> set[str]:
     """The DOIs that name the work(s) this item represents.
 
     The item's own `source_id` when it is itself a DOI (crossref,
-    biorxiv/medrxiv), plus the DOI of every `doi.org` link it carries.
+    biorxiv/medrxiv), plus the DOI of every `doi.org` link it carries when
+    its source is a scholarly record (`WORK_SOURCES`). A `doi.org` link from
+    any other source is a citation and names no work (ADR 0116).
 
     Public so `related` can score a *same-work* edge with the same
     DOI-extraction rule the work clustering uses — an item is a sibling
     representation of another exactly when they share one of these DOIs.
+
+    Args:
+        item: The item to read work identities from.
+
+    Returns:
+        The lowercased DOIs of the works the item represents; empty when it
+        represents none.
     """
     dois: set[str] = set()
     if item.source_id and _DOI_RE.match(item.source_id):
         dois.add(item.source_id.lower())
+    if item.source not in WORK_SOURCES:
+        return dois
     for link in item.links:
         doi = _doi_from_link(link)
         if doi:
