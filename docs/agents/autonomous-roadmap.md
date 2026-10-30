@@ -3,7 +3,7 @@
 *Amended: 2026-07-27 — restructured for readability; shipped narration folded
 out of the queue into the one-line ledger. 2026-10-29 — maintenance pass:
 queue requeued (H442–H445), ledger rows H426–H441 re-compacted into the
-table.*
+table; the same day the queue drained.*
 
 How the hourly autonomous worker (`work/scrolls-dev`) spends its runs. This is
 the **scheduling layer** under `docs/product/prd.md` (direction) and
@@ -38,10 +38,10 @@ committed/tested/clean stopping point, and stop. Each slice is a GitHub issue;
 the issue carries the evidence, scope, and done-when. Requeued 2026-10-29 from
 live-library evidence — see `docs/agents/progress/261029/plans.md`.
 
-| Slot | Slice | Issue | Maps to |
-| --- | --- | --- | --- |
-
-Preconditions: none between slices; the order is by custody value.
+**Drained 2026-10-29.** H442–H445 shipped (see the ledger). Nothing is
+queued: the next slices come from evidence the next check-in gathers, per
+maintenance rule §5 — see "After the queue" in
+`docs/agents/progress/261029/plans.md`.
 
 **Pruned 2026-10-29:** the de-prioritized budget/tier convergence cells
 H244–H249. They were the correct-by-construction tail of a combinatorial
