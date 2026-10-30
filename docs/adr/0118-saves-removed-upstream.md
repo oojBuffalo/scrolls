@@ -69,6 +69,11 @@ records nothing.**
   existing bookmarks start being compared at their first account-scoped walk.
 - **"What did I stop saving?" has an answer**: `scrolls history <id> --status
   unsaved_upstream`, and the sync report's `upstream.unsaved`.
+- **`search --drift` reads only verify verdicts now.** Its SQL picked an
+  item's latest ledger row of any kind, so a membership row (or an older
+  conflict-axis row) could stand in for the drift verdict and split it from
+  `list --drift`. It now filters to `CUSTODY_STATUSES`, as `latest_events`
+  always has.
 - **The ledger stays the one record.** No new table or sidecar file; the
   events travel with `export events` and bundles like every other ledger row.
 - **Conservative by design.** One unnameable entry blocks a comparison

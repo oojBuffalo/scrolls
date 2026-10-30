@@ -418,6 +418,30 @@ def test_an_item_removed_from_the_library_gets_no_event(scrolls_home, fake_x, ca
     assert payload["upstream"]["unsaved"] == []
 
 
+# --- other axes never move the drift posture ------------------------------
+
+
+def test_a_membership_event_never_reads_as_a_drift_verdict(scrolls_home, fake_x, capsys):
+    # search --drift reads each hit's latest verdict in SQL; a membership row
+    # appended after it must not become that verdict (Codex, round 4), nor
+    # must a conflict-axis row. `list --drift` already ignores both.
+    from scrolls.custody import CONFLICT_STATUS, CustodyEvent, record_events
+    from scrolls.search import search_items
+
+    fake_x([_page(_posts(1))])
+    _sync(capsys)  # x:1 is unverified, and now carries a saved_upstream row
+    db = get_paths().db_path
+    assert [h.id for h in search_items(db, "post", drift="unverified")] == ["x:1"]
+
+    record_events(db, [
+        CustodyEvent("x:1", "2026-10-29T01:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("x:1", "2026-10-29T02:00:00+00:00", CONFLICT_STATUS, "h", "g"),
+        CustodyEvent("x:1", "2026-10-29T03:00:00+00:00", SAVED_UPSTREAM_STATUS, "h", None, KEY),
+    ])
+    assert [h.id for h in search_items(db, "post", drift="verified")] == ["x:1"]
+    assert search_items(db, "post", drift="unverified") == []
+
+
 # --- the timeline ---------------------------------------------------------
 
 
