@@ -34,6 +34,11 @@ records nothing.**
   walk is `complete` only when it ended on the service's own end signal (an
   empty page or no cursor for X, no `rlecontinue` for MediaWiki), unlimited and
   unbroken. An empty page now means no entries at all.
+- **An error answer is not an empty page.** X can answer HTTP 200 with only
+  `errors`; a page with no bookmarks timeline (or, over the API, no `data` or
+  `meta`) is now a walk failure, and errors beside a timeline make the walk
+  partial. A reading-list walk is complete only when both the list
+  enumeration and the entry walk ended on MediaWiki's own signal.
 - **A membership axis on the ledger.** Two statuses beside the verify verdicts
   and the conflict axis: `saved_upstream` and `unsaved_upstream`, with the
   collection key (`x/bookmarks`) as `detail`. Disjoint from the drift posture:

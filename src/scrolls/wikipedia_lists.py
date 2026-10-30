@@ -229,7 +229,7 @@ def _check(payload: dict) -> dict:
 
 def fetch_lists(
     session: WikipediaSession, *, get_json: GetJson
-) -> tuple[dict[int, str], set[int]]:
+) -> tuple[dict[int, str], set[int], bool]:
     """Every reading list the account holds.
 
     Args:
@@ -237,9 +237,12 @@ def fetch_lists(
         get_json: Injected JSON fetcher.
 
     Returns:
-        A (list id to name, ids of default lists) pair. The default list is
-        Wikipedia's unnamed catch-all — where an article goes when the user
-        filed it nowhere — so it is flagged rather than treated as a name.
+        A (list id to name, ids of default lists, complete) triple. The
+        default list is Wikipedia's unnamed catch-all — where an article goes
+        when the user filed it nowhere — so it is flagged rather than treated
+        as a name. `complete` is True only when MediaWiki's own end signal
+        (no `rlcontinue`) ended the walk; a page cap or a repeated cursor
+        leaves lists unread, and so no list walk over them is complete.
 
     Raises:
         WikipediaListsError: The API rejected the request.
@@ -255,11 +258,13 @@ def fetch_lists(
             if entry.get("default"):
                 defaults.add(entry["id"])
         cursor = (payload.get("continue") or {}).get("rlcontinue")
-        if not cursor or cursor in seen:
+        if not cursor:
+            return lists, defaults, True
+        if cursor in seen:
             break
         seen.add(cursor)
         params = {**params, "rlcontinue": cursor}
-    return lists, defaults
+    return lists, defaults, False
 
 
 def collect_reading_lists(
@@ -287,10 +292,10 @@ def collect_reading_lists(
         WikipediaListsError: A request failed and `stop_on_error` is False.
     """
     fetch = get_json or _session_fetcher(session)
-    all_lists, defaults = fetch_lists(session, get_json=fetch)
+    all_lists, defaults, lists_complete = fetch_lists(session, get_json=fetch)
     if not all_lists:
-        # The account holds no list at all: a complete, empty collection.
-        return ReadingListSync(lists={}, pages=0, complete=True)
+        # No list at all: a complete, empty collection, if the walk finished.
+        return ReadingListSync(lists={}, pages=0, complete=lists_complete)
 
     # A named list is the user's own curation and becomes a tag; the default
     # list is the absence of a choice, so it contributes none.
@@ -317,6 +322,7 @@ def collect_reading_lists(
     pages = 0
     error: str | None = None
     complete = False
+    recognized = True
 
     for _ in range(_MAX_PAGES):
         try:
@@ -328,7 +334,11 @@ def collect_reading_lists(
             raise
 
         pages += 1
-        for entry in payload.get("query", {}).get("readinglistentries") or ():
+        listed = (payload.get("query") or {}).get("readinglistentries")
+        if not isinstance(listed, list):
+            # Not an entries page at all; what it would have listed is unknown.
+            recognized = False
+        for entry in listed or ():
             item = _to_item(entry, tags_by_list, imported_at, failures)
             if item is None:
                 continue
@@ -355,7 +365,9 @@ def collect_reading_lists(
         error=error,
         seen=tuple(by_id),
         unidentified=sum(1 for f in failures if f["reason"] != _NOT_WIKIPEDIA),
-        complete=complete,
+        # Both walks must finish: entries over a partial set of lists, or a
+        # page that was not an entries page, leave saves unaccounted for.
+        complete=complete and lists_complete and recognized,
     )
 
 

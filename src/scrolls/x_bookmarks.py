@@ -61,6 +61,10 @@ class BookmarksPage:
             deleted post is still bookmarked (ADR 0118).
         unidentified: Entries that are neither pagination nor a nameable
             post, so a comparison cannot know what they were.
+        timeline: Whether the response carried a bookmarks timeline at all.
+            X can answer HTTP 200 with only `errors`; that is not an empty
+            collection.
+        errors: The messages of any service errors the response carried.
     """
 
     items: tuple[ScrollItem, ...] = ()
@@ -68,6 +72,8 @@ class BookmarksPage:
     failures: tuple[dict, ...] = ()
     seen: tuple[str, ...] = ()
     unidentified: int = 0
+    timeline: bool = True
+    errors: tuple[str, ...] = ()
 
 
 def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
@@ -112,7 +118,43 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
             failures.append({"entry_id": entry_id, "error": str(exc)})
 
     return BookmarksPage(
-        tuple(items), next_cursor, tuple(failures), tuple(seen), unidentified
+        tuple(items),
+        next_cursor,
+        tuple(failures),
+        tuple(seen),
+        unidentified,
+        timeline=_has_timeline(payload),
+        errors=service_errors(payload),
+    )
+
+
+def _has_timeline(payload: dict) -> bool:
+    """Whether a response carries the bookmarks timeline's instruction list."""
+    timeline = (
+        ((payload or {}).get("data") or {})
+        .get("bookmark_timeline_v2", {})
+        .get("timeline", {})
+    )
+    return isinstance(timeline, dict) and isinstance(timeline.get("instructions"), list)
+
+
+def service_errors(payload: dict) -> tuple[str, ...]:
+    """The messages of the `errors` array an X response carried, if any.
+
+    Args:
+        payload: A decoded GraphQL or API v2 response.
+
+    Returns:
+        One message per error, in order; empty when there were none.
+    """
+    errors = (payload or {}).get("errors")
+    if not isinstance(errors, list):
+        return ()
+    return tuple(
+        str(error.get("message") or error.get("detail") or error)
+        if isinstance(error, dict)
+        else str(error)
+        for error in errors
     )
 
 

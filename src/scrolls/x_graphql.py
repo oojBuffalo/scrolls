@@ -292,6 +292,9 @@ def fetch_bookmarks(
     pages = 0
     error: str | None = None
     complete = False
+    # A page that carried service errors beside its timeline may be missing
+    # entries, so the walk still imports but is never complete.
+    partial = False
 
     while True:
         url = build_url(cursor=cursor, count=page_size)
@@ -307,6 +310,16 @@ def fetch_bookmarks(
 
         pages += 1
         page = parse_bookmarks_page(payload, synced_at=synced_at)
+        if not page.timeline:
+            # An HTTP 200 carrying only `errors` read nothing; calling it an
+            # empty page would end the walk as if the collection were empty.
+            message = "; ".join(page.errors) or "no bookmarks timeline in the response"
+            failure = XGraphQLError(f"{BOOKMARKS_OPERATION} failed: {message}")
+            if stop_on_error:
+                error = str(failure)
+                break
+            raise failure
+        partial = partial or bool(page.errors)
         items.extend(page.items)
         failures.extend(page.failures)
         seen.update(dict.fromkeys(page.seen))
@@ -328,7 +341,13 @@ def fetch_bookmarks(
         sleep(delay)
 
     return BookmarksSync(
-        tuple(items), tuple(failures), pages, error, tuple(seen), unidentified, complete
+        tuple(items),
+        tuple(failures),
+        pages,
+        error,
+        tuple(seen),
+        unidentified,
+        complete and not partial,
     )
 
 

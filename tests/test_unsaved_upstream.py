@@ -259,6 +259,35 @@ def test_a_walk_that_ended_early_records_nothing(scrolls_home, fake_x, monkeypat
     assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
 
 
+def test_an_error_envelope_is_not_an_empty_collection(scrolls_home, fake_x, capsys):
+    # X can answer HTTP 200 with only `errors`; nothing was read, so nothing
+    # may be called removed (Codex review of H444, P1).
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([{"errors": [{"code": 32, "message": "Could not authenticate you."}]}])
+    capsys.readouterr()
+    code = main(["sync", "x", "--collection", "bookmarks", "--browser", "env"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "Could not authenticate you" in json.loads(captured.err)["error"]
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+def test_an_error_beside_the_timeline_makes_the_walk_partial(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    page = _page(_posts(1))
+    page["errors"] = [{"message": "Timeout: Unspecified"}]
+    fake_x([page])
+    _, payload = _sync(capsys)
+    assert payload["imported"] == 0
+    assert payload["upstream"]["compared"] is False
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
 def test_an_unidentified_entry_blocks_the_comparison(scrolls_home, fake_x, capsys):
     fake_x([_page(_posts(1, 2))])
     _sync(capsys)
@@ -353,3 +382,24 @@ def test_reading_lists_report_every_article_they_hold():
     # Commons can never be held, so it does not block a comparison; an entry
     # with no title could be anything, so it does.
     assert result.unidentified == 1
+    assert result.complete is True
+
+
+def test_a_truncated_list_enumeration_is_not_a_complete_walk():
+    # The lists themselves page; if that walk stops on a repeated cursor, the
+    # articles in the lists it never reached are not "removed" (Codex, P2).
+    lists = {"query": {"readinglists": [{"id": 1, "name": "default", "default": True}]},
+             "continue": {"rlcontinue": "again"}}
+    entries = {"query": {"readinglistentries": [
+        {"id": 10, "listId": 1, "project": "https://en.wikipedia.org", "title": "SQLite",
+         "created": "2026-01-01T00:00:00Z"},
+    ]}}
+
+    def get_json(url):
+        return entries if "readinglistentries" in url else lists
+
+    result = collect_reading_lists(
+        _Session(), imported_at="2026-10-29T00:00:00+00:00", get_json=get_json
+    )
+    assert result.seen == ("wikipedia:en:SQLite",)
+    assert result.complete is False
