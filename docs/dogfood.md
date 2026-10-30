@@ -837,6 +837,61 @@ source, the trend baseline is untouched — the symmetric shell twin of the MCP
 triage below. The agent reads *where* the loss is and acts *only there*,
 custody-safely.
 
+### Scheduling it
+
+Verification that runs only when someone remembers is not stewardship, so
+the recurring pass belongs on a schedule.
+
+**Cadence.** Daily, bounded: `scrolls maintain --limit 200`.
+
+- **The bound paces the network.** About 200 re-fetches, a few minutes a day.
+- **Coverage-first order cycles everything.** Never-checked items go first,
+  then the stalest verdicts, so a 1,000-item library is fully re-verified
+  about every five days.
+- **Overruns are safe.** A pass still running when the next one fires makes
+  that one skip with exit 75; nothing overlaps (ADR 0117).
+
+**macOS (launchd).** Save as `~/Library/LaunchAgents/dev.scrolls.maintain.plist`,
+then `launchctl load` it. Paths must be absolute; launchd has no shell `PATH`.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.scrolls.maintain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>--project</string>
+    <string>/path/to/scrolls</string>
+    <string>scrolls</string>
+    <string>maintain</string>
+    <string>--limit</string>
+    <string>200</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/scrolls-maintain.json</string>
+  <key>StandardErrorPath</key><string>/tmp/scrolls-maintain.err</string>
+</dict>
+</plist>
+```
+
+**Linux (cron).** One line in `crontab -e`:
+
+```text
+0 4 * * * /usr/local/bin/uv run --project /path/to/scrolls scrolls maintain --limit 200 >/tmp/scrolls-maintain.json 2>/tmp/scrolls-maintain.err
+```
+
+**Reading the results.** The report on stdout is the pass;
+`scrolls maintain --history --trend` reads the trajectory across passes.
+
+**Browser-session sources.** X rechecks read the browser's cookies, which
+on macOS decrypt through the login keychain. A job that cannot reach the
+session records `error` verdicts for those items, never false drift.
+
 ## The same loop over MCP
 
 The flow above is how an agent drives custody from the **shell**. An agent that
