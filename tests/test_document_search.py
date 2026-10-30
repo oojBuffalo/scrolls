@@ -152,6 +152,34 @@ def test_upgrading_backfills_and_indexes_held_document_text(home):
     assert run_doctor(home)["fts"]["in_sync"] is True
 
 
+def test_a_failed_upgrade_leaves_the_library_as_it_was(home, monkeypatch):
+    # Every command upgrades first, so a migration that dies halfway must not
+    # strand the library between schemas (Codex review of H445, P1).
+    import scrolls.db as db_module
+
+    db = home.db_path
+    db.unlink()
+    _v8_library(db, [_pdf("Signed at Zanzibar.")])
+    broken = (*MIGRATIONS[9], "SELECT * FROM no_such_table")
+    monkeypatch.setitem(db_module.MIGRATIONS, 9, broken)
+
+    with pytest.raises(sqlite3.OperationalError):
+        init_db(db)
+
+    assert read_schema_version(db) == 8
+    conn = sqlite3.connect(db)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    triggers = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    conn.close()
+    assert "document_text" not in columns
+    assert {"items_fts_insert", "items_fts_delete", "items_fts_update"} <= triggers
+
+    monkeypatch.undo()
+    init_db(db)  # the retry succeeds from a clean v8
+    assert [h.id for h in search_items(db, "zanzibar")] == ["web:treaty"]
+
+
 def test_any_command_upgrades_an_older_library_before_writing(home, capsys):
     # `scrolls set` writes the item without calling init itself; on a v8
     # library the new column must already exist when it does.

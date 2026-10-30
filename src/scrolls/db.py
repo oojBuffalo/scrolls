@@ -222,10 +222,18 @@ def init_db(db_path: Path) -> None:
 
     Raises ValueError if the database was written by a newer scrolls than
     this one; refusing beats silently downgrading the stamp.
+
+    The whole walk is one explicit transaction. Python's `sqlite3` opens no
+    implicit transaction before DDL, so `with conn:` alone would commit each
+    `DROP`/`ALTER` as it ran, and a migration that died halfway (migration 9
+    drops the search index before rebuilding it) would strand the library
+    between schemas. SQLite's DDL is transactional, so a failure now rolls
+    every step back and the stamp still names the schema the file holds.
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, isolation_level=None)  # we BEGIN/COMMIT
     try:
-        with conn:  # one transaction
+        conn.execute("BEGIN IMMEDIATE")
+        try:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
@@ -242,6 +250,10 @@ def init_db(db_path: Path) -> None:
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
     finally:
         conn.close()
 
