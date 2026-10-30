@@ -79,7 +79,7 @@ from scrolls.items import (
 )
 from scrolls.works import WorkRef, work_membership
 
-_BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
+_BM25_WEIGHTS = "5.0, 2.0, 1.0, 1.0"  # title, summary, extracted_text, document_text
 _SNIPPET_TOKENS = 12
 
 # The indexed FTS columns in BM25-weight order (highest first), the same order
@@ -88,18 +88,21 @@ _SNIPPET_TOKENS = 12
 # the highest-weighted one — so the explanation is grounded in the very weights
 # that produced the rank, never an invented relevance score (custody-vision §3.5:
 # provenance and fidelity, not engagement, rank a custody library).
-_FTS_FIELDS = ("title", "summary", "extracted_text")
+_FTS_FIELDS = ("title", "summary", "extracted_text", "document_text")
+# A held document's read text (ADR 0119) is body text like `extracted_text`, so it
+# shares the `weak` band and weight: a word found only in a PDF is a body hit.
 _STRENGTH_BY_FIELD = {
     "title": "strong",
     "summary": "moderate",
     "extracted_text": "weak",
+    "document_text": "weak",
 }
 
-# The strength bands in descending field-weight order (strongest first), 1:1 with
-# `_FTS_FIELDS` so band index `i` names the same field as `_FTS_FIELDS[i]`. The
-# closed vocabulary `tally_strength` partitions over and `--strength` filters by;
-# derived from `_STRENGTH_BY_FIELD` so the order can never drift from the weights.
-STRENGTH_BANDS = tuple(_STRENGTH_BY_FIELD[field] for field in _FTS_FIELDS)
+# The strength bands in descending field-weight order (strongest first), each once.
+# The closed vocabulary `tally_strength` partitions over and `--strength` filters
+# by; derived from `_STRENGTH_BY_FIELD` so the order can never drift from the
+# weights. Two fields can share a band, so a band names a set of fields.
+STRENGTH_BANDS = tuple(dict.fromkeys(_STRENGTH_BY_FIELD[field] for field in _FTS_FIELDS))
 
 # Presence, not content: the fidelity tier (ADR 0097) needs to know only
 # *whether* each body column is populated, so the query asks SQLite for the
@@ -218,14 +221,18 @@ _CONTENT_DUPLICATE_CLAUSE = (
 def _strength_match(strength: str, tokens: list[str]) -> str:
     """The column-restricted FTS match string behind `--strength` (H314).
 
-    `strength` names a band in `STRENGTH_BANDS` (strongest first, 1:1 with
-    `_FTS_FIELDS`), so the columns *at or above* it are the prefix
-    `_FTS_FIELDS[:i+1]` — `strong` → title, `moderate` → title+summary, `weak` →
-    every field. Restricts the bound query to that column set with the same
+    `strength` names a band in `STRENGTH_BANDS` (strongest first), so the columns
+    *at or above* it are every field whose band ranks no lower — `strong` →
+    title, `moderate` → title+summary, `weak` → every field, document text
+    included. Restricts the bound query to that column set with the same
     any-token (OR) test `_match_explanations` reads `matched_fields` off, so the
     filter keeps exactly the hits whose `match_strength` is the band or stronger.
     """
-    columns = _FTS_FIELDS[: STRENGTH_BANDS.index(strength) + 1]
+    rank = STRENGTH_BANDS.index(strength)
+    columns = [
+        field for field in _FTS_FIELDS
+        if STRENGTH_BANDS.index(_STRENGTH_BY_FIELD[field]) <= rank
+    ]
     any_token = " OR ".join(tokens)
     return f"{{{' '.join(columns)}}} : ({any_token})"
 

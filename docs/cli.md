@@ -8,7 +8,7 @@ and error envelopes. This is the reference for agents (and contributors)
 consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
-Every example below is real output captured from `scrolls 0.1.0` (schema version 8)
+Every example below is real output captured from `scrolls 0.1.0` (schema version 9)
 on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
@@ -5905,10 +5905,13 @@ query and corpus, so it tells an agent the *order* but not *why*. Each hit
 therefore also explains its own rank:
 
 - **`matched_fields`** names the indexed fields the query terms actually
-  landed in, in BM25-weight order (`title`/`summary`/`extracted_text`).
+  landed in, in BM25-weight order
+  (`title`/`summary`/`extracted_text`/`document_text`). `document_text` is
+  the read text of held documents, a captured PDF's text (ADR 0119), so a
+  word held only in a PDF is found and says so.
 - **`match_strength`** distils that into the qualitative confidence those
   weights imply — `strong` for a title hit, `moderate` for a summary hit,
-  `weak` for a body-only hit (`test_search_hit_explains_a_title_match`,
+  `weak` for a body-only hit, document text included (`test_search_hit_explains_a_title_match`,
   `test_search_hit_explains_a_body_only_match`,
   `test_search_hit_explains_a_summary_match_as_moderate`).
 - **How the fields are read** — by column-restricted FTS matches over the

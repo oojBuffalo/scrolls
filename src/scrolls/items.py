@@ -50,6 +50,30 @@ class ScrollItem:
 
 _FIELD_NAMES = tuple(f.name for f in fields(ScrollItem))
 
+# The columns every write sets: the model's fields plus `document_text`, the
+# search index's view of held documents (ADR 0119). It is not part of the
+# model; each write derives it from `media`, so it can never disagree with the
+# refs it was read from, and an export never carries it.
+_COLUMN_NAMES = _FIELD_NAMES + ("document_text",)
+
+
+def document_text(media: tuple) -> str | None:
+    """The read text of every held document, as the search index sees it.
+
+    Args:
+        media: An item's media refs.
+
+    Returns:
+        Each ref's non-empty `text`, in ref order, one per line; None when no
+        document has been read (an unread or unreadable PDF has no `text`).
+    """
+    texts = [
+        ref["text"]
+        for ref in media
+        if isinstance(ref, dict) and isinstance(ref.get("text"), str) and ref["text"]
+    ]
+    return "\n".join(texts) or None
+
 
 # The stages at which a held body counts as full custody: the pipeline has
 # finished capturing the item, so the body it holds is the one it stands behind.
@@ -295,14 +319,14 @@ def make_item_id(source: str, source_id: str | None, url: str) -> str:
 def insert_item(db_path: Path, item: ScrollItem) -> bool:
     """Insert an item; return False (keeping the existing row) if the id is taken."""
     row = _to_row(item)
-    columns = ", ".join(_FIELD_NAMES)
-    placeholders = ", ".join("?" for _ in _FIELD_NAMES)
+    columns = ", ".join(_COLUMN_NAMES)
+    placeholders = ", ".join("?" for _ in _COLUMN_NAMES)
     conn = sqlite3.connect(db_path)
     try:
         with conn:
             cursor = conn.execute(
                 f"INSERT OR IGNORE INTO items ({columns}) VALUES ({placeholders})",
-                tuple(row[name] for name in _FIELD_NAMES),
+                tuple(row[name] for name in _COLUMN_NAMES),
             )
         return cursor.rowcount == 1
     finally:
@@ -351,7 +375,7 @@ def merge_item(db_path: Path, item: ScrollItem) -> str:
 def update_item(db_path: Path, item: ScrollItem) -> bool:
     """Replace the stored row for `item.id`; return False if no such row (no upsert)."""
     row = _to_row(item)
-    value_names = tuple(name for name in _FIELD_NAMES if name != "id")
+    value_names = tuple(name for name in _COLUMN_NAMES if name != "id")
     assignments = ", ".join(f"{name} = ?" for name in value_names)
     conn = sqlite3.connect(db_path)
     try:
@@ -373,8 +397,8 @@ def replace_items(db_path: Path, remove_ids: list[str], item: ScrollItem) -> Non
     merged survivor. `item.id` may be one of the removed ids.
     """
     row = _to_row(item)
-    columns = ", ".join(_FIELD_NAMES)
-    placeholders = ", ".join("?" for _ in _FIELD_NAMES)
+    columns = ", ".join(_COLUMN_NAMES)
+    placeholders = ", ".join("?" for _ in _COLUMN_NAMES)
     conn = sqlite3.connect(db_path)
     try:
         with conn:
@@ -383,7 +407,7 @@ def replace_items(db_path: Path, remove_ids: list[str], item: ScrollItem) -> Non
             )
             conn.execute(
                 f"INSERT INTO items ({columns}) VALUES ({placeholders})",
-                tuple(row[name] for name in _FIELD_NAMES),
+                tuple(row[name] for name in _COLUMN_NAMES),
             )
     finally:
         conn.close()
@@ -809,6 +833,7 @@ def _to_row(item: ScrollItem) -> dict[str, Any]:
     for name in _JSON_OBJECT_FIELDS:
         if row[name] is not None:
             row[name] = json.dumps(row[name])
+    row["document_text"] = document_text(item.media)
     return row
 
 
@@ -901,7 +926,7 @@ def adopt_incoming(
                 ),
             )
             row = _to_row(incoming)
-            value_names = tuple(name for name in _FIELD_NAMES if name != "id")
+            value_names = tuple(name for name in _COLUMN_NAMES if name != "id")
             assignments = ", ".join(f"{name} = ?" for name in value_names)
             conn.execute(
                 f"UPDATE items SET {assignments} WHERE id = ?",

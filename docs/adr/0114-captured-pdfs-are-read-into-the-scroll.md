@@ -76,7 +76,7 @@ The capability already existed. The `pdf` adapter (ADR 0013) and the
   and `extracted_text`, read from the items table, so indexing document
   text needs an index schema change and a rebuild. Until then `search` and
   `context` do not find document text; the scroll, `show` and `get_scroll`
-  carry it.
+  carry it. *Settled 2026-10-29 by [0119](0119-held-document-text-is-searchable.md).*
 - **Deferred: OCR.** Scanned PDFs stay honestly `text: null`.
 
 Tests: `tests/test_documents.py`.
