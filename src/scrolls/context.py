@@ -61,6 +61,7 @@ excerpts whose query is in the title" and the kept slice re-folds the
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from scrolls.classify import stale_classification_counts_by_source
@@ -84,6 +85,7 @@ from scrolls.items import (
     ScrollItem,
     classification_phrase,
     classification_provenance,
+    document_text,
     get_item,
 )
 from scrolls.kb import load_concept_summaries
@@ -103,6 +105,8 @@ from scrolls.search import (
 from scrolls.works import render_at_risk_works
 
 _EXCERPT_CHARS = 700
+# How much of a held document a document excerpt keeps before its match.
+_EXCERPT_LEAD = 200
 DEFAULT_LIMIT = 8
 
 # Progressive context budget tiers (MVP M3, obsidian L0–L3 adaptation). A
@@ -490,10 +494,10 @@ def build_context(
     # bodies on demand with `scrolls show <id>` or a `--budget full` re-run.
     if _tier_at_least(budget, "full"):
         lines += ["", "## Excerpts"]
-        for item in items:
+        for hit, item in pairs:
             lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
             lines += _provenance_tags(item, verdicts.get(item.id))
-            excerpt = _excerpt(item)
+            excerpt = _excerpt(item, hit, query)
             if excerpt:
                 lines += ["", excerpt]
 
@@ -766,10 +770,48 @@ def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str
     return tags
 
 
-def _excerpt(item: ScrollItem) -> str:
-    # collapse whitespace so stray markdown in extracted text can't break
-    # the bundle's own structure
-    text = " ".join((item.summary or item.extracted_text or "").split())
+def _excerpt(item: ScrollItem, hit: SearchHit, query: str) -> str:
+    """The body text a full-budget bundle shows for one match.
+
+    A match the query found only in a held document (ADR 0119) shows that
+    document's text around the match, since the item's own summary and body
+    do not contain it; every other match shows the summary, else the body.
+
+    Args:
+        item: The matched item.
+        hit: Its search hit, naming the fields the query landed in.
+        query: The bundle's query.
+
+    Returns:
+        The excerpt, whitespace collapsed so stray markdown cannot break the
+        bundle's own structure, clipped to `_EXCERPT_CHARS`.
+    """
+    fields = set(hit.matched_fields)
+    if "document_text" in fields and not fields & {"summary", "extracted_text"}:
+        held = " ".join((document_text(item.media) or "").split())
+        if held:
+            window = held[_match_start(held, query) :]
+            return "From a held document: " + _clip(window, cut_before=window != held)
+    return _clip(" ".join((item.summary or item.extracted_text or "").split()))
+
+
+def _match_start(text: str, query: str) -> int:
+    """Where a window into `text` starts so the query's first found term shows."""
+    terms = [
+        term
+        for term in re.findall(r"\w+", query)
+        if term.upper() not in ("AND", "OR", "NOT", "NEAR")
+    ]
+    lowered = text.lower()
+    found = [at for term in terms if (at := lowered.find(term.lower())) >= 0]
+    if not found or min(found) <= _EXCERPT_LEAD:
+        return 0
+    return text.rfind(" ", 0, min(found) - _EXCERPT_LEAD) + 1
+
+
+def _clip(text: str, *, cut_before: bool = False) -> str:
+    """Cut `text` to `_EXCERPT_CHARS` on a word boundary, marking each cut."""
+    prefix = "… " if cut_before else ""
     if len(text) <= _EXCERPT_CHARS:
-        return text
-    return text[:_EXCERPT_CHARS].rsplit(" ", 1)[0] + " …"
+        return prefix + text
+    return prefix + text[:_EXCERPT_CHARS].rsplit(" ", 1)[0] + " …"

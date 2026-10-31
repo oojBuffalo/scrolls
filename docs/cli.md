@@ -6716,7 +6716,8 @@ The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
 (IDEAS.md §11, `tests/test_context.py`). Each excerpt carries the item
 id, source, and scroll path for follow-up with `scrolls show` or a file
-read.
+read. A match found only in a held document's text excerpts that document
+around the match, marked "From a held document" (ADR 0119).
 
 - **`## Connected scrolls`** — when the matches link to or from other saved
   scrolls, this section (between Excerpts and Links) lists those neighbors

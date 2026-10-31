@@ -104,6 +104,34 @@ def test_cli_search_and_context_reach_document_text(home, capsys):
     assert "A page about a treaty" in capsys.readouterr().out
 
 
+def test_context_excerpts_the_document_text_that_matched(home, capsys):
+    # The item's own body says nothing about Zanzibar; the bundle's excerpt
+    # must carry the held document's words around the match, not the body.
+    filler = "Preamble clause. " * 120
+    insert_item(home.db_path, _item(media=[_pdf(filler + "Signed at Zanzibar in 1890.")]))
+    capsys.readouterr()
+
+    assert main(["context", "zanzibar", "--budget", "full"]) == 0
+    out = capsys.readouterr().out
+    excerpts = out.split("## Excerpts", 1)[1]
+    assert "From a held document: … " in excerpts
+    assert "Signed at Zanzibar in 1890." in excerpts
+    assert "The page mentions a document." not in excerpts
+
+
+def test_a_body_match_keeps_the_body_excerpt(home, capsys):
+    insert_item(
+        home.db_path,
+        _item(extracted_text="Zanzibar is named in the page itself.", media=[_pdf("Zanzibar again.")]),
+    )
+    capsys.readouterr()
+
+    assert main(["context", "zanzibar", "--budget", "full"]) == 0
+    excerpts = capsys.readouterr().out.split("## Excerpts", 1)[1]
+    assert "Zanzibar is named in the page itself." in excerpts
+    assert "From a held document" not in excerpts
+
+
 def test_the_derived_column_never_leaves_the_library(home, capsys):
     insert_item(home.db_path, _item(media=[_pdf("Signed at Zanzibar.")]))
     capsys.readouterr()
