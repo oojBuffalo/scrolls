@@ -870,47 +870,49 @@ def latest_membership_events(db_path: Path, collection: str) -> dict[str, Custod
 
 
 def record_membership_walk(
-    db_path: Path, collection: str, events: Iterable[CustodyEvent], walked_at: str
+    db_path: Path, collection: str, events: Iterable[CustodyEvent], started: int
 ) -> bool:
     """Record one complete walk's membership events unless a newer walk has.
 
     Two syncs of one account's collection can overlap. If the walk that started
     first finishes last, its findings are older than the ledger's and would undo
-    them: a removal the newer walk recorded would read as a return. So a walk
-    whose collection already holds a membership event stamped after it started
-    records nothing. The check and the append share one write transaction, so
-    no other walk can land between them.
+    them: a removal the newer walk recorded would read as a return. So every
+    recorded walk leaves a watermark, its start, in `meta` under
+    `membership_walk:<collection>` — even a walk that changed nothing — and a
+    walk that started before the watermark records nothing. The check, the
+    events and the watermark share one write transaction.
 
     Args:
         db_path: The library database.
         collection: The collection key, `<source>/<name>@<account>`.
         events: The walk's membership events.
-        walked_at: When the walk started, the stamp on each of its events.
+        started: When the walk started, in nanoseconds; finer than the
+            seconds its events are stamped with, so two walks started within
+            one second still order.
 
     Returns:
-        Whether the walk was current and its events were appended.
+        Whether the walk was current and was recorded.
     """
     rows = [
         (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash, e.detail)
         for e in events
     ]
-    statuses = ", ".join("?" for _ in MEMBERSHIP_AXIS_STATUSES)
+    watermark = f"membership_walk:{collection}"
     placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
     conn = sqlite3.connect(db_path, isolation_level=None)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        newer = conn.execute(
-            f"SELECT 1 FROM custody_events WHERE status IN ({statuses}) "
-            "AND detail = ? AND checked_at > ? LIMIT 1",
-            (*MEMBERSHIP_AXIS_STATUSES, collection, walked_at),
-        ).fetchone()
-        if newer:
+        newest = conn.execute("SELECT value FROM meta WHERE key = ?", (watermark,)).fetchone()
+        if newest and int(newest[0]) > started:
             conn.execute("ROLLBACK")
             return False
         conn.executemany(
             f"INSERT INTO custody_events ({', '.join(_EVENT_COLUMNS)}) "
             f"VALUES ({placeholders})",
             rows,
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (watermark, str(started))
         )
         conn.execute("COMMIT")
         return True

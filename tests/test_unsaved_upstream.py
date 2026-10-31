@@ -235,16 +235,20 @@ def test_a_save_that_returns_is_recorded_as_resaved(scrolls_home, fake_x, capsys
     assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
 
 
+def _walks_start(monkeypatch, *starts):
+    """Start each next sync at the given nanosecond, all within one second."""
+    queued = iter(starts)
+    monkeypatch.setattr("scrolls.cli.walk_started", lambda: next(queued))
+    monkeypatch.setattr("scrolls.cli.now_iso", lambda: "2026-10-30T02:00:00+00:00")
+
+
 def test_an_older_walk_that_finishes_last_records_nothing(
     scrolls_home, fake_x, monkeypatch, capsys
 ):
-    # Two syncs overlap: the one that started first saw x:2 still saved, but
-    # finishes after a newer walk recorded its removal. Its findings are older
-    # than the ledger's, so it must not read the removal as a return.
-    starts = iter(
-        ["2026-10-30T01:00:00+00:00", "2026-10-30T03:00:00+00:00", "2026-10-30T02:00:00+00:00"]
-    )
-    monkeypatch.setattr("scrolls.cli.now_iso", lambda: next(starts))
+    # Two syncs overlap, started within the same second: the one that started
+    # first saw x:2 still saved, but finishes after a newer walk recorded its
+    # removal. Its findings are older, so it must not read that as a return.
+    _walks_start(monkeypatch, 1, 3, 2)
     fake_x([_page(_posts(1, 2))])
     _sync(capsys)
     fake_x([_page(_posts(1))])
@@ -260,6 +264,25 @@ def test_an_older_walk_that_finishes_last_records_nothing(
     assert _membership()["x:2"] == UNSAVED_UPSTREAM_STATUS
 
 
+def test_a_newer_walk_that_changed_nothing_still_outranks_an_older_one(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    # The newer walk found the collection unchanged and wrote no events; the
+    # older walk, which saw x:2 gone before the user re-saved it, is stale.
+    _walks_start(monkeypatch, 1, 3, 2)
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1))])
+    _, payload = _sync(capsys)
+
+    assert payload["upstream"]["compared"] is False
+    assert payload["upstream"]["unsaved"] == []
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
 def test_a_stale_walk_writes_no_membership_rows(scrolls_home):
     from scrolls.custody import CustodyEvent, record_membership_walk
     from scrolls.db import init_db
@@ -268,24 +291,15 @@ def test_a_stale_walk_writes_no_membership_rows(scrolls_home):
     db.parent.mkdir(parents=True, exist_ok=True)
     init_db(db)
 
-    def event(at):
-        return CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, KEY)
+    def event(key=KEY):
+        return CustodyEvent("x:1", "2026-10-30T02:00:00+00:00", SAVED_UPSTREAM_STATUS, "h", None, key)
 
-    assert record_membership_walk(db, KEY, [event("2026-10-30T03:00:00+00:00")], "2026-10-30T03:00:00+00:00")
-    assert not record_membership_walk(db, KEY, [event("2026-10-30T02:00:00+00:00")], "2026-10-30T02:00:00+00:00")
+    assert record_membership_walk(db, KEY, [], 30)  # an unchanged walk still counts
+    assert not record_membership_walk(db, KEY, [event()], 20)
+    assert KEY not in {e.detail for e in latest_membership_events(db, KEY).values()}
+    assert record_membership_walk(db, KEY, [event()], 40)
     # another account's collection is not this one's
-    assert record_membership_walk(
-        db, "x/bookmarks@7", [replace_detail(event("2026-10-30T02:00:00+00:00"), "x/bookmarks@7")],
-        "2026-10-30T02:00:00+00:00",
-    )
-    assert latest_membership_events(db, KEY)["x:1"].checked_at == "2026-10-30T03:00:00+00:00"
-
-
-def replace_detail(event, detail):
-    """The same membership event, filed under another collection key."""
-    from dataclasses import replace
-
-    return replace(event, detail=detail)
+    assert record_membership_walk(db, "x/bookmarks@7", [event("x/bookmarks@7")], 20)
 
 
 def test_a_deleted_post_still_bookmarked_is_not_unsaved(scrolls_home, fake_x, capsys):

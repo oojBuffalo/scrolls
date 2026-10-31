@@ -49,9 +49,11 @@ records nothing.**
   first sighting or its return (reported as `resaved`). A removal already
   recorded is counted (`still_unsaved`), not recorded again.
 - **An older walk never overrides a newer one.** Two syncs of one account's
-  collection can overlap. A walk whose collection already holds a membership
-  event stamped after it started records nothing and says so; the check and
-  the append share one write transaction (`custody.record_membership_walk`).
+  collection can overlap. Every recorded walk, even one that changed nothing,
+  leaves its start (in nanoseconds, so two walks in one second still order) as
+  a watermark in `meta` under `membership_walk:<key>`. A walk that started
+  before the watermark records nothing and says so; the check, the events and
+  the watermark share one write transaction (`custody.record_membership_walk`).
 - **Membership is per account.** Two browser profiles signed in as two
   accounts hold two collections; walking one is no evidence about the other.
   The key carries the account: X's numeric user id (the `twid` cookie on the
