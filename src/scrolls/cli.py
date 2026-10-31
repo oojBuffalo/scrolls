@@ -59,6 +59,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    record_membership_walk,
     resolution_event,
     supersession_event,
     tally_custody,
@@ -192,9 +193,14 @@ from scrolls.saved_collections import (
     CollectionUnavailable,
     PullOptions,
     UnknownCollection,
+    UpstreamComparison,
     collections_for,
+    compare_upstream,
     now_iso,
     resolve_collection,
+    upstream_unready,
+    walk_stamp,
+    walk_started,
 )
 from scrolls.x_session import BROWSER_CHOICES
 
@@ -2515,7 +2521,9 @@ def _cmd_sync_collection(
         # A start-up failure (no session, expired session, missing grant)
         # fails the whole run: a partial import that silently dropped the
         # un-authorized half would be worse than nothing.
-        result = collection.pull(options, now_iso())
+        pulled_at = now_iso()
+        started = walk_started()
+        result = collection.pull(options, pulled_at)
     except CollectionUnavailable as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
@@ -2538,6 +2546,33 @@ def _cmd_sync_collection(
         else:
             counts["skipped"] += 1
 
+    # A complete walk also says what the user removed upstream (ADR 0118):
+    # recorded on the ledger's membership axis, per account, never acted on.
+    # The comparison runs inside the recording transaction, so overlapping
+    # syncs see each other's findings, and an older walk never lands last.
+    reason = upstream_unready(result, limited=options.limit is not None)
+    if reason:
+        upstream = UpstreamComparison(False, reason)
+    else:
+        held = list_items(paths.db_path)
+        upstream = record_membership_walk(
+            paths.db_path,
+            collection.key(result.account),
+            started,
+            lambda latest: compare_upstream(
+                collection,
+                result,
+                limited=False,
+                held=held,
+                latest=latest,
+                now=walk_stamp(started),
+            ),
+        )
+        if upstream is None:
+            upstream = UpstreamComparison(
+                False, "a newer walk of this collection was recorded while this one ran"
+            )
+
     payload = {
         "source": collection.source,
         "collection": collection.name,
@@ -2546,6 +2581,7 @@ def _cmd_sync_collection(
         "session": result.session,
         **result.extra,
         "failures": list(result.failures),
+        "upstream": upstream.payload(),
     }
     if result.error:
         payload["error"] = result.error

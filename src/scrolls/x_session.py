@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 from scrolls.browser_cookies import (
     BROWSER_CHOICES,
@@ -79,6 +80,9 @@ X_COOKIES = CookieSpec(
     required=("auth_token", "ct0"),
     login_url="https://x.com",
     env_vars=(("auth_token", AUTH_TOKEN_ENV), ("ct0", CT0_ENV)),
+    # `twid` is `u=<user id>`: not needed to authenticate, but it names the
+    # account, which a collection comparison is scoped to (ADR 0118).
+    optional=("twid",),
 )
 
 
@@ -91,11 +95,14 @@ class XSession:
         ct0: The `ct0` cookie, echoed back as the `x-csrf-token` header.
         origin: Where the session came from ('chrome', 'firefox', 'env'),
             recorded in provenance so a capture's path is auditable.
+        user_id: The signed-in account's numeric id, from the `twid` cookie,
+            or None when the browser held none (the env route never does).
     """
 
     auth_token: str
     ct0: str
     origin: str
+    user_id: str | None = None
 
     @property
     def cookie_header(self) -> str:
@@ -118,7 +125,26 @@ def _as_session(cookies) -> XSession:
         auth_token=cookies.values["auth_token"],
         ct0=cookies.values["ct0"],
         origin=cookies.origin,
+        user_id=user_id_from_twid(cookies.values.get("twid")),
     )
+
+
+def user_id_from_twid(value: str | None) -> str | None:
+    """The numeric account id in X's `twid` cookie (`u=<id>`, often escaped).
+
+    Args:
+        value: The raw cookie value, or None.
+
+    Returns:
+        The id, or None when the value is absent or not that shape.
+    """
+    if not value:
+        return None
+    decoded = unquote(value).strip('"')
+    if not decoded.startswith("u="):
+        return None
+    user_id = decoded[2:]
+    return user_id if user_id.isdigit() else None
 
 
 def read_chrome_session(db_path: Path, *, key: bytes, origin: str = "chrome") -> XSession:

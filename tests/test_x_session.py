@@ -240,7 +240,55 @@ def test_a_logged_out_firefox_profile_says_so(tmp_path):
         read_firefox_session(db)
 
 
+def test_the_twid_cookie_names_the_signed_in_account(tmp_path):
+    """`twid` rides along from the session's own host; it is never required (ADR 0118)."""
+    db = tmp_path / "cookies.sqlite"
+    _firefox_db(db, [
+        (".x.com", "auth_token", "AUTH"),
+        (".x.com", "ct0", "CSRF"),
+        (".x.com", "twid", "u%3D1234567"),
+        ("twitter.com", "twid", "u%3D999"),  # another host's stale account
+    ])
+    assert read_firefox_session(db).user_id == "1234567"
+
+    bare = tmp_path / "bare.sqlite"
+    _firefox_db(bare, [(".x.com", "auth_token", "AUTH"), (".x.com", "ct0", "CSRF")])
+    assert read_firefox_session(bare).user_id is None
+
+
 # --- browser discovery ---------------------------------------------------
+
+
+def test_an_unreadable_twid_cookie_leaves_the_session_usable(tmp_path):
+    # The account is optional (ADR 0118): a twid that will not decrypt drops
+    # out, and the sync imports as an unknown account rather than failing.
+    key = derive_chrome_key("pw")
+    db = tmp_path / "Cookies"
+    _cookie_db(
+        db,
+        [
+            (".x.com", "auth_token", "", _encrypt(b"\x00" * 32 + b"AUTH", key)),
+            (".x.com", "ct0", "", _encrypt(b"\x00" * 32 + b"CSRF", key)),
+            (".x.com", "twid", "", _encrypt(b"u%3D1234567", derive_chrome_key("other"))),
+        ],
+    )
+    session = read_chrome_session(db, key=key)
+    assert session.auth_token == "AUTH"
+    assert session.user_id is None
+
+
+def test_an_unreadable_required_cookie_still_fails_loudly(tmp_path):
+    key = derive_chrome_key("pw")
+    db = tmp_path / "Cookies"
+    _cookie_db(
+        db,
+        [
+            (".x.com", "auth_token", "", _encrypt(b"AUTH", derive_chrome_key("other"))),
+            (".x.com", "ct0", "", _encrypt(b"\x00" * 32 + b"CSRF", key)),
+        ],
+    )
+    with pytest.raises(XSessionError, match="decrypt"):
+        read_chrome_session(db, key=key)
 
 
 def test_every_known_chromium_browser_has_its_own_keychain_service():
