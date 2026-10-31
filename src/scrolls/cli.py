@@ -60,6 +60,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    record_membership_walk,
     resolution_event,
     supersession_event,
     tally_custody,
@@ -193,6 +194,7 @@ from scrolls.saved_collections import (
     CollectionUnavailable,
     PullOptions,
     UnknownCollection,
+    UpstreamComparison,
     collections_for,
     compare_upstream,
     now_iso,
@@ -2555,7 +2557,14 @@ def _cmd_sync_collection(
         ),
         now=pulled_at,
     )
-    record_events(paths.db_path, upstream.events)
+    # Overlapping syncs: a walk that started before the newest recorded one is
+    # out of date, and recording it would undo what that newer walk found.
+    if upstream.compared and not record_membership_walk(
+        paths.db_path, collection.key(result.account), upstream.events, pulled_at
+    ):
+        upstream = UpstreamComparison(
+            False, "a newer walk of this collection was recorded while this one ran"
+        )
 
     payload = {
         "source": collection.source,

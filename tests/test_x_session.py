@@ -259,6 +259,38 @@ def test_the_twid_cookie_names_the_signed_in_account(tmp_path):
 # --- browser discovery ---------------------------------------------------
 
 
+def test_an_unreadable_twid_cookie_leaves_the_session_usable(tmp_path):
+    # The account is optional (ADR 0118): a twid that will not decrypt drops
+    # out, and the sync imports as an unknown account rather than failing.
+    key = derive_chrome_key("pw")
+    db = tmp_path / "Cookies"
+    _cookie_db(
+        db,
+        [
+            (".x.com", "auth_token", "", _encrypt(b"\x00" * 32 + b"AUTH", key)),
+            (".x.com", "ct0", "", _encrypt(b"\x00" * 32 + b"CSRF", key)),
+            (".x.com", "twid", "", _encrypt(b"u%3D1234567", derive_chrome_key("other"))),
+        ],
+    )
+    session = read_chrome_session(db, key=key)
+    assert session.auth_token == "AUTH"
+    assert session.user_id is None
+
+
+def test_an_unreadable_required_cookie_still_fails_loudly(tmp_path):
+    key = derive_chrome_key("pw")
+    db = tmp_path / "Cookies"
+    _cookie_db(
+        db,
+        [
+            (".x.com", "auth_token", "", _encrypt(b"AUTH", derive_chrome_key("other"))),
+            (".x.com", "ct0", "", _encrypt(b"\x00" * 32 + b"CSRF", key)),
+        ],
+    )
+    with pytest.raises(XSessionError, match="decrypt"):
+        read_chrome_session(db, key=key)
+
+
 def test_every_known_chromium_browser_has_its_own_keychain_service():
     """Each Chromium fork encrypts under its own Safe Storage entry."""
     services = [browser.keychain_service for browser in CHROMIUM_BROWSERS.values()]
