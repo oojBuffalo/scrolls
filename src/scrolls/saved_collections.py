@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from scrolls.custody import (
@@ -297,6 +297,26 @@ def walk_started() -> int:
     return time.time_ns()
 
 
+def walk_stamp(started: int) -> str:
+    """The `checked_at` a walk's membership events carry, to the microsecond.
+
+    Finer than `now_iso`, so two walks within one second leave rows an events
+    export and restore still tell apart (ADR 0118).
+
+    Args:
+        started: `walk_started()`'s nanoseconds.
+
+    Returns:
+        The walk's start as UTC ISO-8601 with microseconds.
+    """
+    # integer arithmetic: a float of epoch seconds cannot hold the microseconds
+    moment = _EPOCH + timedelta(microseconds=started // 1000)
+    return moment.isoformat(timespec="microseconds")
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 @dataclass(frozen=True)
 class UpstreamComparison:
     """What one pull learned about the collection's membership (ADR 0118).
@@ -329,6 +349,34 @@ class UpstreamComparison:
             "resaved": list(self.resaved),
             "still_unsaved": self.still_unsaved,
         }
+
+
+def upstream_unready(pull: CollectionPull, *, limited: bool) -> str | None:
+    """Why a walk cannot say what is missing from its collection, if it cannot.
+
+    Only a walk that saw the whole collection, as a known account, may compare
+    (ADR 0118).
+
+    Args:
+        pull: The walk's outcome.
+        limited: Whether the user bounded the walk with `--limit`.
+
+    Returns:
+        The reason the comparison is declined, or None when the walk may compare.
+    """
+    if limited:
+        return "a --limit walk sees only part of the collection"
+    if pull.error:
+        return f"the walk ended early: {pull.error}"
+    if not pull.complete:
+        return "the walk stopped before the service said it was done"
+    if pull.unidentified:
+        return f"{pull.unidentified} collection entries could not be identified"
+    if not pull.account:
+        # Membership is per account: another profile's collection is not this
+        # one's, and a comparison across them would fabricate removals.
+        return "the account behind the walk could not be identified"
+    return None
 
 
 def compare_upstream(
@@ -366,26 +414,9 @@ def compare_upstream(
     Returns:
         The comparison, with the events still to be recorded.
     """
-    if limited:
-        return UpstreamComparison(
-            False, "a --limit walk sees only part of the collection"
-        )
-    if pull.error:
-        return UpstreamComparison(False, f"the walk ended early: {pull.error}")
-    if not pull.complete:
-        return UpstreamComparison(
-            False, "the walk stopped before the service said it was done"
-        )
-    if pull.unidentified:
-        return UpstreamComparison(
-            False, f"{pull.unidentified} collection entries could not be identified"
-        )
-    if not pull.account:
-        # Membership is per account: another profile's collection is not this
-        # one's, and a comparison across them would fabricate removals.
-        return UpstreamComparison(
-            False, "the account behind the walk could not be identified"
-        )
+    reason = upstream_unready(pull, limited=limited)
+    if reason:
+        return UpstreamComparison(False, reason)
 
     key = collection.key(pull.account)
     by_id = {item.id: item for item in held if item.source == collection.source}

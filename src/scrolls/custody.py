@@ -858,54 +858,74 @@ def latest_membership_events(db_path: Path, collection: str) -> dict[str, Custod
     Returns:
         Item id to that item's latest membership event in the collection.
     """
-    placeholders = ", ".join("?" for _ in MEMBERSHIP_AXIS_STATUSES)
     rows = _query_events(
-        db_path,
-        "SELECT * FROM custody_events WHERE id IN "
-        f"(SELECT MAX(id) FROM custody_events WHERE status IN ({placeholders}) "
-        "AND detail = ? GROUP BY item_id)",
-        (*MEMBERSHIP_AXIS_STATUSES, collection),
+        db_path, _LATEST_MEMBERSHIP_SQL, (*MEMBERSHIP_AXIS_STATUSES, collection)
     )
     return {row["item_id"]: _from_row(row) for row in rows}
 
 
-def record_membership_walk(
-    db_path: Path, collection: str, events: Iterable[CustodyEvent], started: int
-) -> bool:
-    """Record one complete walk's membership events unless a newer walk has.
+_LATEST_MEMBERSHIP_SQL = (
+    "SELECT * FROM custody_events WHERE id IN "
+    "(SELECT MAX(id) FROM custody_events WHERE status IN "
+    f"({', '.join('?' for _ in MEMBERSHIP_AXIS_STATUSES)}) "
+    "AND detail = ? GROUP BY item_id)"
+)
 
-    Two syncs of one account's collection can overlap. If the walk that started
-    first finishes last, its findings are older than the ledger's and would undo
-    them: a removal the newer walk recorded would read as a return. So every
-    recorded walk leaves a watermark, its start, in `meta` under
-    `membership_walk:<collection>` — even a walk that changed nothing — and a
-    walk that started before the watermark records nothing. The check, the
-    events and the watermark share one write transaction.
+
+def record_membership_walk(
+    db_path: Path,
+    collection: str,
+    started: int,
+    compare: Callable[[dict[str, CustodyEvent]], Any],
+) -> Any | None:
+    """Compare one complete walk against the ledger and record it, atomically.
+
+    Two syncs of one account's collection can overlap, and each must see the
+    other's findings or none of them. So the comparison runs inside one write
+    transaction with its own reads and writes:
+
+    - **A stale walk records nothing.** Every recorded walk, even one that
+      changed nothing, leaves its start as a watermark in `meta` under
+      `membership_walk:<collection>`. A walk that started before the watermark
+      is older than what the ledger already knows.
+    - **A current walk compares the ledger as it stands then.** Its latest
+      membership per item is read under the write lock, so a walk that
+      committed a moment earlier is part of the comparison, not lost under it.
 
     Args:
         db_path: The library database.
         collection: The collection key, `<source>/<name>@<account>`.
-        events: The walk's membership events.
-        started: When the walk started, in nanoseconds; finer than the
-            seconds its events are stamped with, so two walks started within
-            one second still order.
+        started: When the walk started, in nanoseconds; finer than seconds,
+            so two walks started within one second still order.
+        compare: Builds the walk's comparison from each item's latest
+            membership event; whatever it returns carries the `events` to
+            append.
 
     Returns:
-        Whether the walk was current and was recorded.
+        The comparison, recorded; or None when a newer walk had already been
+        recorded and nothing was written.
     """
-    rows = [
-        (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash, e.detail)
-        for e in events
-    ]
     watermark = f"membership_walk:{collection}"
     placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
     conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
     try:
         conn.execute("BEGIN IMMEDIATE")
         newest = conn.execute("SELECT value FROM meta WHERE key = ?", (watermark,)).fetchone()
         if newest and int(newest[0]) > started:
             conn.execute("ROLLBACK")
-            return False
+            return None
+        latest = {
+            row["item_id"]: _from_row(row)
+            for row in conn.execute(
+                _LATEST_MEMBERSHIP_SQL, (*MEMBERSHIP_AXIS_STATUSES, collection)
+            )
+        }
+        comparison = compare(latest)
+        rows = [
+            (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash, e.detail)
+            for e in comparison.events
+        ]
         conn.executemany(
             f"INSERT INTO custody_events ({', '.join(_EVENT_COLUMNS)}) "
             f"VALUES ({placeholders})",
@@ -915,7 +935,7 @@ def record_membership_walk(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (watermark, str(started))
         )
         conn.execute("COMMIT")
-        return True
+        return comparison
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")

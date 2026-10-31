@@ -235,9 +235,12 @@ def test_a_save_that_returns_is_recorded_as_resaved(scrolls_home, fake_x, capsys
     assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
 
 
-def _walks_start(monkeypatch, *starts):
-    """Start each next sync at the given nanosecond, all within one second."""
-    queued = iter(starts)
+_SECOND = 1_793_325_600 * 10**9  # 2026-10-30T02:00:00Z, in nanoseconds
+
+
+def _walks_start(monkeypatch, *micros):
+    """Start each next sync that many microseconds into one shared second."""
+    queued = iter(_SECOND + m * 1000 for m in micros)
     monkeypatch.setattr("scrolls.cli.walk_started", lambda: next(queued))
     monkeypatch.setattr("scrolls.cli.now_iso", lambda: "2026-10-30T02:00:00+00:00")
 
@@ -283,23 +286,96 @@ def test_a_newer_walk_that_changed_nothing_still_outranks_an_older_one(
     assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
 
 
-def test_a_stale_walk_writes_no_membership_rows(scrolls_home):
-    from scrolls.custody import CustodyEvent, record_membership_walk
+def _walk(*events):
+    """A comparison as `record_membership_walk` sees one: its events."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(events=tuple(events))
+
+
+def _member(status, key=KEY, item_id="x:1"):
+    from scrolls.custody import CustodyEvent
+
+    return CustodyEvent(item_id, "2026-10-30T02:00:00+00:00", status, "h", None, key)
+
+
+@pytest.fixture
+def ledger(scrolls_home):
     from scrolls.db import init_db
 
     db = get_paths().db_path
     db.parent.mkdir(parents=True, exist_ok=True)
     init_db(db)
+    return db
 
-    def event(key=KEY):
-        return CustodyEvent("x:1", "2026-10-30T02:00:00+00:00", SAVED_UPSTREAM_STATUS, "h", None, key)
 
-    assert record_membership_walk(db, KEY, [], 30)  # an unchanged walk still counts
-    assert not record_membership_walk(db, KEY, [event()], 20)
-    assert KEY not in {e.detail for e in latest_membership_events(db, KEY).values()}
-    assert record_membership_walk(db, KEY, [event()], 40)
+def test_a_stale_walk_writes_nothing_and_a_current_one_compares_the_ledger(ledger):
+    from scrolls.custody import record_membership_walk
+
+    assert record_membership_walk(ledger, KEY, 30, lambda latest: _walk())  # unchanged still counts
+    assert record_membership_walk(ledger, KEY, 20, lambda latest: _walk(_member("saved_upstream"))) is None
+    assert latest_membership_events(ledger, KEY) == {}
+
+    seen = {}
+    record_membership_walk(ledger, KEY, 40, lambda latest: _walk(_member(UNSAVED_UPSTREAM_STATUS)))
+    record_membership_walk(ledger, KEY, 50, lambda latest: seen.update(latest) or _walk())
+    assert seen["x:1"].status == UNSAVED_UPSTREAM_STATUS  # read inside the transaction
     # another account's collection is not this one's
-    assert record_membership_walk(db, "x/bookmarks@7", [event("x/bookmarks@7")], 20)
+    other = "x/bookmarks@7"
+    assert record_membership_walk(ledger, other, 20, lambda latest: _walk(_member("saved_upstream", other)))
+
+
+def test_overlapping_walks_compare_one_at_a_time(ledger):
+    # The newer walk holds the write transaction while it compares; the older
+    # walk waits, then finds itself stale before it reads anything.
+    import threading
+
+    from scrolls.custody import record_membership_walk
+
+    inside, release, older_read, results = threading.Event(), threading.Event(), {}, {}
+
+    def newer(latest):
+        inside.set()
+        release.wait(5)
+        return _walk(_member(UNSAVED_UPSTREAM_STATUS))
+
+    def older(latest):
+        older_read.update(latest)
+        return _walk(_member(SAVED_UPSTREAM_STATUS))
+
+    first = threading.Thread(target=lambda: results.update(newer=record_membership_walk(ledger, KEY, 3, newer)))
+    first.start()
+    assert inside.wait(5)
+    second = threading.Thread(target=lambda: results.update(older=record_membership_walk(ledger, KEY, 2, older)))
+    second.start()
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert results["newer"] is not None and results["older"] is None
+    assert older_read == {}
+    assert latest_membership_events(ledger, KEY)["x:1"].status == UNSAVED_UPSTREAM_STATUS
+
+
+def test_transitions_within_one_second_survive_an_events_round_trip(
+    scrolls_home, fake_x, monkeypatch, capsys, tmp_path
+):
+    # saved -> unsaved -> saved in one second: each walk's rows carry its own
+    # microsecond stamp, so restoring the ledger keeps all three transitions.
+    from scrolls.custody import import_events, item_events
+
+    _walks_start(monkeypatch, 1, 2, 3)
+    for posts in ((1, 2), (1,), (1, 2)):
+        fake_x([_page(_posts(*posts))])
+        _sync(capsys)
+    events = list(reversed(item_events(get_paths().db_path, "x:2")))
+    assert [e.status for e in events] == ["saved_upstream", "unsaved_upstream", "saved_upstream"]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    assert main(["init"]) == 0
+    restored = get_paths().db_path
+    assert import_events(restored, events) == (3, 0)
+    assert latest_membership_events(restored, KEY)["x:2"].status == SAVED_UPSTREAM_STATUS
 
 
 def test_a_deleted_post_still_bookmarked_is_not_unsaved(scrolls_home, fake_x, capsys):
