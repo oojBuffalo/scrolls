@@ -471,15 +471,16 @@ matrix, and the 2026-07-22 steer retired guard-cell families as a default.
 
 The buffer rots if nobody refreshes it. The rule:
 
-1. **Every run, before stopping**, the worker checks whether the lead work slot
-   is done. If fewer than ~6 un-started work slots remain, it **appends** new
-   concrete slices derived from the MVP and PRD so the lead always covers the
-   next ~24h.
-2. **At least once per 24h** (or the first run after midnight UTC), do a full
-   refresh: fold completed slots into the shipped ledger, prune slices overtaken
-   by events, and re-derive the forward plan. Dated status snapshots and
-   day/week plans belong in the dated check-in dirs
-   (`docs/agents/progress/<YYMMDD>/`), not in this file.
+1. **Per queue, not per day.** The hourly worker is paused; slices ship one
+   issue at a time. When the queue drains, the closing check-in requeues from
+   the evidence it gathered, or records that nothing qualifies (rule 5). The
+   queue is never topped up to a fixed size.
+2. **Each requeue is a full refresh:** fold completed slots into the shipped
+   ledger, prune slices overtaken by events, and re-derive the forward plan.
+   Dated status snapshots and plans belong in the dated check-in dirs
+   (`docs/agents/progress/<YYMMDD>/`), not in this file. If the hourly worker
+   is restarted, it tops the queue up to ~6 slots each run and refreshes at
+   least once per 24h.
 3. **Date discipline:** always write absolute dates (`YYYY-MM-DD`), never
    "today" — this doc is read later (obsidian anti-pattern: `date: today`).
 4. **Provenance:** when a slice ships, the commit subject (with its `(H<NN>)`
