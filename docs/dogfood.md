@@ -885,6 +885,14 @@ then `launchctl load` it. Paths must be absolute; launchd has no shell `PATH`.
 0 4 * * * /usr/local/bin/uv run --project /path/to/scrolls scrolls maintain --limit 200 >/tmp/scrolls-maintain.json 2>/tmp/scrolls-maintain.err
 ```
 
+**A library outside `~/.scrolls`.** launchd and cron start jobs with a bare
+environment, so a `SCROLLS_HOME` set in your shell never reaches them and the
+pass checks `~/.scrolls` instead. Set it in the job itself:
+
+- **launchd:** add to the plist's top-level `<dict>`:
+  `<key>EnvironmentVariables</key><dict><key>SCROLLS_HOME</key><string>/path/to/library</string></dict>`
+- **cron:** prefix the command: `0 4 * * * SCROLLS_HOME=/path/to/library /usr/local/bin/uv run …`
+
 **Reading the results.** The report on stdout is the pass;
 `scrolls maintain --history --trend` reads the trajectory across passes.
 
