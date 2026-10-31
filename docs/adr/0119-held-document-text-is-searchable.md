@@ -54,9 +54,10 @@ Two constraints shaped the fix:
 
 - **`search` and `context` find what a held PDF says**, and the hit says it
   landed in `document_text`. The MCP twins read the same index. A match
-  found only there gets a `context` excerpt from the document, around the
-  match and marked "From a held document", since the item's own summary and
-  body do not hold it.
+  found only there gets a `context` excerpt from the document, starting just
+  before the match the index itself found (`search.document_passage`, so whole
+  tokens and folded diacritics as `search` matched them) and marked "From a
+  held document", since the item's own summary and body do not hold it.
 - **Storage is unchanged in kind.** The external-content index stores no
   copy of the text; the one new column holds it once.
 - **OCR stays deferred** (ADR 0114): a scanned PDF still adds nothing.

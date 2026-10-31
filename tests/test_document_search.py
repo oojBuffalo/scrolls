@@ -119,6 +119,25 @@ def test_context_excerpts_the_document_text_that_matched(home, capsys):
     assert "The page mentions a document." not in excerpts
 
 
+@pytest.mark.parametrize(
+    "query, document, evidence",
+    [
+        # a whole token, as FTS matches it: "part" is not "art"
+        ("art", "Part of the preamble, part two. " * 60 + "A work of art.", "A work of art."),
+        # diacritics fold, as FTS folds them
+        ("resume", "Preamble clause. " * 120 + "Her résumé names Zanzibar.", "Her résumé names Zanzibar."),
+    ],
+    ids=["whole-token", "diacritics"],
+)
+def test_the_document_excerpt_holds_the_words_search_matched(home, capsys, query, document, evidence):
+    insert_item(home.db_path, _item(media=[_pdf(document)]))
+    capsys.readouterr()
+
+    assert main(["context", query, "--budget", "full"]) == 0
+    excerpts = capsys.readouterr().out.split("## Excerpts", 1)[1]
+    assert evidence in excerpts
+
+
 def test_a_body_match_keeps_the_body_excerpt(home, capsys):
     insert_item(
         home.db_path,

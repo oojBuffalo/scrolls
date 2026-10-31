@@ -565,6 +565,44 @@ def _escape_tokens(query: str) -> list[str]:
     return tokens
 
 
+def document_passage(
+    db_path: Path, item_id: str, query: str, *, lead: int
+) -> tuple[str, bool] | None:
+    """An item's held document text from just before the query's first match.
+
+    The match is FTS5's own (`highlight` over `document_text`, ADR 0119), so
+    the passage holds the words that made the hit, tokenized as search
+    tokenized them: whole tokens only, diacritics folded.
+
+    Args:
+        db_path: The library database.
+        item_id: The matched item.
+        query: The free-text query, escaped as `search_items` escapes it.
+        lead: How many characters to keep before the match.
+
+    Returns:
+        The passage and whether text before it was cut, or None when no query
+        term matches the item's document text.
+    """
+    any_token = " OR ".join(_escape_tokens(query))
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT highlight(items_fts, ?, char(1), char(2)) FROM items_fts "
+            "WHERE items_fts MATCH ? AND rowid = (SELECT rowid FROM items WHERE id = ?)",
+            (_FTS_FIELDS.index("document_text"), f"document_text : ({any_token})", item_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    marked = row[0] if row else None
+    at = marked.find("\x01") if marked else -1
+    if at < 0:
+        return None
+    start = marked.rfind(" ", 0, at - lead) + 1 if at > lead else 0
+    passage = marked[start:].replace("\x01", "").replace("\x02", "")
+    return passage, start > 0
+
+
 def _match_explanations(
     conn: sqlite3.Connection, tokens: list[str], rowids: list[int]
 ) -> dict[int, tuple[str, ...]]:

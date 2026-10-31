@@ -61,7 +61,6 @@ excerpts whose query is in the title" and the kept slice re-folds the
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from scrolls.classify import stale_classification_counts_by_source
@@ -85,7 +84,6 @@ from scrolls.items import (
     ScrollItem,
     classification_phrase,
     classification_provenance,
-    document_text,
     get_item,
 )
 from scrolls.kb import load_concept_summaries
@@ -98,6 +96,7 @@ from scrolls.maintain import (
 from scrolls.search import (
     SearchHit,
     count_matches,
+    document_passage,
     render_strength_headline,
     search_items,
     tally_strength,
@@ -497,7 +496,7 @@ def build_context(
         for hit, item in pairs:
             lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
             lines += _provenance_tags(item, verdicts.get(item.id))
-            excerpt = _excerpt(item, hit, query)
+            excerpt = _excerpt(db_path, item, hit, query)
             if excerpt:
                 lines += ["", excerpt]
 
@@ -770,14 +769,16 @@ def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str
     return tags
 
 
-def _excerpt(item: ScrollItem, hit: SearchHit, query: str) -> str:
+def _excerpt(db_path: Path, item: ScrollItem, hit: SearchHit, query: str) -> str:
     """The body text a full-budget bundle shows for one match.
 
     A match the query found only in a held document (ADR 0119) shows that
-    document's text around the match, since the item's own summary and body
-    do not contain it; every other match shows the summary, else the body.
+    document's text from just before the match FTS found there, since the
+    item's own summary and body do not contain it; every other match shows the
+    summary, else the body.
 
     Args:
+        db_path: The library database, whose index locates the match.
         item: The matched item.
         hit: Its search hit, naming the fields the query landed in.
         query: The bundle's query.
@@ -788,25 +789,11 @@ def _excerpt(item: ScrollItem, hit: SearchHit, query: str) -> str:
     """
     fields = set(hit.matched_fields)
     if "document_text" in fields and not fields & {"summary", "extracted_text"}:
-        held = " ".join((document_text(item.media) or "").split())
-        if held:
-            window = held[_match_start(held, query) :]
-            return "From a held document: " + _clip(window, cut_before=window != held)
+        found = document_passage(db_path, item.id, query, lead=_EXCERPT_LEAD)
+        if found:
+            passage, cut = found
+            return "From a held document: " + _clip(" ".join(passage.split()), cut_before=cut)
     return _clip(" ".join((item.summary or item.extracted_text or "").split()))
-
-
-def _match_start(text: str, query: str) -> int:
-    """Where a window into `text` starts so the query's first found term shows."""
-    terms = [
-        term
-        for term in re.findall(r"\w+", query)
-        if term.upper() not in ("AND", "OR", "NOT", "NEAR")
-    ]
-    lowered = text.lower()
-    found = [at for term in terms if (at := lowered.find(term.lower())) >= 0]
-    if not found or min(found) <= _EXCERPT_LEAD:
-        return 0
-    return text.rfind(" ", 0, min(found) - _EXCERPT_LEAD) + 1
 
 
 def _clip(text: str, *, cut_before: bool = False) -> str:
