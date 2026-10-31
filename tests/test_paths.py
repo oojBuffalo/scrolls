@@ -15,6 +15,12 @@ def test_root_defaults_to_home_dot_scrolls(monkeypatch):
     assert paths.root == Path.home() / ".scrolls"
 
 
+def test_a_test_never_resolves_the_real_library():
+    # Every command upgrades the library it resolves (ADR 0119), so a test
+    # that forgets to choose one must land in conftest.py's per-test root.
+    assert get_paths().root != Path.home() / ".scrolls"
+
+
 def test_scrolls_home_env_overrides_root(monkeypatch, tmp_path):
     monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "lib"))
     paths = get_paths()

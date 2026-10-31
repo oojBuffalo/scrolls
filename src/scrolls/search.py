@@ -79,7 +79,7 @@ from scrolls.items import (
 )
 from scrolls.works import WorkRef, work_membership
 
-_BM25_WEIGHTS = "5.0, 2.0, 1.0"  # title, summary, extracted_text
+_BM25_WEIGHTS = "5.0, 2.0, 1.0, 1.0"  # title, summary, extracted_text, document_text
 _SNIPPET_TOKENS = 12
 
 # The indexed FTS columns in BM25-weight order (highest first), the same order
@@ -88,18 +88,21 @@ _SNIPPET_TOKENS = 12
 # the highest-weighted one — so the explanation is grounded in the very weights
 # that produced the rank, never an invented relevance score (custody-vision §3.5:
 # provenance and fidelity, not engagement, rank a custody library).
-_FTS_FIELDS = ("title", "summary", "extracted_text")
+_FTS_FIELDS = ("title", "summary", "extracted_text", "document_text")
+# A held document's read text (ADR 0119) is body text like `extracted_text`, so it
+# shares the `weak` band and weight: a word found only in a PDF is a body hit.
 _STRENGTH_BY_FIELD = {
     "title": "strong",
     "summary": "moderate",
     "extracted_text": "weak",
+    "document_text": "weak",
 }
 
-# The strength bands in descending field-weight order (strongest first), 1:1 with
-# `_FTS_FIELDS` so band index `i` names the same field as `_FTS_FIELDS[i]`. The
-# closed vocabulary `tally_strength` partitions over and `--strength` filters by;
-# derived from `_STRENGTH_BY_FIELD` so the order can never drift from the weights.
-STRENGTH_BANDS = tuple(_STRENGTH_BY_FIELD[field] for field in _FTS_FIELDS)
+# The strength bands in descending field-weight order (strongest first), each once.
+# The closed vocabulary `tally_strength` partitions over and `--strength` filters
+# by; derived from `_STRENGTH_BY_FIELD` so the order can never drift from the
+# weights. Two fields can share a band, so a band names a set of fields.
+STRENGTH_BANDS = tuple(dict.fromkeys(_STRENGTH_BY_FIELD[field] for field in _FTS_FIELDS))
 
 # Presence, not content: the fidelity tier (ADR 0097) needs to know only
 # *whether* each body column is populated, so the query asks SQLite for the
@@ -218,14 +221,18 @@ _CONTENT_DUPLICATE_CLAUSE = (
 def _strength_match(strength: str, tokens: list[str]) -> str:
     """The column-restricted FTS match string behind `--strength` (H314).
 
-    `strength` names a band in `STRENGTH_BANDS` (strongest first, 1:1 with
-    `_FTS_FIELDS`), so the columns *at or above* it are the prefix
-    `_FTS_FIELDS[:i+1]` — `strong` → title, `moderate` → title+summary, `weak` →
-    every field. Restricts the bound query to that column set with the same
+    `strength` names a band in `STRENGTH_BANDS` (strongest first), so the columns
+    *at or above* it are every field whose band ranks no lower — `strong` →
+    title, `moderate` → title+summary, `weak` → every field, document text
+    included. Restricts the bound query to that column set with the same
     any-token (OR) test `_match_explanations` reads `matched_fields` off, so the
     filter keeps exactly the hits whose `match_strength` is the band or stronger.
     """
-    columns = _FTS_FIELDS[: STRENGTH_BANDS.index(strength) + 1]
+    rank = STRENGTH_BANDS.index(strength)
+    columns = [
+        field for field in _FTS_FIELDS
+        if STRENGTH_BANDS.index(_STRENGTH_BY_FIELD[field]) <= rank
+    ]
     any_token = " OR ".join(tokens)
     return f"{{{' '.join(columns)}}} : ({any_token})"
 
@@ -556,6 +563,64 @@ def _escape_tokens(query: str) -> list[str]:
     if not tokens:
         raise ValueError("search query has no searchable tokens")
     return tokens
+
+
+def document_passage(
+    db_path: Path, item_id: str, query: str, *, lead: int
+) -> tuple[str, bool] | None:
+    """An item's held document text from just before the query's first match.
+
+    The match is FTS5's own (`highlight` over `document_text`, ADR 0119), so
+    the passage holds the words that made the hit, tokenized as search
+    tokenized them: whole tokens only, diacritics folded.
+
+    Args:
+        db_path: The library database.
+        item_id: The matched item.
+        query: The free-text query, escaped as `search_items` escapes it.
+        lead: How many characters to keep before the match.
+
+    Returns:
+        The passage and whether text before it was cut, or None when no query
+        term matches the item's document text.
+    """
+    any_token = " OR ".join(_escape_tokens(query))
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT highlight(items_fts, ?, char(1), char(2)) FROM items_fts "
+            "WHERE items_fts MATCH ? AND rowid = (SELECT rowid FROM items WHERE id = ?)",
+            (_FTS_FIELDS.index("document_text"), f"document_text : ({any_token})", item_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    marked = row[0] if row else None
+    at = marked.find("\x01") if marked else -1
+    if at < 0:
+        return None
+    start = _passage_start(marked, at, lead)
+    passage = marked[start:].replace("\x01", "").replace("\x02", "")
+    return passage, start > 0
+
+
+def _passage_start(text: str, at: int, lead: int) -> int:
+    """Where a passage keeping `lead` characters before offset `at` begins.
+
+    On the nearest whitespace of any kind a little before that point, so the
+    passage opens on a whole word; mid-word when none is near, so the match
+    always stays inside the passage.
+    """
+    if at <= lead:
+        return 0
+    cut = at - lead
+    for i in range(cut - 1, max(cut - _BOUNDARY_REACH, 0) - 1, -1):
+        if text[i].isspace():
+            return i + 1
+    return cut
+
+
+# How far back `_passage_start` looks for a word boundary before cutting mid-word.
+_BOUNDARY_REACH = 64
 
 
 def _match_explanations(

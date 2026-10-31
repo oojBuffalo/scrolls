@@ -3,7 +3,7 @@
 *Amended: 2026-07-27 — restructured for readability; shipped narration folded
 out of the queue into the one-line ledger. 2026-10-29 — maintenance pass:
 queue requeued (H442–H445), ledger rows H426–H441 re-compacted into the
-table.*
+table; the same day the queue drained.*
 
 How the hourly autonomous worker (`work/scrolls-dev`) spends its runs. This is
 the **scheduling layer** under `docs/product/prd.md` (direction) and
@@ -38,11 +38,10 @@ committed/tested/clean stopping point, and stop. Each slice is a GitHub issue;
 the issue carries the evidence, scope, and done-when. Requeued 2026-10-29 from
 live-library evidence — see `docs/agents/progress/261029/plans.md`.
 
-| Slot | Slice | Issue | Maps to |
-| --- | --- | --- | --- |
-| H445 | **Held document text is searchable.** The FTS index reads PDF text, so `search` and `context` find it. | #25 | cap 7 |
-
-Preconditions: none between slices; the order is by custody value.
+**Drained 2026-10-29.** H442–H445 shipped (see the ledger). Nothing is
+queued: the next slices come from evidence the next check-in gathers, per
+maintenance rule §5 — see "After the queue" in
+`docs/agents/progress/261029/plans.md`.
 
 **Pruned 2026-10-29:** the de-prioritized budget/tier convergence cells
 H244–H249. They were the correct-by-construction tail of a combinatorial
@@ -464,6 +463,7 @@ matrix, and the 2026-07-22 steer retired guard-cell families as a default.
 | H442 | A cited DOI is not a work identity (production, `src/scrolls/works.py`) — a `doi.org` link names an item's work only when its source is a scholarly record (`WORK_SOURCES`); since ADR 0110 Wikipedia citations had forged 185 works; live copy: 185 → 0 works, posture `at_risk` → `attention`; issue #22 (ADR 0116) | cap 5 |
 | H443 | `maintain` is safe to schedule (production, `src/scrolls/maintain.py` + `cli.py` + `mcp_server.py`) — every pass and the MCP act hold `.maintenance/lock` (an `flock` that dies with its holder); a second pass skips with exit 75 and the holder's `{pid, started_at}`; daily `--limit 200` launchd/cron recipe; live copy: overlapping pass refused, 20 rechecked; issue #23 (ADR 0117) | cap 1/3 |
 | H444 | Saves removed upstream are recorded (production, `src/scrolls/saved_collections.py` + `custody.py` + `x_bookmarks.py` + `x_graphql.py` + `x_api.py` + `wikipedia_lists.py` + `cli.py`) — walks report `seen` and `complete`; a complete walk records `saved_upstream`/`unsaved_upstream` on a ledger membership axis, report-only; a tombstoned post counts as seen and no longer ends the X walk; issue #24 (ADR 0118) | cap 3/4 |
+| H445 | Held document text is searchable (production, `src/scrolls/db.py` + `items.py` + `search.py` + `cli.py`) — a derived `items.document_text` feeds a fourth FTS column, so `search`/`context` find what a held PDF says; migration 9 backfills it; every command upgrades an older library first; issue #25 (ADR 0119) | cap 7 |
 
 ---
 

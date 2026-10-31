@@ -71,7 +71,7 @@ from scrolls.context import BUDGET_TIERS as CONTEXT_BUDGET_TIERS
 from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
-from scrolls.db import init_db, read_schema_version
+from scrolls.db import init_db, read_schema_version, upgrade_db
 from scrolls.doctor import run_doctor
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import FIELDS as FACET_FIELDS
@@ -1750,6 +1750,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Bring an older library up to the current schema before any command reads
+    # or writes it; a current or missing database is untouched.
+    upgrade_db(get_paths().db_path)
 
     if args.command == "add":
         return _cmd_add(args.url)
