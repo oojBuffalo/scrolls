@@ -2487,6 +2487,20 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
      missing an axis (an older snapshot, e.g. one written before `coverage`
      was tracked) reads that axis as zero, never null.
 
+**One pass at a time** (ADR 0117). Every pass, scoped or whole-library, holds
+the run lock `<root>/.maintenance/lock` while it runs:
+
+- **A second pass skips, it does not overlap.** It writes nothing, prints
+  `{"error": "maintenance already running since <t>", "reason":
+  "already_running", "holder": {"pid", "started_at"}}` on stderr, and exits
+  **75** (EX_TEMPFAIL). Exit 1 still means structural issues remain, so a
+  scheduler can tell a skip from a finding.
+- **A dead pass does not wedge the schedule.** The lock is an OS file lock
+  that dies with its process; the file it leaves behind is reused.
+- **`--history` never takes the lock** — it is a read.
+
+To run it on a schedule, see [dogfood.md](dogfood.md#scheduling-it).
+
 The report also carries a one-line **`headline`** — the shared
 `custody.custody_headline` (`_Custody: N scroll(s) · fidelity <tier counts> ·
 drift <posture counts>._`) the bundle briefing, the `context` bundle, and the
