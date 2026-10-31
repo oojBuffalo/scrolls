@@ -52,7 +52,6 @@ from scrolls.custody import (
     items_in_posture,
     last_checked,
     latest_events,
-    latest_membership_events,
     live_recapture,
     parse_since,
     partition_resolvable_events,
@@ -199,6 +198,8 @@ from scrolls.saved_collections import (
     compare_upstream,
     now_iso,
     resolve_collection,
+    upstream_unready,
+    walk_stamp,
     walk_started,
 )
 from scrolls.x_session import BROWSER_CHOICES
@@ -2547,26 +2548,30 @@ def _cmd_sync_collection(
 
     # A complete walk also says what the user removed upstream (ADR 0118):
     # recorded on the ledger's membership axis, per account, never acted on.
-    upstream = compare_upstream(
-        collection,
-        result,
-        limited=options.limit is not None,
-        held=list_items(paths.db_path),
-        latest=(
-            latest_membership_events(paths.db_path, collection.key(result.account))
-            if result.account
-            else {}
-        ),
-        now=pulled_at,
-    )
-    # Overlapping syncs: a walk that started before the newest recorded one is
-    # out of date, and recording it would undo what that newer walk found.
-    if upstream.compared and not record_membership_walk(
-        paths.db_path, collection.key(result.account), upstream.events, started
-    ):
-        upstream = UpstreamComparison(
-            False, "a newer walk of this collection was recorded while this one ran"
+    # The comparison runs inside the recording transaction, so overlapping
+    # syncs see each other's findings, and an older walk never lands last.
+    reason = upstream_unready(result, limited=options.limit is not None)
+    if reason:
+        upstream = UpstreamComparison(False, reason)
+    else:
+        held = list_items(paths.db_path)
+        upstream = record_membership_walk(
+            paths.db_path,
+            collection.key(result.account),
+            started,
+            lambda latest: compare_upstream(
+                collection,
+                result,
+                limited=False,
+                held=held,
+                latest=latest,
+                now=walk_stamp(started),
+            ),
         )
+        if upstream is None:
+            upstream = UpstreamComparison(
+                False, "a newer walk of this collection was recorded while this one ran"
+            )
 
     payload = {
         "source": collection.source,

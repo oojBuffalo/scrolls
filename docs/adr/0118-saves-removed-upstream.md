@@ -48,12 +48,16 @@ records nothing.**
   `unsaved_upstream`. A held item the walk saw gets `saved_upstream` on its
   first sighting or its return (reported as `resaved`). A removal already
   recorded is counted (`still_unsaved`), not recorded again.
-- **An older walk never overrides a newer one.** Two syncs of one account's
-  collection can overlap. Every recorded walk, even one that changed nothing,
-  leaves its start (in nanoseconds, so two walks in one second still order) as
-  a watermark in `meta` under `membership_walk:<key>`. A walk that started
-  before the watermark records nothing and says so; the check, the events and
-  the watermark share one write transaction (`custody.record_membership_walk`).
+- **Overlapping walks compare one at a time.** Two syncs of one account's
+  collection can overlap, so the comparison runs inside one write transaction
+  (`custody.record_membership_walk`):
+  - Every recorded walk, even one that changed nothing, leaves its start (in
+    nanoseconds) as a watermark in `meta` under `membership_walk:<key>`. A walk
+    that started before it records nothing and says so.
+  - A current walk reads the latest membership under the write lock, so a
+    walk that committed a moment earlier is part of its comparison.
+  - Its rows carry the walk's start to the microsecond, so transitions within
+    one second keep distinct identities through an events export and restore.
 - **Membership is per account.** Two browser profiles signed in as two
   accounts hold two collections; walking one is no evidence about the other.
   The key carries the account: X's numeric user id (the `twid` cookie on the
