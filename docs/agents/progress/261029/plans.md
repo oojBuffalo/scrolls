@@ -77,7 +77,7 @@ both on 2026-10-30, and both feed the next check-in:
   installed as `dev.scrolls.maintain`: daily at 04:00, `--limit 200`,
   against the main checkout. Its first pass met the schema-9 library on
   trunk code and stopped before writing; it runs once the merge is pulled.
-  Nothing has re-verified the live library since 2026-08-23.
+  Nothing has re-verified the live library since 2026-08-25.
 - **One live collection pull on a copy** still needs the browser session,
   which the agent sandbox cannot read. H444's comparison has never met real
   X or MediaWiki responses. One `sync --collection` per source on a copied
