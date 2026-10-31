@@ -14,7 +14,7 @@ and done-when.
 | Slot | Slice | Why now | Issue |
 | --- | --- | --- | --- |
 | H442 | A cited DOI is not a work identity | The live posture verdict is a false `at_risk`; 185 forged works | #22 |
-| H443 | `maintain` is safe to schedule | Nothing has re-verified the library in 66 days | #23 |
+| H443 | `maintain` is safe to schedule | Nothing has re-verified the library since 2026-08-25 | #23 |
 | H444 | Saves removed upstream are recorded | ADR 0113's reason to defer no longer holds | #24 |
 | H445 | Held document text is searchable | `search` answers "nothing" for held PDF text (M2) | #25 |
 
@@ -31,7 +31,7 @@ promise, and the live library shows it lapsing.
   `docs/agents/progress/<YYMMDD>/` follows each drained queue instead.
 - **Roadmap upkeep happens per queue, not per day.** When the queue drains,
   the closing check-in requeues from evidence or records that nothing
-  qualifies (maintenance rule §5).
+  qualifies (maintenance rule §5). Rules 1–2 now say the same.
 
 ## Considered and not queued
 

@@ -319,13 +319,16 @@ def read_chromium_cookies(
     found = pick_cookies(rows, spec)
     if found is None:
         raise _logged_out(spec, origin)
-    return BrowserCookies(
-        values={
-            name: decrypt_chrome_value(value, key, db_version=db_version)
-            for name, value in found.items()
-        },
-        origin=origin,
-    )
+    values = {}
+    for name, value in found.items():
+        try:
+            values[name] = decrypt_chrome_value(value, key, db_version=db_version)
+        except BrowserCookieError:
+            # A required cookie that will not decrypt is no session at all; an
+            # optional one only drops out, as if the browser never set it.
+            if name in spec.required:
+                raise
+    return BrowserCookies(values=values, origin=origin)
 
 
 def read_firefox_cookies(db_path: Path, *, spec: CookieSpec) -> BrowserCookies:

@@ -42,7 +42,7 @@ Read 2026-10-29, offline (`scrolls status`, and a copy for the rest).
 | --- | --- |
 | Items | 1,048 — 566 Wikipedia, 482 X |
 | Fidelity | 1,048 full |
-| Last verified | 2026-08-23, every item (66 days) |
+| Last verified | Wikipedia 2026-08-23, X 2026-08-25 (ledger, UTC); nothing since |
 | Drift | 993 unchanged, 55 drifted (all Wikipedia), 0 rotted |
 | Posture | `at_risk` — `at_risk_works`, `source_drift` |
 | Works (≥2 representations) | 185, every one Wikipedia-only |

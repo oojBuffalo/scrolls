@@ -235,6 +235,59 @@ def test_a_save_that_returns_is_recorded_as_resaved(scrolls_home, fake_x, capsys
     assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
 
 
+def test_an_older_walk_that_finishes_last_records_nothing(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    # Two syncs overlap: the one that started first saw x:2 still saved, but
+    # finishes after a newer walk recorded its removal. Its findings are older
+    # than the ledger's, so it must not read the removal as a return.
+    starts = iter(
+        ["2026-10-30T01:00:00+00:00", "2026-10-30T03:00:00+00:00", "2026-10-30T02:00:00+00:00"]
+    )
+    monkeypatch.setattr("scrolls.cli.now_iso", lambda: next(starts))
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1, 2))])
+    code, payload = _sync(capsys)
+
+    assert code == 0
+    assert payload["upstream"]["compared"] is False
+    assert "newer walk" in payload["upstream"]["reason"]
+    assert payload["upstream"]["resaved"] == []
+    assert _membership()["x:2"] == UNSAVED_UPSTREAM_STATUS
+
+
+def test_a_stale_walk_writes_no_membership_rows(scrolls_home):
+    from scrolls.custody import CustodyEvent, record_membership_walk
+    from scrolls.db import init_db
+
+    db = get_paths().db_path
+    db.parent.mkdir(parents=True, exist_ok=True)
+    init_db(db)
+
+    def event(at):
+        return CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, KEY)
+
+    assert record_membership_walk(db, KEY, [event("2026-10-30T03:00:00+00:00")], "2026-10-30T03:00:00+00:00")
+    assert not record_membership_walk(db, KEY, [event("2026-10-30T02:00:00+00:00")], "2026-10-30T02:00:00+00:00")
+    # another account's collection is not this one's
+    assert record_membership_walk(
+        db, "x/bookmarks@7", [replace_detail(event("2026-10-30T02:00:00+00:00"), "x/bookmarks@7")],
+        "2026-10-30T02:00:00+00:00",
+    )
+    assert latest_membership_events(db, KEY)["x:1"].checked_at == "2026-10-30T03:00:00+00:00"
+
+
+def replace_detail(event, detail):
+    """The same membership event, filed under another collection key."""
+    from dataclasses import replace
+
+    return replace(event, detail=detail)
+
+
 def test_a_deleted_post_still_bookmarked_is_not_unsaved(scrolls_home, fake_x, capsys):
     fake_x([_page(_posts(1, 2))])
     _sync(capsys)

@@ -4830,6 +4830,10 @@ holds, so it also records what the user removed there (ADR 0118):
 - **Only a complete walk compares.** A `--limit` walk, one that ended early,
   or one with entries it could not name records nothing and says why in
   `upstream.reason`. A deleted post that is still bookmarked counts as seen.
+- **An older walk never overrides a newer one.** When two syncs of one
+  account's collection overlap and the one that started first finishes
+  last, it records nothing: a removal the newer walk found would otherwise
+  read as a return.
 - **Recorded once.** A removal already recorded is counted in
   `still_unsaved`, not recorded again.
 
@@ -4899,15 +4903,19 @@ and quoted-tweet body from the same response that enumerated them
 
 ```console
 $ scrolls sync x --bookmarks
-{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 3, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 3, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks          # nothing new saved since
-{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks --limit 1
-{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+[exit 0]
+
+$ scrolls sync x --bookmarks --browser env    # pasted cookies name no account
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": [], "upstream": {"compared": false, "reason": "the account behind the walk could not be identified", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 ```
 

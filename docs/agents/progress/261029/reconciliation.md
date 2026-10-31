@@ -44,8 +44,9 @@ regression from the capture work went unnoticed until this pass.
    instead, which was fine, but the roadmap stopped saying what was next.
    **Correction (applied):** requeued H442–H445, each backed by an issue.
 
-4. **Verification became a one-off.** The live library was verified once,
-   on 2026-08-23, and never again. A custody system that verifies only when
+4. **Verification became a one-off.** The live library was verified once
+   per source (Wikipedia 2026-08-23, X 2026-08-25) and never again. A
+   custody system that verifies only when
    someone remembers is not stewardship. **Correction:** H443 (#23).
 
 5. **Two deferrals rested on premises that no longer hold.** ADR 0113
