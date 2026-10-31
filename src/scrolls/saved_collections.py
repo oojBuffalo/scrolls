@@ -19,6 +19,7 @@ fail the whole run in one envelope. A failure *mid-walk* rides on
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
@@ -289,6 +290,11 @@ def resolve_collection(source: str, name: str) -> SavedCollection:
 def now_iso() -> str:
     """The pull timestamp every item in one run shares."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def walk_started() -> int:
+    """When a pull starts, in nanoseconds: orders overlapping walks (ADR 0118)."""
+    return time.time_ns()
 
 
 @dataclass(frozen=True)

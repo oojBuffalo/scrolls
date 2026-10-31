@@ -199,6 +199,7 @@ from scrolls.saved_collections import (
     compare_upstream,
     now_iso,
     resolve_collection,
+    walk_started,
 )
 from scrolls.x_session import BROWSER_CHOICES
 
@@ -2520,6 +2521,7 @@ def _cmd_sync_collection(
         # fails the whole run: a partial import that silently dropped the
         # un-authorized half would be worse than nothing.
         pulled_at = now_iso()
+        started = walk_started()
         result = collection.pull(options, pulled_at)
     except CollectionUnavailable as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
@@ -2560,7 +2562,7 @@ def _cmd_sync_collection(
     # Overlapping syncs: a walk that started before the newest recorded one is
     # out of date, and recording it would undo what that newer walk found.
     if upstream.compared and not record_membership_walk(
-        paths.db_path, collection.key(result.account), upstream.events, pulled_at
+        paths.db_path, collection.key(result.account), upstream.events, started
     ):
         upstream = UpstreamComparison(
             False, "a newer walk of this collection was recorded while this one ran"
