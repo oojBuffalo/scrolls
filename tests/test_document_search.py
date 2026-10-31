@@ -126,8 +126,12 @@ def test_context_excerpts_the_document_text_that_matched(home, capsys):
         ("art", "Part of the preamble, part two. " * 60 + "A work of art.", "A work of art."),
         # diacritics fold, as FTS folds them
         ("resume", "Preamble clause. " * 120 + "Her résumé names Zanzibar.", "Her résumé names Zanzibar."),
+        # lines, not spaces, separate the words
+        ("zanzibar", "Preamble\nclause.\n" * 120 + "Signed at Zanzibar in 1890.", "Signed at Zanzibar in 1890."),
+        # no word boundary anywhere near: the window still holds the match
+        ("zanzibar", "Preamble" + "x" * 3000 + " Signed at Zanzibar.", "Signed at Zanzibar."),
     ],
-    ids=["whole-token", "diacritics"],
+    ids=["whole-token", "diacritics", "newline-separated", "no-nearby-boundary"],
 )
 def test_the_document_excerpt_holds_the_words_search_matched(home, capsys, query, document, evidence):
     insert_item(home.db_path, _item(media=[_pdf(document)]))

@@ -598,9 +598,29 @@ def document_passage(
     at = marked.find("\x01") if marked else -1
     if at < 0:
         return None
-    start = marked.rfind(" ", 0, at - lead) + 1 if at > lead else 0
+    start = _passage_start(marked, at, lead)
     passage = marked[start:].replace("\x01", "").replace("\x02", "")
     return passage, start > 0
+
+
+def _passage_start(text: str, at: int, lead: int) -> int:
+    """Where a passage keeping `lead` characters before offset `at` begins.
+
+    On the nearest whitespace of any kind a little before that point, so the
+    passage opens on a whole word; mid-word when none is near, so the match
+    always stays inside the passage.
+    """
+    if at <= lead:
+        return 0
+    cut = at - lead
+    for i in range(cut - 1, max(cut - _BOUNDARY_REACH, 0) - 1, -1):
+        if text[i].isspace():
+            return i + 1
+    return cut
+
+
+# How far back `_passage_start` looks for a word boundary before cutting mid-word.
+_BOUNDARY_REACH = 64
 
 
 def _match_explanations(
