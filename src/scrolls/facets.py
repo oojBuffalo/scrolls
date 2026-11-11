@@ -45,6 +45,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from scrolls.limits import validate_limit
 from scrolls.custody import drift_posture, latest_events
 from scrolls.items import (
     ScrollItem,
@@ -90,6 +91,8 @@ def compute_facets(
     (``None`` for no cap). The optional facets scope the counts the same way
     they scope `scrolls search`. An uninitialized library yields empty lists.
     """
+    if limit is not None:
+        validate_limit(limit)
     wanted = _wanted_fields(field)
     if not db_path.exists():
         return {"facets": {name: [] for name in wanted}}

@@ -39,12 +39,12 @@ index section and a per-page `## Related Tags` co-occurrence list.
 - **Filenames disambiguate slug collisions.** Concept pages key *by* slug, so
   `concepts/<slug>.md` is collision-free by construction. Tags key by case-fold,
   so distinct groups can share a slug (`C++`, `C#`, and `C` all slugify to `c`).
-  `kb._tag_filenames` assigns each group a `tags/<name>.md` stem — the slug, with
-  a numeric suffix (`c-2`, `c-3`) for collisions, in sorted-key order. KB pages
-  are rebuilt from scratch each run and link relatively (the rest of the tree's
-  rule), so a deterministic-per-run name is enough; tag-page filenames are
-  addressable but not globally stable, and consumers that need a stable handle
-  use the item id or URL, never a KB page path.
+  `kb._group_filenames` assigns each group a `tags/<name>.md` stem — the slug,
+  with a numeric suffix (`c-2`, `c-3`) for collisions. Existing generated headings
+  retain each group's path across recompiles, including annotated tombstones.
+  This preserves the annotation ownership promised by ADR 0102; adding a new
+  colliding tag must never attach an existing note to a different group. The
+  same allocation protects free-form category and source names.
 
 - **The page** reuses the shared `_write_page`: `# Tag: <display>`, the member
   count, one bullet per member (sorted by case-folded title, the item's `source`

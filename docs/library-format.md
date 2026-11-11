@@ -56,6 +56,16 @@ scroll that `scrolls show <id>` answers authoritatively.
   reused on every re-render even if the title changes, so links from KB
   pages and agent transcripts don't break
   (`test_write_scroll_reuses_stored_path_even_when_title_changes`).
+- **Paths name owned files.** Imported paths must be relative to `scrolls/`
+  for scrolls and `media/` for media. Absolute paths, traversal, backslashes,
+  and symlink aliases are rejected. Controlled paths inside `library/` and
+  `agents/` also reject symlinks before reads or regeneration. A symlink for
+  `SCROLLS_HOME` itself can still relocate the library. If a scroll path belongs to
+  another item, rendering allocates a distinct filename. Removal preserves
+  files still referenced by another item (`tests/test_artifact_paths.py`).
+- **Views are checked against the held record.** `doctor` reports missing
+  and stale scrolls; `doctor --fix` regenerates them. This includes a scroll
+  left over after adopting or restoring another capture (ADR 0116).
 
 ### Frontmatter
 
@@ -391,12 +401,16 @@ field (roadmap H89/H93;
   (ADR [0059](adr/0059-tag-concept-facets.md)), not concepts' coarser
   slug merge — so `MIT` and `mit` are one page while `C++` and `C#`
   stay distinct, even though both slugify to `c`.
-- **Colliding slugs disambiguate the filename.** When distinct tags
-  collide on a slug, the page filenames take a numeric suffix (`c.md`,
-  `c-2.md`) assigned in sorted-key order; KB page filenames are
-  regenerated each run and linked relatively, so they are addressable
-  but not globally stable
-  (`test_kb_groups_tags_case_insensitively_but_keeps_distinct_folds`).
+- **Group filenames retain their identity.** Source, category, and tag
+  pages reuse the path whose generated heading names that group. New
+  groups take an unused slug or numeric suffix (`c.md`, `c-2.md`),
+  reserving existing paths so a colliding group cannot inherit another
+  group's annotations. An annotated tombstone retains its heading so
+  the original group can reclaim its page when it returns
+  (`tests/test_v1_kb_identity.py`).
+- **Merged spellings count each item once.** An item carrying both
+  `MIT` and `mit`, or both `RAG` and `rag`, contributes one member to
+  the merged page and facet count.
 
 #### Optional concept- and tag-page sections
 
@@ -741,7 +755,7 @@ photos — to `media/<source>/<id-slug>-<n><ext>`
 (`tests/test_media.py`):
 
 - **`<n>`** is the ref's 1-based position in the item's `media` array,
-  or the next free number when another ref already holds that name — a
+  or the next free number when another ref or existing file holds that name — a
   re-fetch keeps a held ref's path (ADR 0114), so a ref inserted ahead of
   it must not take its file.
 - **The extension** comes from the URL path, else from the ref's

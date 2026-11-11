@@ -111,6 +111,18 @@ def _sub(feed_url, **overrides):
     return Subscription(**{**defaults, **overrides})
 
 
+def test_sync_skips_malformed_url_without_losing_valid_entries(scrolls_home):
+    xml = ('<rss version="2.0"><channel><title>Feed</title>'
+           '<item><link>https://[broken</link></item>'
+           '<item><link>https://example.com/good</link></item>'
+           '</channel></rss>')
+    paths, sub, _ = follow_feed("https://example.com/feed", get_text=lambda _: xml)
+    result = sync_many(paths.db_path, [sub], fetch=_fetch_ok(xml))
+    assert result["new"] == 1
+    assert result["skipped"] == 1
+    assert result["failed"] == 0
+
+
 # --- to_feed_url ---
 
 

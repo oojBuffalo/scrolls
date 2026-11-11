@@ -2937,7 +2937,7 @@ def test_trend_reports_enrichment_staleness_accumulating_across_runs(home, capsy
             "classified_ruleset": "superseded-fingerprint",
         },
     )
-    assert update_item(home.db_path, stale)
+    assert update_item(home.db_path, write_scroll(home, stale))
 
     # pass 2 (offline): the audit now counts one stale classification
     assert main(["maintain", "--no-recheck"]) == 0
@@ -3233,7 +3233,7 @@ def test_maintain_suggests_classify_stale_for_a_stale_classification(
             "classified_ruleset": "deadbeef0000",  # a fingerprint the live ruleset superseded
         },
     )
-    update_item(home.db_path, stale)
+    update_item(home.db_path, write_scroll(home, stale))
     capsys.readouterr()
 
     monkeypatch.setattr(cli, "live_recapture", _identity_recapture)
@@ -3479,18 +3479,16 @@ def _mark_stale_classified(item_id):
     """Stamp a persisted item rules-classified under a *superseded* ruleset, so the
     live ruleset reads it stale (the H40 stale-classification fixture)."""
     persisted = get_item(get_paths().db_path, item_id)
-    update_item(
-        get_paths().db_path,
-        replace(
-            persisted,
-            provenance={
-                **persisted.provenance,
-                "classified_by": "rules-v1",
-                "classified_basis": "title-pattern",
-                "classified_ruleset": "deadbeef0000",  # superseded by the live ruleset
-            },
-        ),
+    stale = replace(
+        persisted,
+        provenance={
+            **persisted.provenance,
+            "classified_by": "rules-v1",
+            "classified_basis": "title-pattern",
+            "classified_ruleset": "deadbeef0000",  # superseded by the live ruleset
+        },
     )
+    update_item(get_paths().db_path, write_scroll(get_paths(), stale))
 
 
 def test_maintain_report_carries_the_per_source_enrichment_staleness(

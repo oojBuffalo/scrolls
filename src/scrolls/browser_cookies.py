@@ -479,15 +479,23 @@ def pinned_db(browser: ChromiumBrowser, profile: str) -> Path:
     return modern if modern.is_file() else base / "Cookies"
 
 
-def _load_chromium(browser: ChromiumBrowser, spec: CookieSpec) -> BrowserCookies:
+def _load_chromium(
+    browser: ChromiumBrowser, spec: CookieSpec, *, profile: str | None = None
+) -> BrowserCookies:
     """Read the first profile of one Chromium browser that holds a session.
 
     Raises:
         BrowserCookieError: The browser is absent, its Keychain entry is
             unavailable, or no profile is signed in.
     """
-    databases = chromium_cookie_dbs(browser.profile_root)
+    if profile:
+        path = pinned_db(browser, profile)
+        databases = [path] if path.is_file() else []
+    else:
+        databases = chromium_cookie_dbs(browser.profile_root)
     if not databases:
+        if profile:
+            raise BrowserCookieError(f"{browser.name} has no cookie database for profile {profile!r}")
         raise BrowserCookieError(f"{browser.name} is not installed on this machine")
 
     key = derive_chrome_key(
@@ -502,14 +510,18 @@ def _load_chromium(browser: ChromiumBrowser, spec: CookieSpec) -> BrowserCookies
     raise last  # every profile failed; the last reason is as good as any
 
 
-def _load_firefox(spec: CookieSpec) -> BrowserCookies:
+def _load_firefox(spec: CookieSpec, *, profile: str | None = None) -> BrowserCookies:
     """Read the first Firefox profile that holds a session.
 
     Raises:
         BrowserCookieError: Firefox is absent or no profile is signed in.
     """
     databases = firefox_cookie_dbs()
+    if profile:
+        databases = [path for path in databases if path.parent.name == profile]
     if not databases:
+        if profile:
+            raise BrowserCookieError(f"firefox has no cookie database for profile {profile!r}")
         raise BrowserCookieError("firefox is not installed on this machine")
     last: BrowserCookieError | None = None
     for db_path in databases:
@@ -523,7 +535,7 @@ def _load_firefox(spec: CookieSpec) -> BrowserCookies:
 def load_cookies(
     spec: CookieSpec, browser: str = "auto", *, profile: str | None = None
 ) -> BrowserCookies:
-    """Resolve one service's cookies, preferring explicitly supplied values.
+    """Resolve one service's cookies, honoring an explicitly selected profile.
 
     Args:
         spec: Which hosts and cookie names the service needs.
@@ -538,7 +550,9 @@ def load_cookies(
     Raises:
         BrowserCookieError: No session could be resolved by the requested path.
     """
-    if browser in ("auto", "env"):
+    if profile and browser == "env":
+        raise BrowserCookieError("a browser profile cannot be combined with --browser env")
+    if browser == "env" or (browser == "auto" and not profile):
         found = cookies_from_env(spec)
         if found is not None:
             return found
@@ -547,19 +561,10 @@ def load_cookies(
 
     if browser in CHROMIUM_BROWSERS:
         chosen = CHROMIUM_BROWSERS[browser]
-        if profile:
-            return read_chromium_cookies(
-                pinned_db(chosen, profile),
-                key=derive_chrome_key(
-                    keychain_password(chosen.keychain_service, chosen.keychain_account)
-                ),
-                spec=spec,
-                origin=chosen.name,
-            )
-        return _load_chromium(chosen, spec)
+        return _load_chromium(chosen, spec, profile=profile)
 
     if browser == FIREFOX_BROWSER:
-        return _load_firefox(spec)
+        return _load_firefox(spec, profile=profile)
 
     if browser != "auto":
         raise BrowserCookieError(
@@ -572,8 +577,8 @@ def load_cookies(
     for candidate in (*CHROMIUM_BROWSERS.values(), FIREFOX_BROWSER):
         try:
             if candidate == FIREFOX_BROWSER:
-                return _load_firefox(spec)
-            return _load_chromium(candidate, spec)
+                return _load_firefox(spec, profile=profile)
+            return _load_chromium(candidate, spec, profile=profile)
         except BrowserCookieError as exc:
             name = candidate if isinstance(candidate, str) else candidate.name
             reasons.append(f"{name}: {exc}")

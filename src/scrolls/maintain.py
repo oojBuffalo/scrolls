@@ -74,15 +74,14 @@ _DRIFT_AXES = ("checked", "unverified", "unchanged", "drifted", "rotted", "error
 # that closes it — maintain *names* the command, never runs it (custody §2.4:
 # `doctor --fix` / `scrolls media` / `classify --stale` / `kb --stale` stay the
 # explicit mutations). Ordered so the `suggested` block is deterministic, and
-# grouped by command: the three structural categories `doctor --fix` repairs
-# (duplicate items, missing scroll files, an out-of-sync FTS index) share one
-# suggestion rather than three identical ones. `orphan_scrolls` has no entry:
+# grouped by command: structural findings `doctor --fix` repairs (duplicate
+# items, missing or stale scrolls, an out-of-sync FTS index) share one suggestion. `orphan_scrolls` has no entry:
 # doctor never deletes a file it cannot prove it wrote, so there is no on-request
 # repair to suggest — the orphan is surfaced (it still bumps `issues`/the exit
 # code), never acted on, so maintain points at a command only when one actually
 # closes the gap.
 _REPAIR_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("scrolls doctor --fix", ("duplicates", "missing_scrolls", "fts")),
+    ("scrolls doctor --fix", ("duplicates", "missing_scrolls", "stale_scrolls", "fts")),
     ("scrolls media", ("missing_media",)),
     ("scrolls classify --stale", ("enrichment_stale",)),
     ("scrolls kb --stale", ("summaries_stale",)),

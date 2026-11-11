@@ -18,6 +18,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from scrolls.paths import validate_artifact_relpath
+
 _JSON_LIST_FIELDS = ("tags", "concepts", "links", "media")
 _JSON_OBJECT_FIELDS = ("provenance",)
 
@@ -793,11 +795,53 @@ def item_from_dict(data: dict[str, Any]) -> ScrollItem:
     JSON form is a list). Keys the model doesn't define are dropped, so an
     export written by a newer schema still loads under an older reader
     (forward compatibility, ADR 0082). The caller must ensure the required
-    identity fields are present — `ScrollItem(**known)` raises otherwise.
+    identity fields and known field types are valid before any row is written.
     """
+    if not isinstance(data, dict):
+        raise ValueError("item must be a JSON object")
     known = {name: data[name] for name in _FIELD_NAMES if name in data}
+    required = ("id", "source", "url", "saved_at")
+    for name in required:
+        if not isinstance(known.get(name), str) or not known[name]:
+            raise ValueError(f"{name} must be a non-empty string")
+    for name, value in known.items():
+        if name in _JSON_LIST_FIELDS:
+            if not isinstance(value, (list, tuple)):
+                raise ValueError(f"{name} must be an array")
+            element_type = (dict, str) if name == "media" else str
+            if any(not isinstance(entry, element_type) for entry in value):
+                kind = "objects or legacy strings" if name == "media" else "strings"
+                raise ValueError(f"{name} must contain only {kind}")
+        elif name == "provenance":
+            if value is not None and not isinstance(value, dict):
+                raise ValueError("provenance must be an object or null")
+        elif value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string or null")
+    if (
+        any(char in known["source"] for char in ("/", "\\", "\x00"))
+        or known["source"] in (".", "..")
+    ):
+        raise ValueError("source must be a single directory name")
+    if known.get("markdown_path") is not None:
+        validate_artifact_relpath(known["markdown_path"], "scrolls")
+    for ref in known.get("media", ()):
+        if not isinstance(ref, dict):  # legacy string references still round-trip
+            continue
+        if ref.get("path") is not None:
+            validate_artifact_relpath(ref["path"], "media")
+        for name in ("url", "type", "title", "original_url", "text", "text_method"):
+            if ref.get(name) is not None and not isinstance(ref[name], str):
+                raise ValueError(f"media {name} must be a string or null")
+        for name in ("bytes", "oversize"):
+            if ref.get(name) is not None and (
+                not isinstance(ref[name], int) or isinstance(ref[name], bool)
+                or ref[name] < 0
+            ):
+                raise ValueError(f"media {name} must be a non-negative integer")
+    if known.get("stage", "detected") not in ("detected", "fetched", "rendered"):
+        raise ValueError("stage must be detected, fetched, or rendered")
     for name in _JSON_LIST_FIELDS:
-        if known.get(name) is not None:
+        if name in known:
             known[name] = tuple(known[name])
     return ScrollItem(**known)
 
@@ -974,7 +1018,15 @@ def archived_snapshots(db_path: Path, item_id: str) -> list[ScrollItem]:
         return []
     finally:
         conn.close()
-    return [item_from_dict(json.loads(row[0])) for row in rows]
+    snapshots = []
+    for row in rows:
+        snapshot = item_from_dict(json.loads(row[0]))
+        if snapshot.id != item_id:
+            raise ValueError(
+                f"archive snapshot id {snapshot.id!r} does not match item_id {item_id!r}"
+            )
+        snapshots.append(snapshot)
+    return snapshots
 
 
 def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
@@ -1336,9 +1388,23 @@ def archive_from_dict(data: dict[str, Any]) -> ArchiveRecord:
 
     `prior_hash`/`superseded_by` are nullable (a prior with no content hash, or an
     adoption that recorded no incoming hash). Unknown keys are tolerated for
-    forward compatibility. The caller validates the required identity fields
-    (`item_id`/`archived_at`/`snapshot`), like `item_from_dict`/`event_from_dict`.
+    forward compatibility. Known field types and the model-complete snapshot
+    identity are validated, like `item_from_dict`/`event_from_dict`.
     """
+    for name in ("item_id", "archived_at"):
+        if not isinstance(data.get(name), str) or not data[name]:
+            raise ValueError(f"{name} must be a non-empty string")
+    for name in ("prior_hash", "superseded_by"):
+        if data.get(name) is not None and not isinstance(data[name], str):
+            raise ValueError(f"{name} must be a string or null")
+    try:
+        snapshot = item_from_dict(data.get("snapshot"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid archive snapshot: {exc}") from exc
+    if snapshot.id != data["item_id"]:
+        raise ValueError(
+            f"archive snapshot id {snapshot.id!r} does not match item_id {data['item_id']!r}"
+        )
     return ArchiveRecord(
         item_id=data["item_id"],
         archived_at=data["archived_at"],

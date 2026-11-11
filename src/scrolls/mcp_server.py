@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from scrolls import feeds
+from scrolls.limits import validate_limit
 from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
@@ -70,7 +71,7 @@ from scrolls.items import (
 from scrolls.items import latest_archived as _latest_archived
 from scrolls.items import list_archived as _list_archived
 from scrolls.kb import compile_kb
-from scrolls.paths import get_paths
+from scrolls.paths import artifact_path, get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
 from scrolls.pipeline import resolve_item_id
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
@@ -268,6 +269,7 @@ def list_scrolls(
     "what arxiv papers tagged efficient are in the library", which has no natural
     search query.
     """
+    validate_limit(limit)
     paths = get_paths()
     boundary = parse_since(stale_before)  # raises on a malformed boundary
     if not paths.db_path.exists():
@@ -426,6 +428,8 @@ def get_scroll_history(
     `since` / unknown `status` — is an error, the same empty-vs-error split
     `get_scroll`/`get_related_scrolls` draw.
     """
+    if limit is not None:
+        validate_limit(limit)
     paths = get_paths()
     boundary = parse_since(since)  # malformed → ValueError (the MCP error idiom)
     resolved = resolve_item_id(item_id)
@@ -480,6 +484,7 @@ def get_related_scrolls(
     is the item's id or the URL that saved it (ADR 0028), resolved like
     `get_scroll`'s. An unknown item is an error.
     """
+    validate_limit(limit)
     paths = get_paths()
     resolved = resolve_item_id(item_id)
     if not paths.db_path.exists():
@@ -749,7 +754,7 @@ def get_concept_page(concept: str) -> str:
     Spellings are matched by slug ("BM25" and "bm25" are the same page).
     """
     paths = get_paths()
-    page = paths.library_dir / "concepts" / f"{slugify(concept)}.md"
+    page = artifact_path(paths, f"library/concepts/{slugify(concept)}.md", "library")
     if not page.exists():
         raise ValueError(
             f"no concept page for {concept!r} — compile the library first "
@@ -770,11 +775,12 @@ def get_tag_page(tag: str) -> str:
     """
     paths = get_paths()
     base = slugify(tag) or "untitled"
-    tags_dir = paths.library_dir / "tags"
+    tags_dir = artifact_path(paths, "library/tags", "library")
     wanted = tag.casefold()
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         for page in candidates:
+            artifact_path(paths, str(page.relative_to(paths.root)), "library")
             text = page.read_text(encoding="utf-8")
             body = generated_body(text) or text
             heading = body.split("\n", 1)[0]
@@ -1016,6 +1022,8 @@ def get_maintenance_history(
     library is the empty `[]` (or, with `trend=True`, the `insufficient-history`
     envelope), never an error.
     """
+    if limit is not None:
+        validate_limit(limit)
     runs = read_log(log_path(get_paths()), limit)
     runs = [
         {**run, "headline": snapshot_headline(run.get("snapshot", {}))} for run in runs

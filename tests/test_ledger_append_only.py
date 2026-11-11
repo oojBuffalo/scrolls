@@ -35,7 +35,7 @@ Two faces, the H388/H394/H399/H406 shape:
    ledger history is removed; its drift events survive, no FK cascade), ``archive
    prune``, ``import archive`` — and the seven appends (``verify``/``verify_scroll`` →
    drifted, ``reconcile`` → resolved, ``import items``/``import bundle`` → conflict,
-   ``import events`` → verified, ``archive restore`` → superseded).
+   ``import events`` → unchanged, ``archive restore`` → superseded).
 
 **Roadmap correction (the H404/H407 precedent):** the H409 spec's parenthetical
 named ``reconcile`` ledger-neutral — it is not. `reconcile --keep-held` records a
@@ -167,11 +167,11 @@ def _run_bundle_conflict(paths, work, capsys):
 
 
 def _setup_events(paths, work, capsys):
-    # a fresh verified event for arxiv:dba (the fixture's ledger holds only web:hub),
-    # so the restore imports exactly one new row carrying the `verified` verb
+    # a fresh unchanged event for arxiv:dba (the fixture's ledger holds only web:hub),
+    # so the restore imports exactly one new unchanged verdict
     line = json.dumps({
         "item_id": "arxiv:dba", "checked_at": "2026-06-20T00:00:00+00:00",
-        "status": "verified", "prior_hash": "sha256:dba",
+        "status": "unchanged", "prior_hash": "sha256:dba",
         "observed_hash": "sha256:dba", "detail": None,
     })
     (work / "incoming.events.jsonl").write_text(line + "\n", encoding="utf-8")
@@ -250,7 +250,7 @@ _DRIVEN = {
         "run": _run_bundle_conflict,
     },
     "import events": {
-        "verbs": frozenset({"verified"}),
+        "verbs": frozenset({"unchanged"}),
         "setup": _setup_events,
         "run": _run_events,
     },

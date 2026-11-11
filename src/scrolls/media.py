@@ -26,8 +26,8 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from scrolls import documents
-from scrolls.items import ScrollItem
-from scrolls.paths import LibraryPaths
+from scrolls.items import ScrollItem, list_items
+from scrolls.paths import LibraryPaths, artifact_path
 from scrolls.render import slugify
 from scrolls.sources import http
 
@@ -97,6 +97,13 @@ def capture_media(
     # paths refs already hold — kept across a re-fetch — are never handed to
     # another ref, or a ref inserted ahead of one would overwrite its file
     reserved = {ref["path"] for ref in refs if isinstance(ref, dict) and ref.get("path")}
+    shared = set()
+    if force and paths.db_path.exists():
+        shared = {
+            ref["path"]
+            for peer in list_items(paths.db_path) if peer.id != item.id
+            for ref in peer.media if isinstance(ref, dict) and ref.get("path")
+        }
     results: list[dict[str, Any]] = []
     changed = False
     for index, ref in enumerate(refs, start=1):
@@ -104,9 +111,15 @@ def capture_media(
         if not url:
             results.append({"url": None, "status": "skipped"})
             continue
-        relpath = ref.get("path") or _free_relpath(paths, item, index, ref, reserved)
+        try:
+            relpath = ref.get("path")
+            if not relpath or (force and relpath in shared):
+                relpath = _free_relpath(paths, item, index, ref, reserved)
+            target = artifact_path(paths, relpath, "media")
+        except ValueError as exc:
+            results.append({"url": url, "status": "failed", "error": str(exc)})
+            continue
         reserved.add(relpath)
-        target = paths.root / relpath
         if not force and ref.get("path") and target.exists():
             result = {"url": url, "status": "skipped", "path": relpath}
             if documents.wants_text(item, ref) and "text" not in ref:
@@ -142,8 +155,12 @@ def capture_media(
             ref.pop("oversize", None)
             ref.pop("bytes", None)
             changed = True
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(payload)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+        except OSError as exc:
+            results.append({"url": url, "status": "failed", "error": str(exc)})
+            continue
         if ref.get("path") != relpath:
             ref["path"] = relpath
             changed = True
@@ -317,7 +334,10 @@ def _free_relpath(
 ) -> str:
     """The ref's own `-<index>` name, else the next `-<n>` no other ref holds."""
     n = index
-    while (relpath := _media_relpath(paths, item, n, ref)) in reserved:
+    while (
+        (relpath := _media_relpath(paths, item, n, ref)) in reserved
+        or artifact_path(paths, relpath, "media").exists()
+    ):
         n += 1
     return relpath
 

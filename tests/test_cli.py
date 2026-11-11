@@ -1115,16 +1115,18 @@ def test_fetch_continues_past_failures_and_exits_nonzero(scrolls_home, monkeypat
     assert get_item(get_paths().db_path, "wikipedia:en:SQLite").stage == "detected"
 
 
-def test_fetch_by_id_refetches_regardless_of_stage(scrolls_home, fake_wikipedia_api, capsys):
+def test_fetch_by_id_requires_verify_for_held_capture(scrolls_home, fake_wikipedia_api, capsys):
     main(["add", "https://en.wikipedia.org/wiki/SQLite"])
     main(["fetch"])
     capsys.readouterr()
 
     exit_code = main(["fetch", "wikipedia:en:SQLite"])
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["fetched"] == 1
+    assert payload["fetched"] == 0
+    assert payload["failed"] == 1
     assert payload["results"][0]["id"] == "wikipedia:en:SQLite"
+    assert "verify" in payload["results"][0]["error"]
 
 
 def test_fetch_by_id_without_adapter_fails(scrolls_home, monkeypatch, capsys):
@@ -2890,7 +2892,7 @@ def test_ingest_leaves_unmatched_items_unclassified(scrolls_home, monkeypatch, c
     assert payload["stage"] == "rendered"
 
 
-def test_ingest_existing_url_refreshes_it(scrolls_home, fake_wikipedia_api, capsys):
+def test_ingest_existing_url_renders_held_capture(scrolls_home, fake_wikipedia_api, capsys):
     main(["ingest", "https://en.wikipedia.org/wiki/SQLite"])
     capsys.readouterr()
 

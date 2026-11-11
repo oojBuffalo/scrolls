@@ -119,3 +119,82 @@ def test_post_json_sends_the_body_as_json_and_parses_the_reply(echo_url):
     assert result["echo"] == {"noteId": "9bf2dbi3p4"}
     assert result["content_type"] == "application/json"
     assert result["user_agent"].startswith("scrolls/")
+
+
+class _GzipHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        import gzip
+
+        body = BODY if self.path == "/feed" else json.dumps({"text": "alpha " * 100}).encode()
+        payload = gzip.compress(body)
+        if self.path == "/truncated":
+            payload = payload[:-4]
+        elif self.path == "/corrupt":
+            payload = payload[:10] + b"\xff" + payload[11:]
+        self.send_response(200)
+        if self.path != "/raw-file":
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("ETag", ETAG)
+        self.end_headers()
+        self.wfile.write(payload)
+
+    do_POST = do_GET
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def gzip_url():
+    server = HTTPServer(("127.0.0.1", 0), _GzipHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+    thread.join()
+    server.server_close()
+
+
+def test_gzip_text_and_json_are_decoded(gzip_url):
+    from scrolls.sources.http import get_text, get_json
+
+    assert get_text(gzip_url + "/feed") == BODY.decode()
+    assert get_json(gzip_url + "/json") == {"text": "alpha " * 100}
+
+
+def test_gzip_conditional_and_post_are_decoded(gzip_url):
+    assert get_conditional(gzip_url + "/feed").text == BODY.decode()
+    assert post_json(gzip_url + "/json", {}) == {"text": "alpha " * 100}
+
+
+def test_gzip_limits_apply_to_decoded_body(gzip_url):
+    from scrolls.sources.http import get_bytes, get_bytes_within
+
+    with pytest.raises(ValueError, match="exceeds"):
+        get_bytes(gzip_url + "/json", max_bytes=100)
+    payload, size = get_bytes_within(gzip_url + "/json", max_bytes=100)
+    assert payload is None
+    assert size is None
+    payload, size = get_bytes_within(gzip_url + "/json", max_bytes=1000)
+    assert json.loads(payload) == {"text": "alpha " * 100}
+    assert size == len(payload)
+
+
+def test_gzip_file_without_content_encoding_stays_compressed(gzip_url):
+    import gzip
+    from scrolls.sources.http import get_bytes
+
+    payload = get_bytes(gzip_url + "/raw-file")
+    assert payload.startswith(b"\x1f\x8b")
+    assert json.loads(gzip.decompress(payload)) == {"text": "alpha " * 100}
+
+
+@pytest.mark.parametrize("path", ["/truncated", "/corrupt"])
+def test_invalid_gzip_is_a_transport_error(gzip_url, path):
+    from scrolls.sources.http import get_bytes, get_bytes_within, get_text, get_json
+
+    for read in (get_bytes, get_bytes_within, get_text, get_json, get_conditional,
+                 lambda url: post_json(url, {})):
+        with pytest.raises(OSError):
+            read(gzip_url + path)

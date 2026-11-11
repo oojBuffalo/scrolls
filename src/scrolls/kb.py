@@ -39,7 +39,7 @@ from scrolls.custody import (
     render_custody_by_source,
     render_custody_refresh,
 )
-from scrolls.generated import fence, has_user_content, user_regions, write_generated
+from scrolls.generated import fence, generated_body, has_user_content, user_regions, write_generated
 from scrolls.graph import Component, Edge, connected_components, graph_over
 from scrolls.items import (
     ScrollItem,
@@ -49,7 +49,7 @@ from scrolls.items import (
     get_fidelity,
     list_items,
 )
-from scrolls.paths import LibraryPaths
+from scrolls.paths import LibraryPaths, artifact_path
 from scrolls.render import slugify
 from scrolls.works import (
     Work,
@@ -109,13 +109,16 @@ def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
     """
     by_concept: dict[str, dict] = {}
     for item in items:
+        seen: set[str] = set()
         for concept in dict.fromkeys(item.concepts):
             slug = slugify(concept)
             if not slug:
                 continue
             entry = by_concept.setdefault(slug, {"display": concept, "items": []})
             entry["display"] = min(entry["display"], concept)
-            entry["items"].append(item)
+            if slug not in seen:
+                entry["items"].append(item)
+                seen.add(slug)
     return by_concept
 
 
@@ -129,13 +132,16 @@ def group_tags(items: list[ScrollItem]) -> dict[str, dict]:
     """
     by_tag: dict[str, dict] = {}
     for item in items:
+        seen: set[str] = set()
         for tag in dict.fromkeys(item.tags):
             key = tag.lower()
             if not key:
                 continue
             entry = by_tag.setdefault(key, {"display": tag, "items": []})
             entry["display"] = min(entry["display"], tag)
-            entry["items"].append(item)
+            if key not in seen:
+                entry["items"].append(item)
+                seen.add(key)
     return by_tag
 
 
@@ -201,6 +207,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     """
     if not paths.db_path.exists():
         return KbResult(0, 0, 0, 0, 0, 0, 0, 0, 0)
+    _validate_generated_paths(paths)
     items = [item for item in list_items(paths.db_path) if item.markdown_path]
     # one ledger read for the whole compile, shared by every list-page row's
     # custody marker (the bundle/context pattern, roadmap H89) — the per-row
@@ -222,7 +229,16 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     related = related_concepts(by_concept)
     by_tag = group_tags(items)
     related_tag_map = related_tags(by_tag)
-    tag_filenames = _tag_filenames(by_tag)
+    source_filenames = _group_filenames(
+        {key: key for key in by_source}, paths.library_dir / "sources", "Source"
+    )
+    category_filenames = _group_filenames(
+        {key: key for key in by_category}, paths.library_dir / "categories", "Category"
+    )
+    tag_filenames = _group_filenames(
+        {key: entry["display"] for key, entry in by_tag.items()},
+        paths.library_dir / "tags", "Tag", folded=True,
+    )
     summaries = load_concept_summaries(paths.db_path)
     # the link graph over the rendered items only, so every edge it shows
     # resolves to a scroll file the page can link (graph_over drops links to
@@ -241,7 +257,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     pages = 1  # the index
     for source, members in by_source.items():
         _write_page(
-            paths, written, f"sources/{slugify(source) or 'untitled'}.md",
+            paths, written, f"sources/{source_filenames[source]}.md",
             f"Source: {source}", members, note=lambda i: i.category, verdicts=verdicts,
             summaries=summaries, dup_index=dup_index,
         )
@@ -252,7 +268,7 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
         # arxiv/crossref/pubmed manifestations co-occur, since they share a
         # category but not a source
         _write_page(
-            paths, written, f"categories/{slugify(category) or 'untitled'}.md",
+            paths, written, f"categories/{category_filenames[category]}.md",
             f"Category: {category}", members, note=lambda i: i.source, verdicts=verdicts,
             summaries=summaries, dup_index=dup_index,
             consolidate_works=items_by_id,
@@ -290,10 +306,11 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     _write_works_page(paths, written, works, items_by_id, verdicts)
     pages += 1
     _write_index(
-        paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+        paths, written, items, by_source, by_category, by_concept, by_tag,
+        source_filenames, category_filenames, tag_filenames,
         components, works, verdicts, summaries,
     )
-    _reconcile_generated(paths.library_dir, written)
+    _reconcile_generated(paths, written)
 
     return KbResult(
         items=len(items),
@@ -422,7 +439,8 @@ def _content_duplicate_lines(db_path: Path) -> list[str]:
 
 
 def _write_index(
-    paths, written, items, by_source, by_category, by_concept, by_tag, tag_filenames,
+    paths, written, items, by_source, by_category, by_concept, by_tag,
+    source_filenames, category_filenames, tag_filenames,
     components, works, verdicts: dict[str, CustodyEvent],
     summaries: dict[str, ConceptSummary],
 ) -> None:
@@ -476,7 +494,7 @@ def _write_index(
     if by_source:
         lines += ["", "## Sources", ""]
         for source in sorted(by_source):
-            slug = slugify(source) or "untitled"
+            slug = source_filenames[source]
             lines.append(
                 f"- [{source}](sources/{slug}.md) — {_count(len(by_source[source]))}"
             )
@@ -484,7 +502,7 @@ def _write_index(
     if by_category or unclassified:
         lines += ["", "## Categories", ""]
         for category in sorted(by_category):
-            slug = slugify(category) or "untitled"
+            slug = category_filenames[category]
             lines.append(
                 f"- [{category}](categories/{slug}.md) — {_count(len(by_category[category]))}"
             )
@@ -509,7 +527,7 @@ def _write_index(
         lines += ["", "## Recent", ""]
         for item in list(reversed(items))[:_RECENT_LIMIT]:
             lines.append(_item_line(item, page_dir="library"))
-    _emit(paths.library_dir / "index.md", lines, written)
+    _emit(paths, paths.library_dir / "index.md", lines, written)
 
 
 def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: str,
@@ -554,10 +572,10 @@ def _write_page(paths: LibraryPaths, written: set[Path], relpath: str, title: st
         ]
     if trailer:  # e.g. a concept page's Related Concepts section (ADR 0063)
         lines += trailer
-    _emit(paths.library_dir / relpath, lines, written)
+    _emit(paths, paths.library_dir / relpath, lines, written)
 
 
-def _emit(target: Path, lines: list[str], written: set[Path]) -> None:
+def _emit(paths: LibraryPaths, target: Path, lines: list[str], written: set[Path]) -> None:
     """Write one generated page inside its sentinel fence and record it.
 
     The page body (`lines`) replaces only the fenced region, so a user
@@ -565,6 +583,7 @@ def _emit(target: Path, lines: list[str], written: set[Path]) -> None:
     accumulates every page produced this run so `_reconcile_generated` can tell
     a freshly written page from a stale one.
     """
+    artifact_path(paths, str(target.relative_to(paths.root)), "library")
     write_generated(target, "\n".join(lines), _REGENERATED_BY)
     written.add(target)
 
@@ -643,22 +662,38 @@ def _related_lines(heading: str, related: list[tuple[str, str, int]], name_for) 
     return lines
 
 
-def _tag_filenames(by_tag: dict[str, dict]) -> dict[str, str]:
-    """Collision-free `tags/<name>.md` stems, one per tag group (ADR 0064).
-
-    Tags group by case-fold (`group_tags`), so distinct groups can share a slug
-    (`C++`, `C#`, and `C` all slugify to `c`) where concepts — grouped *by* slug
-    — never do. KB pages are rebuilt from scratch each run and link relatively,
-    so colliding slugs get a deterministic numeric suffix in sorted-key order
-    rather than a globally stable name.
-    """
-    used: dict[str, int] = {}
+def _group_filenames(
+    groups: dict[str, str], directory: Path, kind: str, *, folded: bool = False
+) -> dict[str, str]:
+    """Keep each group's existing path so annotations never change ownership."""
     names: dict[str, str] = {}
-    for key in sorted(by_tag):
+    reserved: set[str] = set()
+    prefix = f"# {kind}: "
+    for page in sorted(directory.glob("*.md")):
+        reserved.add(page.stem)
+        text = page.read_text(encoding="utf-8")
+        body = generated_body(text) or text
+        heading = body.split("\n", 1)[0]
+        if heading.startswith(prefix):
+            key = heading[len(prefix):]
+            key = key.lower() if folded else key
+            if key in groups and key not in names:
+                names[key] = page.stem
+    bases = {slugify(key) or "untitled" for key in groups}
+    for key in sorted(groups):
+        if key in names:
+            continue
         base = slugify(key) or "untitled"
-        count = used.get(base, 0) + 1
-        used[base] = count
-        names[key] = base if count == 1 else f"{base}-{count}"
+        candidate = base
+        suffix = 1
+        while candidate in reserved:
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+            while candidate in bases:
+                suffix += 1
+                candidate = f"{base}-{suffix}"
+        names[key] = candidate
+        reserved.add(candidate)
     return names
 
 
@@ -701,7 +736,7 @@ def _write_graph_page(
                     target = items_by_id[edge.to_id]
                     link = os.path.relpath(target.markdown_path, start=page_dir)
                     lines.append(f"  - → [{target.title or target.id}]({link})")
-    _emit(paths.library_dir / "graph.md", lines, written)
+    _emit(paths, paths.library_dir / "graph.md", lines, written)
 
 
 def _graph_index_line(components: tuple[Component, ...]) -> str:
@@ -776,7 +811,7 @@ def _write_works_page(
                 if rep.id == work.canonical.id:
                     note = f"{note} · canonical"
                 lines.append(_item_line(item, page_dir, note=note))
-    _emit(paths.library_dir / "works.md", lines, written)
+    _emit(paths, paths.library_dir / "works.md", lines, written)
 
 
 def _works_index_line(works: list[Work]) -> str:
@@ -926,7 +961,18 @@ def _count(n: int) -> str:
     return f"{n} scroll{'' if n == 1 else 's'}"
 
 
-def _reconcile_generated(library_dir: Path, written: set[Path]) -> None:
+def _validate_generated_paths(paths: LibraryPaths) -> None:
+    """Check the controlled tree before reading or refreshing any generated page."""
+    for name in _GENERATED_FILES:
+        artifact_path(paths, f"library/{name}", "library")
+    for name in _GENERATED_DIRS:
+        directory = artifact_path(paths, f"library/{name}", "library")
+        if directory.is_dir():
+            for page in directory.iterdir():
+                artifact_path(paths, str(page.relative_to(paths.root)), "library")
+
+
+def _reconcile_generated(paths: LibraryPaths, written: set[Path]) -> None:
     """Clear stale generated pages a recompile left behind, sparing annotations.
 
     A generated file from a prior run that this run did not rewrite (its group
@@ -937,6 +983,8 @@ def _reconcile_generated(library_dir: Path, written: set[Path]) -> None:
     silently dropped (ADR 0102). Always-written pages (`index.md`, `graph.md`,
     `works.md`) are in `written`, so they are never reconciled here.
     """
+    _validate_generated_paths(paths)
+    library_dir = paths.library_dir
     candidates: list[Path] = [library_dir / name for name in _GENERATED_FILES]
     for name in _GENERATED_DIRS:
         directory = library_dir / name
@@ -948,8 +996,11 @@ def _reconcile_generated(library_dir: Path, written: set[Path]) -> None:
         existing = path.read_text(encoding="utf-8")
         if has_user_content(existing):
             prefix, suffix = user_regions(existing)
+            body = generated_body(existing) or ""
+            heading = body.split("\n", 1)[0]
+            tombstone = f"{heading}\n\n{_STALE_BODY}" if heading.startswith("# ") else _STALE_BODY
             path.write_text(
-                prefix + fence(_STALE_BODY, _REGENERATED_BY) + suffix,
+                prefix + fence(tombstone, _REGENERATED_BY) + suffix,
                 encoding="utf-8",
             )
         else:

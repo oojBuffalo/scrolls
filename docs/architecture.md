@@ -5,8 +5,8 @@ tests that prove each claim. For the product vision and design brainstorm
 see `IDEAS.md`; for the rationale behind individual decisions see the
 ADRs indexed at `docs/adr/README.md`.
 
-Everything below describes code on this branch, verified by
-`uv run pytest` (1945 tests at the time of writing). The docs themselves
+Everything below describes code on this branch, covered by
+`uv run pytest`. The docs themselves
 are guarded by `tests/test_docs.py`: cited test names, relative links,
 and `IDEAS.md §N` references must resolve, and `docs/cli.md`'s captured
 examples are pinned to the code's version and schema.
@@ -41,7 +41,10 @@ each command moves items between stages or derives artifacts from them.
   text, summary, links, media, content hash, and provenance, and moves
   the item to `fetched` (`src/scrolls/sources/`). `--limit N` paces a
   batch run — at most N attempts, oldest saved first, resuming next
-  run — so a bulk-imported spine enriches incrementally.
+  run — so a bulk-imported spine enriches incrementally. A record already
+  holding raw text, extracted text, or a content hash cannot be overwritten
+  by `fetch`; `verify` records live changes. Repeating `ingest` renders the
+  held record without fetching again (ADR 0116).
 - `scrolls md [id]` renders each fetched item to a Markdown scroll at
   `scrolls/<source>/<slug>.md` and moves it to `rendered`
   (`src/scrolls/render.py`).
@@ -707,7 +710,7 @@ Two stores, by design (IDEAS.md §3):
   §3). A `concept_summaries` table holds the LLM concept engine's
   synthesized concept-page summaries with the members fingerprint that
   makes regeneration incremental (ADR 0025). `meta` carries the schema
-  version (`SCHEMA_VERSION = 6`);
+  version (`SCHEMA_VERSION = 8`);
   `MIGRATIONS[n]` walks any version gap in one transaction, and opening a
   newer-versioned library raises instead of corrupting it
   (`tests/test_db.py`).
@@ -720,6 +723,12 @@ Two stores, by design (IDEAS.md §3):
   format — frontmatter keys, body sections, KB page formats, and the
   stability guarantees consumers may rely on — is specified in
   `docs/library-format.md`.
+
+**Imported records are validated before mutation.** Known field types,
+artifact paths, event statuses, and archive snapshot identities must be valid;
+unknown fields remain forward-compatible. Artifact paths stay in their
+`scrolls/` or `media/` tree and cannot contain symlink aliases. Removal keeps
+files still referenced by another item (ADR 0116).
 
 The library root is `~/.scrolls`, overridden by `$SCROLLS_HOME` — every
 path derives from the root so tests and portable installs can relocate
@@ -1022,8 +1031,10 @@ its number: a new collection on an existing adapter usually beats a new
 adapter.
 
 Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
-urllib, descriptive User-Agent). Adapters take the fetcher as an
-injectable parameter, which is why no test touches the network.
+urllib, descriptive User-Agent). It decodes HTTP gzip content encoding before
+text/JSON extraction, applies byte caps to decoded bytes, and reports malformed
+compressed responses as transport errors. Ordinary `.gz` files remain intact.
+Adapters take the fetcher as an injectable parameter, keeping tests offline.
 
 ### Adding a new adapter
 
@@ -1327,7 +1338,9 @@ choice (ADRs 0004, 0005).
   complement to the `--tag` query facet (ADR 0059), grouping items by tag
   **case-insensitively** (the facet's rule, not concepts' slug merge — so
   `MIT`/`mit` are one page, `C++`/`C#` two despite a shared slug, the page
-  filenames disambiguated by a numeric suffix); they carry a **Related
+  filenames disambiguated by a numeric suffix and retained by group identity
+  across recompiles, so annotations stay attached to their original group);
+  they carry a **Related
   Tags** co-occurrence section sharing the extracted `_co_occurring` core
   with Related Concepts, and a `tags` count joins the compile summary.
   `graph.md` is the browsable form of `scrolls graph`'s link structure
@@ -1445,10 +1458,10 @@ choice (ADRs 0004, 0005).
 - **Doctor** (`doctor.py`, ADR 0026) — `scrolls doctor` diagnoses drift
   between the index and the file tree: duplicate url-hash items left by
   pre-normalization URLs (ADR 0023's deferred debt), recorded scroll
-  files missing on disk, captured media files gone, orphan scroll files,
+  files missing or stale on disk, captured media files gone, orphan scroll files,
   FTS desync. `--fix` repairs only what is safe offline — merges each
   duplicate group atomically into the id a clean re-add would mint
-  (`items.replace_items`), rewrites missing scrolls from the index,
+  (`items.replace_items`), rewrites missing or stale scrolls from the index,
   rebuilds FTS — and exits 0 only when the library ends fully
   consistent, so it works as a cron-able health probe. Missing media
   stays `scrolls media`'s job; orphan files are never deleted
@@ -1579,8 +1592,9 @@ choice (ADRs 0004, 0005).
   interrupted removal leaves a re-runnable item rather than orphan
   files; the FTS delete trigger keeps search in sync. Refs are ids or
   URLs resolved through the same normalize → detect → mint chain as
-  `add`, and every recorded path is validated against the library root
-  before anything is deleted. No tombstone: a still-followed feed
+  `add`, and every recorded path is validated against its artifact tree
+  before anything is deleted. Files another held item references are retained.
+  No tombstone: a still-followed feed
   re-registers the entry on the next sync. Deliberately not exposed
   over MCP, like doctor (`tests/test_remove.py`).
 - **MCP server** (`mcp_server.py`, ADR 0014, ADR 0020) — `scrolls mcp`

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Collection, Iterable
 
+from scrolls.limits import validate_limit
 from scrolls.dates import to_utc_iso
 from scrolls.items import ScrollItem, get_fidelity, get_item
 from scrolls.sources import FETCH_ADAPTERS, FetchError, SourceGone
@@ -519,6 +520,8 @@ def item_history(
 
     Each axis is ``None`` by default, so the unfiltered shape is unchanged.
     """
+    if limit is not None:
+        validate_limit(limit)
     if status is not None and status not in LEDGER_STATUSES:
         raise ValueError(
             f"unknown custody status {status!r}; "
@@ -561,9 +564,17 @@ def event_from_dict(data: dict) -> CustodyEvent:
     """Reconstruct a `CustodyEvent` from an export row — the `event_export_dict`
     inverse. Unknown keys are tolerated (forward compatibility) and the
     autoincrement ledger id is intentionally absent: it is per-library, never
-    exported, so a restored event is re-numbered by the target ledger. Identity
-    validation (required fields present) is the caller's, like `item_from_dict`.
+    exported, so a restored event is re-numbered by the target ledger. Known
+    field types and the ledger status vocabulary are validated before writing.
     """
+    for name in ("item_id", "checked_at", "status"):
+        if not isinstance(data.get(name), str) or not data[name]:
+            raise ValueError(f"{name} must be a non-empty string")
+    if data["status"] not in LEDGER_STATUSES:
+        raise ValueError(f"status must be one of {', '.join(LEDGER_STATUSES)}")
+    for name in ("prior_hash", "observed_hash", "detail"):
+        if data.get(name) is not None and not isinstance(data[name], str):
+            raise ValueError(f"{name} must be a string or null")
     return CustodyEvent(
         item_id=data["item_id"],
         checked_at=data["checked_at"],

@@ -326,13 +326,15 @@ def test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh(
     insert_item(paths.db_path, make_item(media=(_read_ref(),)))
     capsys.readouterr()
 
-    def refetch(item):  # what wikipedia.fetch_item does: fresh refs, no state
-        return replace(make_item(), media=({"type": "pdf", "url": REPORT_URL},))
+    def refetch(item):
+        raise AssertionError("a held capture must not be re-fetched")
 
     monkeypatch.setitem(FETCH_ADAPTERS, "wikipedia", refetch)
     target = "wikipedia:en:Station" if command == "fetch" else "https://en.wikipedia.org/wiki/Station"
-    assert main([command, target]) == 0
-    capsys.readouterr()
+    assert main([command, target]) == (1 if command == "fetch" else 0)
+    output = capsys.readouterr()
+    if command == "fetch":
+        assert "verify" in output.out
 
     stored = get_item(paths.db_path, "wikipedia:en:Station")
     assert stored.media[0]["path"] == "media/wikipedia/station-1.pdf"

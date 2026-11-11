@@ -62,6 +62,11 @@ claim cites the test that locks it; unless noted, tests live in
     (`test_show_unknown_url_reports_the_resolved_id`).
   - Subscription ids (`sync`, `unfollow`) are a separate namespace;
     `unfollow` accepts feed URLs already.
+- **Result caps are bounded non-negative integers.** `--limit`,
+  maintenance `--history N`, and archive `--keep N` accept 0 through
+  9223372036854775807. Zero requests no rows; a negative or overflowing
+  count is a usage error (exit 2). MCP cap arguments reject the same
+  invalid range as tool errors (`tests/test_v1_limits.py`).
 - **Stages**: `detected → fetched → rendered`, advanced by
   `fetch` and `md`; `classify`, `media`, and `kb` are stage-neutral.
 
@@ -1440,16 +1445,22 @@ $ scrolls paths
 ### `scrolls doctor [--fix] [--source S]`
 
 Check integrity between the SQLite index and the file tree, offline
-(ADR 0026; all cited tests in `tests/test_doctor.py`). Five checks,
+(ADR 0026; all cited tests in `tests/test_doctor.py` unless stated). Six checks,
 each a top-level key:
 
 | Key | Finding | With `--fix` |
 | --- | --- | --- |
 | `duplicates` | url-hash items (no source-local id) whose URLs normalize to the same resource — the pre-normalization legacy ADR 0023 left in place | merged (`test_fix_merges_duplicates_into_canonical_id`) |
 | `missing_scrolls` | items whose recorded scroll file is gone | rewritten from the index (`test_fix_rewrites_missing_scroll_from_the_index`) |
+| `stale_scrolls` | existing scroll bytes differ from the held record, including after adoption or archive restore | rewritten from the index; `tests/test_doctor_scroll_refresh.py` |
 | `missing_media` | captured media files gone from disk | report-only; `scrolls media` re-downloads (`test_fix_leaves_missing_media_to_scrolls_media`) |
 | `orphan_scrolls` | `.md` files under `scrolls/` no item owns | report-only; never deleted (`test_fix_never_deletes_orphan_scrolls`) |
 | `fts` | search index out of sync with the items table | rebuilt (`test_fix_rebuilds_drifted_fts`) |
+
+Unsafe recorded artifact paths are reported as failed findings and never
+followed. Custody findings include `unsafe_scroll_path`, `unsafe_media_path`,
+and `stale_scroll`; these affect the integrity score. `--fix` repairs stale
+views from the held record and leaves unsafe paths for explicit correction.
 
 A duplicate merge is conservative
 (`test_fix_merges_classification_across_members`,
@@ -3128,8 +3139,9 @@ one-command way to capture a single page end to end.
 
 - **Success:** the payload carries the rendered result
   (`test_ingest_runs_add_fetch_md_in_one_command`).
-- **Re-ingesting** refreshes content but never replaces an existing
-  category (`test_ingest_existing_url_refreshes_it`).
+- **Re-ingesting** uses the held capture without a network request and never
+  replaces an existing category. An item with no held raw text, extracted text,
+  or hash can still be fetched (`tests/test_capture_safety.py`).
 
 ```console
 $ scrolls ingest https://en.wikipedia.org/wiki/SQLite
@@ -3390,11 +3402,16 @@ wrote: one JSON object per line, each a complete item record.
 - **Forward-tolerant:** unknown keys are tolerated, so an export
   written by a newer schema still loads here
   (`test_load_ignores_unknown_keys`).
+- **Known fields are validated before any import writes.** Wrong types, null
+  arrays, unsafe artifact paths, and invalid UTF-8 fail with a typed error.
+  Archive snapshots must contain a valid item whose id matches the archive's
+  `item_id`. These rules also apply to bundle records and archive JSONL;
+  event records validate field types and status (`tests/test_import_validation.py`).
 - **Every field restores:** unlike the spine imports (bookmarks,
   Pocket), this restores extracted text, links, media refs, provenance,
   content hash, and stage — because the export carries them.
 - **Index rows only; derived artifacts rebuild:** run
-  `scrolls doctor --fix` to rewrite any missing scroll file and the FTS
+  `scrolls doctor --fix` to rewrite any missing or stale scroll file and the FTS
   index, then `scrolls kb` to recompile the library.
 - **A *verified* round-trip, not just an assertion:** exporting a real
   library and rebuilding it in a fresh one via `import items` →
@@ -5055,8 +5072,13 @@ $ scrolls unfollow ea77c1d5239e
 ### `scrolls fetch [id] [--limit N]`
 
 No argument: run the source adapter for every item at stage `detected`
-(network). With an id: refetch that one item regardless of stage
-(`test_fetch_by_id_refetches_regardless_of_stage`).
+(network). With an id: fetch that item if it has no held capture, regardless
+of stage (`tests/test_capture_safety.py`).
+
+A record already holding raw text, extracted text, or a content hash fails
+with an instruction to use `verify`. Its capture stays unchanged. Replacing
+a held capture uses the explicit `import --accept-incoming` workflow, which
+archives the prior copy (ADR 0116).
 
 - **Adapterless items skip in a batch** — they stay `detected` for a future
   scrolls and do not fail the run
@@ -5075,13 +5097,10 @@ No argument: run the source adapter for every item at stage `detected`
   limit are not reported.
 - **`--limit` with an explicit id is an error**
   (`test_fetch_limit_with_explicit_id_is_an_error`).
-- **A re-fetch keeps what `scrolls media` learned** — the adapter rebuilds
-  each media ref from the source, so a ref's held `path`, size decline and
-  document text (ADR 0114) are carried across by URL rather than forgotten
-  (`test_scrolls_fetch_and_ingest_keep_the_reading_across_a_refresh`) —
-  as long as the capture itself is unchanged. A new `content_hash` starts
-  the refs over, so the next `scrolls media` fetches and reads them afresh
-  (`test_a_refetch_that_changed_the_capture_starts_its_refs_over`).
+- **Held media state survives repeated ingest.** Reusing the capture keeps
+  media paths, size declines, and extracted document text. A first fetch of
+  a reference-only row carries compatible media state by URL; state from a
+  different content hash is not paired with the new capture.
 
 | Key | Meaning |
 | --- | --- |

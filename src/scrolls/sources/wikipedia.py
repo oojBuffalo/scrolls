@@ -304,9 +304,12 @@ def _is_chrome(name: str) -> bool:
 
 
 def _single_page(payload: dict[str, Any]) -> dict[str, Any]:
-    pages = payload.get("query", {}).get("pages") or []
-    if not pages:
+    query = payload.get("query") if isinstance(payload, dict) else None
+    pages = query.get("pages") if isinstance(query, dict) else None
+    if not isinstance(pages, list) or not pages:
         raise FetchError("wikipedia API returned no pages")
+    if not isinstance(pages[0], dict):
+        raise FetchError("wikipedia API returned a non-object page")
     return pages[0]
 
 

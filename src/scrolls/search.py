@@ -62,6 +62,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from scrolls.limits import validate_limit
 from scrolls.custody import (
     DRIFT_POSTURES,
     FIDELITY_TIERS,
@@ -388,6 +389,7 @@ def search_items(
     A missing database means an empty library: no hits, and the query is
     still validated so callers surface bad input consistently.
     """
+    validate_limit(limit)
     tokens = _escape_tokens(query)
     match = " ".join(tokens)
     clauses, params = _search_filters(

@@ -7,9 +7,11 @@ parameters so tests never touch the network.
 
 from __future__ import annotations
 
+import gzip
 import json
 import urllib.error
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +31,20 @@ class ConditionalText:
     not_modified: bool = False
 
 
+def _response_body(response):
+    """Decode HTTP Content-Encoding without unpacking ordinary .gz files."""
+    if response.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+        return gzip.GzipFile(fileobj=response)
+    return response
+
+
+def _read_body(body, size: int = -1) -> bytes:
+    try:
+        return body.read(size)
+    except (EOFError, zlib.error) as exc:
+        raise OSError(f"invalid compressed HTTP response: {exc}") from exc
+
+
 def get_bytes(
     url: str, headers: dict[str, str] | None = None, max_bytes: int | None = None
 ) -> bytes:
@@ -43,12 +59,13 @@ def get_bytes(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        body = _response_body(response)
         if max_bytes is None:
-            return response.read()
+            return _read_body(body)
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = response.read(65536)
+            chunk = _read_body(body, 65536)
             if not chunk:
                 break
             total += len(chunk)
@@ -84,18 +101,20 @@ def get_bytes_within(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        body = _response_body(response)
         declared = response.headers.get("Content-Length")
-        size = int(declared) if declared and declared.isdigit() else None
+        # Content-Length describes the compressed transfer, not the held bytes.
+        size = int(declared) if body is response and declared and declared.isdigit() else None
         if max_bytes is None:
-            return response.read(), size
+            payload = _read_body(body)
+            return payload, len(payload) if body is not response else size
         if size is not None:
             if size > max_bytes:
                 return None, size
-            return response.read(), size
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = response.read(65536)
+            chunk = _read_body(body, 65536)
             if not chunk:
                 break
             total += len(chunk)
@@ -139,7 +158,7 @@ def post_json(
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+        return json.loads(_read_body(_response_body(response)).decode("utf-8", errors="replace"))
 
 
 def get_conditional(
@@ -160,7 +179,7 @@ def get_conditional(
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             return ConditionalText(
-                text=response.read().decode("utf-8", errors="replace"),
+                text=_read_body(_response_body(response)).decode("utf-8", errors="replace"),
                 etag=response.headers.get("ETag"),
                 last_modified=response.headers.get("Last-Modified"),
             )

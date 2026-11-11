@@ -65,7 +65,11 @@ def load_archive_export(path: Path) -> tuple[list[ArchiveRecord], dict]:
         raise ArchiveSourceError(f"no archive export at {path}")
 
     records: list[ArchiveRecord] = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ArchiveSourceError(f"cannot read {path}: {exc}") from exc
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line:
             continue
@@ -86,6 +90,9 @@ def load_archive_export(path: Path) -> tuple[list[ArchiveRecord], dict]:
                 f"{path} line {lineno}: archived prior missing required field(s): "
                 + ", ".join(missing)
             )
-        records.append(archive_from_dict(data))
+        try:
+            records.append(archive_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise ArchiveSourceError(f"{path} line {lineno}: {exc}") from exc
 
     return records, {"archive": len(records)}

@@ -50,8 +50,8 @@ from scrolls.items import (
     replace_items,
     update_item,
 )
-from scrolls.paths import LibraryPaths
-from scrolls.render import write_scroll
+from scrolls.paths import LibraryPaths, artifact_path
+from scrolls.render import render_markdown, write_scroll
 from scrolls.sources.urls import normalize_url
 from scrolls.works import at_risk_signal, works_over
 
@@ -125,6 +125,7 @@ def run_doctor(
         "fixed": 0,
         "duplicates": [],
         "missing_scrolls": [],
+        "stale_scrolls": [],
         "missing_media": [],
         "orphan_scrolls": [],
         "fts": {"in_sync": None, "status": "skipped"},
@@ -258,6 +259,7 @@ def run_doctor(
     # re-read after merges so the other checks see the repaired rows
     items = list_items(paths.db_path, source=source)
     _check_missing_scrolls(paths, report, items, fix)
+    _check_stale_scrolls(paths, report, items, fix)
     _check_missing_media(paths, report, items)
     if source is None:
         # Not source-attributable (see the run_doctor docstring): an orphan file
@@ -309,7 +311,7 @@ def _check_duplicates(
         if fix:
             try:
                 merged = _merge_group(paths, url, members)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 entry["status"] = "failed"
                 entry["error"] = str(exc)
             else:
@@ -328,6 +330,11 @@ def _merge_group(paths: LibraryPaths, url: str, members: list[ScrollItem]) -> Sc
     the most advanced member; classification scalars fall back across
     members, list fields union; the earliest save date is kept.
     """
+    # Validate the whole cleanup before rendering or unlinking any member.
+    scroll_paths = {
+        member.markdown_path: artifact_path(paths, member.markdown_path, "scrolls")
+        for member in members if member.markdown_path
+    }
     ordered = sorted(
         members,
         key=lambda m: (-_STAGE_RANK.get(m.stage, 0), m.saved_at, m.id),
@@ -346,11 +353,13 @@ def _merge_group(paths: LibraryPaths, url: str, members: list[ScrollItem]) -> Sc
     if merged.markdown_path:
         # frontmatter must show the merged identity, not the donor's.
         # Written before any deletion: a failed write mutates nothing.
-        merged = write_scroll(paths, merged)
+        merged = write_scroll(
+            paths, merged, replacing_ids=tuple(member.id for member in members)
+        )
     for member in members:
         if member.markdown_path and member.markdown_path != merged.markdown_path:
             # provably redundant: doctor itself just merged this scroll away
-            (paths.root / member.markdown_path).unlink(missing_ok=True)
+            scroll_paths[member.markdown_path].unlink(missing_ok=True)
     replace_items(paths.db_path, [member.id for member in members], merged)
     return merged
 
@@ -369,14 +378,24 @@ def _check_missing_scrolls(
 ) -> None:
     """Items pointing at a scroll file that is gone; fix rebuilds it."""
     for item in items:
-        if not item.markdown_path or (paths.root / item.markdown_path).exists():
+        if not item.markdown_path:
+            continue
+        try:
+            target = artifact_path(paths, item.markdown_path, "scrolls")
+        except ValueError as exc:
+            report["issues"] += 1
+            report["missing_scrolls"].append(
+                {"id": item.id, "path": item.markdown_path, "status": "failed", "error": str(exc)}
+            )
+            continue
+        if target.exists():
             continue
         report["issues"] += 1
         entry = {"id": item.id, "path": item.markdown_path, "status": "found"}
         if fix:
             try:
                 rendered = write_scroll(paths, item)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 entry["status"] = "failed"
                 entry["error"] = str(exc)
             else:
@@ -384,6 +403,38 @@ def _check_missing_scrolls(
                 entry["status"] = "rewritten"
                 report["fixed"] += 1
         report["missing_scrolls"].append(entry)
+
+
+def _check_stale_scrolls(
+    paths: LibraryPaths, report: dict, items: list[ScrollItem], fix: bool
+) -> None:
+    """Existing generated scrolls must agree with the canonical captured record."""
+    for item in items:
+        if item.stage != "rendered" or not item.markdown_path:
+            continue
+        try:
+            target = artifact_path(paths, item.markdown_path, "scrolls")
+        except ValueError:  # already reported by the missing-scroll check
+            continue
+        if not target.exists():
+            continue
+        entry = {"id": item.id, "path": item.markdown_path, "status": "found"}
+        try:
+            if target.read_bytes() == render_markdown(item).encode("utf-8"):
+                continue
+        except (OSError, UnicodeError) as exc:
+            entry.update(status="failed", error=str(exc))
+        report["issues"] += 1
+        if fix and entry["status"] != "failed":
+            try:
+                rendered = write_scroll(paths, item)
+                update_item(paths.db_path, rendered)
+            except (OSError, ValueError) as exc:
+                entry.update(status="failed", error=str(exc))
+            else:
+                entry["status"] = "rewritten"
+                report["fixed"] += 1
+        report["stale_scrolls"].append(entry)
 
 
 def _check_missing_media(
@@ -396,7 +447,17 @@ def _check_missing_media(
             if not isinstance(ref, dict):
                 continue
             relpath = ref.get("path")
-            if not relpath or (paths.root / relpath).exists():
+            if not relpath:
+                continue
+            try:
+                target = artifact_path(paths, relpath, "media")
+            except ValueError as exc:
+                report["issues"] += 1
+                report["missing_media"].append(
+                    {"id": item.id, "path": relpath, "status": "failed", "error": str(exc)}
+                )
+                continue
+            if target.exists():
                 continue
             report["issues"] += 1
             report["missing_media"].append(
@@ -469,6 +530,8 @@ def _check_custody_integrity(
           the rendered view it advertises no longer exists on disk. (The
           repairable side of this is `_check_missing_scrolls`; here it counts
           only toward the custody score, never twice toward `issues`.)
+        * ``stale_scroll`` — an existing generated scroll disagrees with the
+          canonical item; `--fix` re-renders it without changing the capture.
         * ``unrederivable_hash`` — a ``content_hash`` is stored but neither
           ``raw_text`` nor ``extracted_text`` survives, so we hold a
           fingerprint of content we can no longer reproduce or verify.
@@ -481,15 +544,31 @@ def _check_custody_integrity(
     violation, so it never lowers the score.
     """
     custody = report["custody"]
+    stale_ids = {
+        entry["id"] for entry in report["stale_scrolls"]
+        if entry["status"] != "rewritten"
+    }
     for item in items:
         tier = get_fidelity(item)
         custody["tiers"][tier] = custody["tiers"].get(tier, 0) + 1
 
-        findings = []
-        scroll_path = paths.root / item.markdown_path if item.markdown_path else None
+        findings = ["stale_scroll"] if item.id in stale_ids else []
+        scroll_path = None
+        if item.markdown_path:
+            try:
+                scroll_path = artifact_path(paths, item.markdown_path, "scrolls")
+            except ValueError:
+                findings.append("unsafe_scroll_path")
         if item.stage == "rendered" and item.markdown_path:
-            if not scroll_path or not scroll_path.exists():
+            if scroll_path and not scroll_path.exists():
                 findings.append("missing_scroll")
+        for ref in item.media:
+            if isinstance(ref, dict) and ref.get("path"):
+                try:
+                    artifact_path(paths, ref["path"], "media")
+                except ValueError:
+                    findings.append("unsafe_media_path")
+                    break
         if item.content_hash and not item.raw_text and not item.extracted_text:
             findings.append("unrederivable_hash")
         if tier != "reference" and not item.url and not item.source_id:

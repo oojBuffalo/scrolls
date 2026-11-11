@@ -64,6 +64,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from scrolls.limits import validate_limit
 from scrolls.custody import (
     DRIFT_POSTURES,
     FIDELITY_TIERS,
@@ -200,6 +201,7 @@ def find_related(
     tier/posture/band raises ValueError (closed vocab), the same could-not-check
     contract `list_items` enforces.
     """
+    validate_limit(limit)
     return filter_related(
         scored_related(db_path, item_id),
         fidelity=fidelity,

@@ -226,8 +226,8 @@ def sync_subscription(
     for entry in feed.entries:
         # normalize before detect/hash (ADR 0023): feeds decorate entry
         # links with tracking junk that would mint fresh URL-hash ids
-        entry_url = normalize_url(entry.url)
         try:
+            entry_url = normalize_url(entry.url)
             detected = detect_source(entry_url)
         except ValueError:
             skipped += 1

@@ -24,7 +24,7 @@ the natural place to add project-specific notes.
 from __future__ import annotations
 
 from scrolls.generated import write_generated
-from scrolls.paths import LibraryPaths
+from scrolls.paths import LibraryPaths, artifact_path
 
 _FRONTMATTER = """\
 ---
@@ -97,9 +97,10 @@ def install_agent_docs(paths: LibraryPaths) -> list[str]:
     reinstall refreshes the generated body while preserving any annotation a
     user appended after the `@end` marker.
     """
+    targets = {name: artifact_path(paths, name, "agents") for name in _TARGETS}
     written = []
     body = _BODY.rstrip("\n")  # fence() re-adds the single trailing newline
     for relpath, header in _TARGETS.items():
-        write_generated(paths.root / relpath, body, _REGENERATED_BY, header=header)
+        write_generated(targets[relpath], body, _REGENERATED_BY, header=header)
         written.append(relpath)
     return written

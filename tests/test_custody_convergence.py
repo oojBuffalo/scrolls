@@ -7615,7 +7615,7 @@ def test_content_identity_custody_record_transports_carry_the_item_set_not_held_
     # guarantee these transports carry is the item-SET sieve (the records reference
     # exactly the redundant members — no unique/NULL-hash leakage), the documented
     # holdings-vs-custody-record boundary the re-flag tiers above do not cross.
-    from scrolls.items import ArchiveRecord, import_archive
+    from scrolls.items import ArchiveRecord, get_item, import_archive, item_to_dict
 
     main(["init"])
     db_a = get_paths().db_path
@@ -7632,7 +7632,8 @@ def test_content_identity_custody_record_transports_carry_the_item_set_not_held_
     ])
     import_archive(db_a, [
         ArchiveRecord(item_id, "2026-06-19T00:00:00+00:00", "sha256:prior", None,
-                      {"id": item_id, "content_hash": "sha256:prior"})
+                      {**item_to_dict(get_item(db_a, item_id)),
+                       "content_hash": "sha256:prior"})
         for item_id in sorted(redundant)
     ])
     capsys.readouterr()
