@@ -1188,8 +1188,11 @@ choice (ADRs 0004, 0005).
   near-duplicate `paper` entries can consolidate them. A representation
   contributes a work's DOI when its `source_id` is itself a DOI
   (`crossref`, `biorxiv`/`medrxiv` — the `10.1101/<accession>` accession is
-  one) or it carries a `doi.org` link (resolved through the same
-  `detect_source` + `normalize_url` path the graph uses). Where the link
+  one) or, when its source is a scholarly record (`works.WORK_SOURCES`), it
+  carries a `doi.org` link (resolved through the same `detect_source` +
+  `normalize_url` path the graph uses). A `doi.org` link from any other
+  source — a Wikipedia article's, a post's — is a citation and names no
+  work (ADR 0116). Where the link
   graph connects two items only when one's link resolves to an item
   *already present*, `works` clusters by the shared DOI identity, so two
   representations bind even when the `crossref` item that would link them is

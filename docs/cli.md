@@ -6118,7 +6118,7 @@ The signal classes, strongest first:
   - It is **complementary** to the same-work edge: two items can be both
     byte-identical *and* share a DOI, and both `reasons` then fire (the
     same bytes, *and* the same work), not double counting.
-- **Same work** — a shared DOI.
+- **Same work** — a shared work DOI (a cited DOI does not count; ADR 0116).
 - **Link edges** — in either direction, resolved through source detection,
   so a tweet linking to `arxiv.org/abs/X` finds item `arxiv:X`.
 - **Shared concepts** and **shared tags**.
@@ -6399,8 +6399,12 @@ entries; this groups them.
 
 - **What contributes a DOI** — a representation contributes a work's DOI
   when its `source_id` is itself a DOI (`crossref`, `biorxiv`/`medrxiv`)
-  or it carries a `doi.org` link (every paper adapter emits the published
-  work's DOI as one).
+  or it carries a `doi.org` link and comes from a scholarly-record source
+  (`arxiv`, `biorxiv`, `medrxiv`, `crossref`, `pubmed`, `rfc`, `zenodo`),
+  whose adapters emit the published work's DOI as one.
+- **A citation is not a representation** — a Wikipedia article or a post
+  that links `doi.org/D` cites the work; it does not join it (ADR 0116).
+  The link still counts in `graph` and as a `related` link edge.
 - **Clustering, not linking** — where `scrolls graph` connects items only
   when one's link resolves to another *already in the library*, `works`
   clusters by the *shared DOI*. So an arXiv preprint and a PubMed record

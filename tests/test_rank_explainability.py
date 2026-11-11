@@ -85,7 +85,7 @@ from test_mcp import _MCP_READ_TOOLS  # noqa: E402
 # The query whose terms land in exactly one indexed field per match item, and the
 # anchor whose neighbours span the three relation bands — both set by the fixture.
 QUERY = "alpha"
-ANCHOR = "x:anchor"
+ANCHOR = "arxiv:anchor"
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ def _seed_rank_surface_mix(db):
       `extracted_text` → `weak`, the `_STRENGTH_BY_FIELD` weights), and none share
       a DOI, so `context` never folds a same-work duplicate (every surface shows
       all three);
-    - the **relation cluster** — `ANCHOR` ("x:anchor") gains one neighbour per
+    - the **relation cluster** — `ANCHOR` ("arxiv:anchor", a preprint) gains one neighbour per
       `relation_strength` band: a shared-DOI same-work edge (`strong`), a shared
       concept (`moderate`), and a same-category-only edge (`weak`, the "never
       enough on its own" corroboration).
@@ -135,7 +135,7 @@ def _seed_rank_surface_mix(db):
         title="Gamma log", extracted_text="alpha deep dive", category="lit"))
     # relation cluster: one relation_strength band per neighbour
     insert_item(db, _item(
-        "x:anchor", "x", "https://x.com/anchor", title="Network anchor",
+        "arxiv:anchor", "arxiv", "https://arxiv.org/abs/anchor", title="Network anchor",
         category="social", concepts=("Graphs",), tags=("viral",),
         links=("https://doi.org/10.6000/r",)))
     insert_item(db, _item(  # shared DOI → same-work edge → strong

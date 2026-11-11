@@ -4,6 +4,10 @@ Date: 2026-06-13
 
 Status: accepted
 
+*Amended: 2026-10-29 — rule 2 narrowed to scholarly-record sources by
+[0116](0116-a-cited-doi-is-not-a-work-identity.md): a `doi.org` link from
+any other source is a citation, not an identity.*
+
 ## Context
 
 The library now reaches one scholarly work through as many as four
@@ -54,7 +58,8 @@ of work `D` when:
    `crossref` items (the DOI folded lowercase, ADR 0037) and for
    `biorxiv`/`medrxiv` items (the `10.1101/<accession>` preprint DOI,
    ADR 0068), and naturally false for arXiv/PubMed/RFC integer ids; or
-2. one of its `links` is a `doi.org` URL — every paper adapter emits the
+2. it comes from a scholarly-record source (ADR 0116) and one of its
+   `links` is a `doi.org` URL — every paper adapter emits the
    published work's DOI as exactly such a link, and `detect_source` reads
    the lowercased DOI back off it (the same normalize-then-detect
    resolution `scrolls graph` uses, ADR 0023/0037).
