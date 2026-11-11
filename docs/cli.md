@@ -8,7 +8,7 @@ and error envelopes. This is the reference for agents (and contributors)
 consuming `scrolls` output programmatically; `README.md` tells the same
 story in prose, and `docs/architecture.md` explains the system behind it.
 
-Every example below is real output captured from `scrolls 0.1.0` (schema version 8)
+Every example below is real output captured from `scrolls 0.1.0` (schema version 9)
 on this branch — see
 [Reproducing these examples](#reproducing-these-examples). Each behavior
 claim cites the test that locks it; unless noted, tests live in
@@ -2105,7 +2105,11 @@ the reader-facing drift posture — so it is `unchanged`, not `verified`).
     `test_import_items_records_a_conflict_as_a_custody_event`).
   - Or "show me the times I **resolved** one" (`--status resolved`, the
     `reconcile --keep-held` decision — see *reconcile* below, H276).
-- **A distinct axis from drift** — the conflict-axis events are never a drift
+  - Or "when did I **stop saving** this upstream?" (`--status
+    unsaved_upstream`, and `saved_upstream` for its sightings — the
+    collection-membership axis a complete `sync --collection` walk records,
+    ADR 0118).
+- **A distinct axis from drift** — the conflict- and membership-axis events are never a drift
   posture: they ride the ledger and this timeline but `doctor`'s
   `custody.drift` / `list --drift` ignore them (a peer disagreeing — or an
   operator affirming the held copy — is no evidence the live source moved).
@@ -2497,6 +2501,20 @@ One scheduled **custody-maintenance pass** — the dogfood flow's recurring sibl
      (`delta.first_run: true`, every `before`/`change` null); a baseline
      missing an axis (an older snapshot, e.g. one written before `coverage`
      was tracked) reads that axis as zero, never null.
+
+**One pass at a time** (ADR 0117). Every pass, scoped or whole-library, holds
+the run lock `<root>/.maintenance/lock` while it runs:
+
+- **A second pass skips, it does not overlap.** It writes nothing, prints
+  `{"error": "maintenance already running since <t>", "reason":
+  "already_running", "holder": {"pid", "started_at"}}` on stderr, and exits
+  **75** (EX_TEMPFAIL). Exit 1 still means structural issues remain, so a
+  scheduler can tell a skip from a finding.
+- **A dead pass does not wedge the schedule.** The lock is an OS file lock
+  that dies with its process; the file it leaves behind is reused.
+- **`--history` never takes the lock** — it is a read.
+
+To run it on a schedule, see [dogfood.md](dogfood.md#scheduling-it).
 
 The report also carries a one-line **`headline`** — the shared
 `custody.custody_headline` (`_Custody: N scroll(s) · fidelity <tier counts> ·
@@ -4808,6 +4826,43 @@ $ scrolls sync x                                 # a collection source is not a 
 [exit 1]
 ```
 
+#### Saves removed upstream
+
+A pull that walked the **whole** collection knows what the service still
+holds, so it also records what the user removed there (ADR 0118):
+
+- **`unsaved_upstream`** — a held item an earlier walk saw and this one did
+  not. The item stays held and its scroll is untouched: un-saving upstream
+  never deletes custody (ADR 0113 §5).
+- **`saved_upstream`** — the walk saw the item: its first sighting, or its
+  return after a removal (reported as `resaved`).
+- **Per account** — membership is keyed by the account the walk ran as
+  (`x/bookmarks@<user id>`, `wikipedia/reading-lists@<name>`), so another
+  profile's account is never compared against this one. The first complete
+  walk per account records the baseline. A walk whose account is unknown
+  (X's env-var route carries none) compares nothing.
+- **Where they live** — on the custody ledger's membership axis, with that
+  key as `detail`. `scrolls history <id>` shows
+  them; they never move the drift posture.
+- **Only a complete walk compares.** A `--limit` walk, one that ended early,
+  or one with entries it could not name records nothing and says why in
+  `upstream.reason`. A deleted post that is still bookmarked counts as seen.
+- **An older walk never overrides a newer one.** When two syncs of one
+  account's collection overlap and the one that started first finishes
+  last, it records nothing: a removal the newer walk found would otherwise
+  read as a return.
+- **Recorded once.** A removal already recorded is counted in
+  `still_unsaved`, not recorded again.
+
+| `upstream` field | Meaning |
+| --- | --- |
+| `compared` | whether the walk was complete enough to compare |
+| `reason` | why not, or `null` |
+| `saved` | items recorded as members for the first time |
+| `unsaved` | ids newly found removed upstream |
+| `resaved` | ids that returned after a removal |
+| `still_unsaved` | removals already recorded, still absent |
+
 ### `scrolls sync` — the X bookmarks collection
 
 `scrolls sync x --collection bookmarks` (alias `--bookmarks`) `[--limit N] [--browser B] [--profile P] [--auth R]`
@@ -4861,18 +4916,23 @@ and quoted-tweet body from the same response that enumerated them
 | `session` | where the session came from (`chrome`, `firefox`, `env`, …) — provenance for the pull |
 | `failures[]` | per-entry parse problems that did not abort the walk |
 | `error` | present only on a partial pull, alongside what was captured |
+| `upstream` | what a complete walk found removed upstream — always present; see *Saves removed upstream* above |
 
 ```console
 $ scrolls sync x --bookmarks
-{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 3, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks          # nothing new saved since
-{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks --limit 1
-{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+[exit 0]
+
+$ scrolls sync x --bookmarks --browser env    # pasted cookies name no account
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": [], "upstream": {"compared": false, "reason": "the account behind the walk could not be identified", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 ```
 
@@ -4944,18 +5004,19 @@ so drift on a saved article is detectable.
 | `lists` | every reading list found, by name |
 | `failures[]` | per-entry problems that did not abort the walk |
 | `error` | present only on a partial pull, alongside what was captured |
+| `upstream` | what a complete walk found removed upstream — always present; see *Saves removed upstream* above |
 
 ```console
 $ scrolls sync wikipedia --reading-lists
-{"source": "wikipedia", "collection": "reading-lists", "imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": true, "reason": null, "saved": 566, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists       # nothing new saved since
-{"source": "wikipedia", "collection": "reading-lists", "imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists --limit 2
-{"source": "wikipedia", "collection": "reading-lists", "imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 ```
 
@@ -5871,10 +5932,13 @@ query and corpus, so it tells an agent the *order* but not *why*. Each hit
 therefore also explains its own rank:
 
 - **`matched_fields`** names the indexed fields the query terms actually
-  landed in, in BM25-weight order (`title`/`summary`/`extracted_text`).
+  landed in, in BM25-weight order
+  (`title`/`summary`/`extracted_text`/`document_text`). `document_text` is
+  the read text of held documents, a captured PDF's text (ADR 0119), so a
+  word held only in a PDF is found and says so.
 - **`match_strength`** distils that into the qualitative confidence those
   weights imply — `strong` for a title hit, `moderate` for a summary hit,
-  `weak` for a body-only hit (`test_search_hit_explains_a_title_match`,
+  `weak` for a body-only hit, document text included (`test_search_hit_explains_a_title_match`,
   `test_search_hit_explains_a_body_only_match`,
   `test_search_hit_explains_a_summary_match_as_moderate`).
 - **How the fields are read** — by column-restricted FTS matches over the
@@ -6137,7 +6201,7 @@ The signal classes, strongest first:
   - It is **complementary** to the same-work edge: two items can be both
     byte-identical *and* share a DOI, and both `reasons` then fire (the
     same bytes, *and* the same work), not double counting.
-- **Same work** — a shared DOI.
+- **Same work** — a shared work DOI (a cited DOI does not count; ADR 0116).
 - **Link edges** — in either direction, resolved through source detection,
   so a tweet linking to `arxiv.org/abs/X` finds item `arxiv:X`.
 - **Shared concepts** and **shared tags**.
@@ -6418,8 +6482,12 @@ entries; this groups them.
 
 - **What contributes a DOI** — a representation contributes a work's DOI
   when its `source_id` is itself a DOI (`crossref`, `biorxiv`/`medrxiv`)
-  or it carries a `doi.org` link (every paper adapter emits the published
-  work's DOI as one).
+  or it carries a `doi.org` link and comes from a scholarly-record source
+  (`arxiv`, `biorxiv`, `medrxiv`, `crossref`, `pubmed`, `rfc`, `zenodo`),
+  whose adapters emit the published work's DOI as one.
+- **A citation is not a representation** — a Wikipedia article or a post
+  that links `doi.org/D` cites the work; it does not join it (ADR 0116).
+  The link still counts in `graph` and as a `related` link edge.
 - **Clustering, not linking** — where `scrolls graph` connects items only
   when one's link resolves to another *already in the library*, `works`
   clusters by the *shared DOI*. So an arXiv preprint and a PubMed record
@@ -6667,7 +6735,8 @@ The Markdown exception: a compact context bundle — best matches,
 capped excerpts, source links — that agents drop directly into context
 (IDEAS.md §11, `tests/test_context.py`). Each excerpt carries the item
 id, source, and scroll path for follow-up with `scrolls show` or a file
-read.
+read. A match found only in a held document's text excerpts that document
+around the match, marked "From a held document" (ADR 0119).
 
 - **`## Connected scrolls`** — when the matches link to or from other saved
   scrolls, this section (between Excerpts and Links) lists those neighbors

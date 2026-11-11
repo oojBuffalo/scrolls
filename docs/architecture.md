@@ -703,8 +703,12 @@ Two stores, by design (IDEAS.md §3):
   `src/scrolls/db.py`). List-valued fields (`tags`, `concepts`, `links`,
   `media`) and `provenance` round-trip through JSON text columns. An
   external-content FTS5 table (`items_fts`) over title/summary/extracted
-  text is kept in sync by SQL triggers so no Python write path can forget
-  it. A `subscriptions` table holds followed feeds and their sync
+  text and `document_text` is kept in sync by SQL triggers so no Python
+  write path can forget it. `document_text` is the one column outside the
+  dataclass: every write derives it from the media refs' read text, so the
+  index finds what a held PDF says, and no export carries it (ADR 0119).
+  Every command first upgrades an older database (`db.upgrade_db`), so a
+  write never meets a missing column. A `subscriptions` table holds followed feeds and their sync
   state, including each feed's HTTP cache validators (ADR 0017,
   ADR 0019) — sync state belongs to the index, not config (IDEAS.md
   §3). A `concept_summaries` table holds the LLM concept engine's
@@ -1009,6 +1013,11 @@ Detection and fetch take one URL at a time. A source may also offer a
 - **One loop:** `scrolls sync <source> --collection <name>` dispatches
   through the declaration and inserts with `INSERT OR IGNORE`, so a re-sync
   never overwrites a held item.
+- **Membership:** a pull also reports every entry it `seen` and whether it
+  is `complete`. A complete walk records `saved_upstream`/`unsaved_upstream`
+  on the custody ledger's membership axis (`compare_upstream`, ADR 0118), a
+  third axis beside the verify verdicts and import conflicts. Report-only:
+  a save removed upstream stays held.
 
 | Collection | Shape | Enters at | `saved_at` from | Routes | ADR |
 | --- | --- | --- | --- | --- | --- |
@@ -1199,8 +1208,11 @@ choice (ADRs 0004, 0005).
   near-duplicate `paper` entries can consolidate them. A representation
   contributes a work's DOI when its `source_id` is itself a DOI
   (`crossref`, `biorxiv`/`medrxiv` — the `10.1101/<accession>` accession is
-  one) or it carries a `doi.org` link (resolved through the same
-  `detect_source` + `normalize_url` path the graph uses). Where the link
+  one) or, when its source is a scholarly record (`works.WORK_SOURCES`), it
+  carries a `doi.org` link (resolved through the same `detect_source` +
+  `normalize_url` path the graph uses). A `doi.org` link from any other
+  source — a Wikipedia article's, a post's — is a citation and names no
+  work (ADR 0116). Where the link
   graph connects two items only when one's link resolves to an item
   *already present*, `works` clusters by the shared DOI identity, so two
   representations bind even when the `crossref` item that would link them is

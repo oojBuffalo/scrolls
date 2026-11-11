@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 from scrolls.items import ScrollItem, make_item_id
 # Shared with the GraphQL parser so both paths title and collapse identically.
-from scrolls.x_bookmarks import _collapse, _make_title
+from scrolls.x_bookmarks import _collapse, _make_title, service_errors
 
 API_ROOT = "https://api.x.com/2"
 ME_URL = f"{API_ROOT}/users/me"
@@ -96,11 +96,20 @@ class BookmarksPage:
         items: Fetched `x` items, in the order X returned them.
         next_token: Pagination token for the following page, or None.
         failures: Per-entry problems that did not abort the page.
+        seen: The item id of every record on the page, readable or not.
+        unidentified: Records with no id, so nobody can say what they were.
+        recognized: Whether the response was a bookmarks page at all (`data`
+            or `meta`), rather than an error document.
+        errors: The messages of any service errors the response carried.
     """
 
     items: tuple[ScrollItem, ...] = ()
     next_token: str | None = None
     failures: tuple[dict, ...] = ()
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    recognized: bool = True
+    errors: tuple[str, ...] = ()
 
 
 def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
@@ -136,7 +145,14 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
 
     items: list[ScrollItem] = []
     failures: list[dict] = []
+    seen: list[str] = []
+    unidentified = 0
     for record in payload.get("data") or ():
+        record_id = str(record.get("id") or "") if isinstance(record, dict) else ""
+        if record_id.isdigit():
+            seen.append(make_item_id("x", record_id, ""))
+        else:
+            unidentified += 1
         if not isinstance(record, dict):
             continue
         try:
@@ -145,8 +161,16 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
             failures.append({"entry_id": str(record.get("id") or ""), "error": str(exc)})
 
     next_token = (payload.get("meta") or {}).get("next_token")
+    detail = payload.get("detail")
     return BookmarksPage(
-        tuple(items), next_token if isinstance(next_token, str) else None, tuple(failures)
+        tuple(items),
+        next_token if isinstance(next_token, str) else None,
+        tuple(failures),
+        tuple(seen),
+        unidentified,
+        recognized=isinstance(payload.get("data"), list)
+        or isinstance(payload.get("meta"), dict),
+        errors=service_errors(payload) + ((str(detail),) if detail else ()),
     )
 
 
@@ -268,12 +292,21 @@ class BookmarksSync:
         failures: Per-entry parse problems that did not abort the walk.
         pages: How many pages were fetched.
         error: The error that ended the walk early, if one did.
+        seen: The item id of every record the walk passed, readable or not.
+        unidentified: Records the walk could not name.
+        complete: The walk ended on X's own end signal, unlimited and
+            unbroken, so `seen` is the whole collection (ADR 0118).
+        account: The numeric id of the account whose bookmarks were walked.
     """
 
     items: tuple[ScrollItem, ...] = ()
     failures: tuple[dict, ...] = ()
     pages: int = 0
     error: str | None = None
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    complete: bool = False
+    account: str | None = None
 
 
 Getter = Callable[[str, dict], dict]
@@ -362,10 +395,16 @@ def fetch_bookmarks(
 
     items: list[ScrollItem] = []
     failures: list[dict] = []
+    seen: dict[str, None] = {}
+    unidentified = 0
     seen_tokens: set[str] = set()
     token: str | None = None
     pages = 0
     error: str | None = None
+    complete = False
+    # Errors beside a page's data may mean missing records: import, but the
+    # walk is never complete.
+    partial = False
 
     try:
         resolved = user_id or resolve_user_id(access_token, get=fetcher)
@@ -385,15 +424,27 @@ def fetch_bookmarks(
 
         pages += 1
         page = parse_bookmarks_page(payload, synced_at=synced_at)
+        if not page.recognized:
+            # An error document read nothing; it is not an empty collection.
+            message = "; ".join(page.errors) or "no bookmarks in the response"
+            failure = XAPIError(f"bookmarks request failed: {message}")
+            if stop_on_error:
+                error = str(failure)
+                break
+            raise failure
+        partial = partial or bool(page.errors)
         items.extend(page.items)
         failures.extend(page.failures)
+        seen.update(dict.fromkeys(page.seen))
+        unidentified += page.unidentified
 
         if limit is not None and len(items) >= limit:
             items = items[:limit]
             break
         # Same terminator as the GraphQL walk: an empty page ends it, whatever
-        # token X still offers.
-        if not page.items or not page.next_token:
+        # token X still offers. Empty means no records at all.
+        if not (page.seen or page.unidentified) or not page.next_token:
+            complete = True
             break
         if page.next_token in seen_tokens:
             break
@@ -401,7 +452,16 @@ def fetch_bookmarks(
         token = page.next_token
         sleep(delay)
 
-    return BookmarksSync(tuple(items), tuple(failures), pages, error)
+    return BookmarksSync(
+        tuple(items),
+        tuple(failures),
+        pages,
+        error,
+        tuple(seen),
+        unidentified,
+        complete and not partial,
+        account=resolved,
+    )
 
 
 def _http_get(url: str, headers: dict) -> dict:

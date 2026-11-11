@@ -7,6 +7,10 @@ Status: accepted
 Settles: issue #2. Generalizes: [0108](0108-x-bookmarks-native-sync.md),
 [0109](0109-wikipedia-reading-lists-collection.md).
 
+*Amended: 2026-10-29 — §5's deferred "unsaved upstream" event is settled by
+[0118](0118-saves-removed-upstream.md): a complete walk records removals on
+the ledger's membership axis; the save still stays held.*
+
 ## Context
 
 Scrolls had three on-ramps: a URL (`add`), a file someone already exported

@@ -18,8 +18,10 @@ from scrolls.cli import main
 from scrolls.items import ScrollItem, insert_item
 from scrolls.paths import get_paths
 from scrolls.works import (
+    WORK_SOURCES,
     filter_works,
     find_works,
+    item_dois,
     membership_payload,
     to_payload,
     work_membership,
@@ -234,11 +236,11 @@ def test_works_sorted_by_representation_count_then_doi(db):
 
 
 def test_one_item_can_belong_to_two_works(db):
-    # A review linking to two distinct DOIs is a representation of neither
-    # work alone, but it does bind into both clusters.
+    # A preprint published twice (a journal version and a proceedings
+    # version) names both DOIs, so it binds into both works.
     insert_item(db, make_item(
-        "web:review",
-        url="https://example.org/review",
+        "arxiv:2101.00001",
+        url="https://arxiv.org/abs/2101.00001",
         links=("https://doi.org/10.1000/aaa", "https://doi.org/10.2000/bbb"),
     ))
     insert_item(db, make_item(
@@ -251,7 +253,83 @@ def test_one_item_can_belong_to_two_works(db):
     works = find_works(db)
     assert {w.doi for w in works} == {"10.1000/aaa", "10.2000/bbb"}
     for w in works:
-        assert "web:review" in {r.id for r in w.representations}
+        assert "arxiv:2101.00001" in {r.id for r in w.representations}
+
+
+# --- a cited DOI is not a work identity (ADR 0116) ---------------------------
+
+
+def test_articles_citing_one_paper_form_no_work(db):
+    # The live-library case: two encyclopedia articles both cite the 1986
+    # backprop paper. Neither *is* that paper, so there is no work to hold.
+    for title in ("Neural_network", "Stochastic_gradient_descent"):
+        insert_item(db, make_item(
+            f"wikipedia:en:{title}",
+            url=f"https://en.wikipedia.org/wiki/{title}",
+            links=(
+                "https://en.wikipedia.org/wiki/Backpropagation",
+                "https://doi.org/10.1038/323533a0",
+            ),
+        ))
+
+    assert find_works(db) == []
+    assert find_works(db, min_representations=1) == []
+
+
+def test_a_citation_does_not_join_the_held_papers_work(db):
+    # With the paper itself held, an article and a post that link it are
+    # still not representations of it: the work has one form, the paper.
+    insert_item(db, make_item(
+        "crossref:10.1038/323533a0", url="https://doi.org/10.1038/323533a0",
+    ))
+    insert_item(db, make_item(
+        "wikipedia:en:Backpropagation",
+        url="https://en.wikipedia.org/wiki/Backpropagation",
+        links=("https://doi.org/10.1038/323533a0",),
+    ))
+    insert_item(db, make_item(
+        "x:1700000000000000000",
+        url="https://x.com/someone/status/1700000000000000000",
+        links=("https://doi.org/10.1038/323533a0",),
+    ))
+
+    assert find_works(db) == []
+    (work,) = find_works(db, min_representations=1)
+    assert [r.id for r in work.representations] == ["crossref:10.1038/323533a0"]
+    assert works_for_item(
+        [make_item("x:1", links=("https://doi.org/10.1038/323533a0",))], "x:1"
+    ) == []
+
+
+def test_a_review_citing_two_papers_joins_neither_work(db):
+    insert_item(db, make_item(
+        "web:review",
+        url="https://example.org/review",
+        links=("https://doi.org/10.1000/aaa", "https://doi.org/10.2000/bbb"),
+    ))
+    insert_item(db, make_item(
+        "crossref:10.1000/aaa", url="https://doi.org/10.1000/aaa",
+    ))
+    insert_item(db, make_item(
+        "crossref:10.2000/bbb", url="https://doi.org/10.2000/bbb",
+    ))
+
+    assert find_works(db) == []
+    for work in find_works(db, min_representations=1):
+        assert "web:review" not in {r.id for r in work.representations}
+
+
+def test_a_doi_shaped_source_id_still_names_the_work_for_any_source():
+    # Rule 1 is unchanged: an item whose own id is a DOI is that work.
+    (doi,) = item_dois(make_item("crossref:10.1000/AAA"))
+    assert doi == "10.1000/aaa"
+
+
+def test_every_work_source_is_a_registered_adapter():
+    from scrolls.sources import FETCH_ADAPTERS
+
+    assert WORK_SOURCES <= set(FETCH_ADAPTERS)
+    assert {"wikipedia", "x", "web"}.isdisjoint(WORK_SOURCES)
 
 
 def test_empty_and_uninitialized_library_have_no_works(db, tmp_path):
@@ -306,13 +384,13 @@ def test_canonical_breaks_source_ties_by_id():
     # two representations from the same (out-of-table) source: the lower id
     # is the deterministic canonical choice.
     items = [
-        make_item("web:zeta", url="https://example.org/zeta",
+        make_item("zenodo:zeta", url="https://zenodo.org/records/zeta",
                   links=("https://doi.org/10.1000/z",)),
-        make_item("web:alpha", url="https://example.org/alpha",
+        make_item("zenodo:alpha", url="https://zenodo.org/records/alpha",
                   links=("https://doi.org/10.1000/z",)),
     ]
     work = works_over(items)[0]
-    assert work.canonical.id == "web:alpha"
+    assert work.canonical.id == "zenodo:alpha"
 
 
 def test_works_for_item_solo_work_canonical_is_the_item_itself():

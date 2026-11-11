@@ -1187,10 +1187,14 @@ def test_migration_backfills_fts_for_existing_rows(tmp_path):
         for statement in MIGRATIONS[2]:
             conn.execute(statement)
         conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '2')")
+        # a row as a v2 scrolls wrote it: the v2 columns only
+        conn.execute(
+            "INSERT INTO items (id, source, url, saved_at, title, extracted_text, stage) "
+            "VALUES ('wikipedia:en:SQLite', 'wikipedia', 'https://example.org/sqlite', "
+            "'2026-06-12T00:00:00+00:00', 'SQLite', 'SQLite is a database engine.', "
+            "'fetched')"
+        )
     conn.close()
-    insert_item(db_file, make_item(
-        "wikipedia:en:SQLite", "SQLite", "SQLite is a database engine.",
-    ))
 
     init_db(db_file)  # migrate v2 -> current
 

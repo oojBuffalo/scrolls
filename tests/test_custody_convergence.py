@@ -3757,35 +3757,35 @@ def test_object_twin_attention_inherits_the_by_source_scope_split(scrolls_home, 
     insert_item(db, _item(
         "crossref:10.5555/3295222", "Attention Is All You Need", source="crossref",
         source_id="10.5555/3295222", url=doi_link, stage="rendered"))  # reference
-    # the ONLY actionable loss: a full web note that drifted — no DOI, no links, so it
+    # the ONLY actionable loss: a full Zenodo record that drifted — no DOI, no links, so it
     # is both *unrepresented* (forms no multi-rep work) and *isolated* (no graph edge).
     insert_item(db, _item(
-        "web:lone", "Topic lone web note",
+        "zenodo:lone", "Topic lone zenodo record", source="zenodo",
         extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:w"))
     record_events(db, [
         CustodyEvent("arxiv:1706.03762", "2026-06-14T00:00:00+00:00", "unchanged",
                      "sha256:a", "sha256:a", None),
-        CustodyEvent("web:lone", "2026-06-14T00:00:00+00:00", "drifted",
+        CustodyEvent("zenodo:lone", "2026-06-14T00:00:00+00:00", "drifted",
                      "sha256:w", "sha256:x", None),
         # crossref left unverified
     ])
     capsys.readouterr()
 
-    # the canonical whole-library flag — web is the unambiguous weakest source (the
+    # the canonical whole-library flag — zenodo is the unambiguous weakest source (the
     # only one carrying loss), across ≥2 sources, with coverage riding along (H153).
     by_source = run_doctor(get_paths())["custody"]["by_source"]
-    assert set(by_source) == {"arxiv", "crossref", "web"}
+    assert set(by_source) == {"arxiv", "crossref", "zenodo"}
     canonical = weakest_source(by_source)
     assert canonical is not None
-    assert canonical["source"] == "web"
+    assert canonical["source"] == "zenodo"
     assert canonical["drift"]["drifted"] == 1
     assert "coverage" in canonical                      # the coverage-bearing flag
 
-    # GRAPH leg: the graph flag is whole-library — it sees web's loss even though
-    # web:lone is isolated (no edge → no node), and equals the canonical flag
+    # GRAPH leg: the graph flag is whole-library — it sees zenodo's loss even though
+    # zenodo:lone is isolated (no edge → no node), and equals the canonical flag
     # field-for-field, coverage included (graph uses the coverage-bearing distillation).
     graph = mcp_server.get_link_graph()
-    assert "web" not in {node["source"] for node in graph["nodes"]}   # isolate ≠ node
+    assert "zenodo" not in {node["source"] for node in graph["nodes"]}   # isolate ≠ node
     assert graph["stats"]["custody"]["attention"] == canonical
 
     # ... and converges with the JSON status/maintain flags it shares the primitive
@@ -3799,31 +3799,31 @@ def test_object_twin_attention_inherits_the_by_source_scope_split(scrolls_home, 
     # both clean) — so it is honestly `null`. The load-bearing subtlety: the null is
     # the *fully-clean* gate, NOT the single-source gate — the works scope has TWO
     # sources, neither carrying loss, so an agent reads "all clear within what I can
-    # consolidate" while the whole-library audit separately flags web's drift.
+    # consolidate" while the whole-library audit separately flags zenodo's drift.
     works = mcp_server.get_works()
     works_by_source = works["stats"]["custody"]["by_source"]
-    assert set(works_by_source) == {"arxiv", "crossref"}   # ≥2 sources, web absent
-    assert "web" not in works_by_source                    # the loss is outside scope
+    assert set(works_by_source) == {"arxiv", "crossref"}   # ≥2 sources, zenodo absent
+    assert "zenodo" not in works_by_source                    # the loss is outside scope
     works_attention = works["stats"]["custody"]["attention"]
     assert works_attention is None                         # honest disagreement
     # the null is genuinely the clean-scope distillation, not a too-few-sources artefact
     assert weakest_source(works_by_source, include_coverage=False) is None
 
-    # MUTATION — move the SAME loss into the represented scope: give web:lone the
+    # MUTATION — move the SAME loss into the represented scope: give zenodo:lone the
     # work's doi.org link so it becomes a third representation (same item, same drift).
     assert update_item(db, _item(
-        "web:lone", "Topic lone web note",
+        "zenodo:lone", "Topic lone zenodo record", source="zenodo",
         extracted_text="body", raw_text="<raw>body</raw>", content_hash="sha256:w",
         links=(doi_link,)))
 
-    # the whole-library audit is unchanged — web still carries the only loss.
+    # the whole-library audit is unchanged — zenodo still carries the only loss.
     by_source2 = run_doctor(get_paths())["custody"]["by_source"]
     canonical2 = weakest_source(by_source2)
-    assert canonical2 is not None and canonical2["source"] == "web"
+    assert canonical2 is not None and canonical2["source"] == "zenodo"
 
     works2 = mcp_server.get_works()
     works_by_source2 = works2["stats"]["custody"]["by_source"]
-    assert set(works_by_source2) == {"arxiv", "crossref", "web"}   # web now represented
+    assert set(works_by_source2) == {"arxiv", "crossref", "zenodo"}   # zenodo now represented
     works_attention2 = works2["stats"]["custody"]["attention"]
     # the works flag now FIRES — and re-converges with the whole-library flag on every
     # SHARED field; coverage stays the whole-library flag's alone (the lean projection,

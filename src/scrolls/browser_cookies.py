@@ -126,6 +126,8 @@ class CookieSpec:
         login_url: Where to send a logged-out user, named in the error.
         env_vars: Optional (cookie name, environment variable) pairs that
             bypass the browser entirely.
+        optional: Cookie names read from the same host when present, never
+            required for a session (X's `twid`, which names the account).
     """
 
     service: str
@@ -133,6 +135,7 @@ class CookieSpec:
     required: tuple[str, ...]
     login_url: str
     env_vars: tuple[tuple[str, str], ...] = ()
+    optional: tuple[str, ...] = ()
 
     @property
     def env_names(self) -> tuple[str, ...]:
@@ -145,7 +148,8 @@ class BrowserCookies:
     """Cookies read for one service, and where they came from.
 
     Attributes:
-        values: Cookie name to value, covering exactly the spec's `required`.
+        values: Cookie name to value: every one of the spec's `required`,
+            plus whichever of its `optional` the browser held.
         origin: Which browser this came from ('brave', 'firefox', 'env'),
             recorded in provenance so a capture's path is auditable.
     """
@@ -262,12 +266,14 @@ def pick_cookies(rows: list[tuple], spec: CookieSpec) -> dict | None:
 
     Returns:
         A name-to-value mapping, or None when no single host carries them all.
+        Any of the spec's optional cookies on that same host ride along.
     """
+    wanted = (*spec.required, *spec.optional)
     for host in spec.hosts:
         found = {
             name: value
             for host_key, name, value in rows
-            if host_key == host and name in spec.required
+            if host_key == host and name in wanted
         }
         if all(name in found for name in spec.required):
             return found
@@ -313,13 +319,16 @@ def read_chromium_cookies(
     found = pick_cookies(rows, spec)
     if found is None:
         raise _logged_out(spec, origin)
-    return BrowserCookies(
-        values={
-            name: decrypt_chrome_value(found[name], key, db_version=db_version)
-            for name in spec.required
-        },
-        origin=origin,
-    )
+    values = {}
+    for name, value in found.items():
+        try:
+            values[name] = decrypt_chrome_value(value, key, db_version=db_version)
+        except BrowserCookieError:
+            # A required cookie that will not decrypt is no session at all; an
+            # optional one only drops out, as if the browser never set it.
+            if name in spec.required:
+                raise
+    return BrowserCookies(values=values, origin=origin)
 
 
 def read_firefox_cookies(db_path: Path, *, spec: CookieSpec) -> BrowserCookies:
@@ -357,9 +366,7 @@ def read_firefox_cookies(db_path: Path, *, spec: CookieSpec) -> BrowserCookies:
     found = pick_cookies(rows, spec)
     if found is None:
         raise _logged_out(spec, FIREFOX_BROWSER)
-    return BrowserCookies(
-        values={name: found[name] for name in spec.required}, origin=FIREFOX_BROWSER
-    )
+    return BrowserCookies(values=dict(found), origin=FIREFOX_BROWSER)
 
 
 @contextmanager

@@ -60,6 +60,7 @@ from scrolls.custody import (
     recheck_coverage,
     recheck_order,
     record_events,
+    record_membership_walk,
     resolution_event,
     supersession_event,
     tally_custody,
@@ -71,7 +72,7 @@ from scrolls.context import BUDGET_TIERS as CONTEXT_BUDGET_TIERS
 from scrolls.context import DEFAULT_BUDGET as DEFAULT_CONTEXT_BUDGET
 from scrolls.context import DEFAULT_LIMIT as DEFAULT_CONTEXT_LIMIT
 from scrolls.context import build_context
-from scrolls.db import init_db, read_schema_version
+from scrolls.db import init_db, read_schema_version, upgrade_db
 from scrolls.doctor import run_doctor
 from scrolls.facets import DEFAULT_LIMIT as DEFAULT_FACETS_LIMIT
 from scrolls.facets import FIELDS as FACET_FIELDS
@@ -134,12 +135,15 @@ from scrolls.items_export import dump_items_export, load_items_export
 from scrolls.kb import compile_kb
 from scrolls.maintain import (
     DEFAULT_HISTORY_LIMIT,
+    EXIT_ALREADY_RUNNING,
+    MaintenanceBusy,
     assemble_report,
     compute_trend,
     custody_snapshot,
     last_run_boundary,
     load_snapshot,
     log_path,
+    maintenance_lock,
     read_log,
     report_by_source,
     report_enrichment_by_source,
@@ -190,9 +194,14 @@ from scrolls.saved_collections import (
     CollectionUnavailable,
     PullOptions,
     UnknownCollection,
+    UpstreamComparison,
     collections_for,
+    compare_upstream,
     now_iso,
     resolve_collection,
+    upstream_unready,
+    walk_stamp,
+    walk_started,
 )
 from scrolls.x_session import BROWSER_CHOICES
 
@@ -1742,6 +1751,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Bring an older library up to the current schema before any command reads
+    # or writes it; a current or missing database is untouched.
+    upgrade_db(get_paths().db_path)
 
     if args.command == "add":
         return _cmd_add(args.url)
@@ -2159,6 +2171,40 @@ def _cmd_maintain(
     paths = get_paths()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    # One pass at a time (ADR 0117): a pass that overruns its schedule makes the
+    # next one skip, not overlap. A skip is EX_TEMPFAIL, not a finding.
+    try:
+        with maintenance_lock(paths, now=now):
+            return _run_maintain_pass(
+                paths, now, recheck, recheck_all, limit, source, fidelity
+            )
+    except MaintenanceBusy as busy:
+        print(
+            json.dumps({"error": str(busy), "reason": "already_running",
+                        "holder": busy.holder}),
+            file=sys.stderr,
+        )
+        return EXIT_ALREADY_RUNNING
+
+
+def _run_maintain_pass(
+    paths: LibraryPaths, now: str, recheck: bool, recheck_all: bool,
+    limit: int | None, source: str | None, fidelity: str | None,
+) -> int:
+    """The body of one `scrolls maintain` pass, run under the maintenance lock.
+
+    Args:
+        paths: The library being maintained.
+        now: This pass's timestamp (the recorded run time and recheck stamp).
+        recheck: Whether to run the live drift recheck at all.
+        recheck_all: Recheck every held item, ignoring the staleness boundary.
+        limit: Bound the recheck to this many items, or None for no bound.
+        source: Scope the pass to one source, or None for the whole library.
+        fidelity: Scope the recheck to one fidelity tier, or None.
+
+    Returns:
+        The process exit code: 1 when structural issues remain, else 0.
+    """
     # Load the last run's snapshot once: it is both this run's delta baseline AND
     # (via its recorded_at) the staleness boundary the default recheck windows by.
     # A scoped pass reads the same whole-library boundary (it shares the staleness
@@ -2483,7 +2529,9 @@ def _cmd_sync_collection(
         # A start-up failure (no session, expired session, missing grant)
         # fails the whole run: a partial import that silently dropped the
         # un-authorized half would be worse than nothing.
-        result = collection.pull(options, now_iso())
+        pulled_at = now_iso()
+        started = walk_started()
+        result = collection.pull(options, pulled_at)
     except CollectionUnavailable as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
@@ -2506,6 +2554,33 @@ def _cmd_sync_collection(
         else:
             counts["skipped"] += 1
 
+    # A complete walk also says what the user removed upstream (ADR 0118):
+    # recorded on the ledger's membership axis, per account, never acted on.
+    # The comparison runs inside the recording transaction, so overlapping
+    # syncs see each other's findings, and an older walk never lands last.
+    reason = upstream_unready(result, limited=options.limit is not None)
+    if reason:
+        upstream = UpstreamComparison(False, reason)
+    else:
+        held = list_items(paths.db_path)
+        upstream = record_membership_walk(
+            paths.db_path,
+            collection.key(result.account),
+            started,
+            lambda latest: compare_upstream(
+                collection,
+                result,
+                limited=False,
+                held=held,
+                latest=latest,
+                now=walk_stamp(started),
+            ),
+        )
+        if upstream is None:
+            upstream = UpstreamComparison(
+                False, "a newer walk of this collection was recorded while this one ran"
+            )
+
     payload = {
         "source": collection.source,
         "collection": collection.name,
@@ -2514,6 +2589,7 @@ def _cmd_sync_collection(
         "session": result.session,
         **result.extra,
         "failures": list(result.failures),
+        "upstream": upstream.payload(),
     }
     if result.error:
         payload["error"] = result.error

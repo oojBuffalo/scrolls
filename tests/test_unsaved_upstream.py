@@ -1,0 +1,693 @@
+"""Tests for recording saves removed upstream (roadmap H444, ADR 0118).
+
+A collection pull that walked the whole collection knows what the service
+still holds. A held item an earlier walk saw, and this complete walk did not,
+was removed upstream: un-bookmarked, taken off every reading list. That gets
+an `unsaved_upstream` event on the ledger's membership axis. The item stays
+held (ADR 0113 §5), its scroll untouched, its drift posture unmoved.
+
+Only the network is faked, as in `test_cli_x_bookmarks.py`.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from scrolls.cli import main
+from scrolls.custody import (
+    SAVED_UPSTREAM_STATUS,
+    UNSAVED_UPSTREAM_STATUS,
+    latest_events,
+    latest_membership_events,
+)
+from scrolls.items import ScrollItem, get_item, insert_item
+from scrolls.paths import get_paths
+from scrolls.wikipedia_lists import collect_reading_lists
+from scrolls.x_bookmarks import parse_bookmarks_page
+
+KEY = "x/bookmarks@42"
+
+
+@pytest.fixture
+def scrolls_home(monkeypatch, tmp_path):
+    """Point the library root at a temp dir so tests never touch ~/.scrolls.
+
+    The session comes from the env route, as signed in as account 42: the
+    browser route reads that id from X's `twid` cookie (ADR 0118), which the
+    env route cannot supply. `as_account` switches it.
+    """
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "scrolls-home"))
+    monkeypatch.setenv("SCROLLS_X_AUTH_TOKEN", "AUTH")
+    monkeypatch.setenv("SCROLLS_X_CT0", "CSRF")
+    as_account(monkeypatch, "42")
+
+
+def as_account(monkeypatch, user_id):
+    """Make every X session in this test signed in as `user_id` (or no one)."""
+    from dataclasses import replace
+
+    import scrolls.saved_collections as collections
+    from scrolls.x_session import load_session
+
+    monkeypatch.setattr(
+        collections,
+        "load_session",
+        lambda browser, profile=None: replace(load_session(browser, profile=profile), user_id=user_id),
+    )
+
+
+def _tweet_entry(tweet_id):
+    return {
+        "entryId": f"tweet-{tweet_id}",
+        "sortIndex": "1799999999999999999",
+        "content": {
+            "itemContent": {
+                "tweet_results": {
+                    "result": {
+                        "__typename": "Tweet",
+                        "rest_id": str(tweet_id),
+                        "core": {
+                            "user_results": {
+                                "result": {
+                                    "core": {"screen_name": "someone", "name": "Some One"}
+                                }
+                            }
+                        },
+                        "legacy": {
+                            "full_text": f"post {tweet_id}",
+                            "created_at": "Mon Jun 01 15:34:00 +0000 2026",
+                        },
+                    }
+                }
+            }
+        },
+    }
+
+
+def _tombstone_entry(tweet_id):
+    """A bookmark whose post was deleted: still bookmarked, no live post."""
+    return {
+        "entryId": f"tweet-{tweet_id}",
+        "content": {
+            "itemContent": {
+                "tweet_results": {"result": {"__typename": "TweetTombstone"}}
+            }
+        },
+    }
+
+
+def _page(entries, cursor=None):
+    entries = list(entries)
+    if cursor:
+        entries.append({"entryId": "cursor-bottom-0", "content": {"value": cursor}})
+    return {
+        "data": {
+            "bookmark_timeline_v2": {
+                "timeline": {
+                    "instructions": [{"type": "TimelineAddEntries", "entries": entries}]
+                }
+            }
+        }
+    }
+
+
+def _posts(*ids):
+    return [_tweet_entry(i) for i in ids]
+
+
+@pytest.fixture
+def fake_x(monkeypatch):
+    """Serve queued GraphQL pages instead of calling X."""
+
+    def install(pages):
+        queued = list(pages)
+        monkeypatch.setattr(
+            "scrolls.x_graphql._http_get_page", lambda url, headers: queued.pop(0)
+        )
+        monkeypatch.setattr("scrolls.x_graphql.time.sleep", lambda _: None)
+
+    return install
+
+
+def _sync(capsys, *extra):
+    capsys.readouterr()
+    code = main(["sync", "x", "--collection", "bookmarks", "--browser", "env", *extra])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def _membership():
+    events = latest_membership_events(get_paths().db_path, KEY)
+    return {item_id: event.status for item_id, event in events.items()}
+
+
+# --- the walk reports what it saw, readable or not ---------------------------
+
+
+def test_a_deleted_bookmark_is_seen_though_it_cannot_be_read():
+    page = parse_bookmarks_page(
+        _page([_tweet_entry(1), _tombstone_entry(2)], "C1"), synced_at="2026-10-29T00:00:00+00:00"
+    )
+    assert [item.id for item in page.items] == ["x:1"]
+    assert set(page.seen) == {"x:1", "x:2"}
+    assert page.unidentified == 0
+
+
+def test_an_entry_without_a_post_id_is_unidentified():
+    broken = {"entryId": "tweet-broken", "content": {"itemContent": {}}}
+    page = parse_bookmarks_page(_page([broken]), synced_at="2026-10-29T00:00:00+00:00")
+    assert page.seen == ()
+    assert page.unidentified == 1
+
+
+def test_a_page_of_only_deleted_posts_does_not_end_the_walk(scrolls_home, fake_x, capsys):
+    fake_x([
+        _page(_posts(1), "C1"),
+        _page([_tombstone_entry(2)], "C2"),
+        _page(_posts(3)),
+    ])
+    code, payload = _sync(capsys)
+    assert code == 0
+    assert payload["pages"] == 3
+    assert payload["imported"] == 2
+
+
+# --- a complete walk records membership ------------------------------------
+
+
+def test_the_first_complete_walk_records_the_baseline(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2), "C1"), _page(_posts(3))])
+    code, payload = _sync(capsys)
+
+    assert code == 0
+    assert payload["upstream"] == {
+        "compared": True, "reason": None, "saved": 3,
+        "unsaved": [], "resaved": [], "still_unsaved": 0,
+    }
+    assert _membership() == {
+        "x:1": SAVED_UPSTREAM_STATUS,
+        "x:2": SAVED_UPSTREAM_STATUS,
+        "x:3": SAVED_UPSTREAM_STATUS,
+    }
+
+
+def test_a_save_removed_upstream_is_recorded_and_still_held(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2, 3))])
+    _sync(capsys)
+    db = get_paths().db_path
+    before = get_item(db, "x:2")
+
+    fake_x([_page(_posts(1, 3))])
+    code, payload = _sync(capsys)
+
+    assert code == 0
+    assert payload["upstream"]["unsaved"] == ["x:2"]
+    assert payload["upstream"]["saved"] == 0
+    assert _membership()["x:2"] == UNSAVED_UPSTREAM_STATUS
+    # report-only: the save stays held, untouched, and its drift posture unmoved
+    assert get_item(db, "x:2") == before
+    assert "x:2" not in latest_events(db)
+
+
+def test_a_removal_is_recorded_once(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+    assert payload["upstream"]["still_unsaved"] == 1
+
+
+def test_a_save_that_returns_is_recorded_as_resaved(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["resaved"] == ["x:2"]
+    assert payload["upstream"]["still_unsaved"] == 0
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+_SECOND = 1_793_325_600 * 10**9  # 2026-10-30T02:00:00Z, in nanoseconds
+
+
+def _walks_start(monkeypatch, *micros):
+    """Start each next sync that many microseconds into one shared second."""
+    queued = iter(_SECOND + m * 1000 for m in micros)
+    monkeypatch.setattr("scrolls.cli.walk_started", lambda: next(queued))
+    monkeypatch.setattr("scrolls.cli.now_iso", lambda: "2026-10-30T02:00:00+00:00")
+
+
+def test_an_older_walk_that_finishes_last_records_nothing(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    # Two syncs overlap, started within the same second: the one that started
+    # first saw x:2 still saved, but finishes after a newer walk recorded its
+    # removal. Its findings are older, so it must not read that as a return.
+    _walks_start(monkeypatch, 1, 3, 2)
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1, 2))])
+    code, payload = _sync(capsys)
+
+    assert code == 0
+    assert payload["upstream"]["compared"] is False
+    assert "newer walk" in payload["upstream"]["reason"]
+    assert payload["upstream"]["resaved"] == []
+    assert _membership()["x:2"] == UNSAVED_UPSTREAM_STATUS
+
+
+def test_a_newer_walk_that_changed_nothing_still_outranks_an_older_one(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    # The newer walk found the collection unchanged and wrote no events; the
+    # older walk, which saw x:2 gone before the user re-saved it, is stale.
+    _walks_start(monkeypatch, 1, 3, 2)
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1))])
+    _, payload = _sync(capsys)
+
+    assert payload["upstream"]["compared"] is False
+    assert payload["upstream"]["unsaved"] == []
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+def _walk(*events):
+    """A comparison as `record_membership_walk` sees one: its events."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(events=tuple(events))
+
+
+def _member(status, key=KEY, item_id="x:1"):
+    from scrolls.custody import CustodyEvent
+
+    return CustodyEvent(item_id, "2026-10-30T02:00:00+00:00", status, "h", None, key)
+
+
+@pytest.fixture
+def ledger(scrolls_home):
+    from scrolls.db import init_db
+
+    db = get_paths().db_path
+    db.parent.mkdir(parents=True, exist_ok=True)
+    init_db(db)
+    return db
+
+
+def test_a_stale_walk_writes_nothing_and_a_current_one_compares_the_ledger(ledger):
+    from scrolls.custody import record_membership_walk
+
+    assert record_membership_walk(ledger, KEY, 30, lambda latest: _walk())  # unchanged still counts
+    assert record_membership_walk(ledger, KEY, 20, lambda latest: _walk(_member("saved_upstream"))) is None
+    assert latest_membership_events(ledger, KEY) == {}
+
+    seen = {}
+    record_membership_walk(ledger, KEY, 40, lambda latest: _walk(_member(UNSAVED_UPSTREAM_STATUS)))
+    record_membership_walk(ledger, KEY, 50, lambda latest: seen.update(latest) or _walk())
+    assert seen["x:1"].status == UNSAVED_UPSTREAM_STATUS  # read inside the transaction
+    # another account's collection is not this one's
+    other = "x/bookmarks@7"
+    assert record_membership_walk(ledger, other, 20, lambda latest: _walk(_member("saved_upstream", other)))
+
+
+def test_overlapping_walks_compare_one_at_a_time(ledger):
+    # The newer walk holds the write transaction while it compares; the older
+    # walk waits, then finds itself stale before it reads anything.
+    import threading
+
+    from scrolls.custody import record_membership_walk
+
+    inside, release, older_read, results = threading.Event(), threading.Event(), {}, {}
+
+    def newer(latest):
+        inside.set()
+        release.wait(5)
+        return _walk(_member(UNSAVED_UPSTREAM_STATUS))
+
+    def older(latest):
+        older_read.update(latest)
+        return _walk(_member(SAVED_UPSTREAM_STATUS))
+
+    first = threading.Thread(target=lambda: results.update(newer=record_membership_walk(ledger, KEY, 3, newer)))
+    first.start()
+    assert inside.wait(5)
+    second = threading.Thread(target=lambda: results.update(older=record_membership_walk(ledger, KEY, 2, older)))
+    second.start()
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert results["newer"] is not None and results["older"] is None
+    assert older_read == {}
+    assert latest_membership_events(ledger, KEY)["x:1"].status == UNSAVED_UPSTREAM_STATUS
+
+
+def test_transitions_within_one_second_survive_an_events_round_trip(
+    scrolls_home, fake_x, monkeypatch, capsys, tmp_path
+):
+    # saved -> unsaved -> saved in one second: each walk's rows carry its own
+    # microsecond stamp, so restoring the ledger keeps all three transitions.
+    from scrolls.custody import import_events, item_events
+
+    _walks_start(monkeypatch, 1, 2, 3)
+    for posts in ((1, 2), (1,), (1, 2)):
+        fake_x([_page(_posts(*posts))])
+        _sync(capsys)
+    events = list(reversed(item_events(get_paths().db_path, "x:2")))
+    assert [e.status for e in events] == ["saved_upstream", "unsaved_upstream", "saved_upstream"]
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "restored"))
+    assert main(["init"]) == 0
+    restored = get_paths().db_path
+    assert import_events(restored, events) == (3, 0)
+    assert latest_membership_events(restored, KEY)["x:2"].status == SAVED_UPSTREAM_STATUS
+
+
+def test_a_deleted_post_still_bookmarked_is_not_unsaved(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([_page([_tweet_entry(1), _tombstone_entry(2)])])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+# --- an incomplete walk compares nothing -----------------------------------
+
+
+def test_a_limited_walk_records_nothing(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys, "--limit", "1")
+    assert payload["upstream"]["compared"] is False
+    assert "--limit" in payload["upstream"]["reason"]
+    assert _membership() == {"x:1": SAVED_UPSTREAM_STATUS, "x:2": SAVED_UPSTREAM_STATUS}
+
+
+def test_a_walk_that_ended_early_records_nothing(scrolls_home, fake_x, monkeypatch, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    from scrolls.x_graphql import XGraphQLError
+
+    pages = [_page(_posts(1), "C1")]
+
+    def flaky(url, headers):
+        if pages:
+            return pages.pop(0)
+        raise XGraphQLError("HTTP 500 from X")
+
+    monkeypatch.setattr("scrolls.x_graphql._http_get_page", flaky)
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["compared"] is False
+    assert "ended early" in payload["upstream"]["reason"]
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+def test_an_error_envelope_is_not_an_empty_collection(scrolls_home, fake_x, capsys):
+    # X can answer HTTP 200 with only `errors`; nothing was read, so nothing
+    # may be called removed (Codex review of H444, P1).
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    fake_x([{"errors": [{"code": 32, "message": "Could not authenticate you."}]}])
+    capsys.readouterr()
+    code = main(["sync", "x", "--collection", "bookmarks", "--browser", "env"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "Could not authenticate you" in json.loads(captured.err)["error"]
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+def test_an_error_beside_the_timeline_makes_the_walk_partial(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    page = _page(_posts(1))
+    page["errors"] = [{"message": "Timeout: Unspecified"}]
+    fake_x([page])
+    _, payload = _sync(capsys)
+    assert payload["imported"] == 0
+    assert payload["upstream"]["compared"] is False
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+def test_an_unidentified_entry_blocks_the_comparison(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    broken = {"entryId": "tweet-broken", "content": {"itemContent": {}}}
+    fake_x([_page([_tweet_entry(1), broken])])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["compared"] is False
+    assert "could not be identified" in payload["upstream"]["reason"]
+    assert _membership()["x:2"] == SAVED_UPSTREAM_STATUS
+
+
+# --- what counts as an earlier member --------------------------------------
+
+
+def test_the_first_walk_sets_a_baseline_and_calls_nothing_removed(
+    scrolls_home, fake_x, capsys
+):
+    # A bookmark pulled before membership was recorded has no ledger record.
+    # Its provenance cannot say which account pulled it, so it is not
+    # assumed a member: the first complete walk only records the baseline.
+    main(["init"])
+    db = get_paths().db_path
+    insert_item(db, ScrollItem(
+        id="x:9", source="x", source_id="9", url="https://x.com/a/status/9",
+        title="old bookmark", saved_at="2026-08-25T00:00:00+00:00", stage="fetched",
+        provenance={"adapter": "x-bookmarks"},
+    ))
+    insert_item(db, ScrollItem(
+        id="x:8", source="x", source_id="8", url="https://x.com/a/status/8",
+        title="ingested by URL", saved_at="2026-08-25T00:00:00+00:00", stage="fetched",
+        provenance={"adapter": "x"},
+    ))
+
+    fake_x([_page(_posts(1))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+    assert payload["upstream"]["saved"] == 1
+    assert set(_membership()) == {"x:1"}
+
+
+def test_membership_is_per_account(scrolls_home, fake_x, monkeypatch, capsys):
+    # Two profiles signed in as two accounts hold two collections. Walking the
+    # second is not evidence the first removed anything (Codex, round 3).
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+
+    as_account(monkeypatch, "43")
+    fake_x([_page(_posts(3))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+    assert payload["upstream"]["saved"] == 1
+
+    as_account(monkeypatch, "42")
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"] == {
+        "compared": True, "reason": None, "saved": 0,
+        "unsaved": [], "resaved": [], "still_unsaved": 0,
+    }
+    assert _membership() == {"x:1": SAVED_UPSTREAM_STATUS, "x:2": SAVED_UPSTREAM_STATUS}
+
+
+def test_a_walk_with_no_known_account_records_nothing(
+    scrolls_home, fake_x, monkeypatch, capsys
+):
+    as_account(monkeypatch, None)
+    fake_x([_page(_posts(1, 2))])
+    _, payload = _sync(capsys)
+    assert payload["imported"] == 2
+    assert payload["upstream"]["compared"] is False
+    assert "account" in payload["upstream"]["reason"]
+    assert _membership() == {}
+
+
+def test_the_twid_cookie_names_the_account():
+    from scrolls.x_session import user_id_from_twid
+
+    assert user_id_from_twid("u%3D1234567") == "1234567"
+    assert user_id_from_twid('"u=89"') == "89"
+    assert user_id_from_twid("v=1") is None
+    assert user_id_from_twid(None) is None
+
+
+def test_an_item_added_by_url_has_no_provenance_and_is_not_a_member(
+    scrolls_home, fake_x, capsys
+):
+    # `scrolls add` registers an item with no provenance at all (Codex, P1).
+    capsys.readouterr()
+    assert main(["add", "https://x.com/someone/status/77"]) == 0
+    assert get_item(get_paths().db_path, "x:77").provenance is None
+
+    fake_x([_page(_posts(1))])
+    code, payload = _sync(capsys)
+    assert code == 0
+    assert payload["upstream"]["unsaved"] == []
+    assert "x:77" not in _membership()
+
+
+def test_an_item_removed_from_the_library_gets_no_event(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    capsys.readouterr()
+    assert main(["rm", "x:2"]) == 0
+
+    fake_x([_page(_posts(1))])
+    _, payload = _sync(capsys)
+    assert payload["upstream"]["unsaved"] == []
+
+
+# --- other axes never move the drift posture ------------------------------
+
+
+def test_a_membership_event_never_reads_as_a_drift_verdict(scrolls_home, fake_x, capsys):
+    # search --drift reads each hit's latest verdict in SQL; a membership row
+    # appended after it must not become that verdict (Codex, round 4), nor
+    # must a conflict-axis row. `list --drift` already ignores both.
+    from scrolls.custody import CONFLICT_STATUS, CustodyEvent, record_events
+    from scrolls.search import search_items
+
+    fake_x([_page(_posts(1))])
+    _sync(capsys)  # x:1 is unverified, and now carries a saved_upstream row
+    db = get_paths().db_path
+    assert [h.id for h in search_items(db, "post", drift="unverified")] == ["x:1"]
+
+    record_events(db, [
+        CustodyEvent("x:1", "2026-10-29T01:00:00+00:00", "unchanged", "h", "h"),
+        CustodyEvent("x:1", "2026-10-29T02:00:00+00:00", CONFLICT_STATUS, "h", "g"),
+        CustodyEvent("x:1", "2026-10-29T03:00:00+00:00", SAVED_UPSTREAM_STATUS, "h", None, KEY),
+    ])
+    assert [h.id for h in search_items(db, "post", drift="verified")] == ["x:1"]
+    assert search_items(db, "post", drift="unverified") == []
+
+
+# --- restore keeps every account's record ---------------------------------
+
+
+def test_two_accounts_membership_survives_an_events_round_trip(tmp_path, monkeypatch):
+    # Same item, status, hash and second, two accounts: only `detail` tells
+    # them apart, so restore must count it as identity (Codex, round 5).
+    from scrolls.custody import CustodyEvent, import_events, preview_import_events, record_events
+
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "home"))
+    main(["init"])
+    db = get_paths().db_path
+    at = "2026-10-29T03:00:00+00:00"
+    pair = [
+        CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, "x/bookmarks@42"),
+        CustodyEvent("x:1", at, SAVED_UPSTREAM_STATUS, "h", None, "x/bookmarks@43"),
+    ]
+    assert preview_import_events(db, pair) == (2, 0)
+    assert import_events(db, pair) == (2, 0)
+    assert import_events(db, pair) == (0, 2)  # still idempotent
+    assert set(latest_membership_events(db, "x/bookmarks@43")) == {"x:1"}
+
+    # a verify verdict keeps its five-field identity: detail never splits it
+    verdicts = [
+        CustodyEvent("x:1", at, "error", "h", None, "timeout"),
+        CustodyEvent("x:1", at, "error", "h", None, "timed out"),
+    ]
+    record_events(db, verdicts[:1])
+    assert import_events(db, verdicts[1:]) == (0, 1)
+
+
+# --- the timeline ---------------------------------------------------------
+
+
+def test_history_shows_and_filters_the_membership_axis(scrolls_home, fake_x, capsys):
+    fake_x([_page(_posts(1, 2))])
+    _sync(capsys)
+    fake_x([_page(_posts(1))])
+    _sync(capsys)
+
+    capsys.readouterr()
+    assert main(["history", "x:2", "--status", UNSAVED_UPSTREAM_STATUS]) == 0
+    (event,) = json.loads(capsys.readouterr().out)
+    assert event["status"] == UNSAVED_UPSTREAM_STATUS
+    assert event["detail"] == KEY
+
+
+# --- reading lists --------------------------------------------------------
+
+
+class _Session:
+    cookie_header = "c=1"
+    origin = "env"
+    display_name = "Reader"
+
+
+def test_reading_lists_report_every_article_they_hold():
+    lists = {"query": {"readinglists": [{"id": 1, "name": "default", "default": True}]}}
+    entries = {"query": {"readinglistentries": [
+        {"id": 10, "listId": 1, "project": "https://en.wikipedia.org", "title": "SQLite",
+         "created": "2026-01-01T00:00:00Z"},
+        {"id": 11, "listId": 1, "project": "https://commons.wikimedia.org", "title": "File:X.png",
+         "created": "2026-01-01T00:00:00Z"},
+        {"id": 12, "listId": 1, "project": "", "title": "",
+         "created": "2026-01-01T00:00:00Z"},
+    ]}}
+
+    def get_json(url):
+        return entries if "readinglistentries" in url else lists
+
+    result = collect_reading_lists(
+        _Session(), imported_at="2026-10-29T00:00:00+00:00", get_json=get_json
+    )
+    assert result.seen == ("wikipedia:en:SQLite",)
+    # Commons can never be held, so it does not block a comparison; an entry
+    # with no title could be anything, so it does.
+    assert result.unidentified == 1
+    assert result.complete is True
+
+
+def test_a_list_enumeration_without_lists_is_not_an_empty_collection():
+    # A warning-only answer names no lists; it is not "you have none" (Codex, P2).
+    warning = {"warnings": {"main": {"*": "Unrecognized parameter"}}, "batchcomplete": ""}
+    result = collect_reading_lists(
+        _Session(), imported_at="2026-10-29T00:00:00+00:00", get_json=lambda url: warning
+    )
+    assert result.complete is False
+
+
+def test_a_truncated_list_enumeration_is_not_a_complete_walk():
+    # The lists themselves page; if that walk stops on a repeated cursor, the
+    # articles in the lists it never reached are not "removed" (Codex, P2).
+    lists = {"query": {"readinglists": [{"id": 1, "name": "default", "default": True}]},
+             "continue": {"rlcontinue": "again"}}
+    entries = {"query": {"readinglistentries": [
+        {"id": 10, "listId": 1, "project": "https://en.wikipedia.org", "title": "SQLite",
+         "created": "2026-01-01T00:00:00Z"},
+    ]}}
+
+    def get_json(url):
+        return entries if "readinglistentries" in url else lists
+
+    result = collect_reading_lists(
+        _Session(), imported_at="2026-10-29T00:00:00+00:00", get_json=get_json
+    )
+    assert result.seen == ("wikipedia:en:SQLite",)
+    assert result.complete is False

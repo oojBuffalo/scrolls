@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _ITEMS_TABLE = """\
 CREATE TABLE items (
@@ -150,6 +150,60 @@ CREATE TABLE item_archive (
     "CREATE INDEX item_archive_item ON item_archive(item_id)",
 )
 
+# Held document text joins the search index (ADR 0119). `items.document_text`
+# is derived, never modelled: each Python write sets it from the media refs'
+# read text (`items.document_text`), and this migration backfills it in SQL. It
+# is a real column, not a computed view, because FTS5 reads its external
+# content back for `rebuild`/`integrity-check` and cannot read `json_each`
+# through a view. The index is rebuilt with a fourth column over it.
+_MEDIA_TEXT_AT = "json_extract(items.media, '$[' || m.key || '].text')"
+_DOCUMENT_TEXT_BACKFILL = f"""\
+UPDATE items SET document_text = (
+    SELECT group_concat({_MEDIA_TEXT_AT}, char(10))
+    FROM json_each(
+        CASE WHEN json_valid(items.media) AND json_type(items.media) = 'array'
+             THEN items.media ELSE '[]' END
+    ) AS m
+    WHERE json_type(items.media, '$[' || m.key || '].text') = 'text'
+      AND {_MEDIA_TEXT_AT} != ''
+)"""
+_FTS_COLUMNS = "title, summary, extracted_text, document_text"
+_DOCUMENT_SEARCH = (
+    "DROP TRIGGER items_fts_insert",
+    "DROP TRIGGER items_fts_delete",
+    "DROP TRIGGER items_fts_update",
+    "DROP TABLE items_fts",
+    "ALTER TABLE items ADD COLUMN document_text TEXT",
+    _DOCUMENT_TEXT_BACKFILL,
+    f"""\
+CREATE VIRTUAL TABLE items_fts USING fts5(
+    {_FTS_COLUMNS},
+    content='items', content_rowid='rowid'
+)""",
+    f"""\
+CREATE TRIGGER items_fts_insert AFTER INSERT ON items BEGIN
+    INSERT INTO items_fts(rowid, {_FTS_COLUMNS})
+    VALUES (new.rowid, new.title, new.summary, new.extracted_text, new.document_text);
+END""",
+    f"""\
+CREATE TRIGGER items_fts_delete AFTER DELETE ON items BEGIN
+    INSERT INTO items_fts(items_fts, rowid, {_FTS_COLUMNS})
+    VALUES ('delete', old.rowid, old.title, old.summary, old.extracted_text,
+            old.document_text);
+END""",
+    f"""\
+CREATE TRIGGER items_fts_update AFTER UPDATE ON items BEGIN
+    INSERT INTO items_fts(items_fts, rowid, {_FTS_COLUMNS})
+    VALUES ('delete', old.rowid, old.title, old.summary, old.extracted_text,
+            old.document_text);
+    INSERT INTO items_fts(rowid, {_FTS_COLUMNS})
+    VALUES (new.rowid, new.title, new.summary, new.extracted_text, new.document_text);
+END""",
+    f"""\
+INSERT INTO items_fts(rowid, {_FTS_COLUMNS})
+SELECT rowid, {_FTS_COLUMNS} FROM items""",
+)
+
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (),  # baseline: the meta table itself
     2: (_ITEMS_TABLE,),
@@ -159,6 +213,7 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
     6: (_CONCEPT_SUMMARIES_TABLE,),
     7: _CUSTODY_EVENTS_TABLE,
     8: _ITEM_ARCHIVE_TABLE,
+    9: _DOCUMENT_SEARCH,
 }
 
 
@@ -167,10 +222,18 @@ def init_db(db_path: Path) -> None:
 
     Raises ValueError if the database was written by a newer scrolls than
     this one; refusing beats silently downgrading the stamp.
+
+    The whole walk is one explicit transaction. Python's `sqlite3` opens no
+    implicit transaction before DDL, so `with conn:` alone would commit each
+    `DROP`/`ALTER` as it ran, and a migration that died halfway (migration 9
+    drops the search index before rebuilding it) would strand the library
+    between schemas. SQLite's DDL is transactional, so a failure now rolls
+    every step back and the stamp still names the schema the file holds.
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, isolation_level=None)  # we BEGIN/COMMIT
     try:
-        with conn:  # one transaction
+        conn.execute("BEGIN IMMEDIATE")
+        try:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
@@ -187,8 +250,38 @@ def init_db(db_path: Path) -> None:
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
     finally:
         conn.close()
+
+
+def upgrade_db(db_path: Path) -> bool:
+    """Migrate an existing database that is older than this code; else do nothing.
+
+    Every command runs this first, so a library written by an older scrolls
+    meets the current schema before any read or write touches it: a command
+    that writes items never finds a column missing (`document_text`, ADR
+    0119). A missing database is left missing, a current one is not written,
+    and a newer one is left for the command to report, as before.
+
+    Args:
+        db_path: The library database.
+
+    Returns:
+        Whether a migration ran. An unreadable file is not migrated here; the
+        command that opens it reports the problem itself.
+    """
+    try:
+        version = read_schema_version(db_path)
+    except sqlite3.DatabaseError:
+        return False
+    if version is None or version >= SCHEMA_VERSION:
+        return False
+    init_db(db_path)
+    return True
 
 
 def read_schema_version(db_path: Path) -> int | None:
