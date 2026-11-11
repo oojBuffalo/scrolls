@@ -2094,7 +2094,11 @@ the reader-facing drift posture — so it is `unchanged`, not `verified`).
     `test_import_items_records_a_conflict_as_a_custody_event`).
   - Or "show me the times I **resolved** one" (`--status resolved`, the
     `reconcile --keep-held` decision — see *reconcile* below, H276).
-- **A distinct axis from drift** — the conflict-axis events are never a drift
+  - Or "when did I **stop saving** this upstream?" (`--status
+    unsaved_upstream`, and `saved_upstream` for its sightings — the
+    collection-membership axis a complete `sync --collection` walk records,
+    ADR 0118).
+- **A distinct axis from drift** — the conflict- and membership-axis events are never a drift
   posture: they ride the ledger and this timeline but `doctor`'s
   `custody.drift` / `list --drift` ignore them (a peer disagreeing — or an
   operator affirming the held copy — is no evidence the live source moved).
@@ -4805,6 +4809,43 @@ $ scrolls sync x                                 # a collection source is not a 
 [exit 1]
 ```
 
+#### Saves removed upstream
+
+A pull that walked the **whole** collection knows what the service still
+holds, so it also records what the user removed there (ADR 0118):
+
+- **`unsaved_upstream`** — a held item an earlier walk saw and this one did
+  not. The item stays held and its scroll is untouched: un-saving upstream
+  never deletes custody (ADR 0113 §5).
+- **`saved_upstream`** — the walk saw the item: its first sighting, or its
+  return after a removal (reported as `resaved`).
+- **Per account** — membership is keyed by the account the walk ran as
+  (`x/bookmarks@<user id>`, `wikipedia/reading-lists@<name>`), so another
+  profile's account is never compared against this one. The first complete
+  walk per account records the baseline. A walk whose account is unknown
+  (X's env-var route carries none) compares nothing.
+- **Where they live** — on the custody ledger's membership axis, with that
+  key as `detail`. `scrolls history <id>` shows
+  them; they never move the drift posture.
+- **Only a complete walk compares.** A `--limit` walk, one that ended early,
+  or one with entries it could not name records nothing and says why in
+  `upstream.reason`. A deleted post that is still bookmarked counts as seen.
+- **An older walk never overrides a newer one.** When two syncs of one
+  account's collection overlap and the one that started first finishes
+  last, it records nothing: a removal the newer walk found would otherwise
+  read as a return.
+- **Recorded once.** A removal already recorded is counted in
+  `still_unsaved`, not recorded again.
+
+| `upstream` field | Meaning |
+| --- | --- |
+| `compared` | whether the walk was complete enough to compare |
+| `reason` | why not, or `null` |
+| `saved` | items recorded as members for the first time |
+| `unsaved` | ids newly found removed upstream |
+| `resaved` | ids that returned after a removal |
+| `still_unsaved` | removals already recorded, still absent |
+
 ### `scrolls sync` — the X bookmarks collection
 
 `scrolls sync x --collection bookmarks` (alias `--bookmarks`) `[--limit N] [--browser B] [--profile P] [--auth R]`
@@ -4858,18 +4899,23 @@ and quoted-tweet body from the same response that enumerated them
 | `session` | where the session came from (`chrome`, `firefox`, `env`, …) — provenance for the pull |
 | `failures[]` | per-entry parse problems that did not abort the walk |
 | `error` | present only on a partial pull, alongside what was captured |
+| `upstream` | what a complete walk found removed upstream — always present; see *Saves removed upstream* above |
 
 ```console
 $ scrolls sync x --bookmarks
-{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 3, "skipped": 0, "failed": 0, "pages": 2, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 3, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks          # nothing new saved since
-{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync x --bookmarks --limit 1
-{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "env", "failures": []}
+{"source": "x", "collection": "bookmarks", "imported": 1, "skipped": 0, "failed": 0, "pages": 1, "session": "chrome", "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
+[exit 0]
+
+$ scrolls sync x --bookmarks --browser env    # pasted cookies name no account
+{"source": "x", "collection": "bookmarks", "imported": 0, "skipped": 3, "failed": 0, "pages": 1, "session": "env", "failures": [], "upstream": {"compared": false, "reason": "the account behind the walk could not be identified", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 ```
 
@@ -4941,18 +4987,19 @@ so drift on a saved article is detectable.
 | `lists` | every reading list found, by name |
 | `failures[]` | per-entry problems that did not abort the walk |
 | `error` | present only on a partial pull, alongside what was captured |
+| `upstream` | what a complete walk found removed upstream — always present; see *Saves removed upstream* above |
 
 ```console
 $ scrolls sync wikipedia --reading-lists
-{"source": "wikipedia", "collection": "reading-lists", "imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 566, "skipped": 0, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": true, "reason": null, "saved": 566, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists       # nothing new saved since
-{"source": "wikipedia", "collection": "reading-lists", "imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 0, "skipped": 566, "failed": 0, "pages": 6, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": true, "reason": null, "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 
 $ scrolls sync wikipedia --reading-lists --limit 2
-{"source": "wikipedia", "collection": "reading-lists", "imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": []}
+{"source": "wikipedia", "collection": "reading-lists", "imported": 2, "skipped": 0, "failed": 0, "pages": 1, "session": "brave", "account": "NerdBuffalo", "lists": ["$$$", "default"], "failures": [], "upstream": {"compared": false, "reason": "a --limit walk sees only part of the collection", "saved": 0, "unsaved": [], "resaved": [], "still_unsaved": 0}}
 [exit 0]
 ```
 

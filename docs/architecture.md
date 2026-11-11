@@ -1000,6 +1000,11 @@ Detection and fetch take one URL at a time. A source may also offer a
 - **One loop:** `scrolls sync <source> --collection <name>` dispatches
   through the declaration and inserts with `INSERT OR IGNORE`, so a re-sync
   never overwrites a held item.
+- **Membership:** a pull also reports every entry it `seen` and whether it
+  is `complete`. A complete walk records `saved_upstream`/`unsaved_upstream`
+  on the custody ledger's membership axis (`compare_upstream`, ADR 0118), a
+  third axis beside the verify verdicts and import conflicts. Report-only:
+  a save removed upstream stays held.
 
 | Collection | Shape | Enters at | `saved_at` from | Routes | ADR |
 | --- | --- | --- | --- | --- | --- |

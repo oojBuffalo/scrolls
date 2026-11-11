@@ -104,12 +104,24 @@ _SUPERSEDED_DETAIL = (
 # posture folds (`CUSTODY_STATUSES`) — ADR 0104/0105/0106.
 CONFLICT_AXIS_STATUSES = (CONFLICT_STATUS, RESOLVED_STATUS, SUPERSEDED_STATUS)
 
-# Every status that can appear in a ledger row — the four verify verdicts plus the
-# two conflict-axis events (import `conflict` and its `resolved` supersession). The
-# `scrolls history --status` filter validates against this superset (a conflict or
-# resolution event is readable on the timeline and filterable), but the drift
-# posture reads only the `CUSTODY_STATUSES` verify verdicts.
-LEDGER_STATUSES = CUSTODY_STATUSES + CONFLICT_AXIS_STATUSES
+# The collection-membership axis (roadmap H444, ADR 0118): what a complete walk
+# of a saved collection found. `saved_upstream` — the walk saw the item in the
+# collection (its first sighting, or its return after a removal);
+# `unsaved_upstream` — an earlier walk saw it and this complete one did not, so
+# the user removed it upstream. The event's `detail` is the collection key
+# (`x/bookmarks`), so one item can carry membership in several collections.
+# Report-only and disjoint from the drift posture: an un-bookmarked post is
+# still held, and its source has not moved (ADR 0113 §5).
+SAVED_UPSTREAM_STATUS = "saved_upstream"
+UNSAVED_UPSTREAM_STATUS = "unsaved_upstream"
+MEMBERSHIP_AXIS_STATUSES = (SAVED_UPSTREAM_STATUS, UNSAVED_UPSTREAM_STATUS)
+
+# Every status that can appear in a ledger row — the four verify verdicts, the
+# conflict-axis events (an import `conflict` and its resolutions), and the
+# membership-axis events. The `scrolls history --status` filter validates
+# against this superset, but the drift posture reads only the
+# `CUSTODY_STATUSES` verify verdicts.
+LEDGER_STATUSES = CUSTODY_STATUSES + CONFLICT_AXIS_STATUSES + MEMBERSHIP_AXIS_STATUSES
 
 # The custody-fidelity tiers in best-held-first order — the three `get_fidelity`
 # returns. The canonical order every custody headline renders tiers in.
@@ -610,9 +622,34 @@ def events_for_items(
 
 # The content key that identifies a check across libraries — the autoincrement
 # `id` is per-library (never exported) and `detail` describes the same check, so
-# neither is part of the identity. Two ledger rows with this 5-tuple equal are
+# neither is part of the identity (except on the membership axis, where `detail`
+# is the collection key — `_event_identity`). Two ledger rows with this 5-tuple equal are
 # the same custody event (roadmap H67's idempotent-restore key).
 _EVENT_IDENTITY = ("item_id", "checked_at", "status", "prior_hash", "observed_hash")
+
+
+def _event_identity(event: CustodyEvent) -> tuple[str, tuple[object, ...]]:
+    """The restore-dedup WHERE clause and its parameters for one event.
+
+    `_EVENT_IDENTITY` for every axis, plus `detail` on the membership axis: there
+    `detail` is not a description but the account-scoped collection key (ADR
+    0118), so two accounts' records of the same item in the same second are two
+    events, not one.
+
+    Args:
+        event: The event a restore is about to insert.
+
+    Returns:
+        A `col IS ? AND …` clause and the values it binds, in order.
+    """
+    columns = list(_EVENT_IDENTITY)
+    values: list[object] = [
+        event.item_id, event.checked_at, event.status, event.prior_hash, event.observed_hash
+    ]
+    if event.status in MEMBERSHIP_AXIS_STATUSES:
+        columns.append("detail")
+        values.append(event.detail)
+    return " AND ".join(f"{col} IS ?" for col in columns), tuple(values)
 
 
 def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, int]:
@@ -635,7 +672,6 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     check see it. NULL hashes compare NULL-safely (SQLite ``IS``).
     """
     ordered = sorted(events, key=lambda e: e.checked_at)
-    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
     insert_cols = ", ".join(_EVENT_COLUMNS)
     placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
     imported = skipped = 0
@@ -643,7 +679,7 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
     try:
         with conn:
             for e in ordered:
-                identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+                where, identity = _event_identity(e)
                 exists = conn.execute(
                     f"SELECT 1 FROM custody_events WHERE {where} LIMIT 1", identity
                 ).fetchone()
@@ -652,7 +688,8 @@ def import_events(db_path: Path, events: Iterable[CustodyEvent]) -> tuple[int, i
                     continue
                 conn.execute(
                     f"INSERT INTO custody_events ({insert_cols}) VALUES ({placeholders})",
-                    (*identity, e.detail),
+                    (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash,
+                     e.detail),
                 )
                 imported += 1
     finally:
@@ -674,13 +711,12 @@ def preview_import_events(
     dry-run test pins these counts equal to a real import's, so the two never
     drift apart.
     """
-    where = " AND ".join(f"{col} IS ?" for col in _EVENT_IDENTITY)
     imported = skipped = 0
     seen: set[tuple[object, ...]] = set()
     conn = sqlite3.connect(db_path)
     try:
         for e in sorted(events, key=lambda e: e.checked_at):
-            identity = (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash)
+            where, identity = _event_identity(e)
             if identity in seen:
                 skipped += 1
                 continue
@@ -805,6 +841,107 @@ def latest_conflict_events(db_path: Path) -> dict[str, CustodyEvent]:
         tuple(CONFLICT_AXIS_STATUSES),
     )
     return {row["item_id"]: _from_row(row) for row in rows}
+
+
+def latest_membership_events(db_path: Path, collection: str) -> dict[str, CustodyEvent]:
+    """The most recent membership event per item for one collection (ADR 0118).
+
+    The membership-axis sibling of `latest_events`/`latest_conflict_events`: the
+    MAX(id) per item over `MEMBERSHIP_AXIS_STATUSES` whose `detail` names
+    `collection`, so the latest walk's finding wins. An item with no entry here
+    was never seen by a complete walk of that collection.
+
+    Args:
+        db_path: The library database.
+        collection: The collection key, `<source>/<name>` (`x/bookmarks`).
+
+    Returns:
+        Item id to that item's latest membership event in the collection.
+    """
+    rows = _query_events(
+        db_path, _LATEST_MEMBERSHIP_SQL, (*MEMBERSHIP_AXIS_STATUSES, collection)
+    )
+    return {row["item_id"]: _from_row(row) for row in rows}
+
+
+_LATEST_MEMBERSHIP_SQL = (
+    "SELECT * FROM custody_events WHERE id IN "
+    "(SELECT MAX(id) FROM custody_events WHERE status IN "
+    f"({', '.join('?' for _ in MEMBERSHIP_AXIS_STATUSES)}) "
+    "AND detail = ? GROUP BY item_id)"
+)
+
+
+def record_membership_walk(
+    db_path: Path,
+    collection: str,
+    started: int,
+    compare: Callable[[dict[str, CustodyEvent]], Any],
+) -> Any | None:
+    """Compare one complete walk against the ledger and record it, atomically.
+
+    Two syncs of one account's collection can overlap, and each must see the
+    other's findings or none of them. So the comparison runs inside one write
+    transaction with its own reads and writes:
+
+    - **A stale walk records nothing.** Every recorded walk, even one that
+      changed nothing, leaves its start as a watermark in `meta` under
+      `membership_walk:<collection>`. A walk that started before the watermark
+      is older than what the ledger already knows.
+    - **A current walk compares the ledger as it stands then.** Its latest
+      membership per item is read under the write lock, so a walk that
+      committed a moment earlier is part of the comparison, not lost under it.
+
+    Args:
+        db_path: The library database.
+        collection: The collection key, `<source>/<name>@<account>`.
+        started: When the walk started, in nanoseconds; finer than seconds,
+            so two walks started within one second still order.
+        compare: Builds the walk's comparison from each item's latest
+            membership event; whatever it returns carries the `events` to
+            append.
+
+    Returns:
+        The comparison, recorded; or None when a newer walk had already been
+        recorded and nothing was written.
+    """
+    watermark = f"membership_walk:{collection}"
+    placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        newest = conn.execute("SELECT value FROM meta WHERE key = ?", (watermark,)).fetchone()
+        if newest and int(newest[0]) > started:
+            conn.execute("ROLLBACK")
+            return None
+        latest = {
+            row["item_id"]: _from_row(row)
+            for row in conn.execute(
+                _LATEST_MEMBERSHIP_SQL, (*MEMBERSHIP_AXIS_STATUSES, collection)
+            )
+        }
+        comparison = compare(latest)
+        rows = [
+            (e.item_id, e.checked_at, e.status, e.prior_hash, e.observed_hash, e.detail)
+            for e in comparison.events
+        ]
+        conn.executemany(
+            f"INSERT INTO custody_events ({', '.join(_EVENT_COLUMNS)}) "
+            f"VALUES ({placeholders})",
+            rows,
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (watermark, str(started))
+        )
+        conn.execute("COMMIT")
+        return comparison
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
 
 
 def unresolved_conflicts(

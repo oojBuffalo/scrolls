@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from scrolls.custody import (
+    CUSTODY_STATUSES,
     DRIFT_POSTURES,
     FIDELITY_TIERS,
     drift_posture,
@@ -160,10 +161,15 @@ _FIDELITY_CLAUSE = (
 # per-hit `drift` is read off. So the clause matches exactly the posture each hit
 # shows, and a never-verified item (no row → the subquery yields NULL) maps to
 # `unverified`. ANDed before the LIMIT, so it scopes the top-k ranked selection
-# (the top hits at that posture), never a post-cap sieve of them.
+# (the top hits at that posture), never a post-cap sieve of them. Only the verify
+# verdicts count, as in `latest_events`: a conflict-axis or membership-axis row
+# appended later is not a drift verdict (ADR 0104, 0118), so `search --drift`
+# agrees with `list --drift` whatever else the ledger holds.
 _DRIFT_CLAUSE = (
     "scrolls_drift((SELECT ce.status FROM custody_events ce "
-    "WHERE ce.item_id = items.id ORDER BY ce.id DESC LIMIT 1)) = ?"
+    "WHERE ce.item_id = items.id AND ce.status IN ("
+    + ", ".join(f"'{status}'" for status in CUSTODY_STATUSES)
+    + ") ORDER BY ce.id DESC LIMIT 1)) = ?"
 )
 
 # The match-strength filter (the rank axis, H314) as a WHERE clause. A hit's

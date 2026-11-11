@@ -40,7 +40,6 @@ live-library evidence — see `docs/agents/progress/261029/plans.md`.
 
 | Slot | Slice | Issue | Maps to |
 | --- | --- | --- | --- |
-| H444 | **Saves removed upstream are recorded.** A complete collection walk marks held members it no longer sees as `unsaved_upstream`; report-only. | #24 | cap 3/4 |
 | H445 | **Held document text is searchable.** The FTS index reads PDF text, so `search` and `context` find it. | #25 | cap 7 |
 
 Preconditions: none between slices; the order is by custody value.
@@ -464,6 +463,7 @@ matrix, and the 2026-07-22 steer retired guard-cell families as a default.
 | H441 | Bundles carry media in an opt-in sidecar (production, `src/scrolls/bundle_media.py` + `cli.py`) — `export bundle --with-media DIR` with a SHA-256 manifest; `import bundle` validates, hash-checks and never overwrites; issue #12 (ADR 0115) | M4/M5, cap 4 |
 | H442 | A cited DOI is not a work identity (production, `src/scrolls/works.py`) — a `doi.org` link names an item's work only when its source is a scholarly record (`WORK_SOURCES`); since ADR 0110 Wikipedia citations had forged 185 works; live copy: 185 → 0 works, posture `at_risk` → `attention`; issue #22 (ADR 0116) | cap 5 |
 | H443 | `maintain` is safe to schedule (production, `src/scrolls/maintain.py` + `cli.py` + `mcp_server.py`) — every pass and the MCP act hold `.maintenance/lock` (an `flock` that dies with its holder); a second pass skips with exit 75 and the holder's `{pid, started_at}`; daily `--limit 200` launchd/cron recipe; live copy: overlapping pass refused, 20 rechecked; issue #23 (ADR 0117) | cap 1/3 |
+| H444 | Saves removed upstream are recorded (production, `src/scrolls/saved_collections.py` + `custody.py` + `x_bookmarks.py` + `x_graphql.py` + `x_api.py` + `wikipedia_lists.py` + `cli.py`) — walks report `seen` and `complete`; a complete walk records `saved_upstream`/`unsaved_upstream` on a ledger membership axis, report-only; a tombstoned post counts as seen and no longer ends the X walk; issue #24 (ADR 0118) | cap 3/4 |
 
 ---
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -35,6 +36,10 @@ from scrolls.items import ScrollItem, make_item_id
 _POSTED_AT_FORMAT = "%a %b %d %H:%M:%S %z %Y"  # "Mon Jun 01 15:34:00 +0000 2026"
 _MAX_TITLE_LENGTH = 80
 _CURSOR_PREFIX = "cursor-bottom"
+# Every pagination entry (`cursor-top-…`, `cursor-bottom-…`) is navigation,
+# not a save; a bookmarked post's entry is `tweet-<id>`.
+_PAGINATION_PREFIX = "cursor-"
+_TWEET_ENTRY = re.compile(r"tweet-(\d+)")
 
 # X wraps some posts in a visibility envelope; the real tweet hangs off `.tweet`.
 _VISIBILITY_TYPENAME = "TweetWithVisibilityResults"
@@ -52,11 +57,23 @@ class BookmarksPage:
         next_cursor: Cursor for the following page, or None at the end.
         failures: Per-entry problems that did not abort the page, each a dict
             with `entry_id` and `error`.
+        seen: The item id of every bookmark on the page, readable or not: a
+            deleted post is still bookmarked (ADR 0118).
+        unidentified: Entries that are neither pagination nor a nameable
+            post, so a comparison cannot know what they were.
+        timeline: Whether the response carried a bookmarks timeline at all.
+            X can answer HTTP 200 with only `errors`; that is not an empty
+            collection.
+        errors: The messages of any service errors the response carried.
     """
 
     items: tuple[ScrollItem, ...] = ()
     next_cursor: str | None = None
     failures: tuple[dict, ...] = ()
+    seen: tuple[str, ...] = ()
+    unidentified: int = 0
+    timeline: bool = True
+    errors: tuple[str, ...] = ()
 
 
 def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
@@ -73,15 +90,24 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
     """
     items: list[ScrollItem] = []
     failures: list[dict] = []
+    seen: list[str] = []
+    unidentified = 0
     next_cursor: str | None = None
 
     for entry in _entries(payload):
         entry_id = entry.get("entryId") or ""
-        if entry_id.startswith(_CURSOR_PREFIX):
-            value = (entry.get("content") or {}).get("value")
-            if isinstance(value, str) and value:
-                next_cursor = value
+        if entry_id.startswith(_PAGINATION_PREFIX):
+            if entry_id.startswith(_CURSOR_PREFIX):
+                value = (entry.get("content") or {}).get("value")
+                if isinstance(value, str) and value:
+                    next_cursor = value
             continue
+
+        match = _TWEET_ENTRY.fullmatch(entry_id)
+        if match:
+            seen.append(make_item_id("x", match.group(1), ""))
+        else:
+            unidentified += 1
 
         result = _tweet_result(entry)
         if result is None:
@@ -91,7 +117,45 @@ def parse_bookmarks_page(payload: dict, *, synced_at: str) -> BookmarksPage:
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             failures.append({"entry_id": entry_id, "error": str(exc)})
 
-    return BookmarksPage(tuple(items), next_cursor, tuple(failures))
+    return BookmarksPage(
+        tuple(items),
+        next_cursor,
+        tuple(failures),
+        tuple(seen),
+        unidentified,
+        timeline=_has_timeline(payload),
+        errors=service_errors(payload),
+    )
+
+
+def _has_timeline(payload: dict) -> bool:
+    """Whether a response carries the bookmarks timeline's instruction list."""
+    timeline = (
+        ((payload or {}).get("data") or {})
+        .get("bookmark_timeline_v2", {})
+        .get("timeline", {})
+    )
+    return isinstance(timeline, dict) and isinstance(timeline.get("instructions"), list)
+
+
+def service_errors(payload: dict) -> tuple[str, ...]:
+    """The messages of the `errors` array an X response carried, if any.
+
+    Args:
+        payload: A decoded GraphQL or API v2 response.
+
+    Returns:
+        One message per error, in order; empty when there were none.
+    """
+    errors = (payload or {}).get("errors")
+    if not isinstance(errors, list):
+        return ()
+    return tuple(
+        str(error.get("message") or error.get("detail") or error)
+        if isinstance(error, dict)
+        else str(error)
+        for error in errors
+    )
 
 
 def _entries(payload: dict) -> list[dict]:
