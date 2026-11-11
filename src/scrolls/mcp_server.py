@@ -42,6 +42,7 @@ from scrolls.maintain import (
     custody_snapshot,
     load_snapshot,
     log_path,
+    maintenance_lock,
     read_log,
     skipped_recheck_report,
     snapshot_headline,
@@ -963,6 +964,11 @@ def run_maintenance(source: str | None = None) -> dict[str, Any]:
     explicit act — `verify_scroll` per item — the same read/act boundary
     `get_library_health` draws against `scrolls doctor --fix`.
 
+    **One pass at a time** (ADR 0117). This holds the same run lock as the CLI
+    pass, so while a scheduled `scrolls maintain` runs it raises
+    `MaintenanceBusy` ("maintenance already running") instead of recording a
+    baseline beside it.
+
     Report-only and idempotent (custody-vision §2.4): it regenerates views and
     records the snapshot/log bookkeeping, but never repairs index rows,
     reclassifies, or re-summarizes — `doctor --fix` / `classify --stale` /
@@ -973,13 +979,17 @@ def run_maintenance(source: str | None = None) -> dict[str, Any]:
     """
     paths = get_paths()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    previous = load_snapshot(snapshot_path(paths))
-    # --no-recheck over MCP: skip the live edge, report coverage from the ledger.
-    # `source` scopes the recheck-coverage read to that source (roadmap H165/H203).
-    recheck_report = skipped_recheck_report(paths, source=source)
-    return assemble_report(
-        paths, recheck_report=recheck_report, previous=previous, source=source, now=now
-    )
+    # The same run lock as the CLI pass (ADR 0117): while a scheduled pass runs,
+    # this refuses with `MaintenanceBusy` rather than recording beside it.
+    with maintenance_lock(paths, now=now):
+        previous = load_snapshot(snapshot_path(paths))
+        # --no-recheck over MCP: skip the live edge, report coverage from the
+        # ledger. `source` scopes the recheck-coverage read (roadmap H165/H203).
+        recheck_report = skipped_recheck_report(paths, source=source)
+        return assemble_report(
+            paths, recheck_report=recheck_report, previous=previous, source=source,
+            now=now,
+        )
 
 
 def get_maintenance_history(

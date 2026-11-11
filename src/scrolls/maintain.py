@@ -37,12 +37,21 @@ time from `scrolls maintain --history`. It follows the custody-ledger posture
 (custody-vision §2.4) — append, never rewrite — and the same degrade-safely
 read posture as the snapshot: a missing log is an empty history (never an
 error), and one corrupt line is skipped rather than hiding every good run.
+
+Every pass — the CLI's and the MCP `run_maintenance` act — runs under one
+run lock, `<root>/.maintenance/lock` (`maintenance_lock`, ADR 0117), so a
+scheduled pass that overruns makes the next one skip rather than overlap.
+Reading the history never takes it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import fcntl
 import json
+import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -98,9 +107,15 @@ _SCOPABLE_REFRESH = frozenset({"enrichment_stale", "summaries_stale"})
 
 SNAPSHOT_RELPATH = Path(".maintenance") / "last-run.json"
 LOG_RELPATH = Path(".maintenance") / "log.jsonl"
+LOCK_RELPATH = Path(".maintenance") / "lock"
 
 # `scrolls maintain --history` with no count prints this many recent runs.
 DEFAULT_HISTORY_LIMIT = 10
+
+# The exit code of a pass that skipped because another holds the lock:
+# sysexits' EX_TEMPFAIL, "try again later". Distinct from 1 (structural
+# issues remain) so a scheduler can tell a skip from a finding (ADR 0117).
+EXIT_ALREADY_RUNNING = 75
 
 
 def snapshot_path(paths: LibraryPaths) -> Path:
@@ -111,6 +126,76 @@ def snapshot_path(paths: LibraryPaths) -> Path:
 def log_path(paths: LibraryPaths) -> Path:
     """Where a library's append-only maintenance run log lives."""
     return paths.root / LOG_RELPATH
+
+
+def lock_path(paths: LibraryPaths) -> Path:
+    """Where a library's maintenance run lock lives."""
+    return paths.root / LOCK_RELPATH
+
+
+class MaintenanceBusy(RuntimeError):
+    """Another maintenance pass holds this library's run lock.
+
+    Attributes:
+        holder: The running pass's `{pid, started_at}` as it recorded them, or
+            None when the lock file could not be read.
+    """
+
+    def __init__(self, holder: dict[str, Any] | None) -> None:
+        self.holder = holder
+        since = f" since {holder['started_at']}" if holder else ""
+        super().__init__(f"maintenance already running{since}")
+
+
+@contextlib.contextmanager
+def maintenance_lock(paths: LibraryPaths, *, now: str) -> Iterator[None]:
+    """Hold the library's maintenance run lock for one pass (ADR 0117).
+
+    A second pass while one runs is refused, not queued: a scheduled pass
+    that overruns its interval makes the next tick skip rather than overlap,
+    so two passes never recheck, append, and record a baseline at once. The
+    lock is an OS file lock (`flock`) on `.maintenance/lock`, so it dies with
+    its holder: a pass killed mid-run leaves the file but not the lock, and
+    the next pass runs. The holder writes its `{pid, started_at}` into the
+    file so a refused pass can say who holds it.
+
+    Args:
+        paths: The library whose maintenance is being run.
+        now: This pass's start time, recorded for a refused pass to report.
+
+    Yields:
+        None, while the lock is held.
+
+    Raises:
+        MaintenanceBusy: Another pass holds the lock.
+    """
+    path = lock_path(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.seek(0)
+            raise MaintenanceBusy(_read_holder(handle.read())) from None
+        try:
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"pid": os.getpid(), "started_at": now}))
+            handle.flush()
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _read_holder(text: str) -> dict[str, Any] | None:
+    """The `{pid, started_at}` a lock holder recorded, or None if unreadable."""
+    try:
+        holder = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(holder, dict) or not isinstance(holder.get("started_at"), str):
+        return None
+    return holder
 
 
 def custody_snapshot(doctor_report: dict[str, Any]) -> dict[str, Any]:
