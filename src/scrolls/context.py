@@ -96,6 +96,7 @@ from scrolls.maintain import (
 from scrolls.search import (
     SearchHit,
     count_matches,
+    document_passage,
     render_strength_headline,
     search_items,
     tally_strength,
@@ -103,6 +104,8 @@ from scrolls.search import (
 from scrolls.works import render_at_risk_works
 
 _EXCERPT_CHARS = 700
+# How much of a held document a document excerpt keeps before its match.
+_EXCERPT_LEAD = 200
 DEFAULT_LIMIT = 8
 
 # Progressive context budget tiers (MVP M3, obsidian L0–L3 adaptation). A
@@ -490,10 +493,10 @@ def build_context(
     # bodies on demand with `scrolls show <id>` or a `--budget full` re-run.
     if _tier_at_least(budget, "full"):
         lines += ["", "## Excerpts"]
-        for item in items:
+        for hit, item in pairs:
             lines += ["", f"### {item.title or item.id}", "", _meta_line(item)]
             lines += _provenance_tags(item, verdicts.get(item.id))
-            excerpt = _excerpt(item)
+            excerpt = _excerpt(db_path, item, hit, query)
             if excerpt:
                 lines += ["", excerpt]
 
@@ -766,10 +769,36 @@ def _provenance_tags(item: ScrollItem, verdict: CustodyEvent | None) -> list[str
     return tags
 
 
-def _excerpt(item: ScrollItem) -> str:
-    # collapse whitespace so stray markdown in extracted text can't break
-    # the bundle's own structure
-    text = " ".join((item.summary or item.extracted_text or "").split())
+def _excerpt(db_path: Path, item: ScrollItem, hit: SearchHit, query: str) -> str:
+    """The body text a full-budget bundle shows for one match.
+
+    A match the query found only in a held document (ADR 0119) shows that
+    document's text from just before the match FTS found there, since the
+    item's own summary and body do not contain it; every other match shows the
+    summary, else the body.
+
+    Args:
+        db_path: The library database, whose index locates the match.
+        item: The matched item.
+        hit: Its search hit, naming the fields the query landed in.
+        query: The bundle's query.
+
+    Returns:
+        The excerpt, whitespace collapsed so stray markdown cannot break the
+        bundle's own structure, clipped to `_EXCERPT_CHARS`.
+    """
+    fields = set(hit.matched_fields)
+    if "document_text" in fields and not fields & {"summary", "extracted_text"}:
+        found = document_passage(db_path, item.id, query, lead=_EXCERPT_LEAD)
+        if found:
+            passage, cut = found
+            return "From a held document: " + _clip(" ".join(passage.split()), cut_before=cut)
+    return _clip(" ".join((item.summary or item.extracted_text or "").split()))
+
+
+def _clip(text: str, *, cut_before: bool = False) -> str:
+    """Cut `text` to `_EXCERPT_CHARS` on a word boundary, marking each cut."""
+    prefix = "… " if cut_before else ""
     if len(text) <= _EXCERPT_CHARS:
-        return text
-    return text[:_EXCERPT_CHARS].rsplit(" ", 1)[0] + " …"
+        return prefix + text
+    return prefix + text[:_EXCERPT_CHARS].rsplit(" ", 1)[0] + " …"

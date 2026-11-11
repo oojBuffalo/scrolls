@@ -700,8 +700,12 @@ Two stores, by design (IDEAS.md §3):
   `src/scrolls/db.py`). List-valued fields (`tags`, `concepts`, `links`,
   `media`) and `provenance` round-trip through JSON text columns. An
   external-content FTS5 table (`items_fts`) over title/summary/extracted
-  text is kept in sync by SQL triggers so no Python write path can forget
-  it. A `subscriptions` table holds followed feeds and their sync
+  text and `document_text` is kept in sync by SQL triggers so no Python
+  write path can forget it. `document_text` is the one column outside the
+  dataclass: every write derives it from the media refs' read text, so the
+  index finds what a held PDF says, and no export carries it (ADR 0119).
+  Every command first upgrades an older database (`db.upgrade_db`), so a
+  write never meets a missing column. A `subscriptions` table holds followed feeds and their sync
   state, including each feed's HTTP cache validators (ADR 0017,
   ADR 0019) — sync state belongs to the index, not config (IDEAS.md
   §3). A `concept_summaries` table holds the LLM concept engine's
