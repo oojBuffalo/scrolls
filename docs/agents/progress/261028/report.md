@@ -2,7 +2,7 @@
 
 ## Verdict
 
-The core is a release candidate after the hardening changes in ADR 0116.
+The core is a release candidate after the hardening changes in ADR 0120.
 The final Python matrix, installed-package checks, and public-source
 verification pass. A blanket
 claim that every optional integration has been tested live is not supported.

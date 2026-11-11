@@ -44,7 +44,7 @@ each command moves items between stages or derives artifacts from them.
   run — so a bulk-imported spine enriches incrementally. A record already
   holding raw text, extracted text, or a content hash cannot be overwritten
   by `fetch`; `verify` records live changes. Repeating `ingest` renders the
-  held record without fetching again (ADR 0116).
+  held record without fetching again (ADR 0120).
 - `scrolls md [id]` renders each fetched item to a Markdown scroll at
   `scrolls/<source>/<slug>.md` and moves it to `rendered`
   (`src/scrolls/render.py`).
@@ -728,7 +728,7 @@ Two stores, by design (IDEAS.md §3):
 artifact paths, event statuses, and archive snapshot identities must be valid;
 unknown fields remain forward-compatible. Artifact paths stay in their
 `scrolls/` or `media/` tree and cannot contain symlink aliases. Removal keeps
-files still referenced by another item (ADR 0116).
+files still referenced by another item (ADR 0120).
 
 The library root is `~/.scrolls`, overridden by `$SCROLLS_HOME` — every
 path derives from the root so tests and portable installs can relocate

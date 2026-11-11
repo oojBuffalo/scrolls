@@ -65,7 +65,7 @@ scroll that `scrolls show <id>` answers authoritatively.
   files still referenced by another item (`tests/test_artifact_paths.py`).
 - **Views are checked against the held record.** `doctor` reports missing
   and stale scrolls; `doctor --fix` regenerates them. This includes a scroll
-  left over after adopting or restoring another capture (ADR 0116).
+  left over after adopting or restoring another capture (ADR 0120).
 
 ### Frontmatter
 

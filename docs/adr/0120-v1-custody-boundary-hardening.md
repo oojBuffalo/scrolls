@@ -1,4 +1,4 @@
-# 0116: Validate custody boundaries before a v1 release
+# 0120: Validate custody boundaries before a v1 release
 
 Date: 2026-10-28
 Status: accepted

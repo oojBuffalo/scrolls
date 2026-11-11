@@ -7,7 +7,7 @@ reproduced failures drive the hardening changes.
 
 The fixes preserve canonical raw capture, keep adoption explicit, retain
 model-complete exports, and regenerate derived views from the index. Contract
-docs and ADR 0116 describe the resulting behavior. The operative vision is
+docs and ADR 0120 describe the resulting behavior. The operative vision is
 unchanged.
 
 The user did not grant commit, push, tag, or publication authority. Changes

@@ -5078,7 +5078,7 @@ of stage (`tests/test_capture_safety.py`).
 A record already holding raw text, extracted text, or a content hash fails
 with an instruction to use `verify`. Its capture stays unchanged. Replacing
 a held capture uses the explicit `import --accept-incoming` workflow, which
-archives the prior copy (ADR 0116).
+archives the prior copy (ADR 0120).
 
 - **Adapterless items skip in a batch** — they stay `detected` for a future
   scrolls and do not fail the run
