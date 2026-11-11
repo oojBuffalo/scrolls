@@ -1,4 +1,7 @@
-# Plans — 2026-07-22
+# Plans — 2026-07-22 (historical; superseded)
+
+*Superseded 2026-10-29 by `../261029/plans.md`, which reconciles each
+objective below against what shipped.*
 
 **Question this file answers:** with the codebase and goals reconciled
 (`reconciliation.md`), what are the next goals/objectives — as logical items,
