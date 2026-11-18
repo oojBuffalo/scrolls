@@ -59,7 +59,11 @@ def load_events_export(path: Path) -> tuple[list[CustodyEvent], dict]:
         raise EventsSourceError(f"no events export at {path}")
 
     events: list[CustodyEvent] = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise EventsSourceError(f"cannot read {path}: {exc}") from exc
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line:
             continue
@@ -80,6 +84,9 @@ def load_events_export(path: Path) -> tuple[list[CustodyEvent], dict]:
                 f"{path} line {lineno}: custody event missing required field(s): "
                 + ", ".join(missing)
             )
-        events.append(event_from_dict(data))
+        try:
+            events.append(event_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise EventsSourceError(f"{path} line {lineno}: {exc}") from exc
 
     return events, {"events": len(events)}

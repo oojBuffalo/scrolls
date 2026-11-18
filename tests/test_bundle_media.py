@@ -722,3 +722,16 @@ def test_an_unencodable_manifest_path_fails_before_anything_lands(
     assert "MANIFEST.jsonl line 3" in json.loads(captured.err)["error"]
     assert main(["list"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+def test_sidecar_export_reports_a_recorded_path_the_validator_rejects(library_a, tmp_path, capsys):
+    # A row imported before paths were validated can still record one.
+    insert_item(
+        library_a.db_path,
+        _item("wikipedia:en:Legacy", "Legacy database",
+              media=({"type": "image", "url": "https://u.example/l.png", "path": "old/photo.png"},)),
+    )
+    code, captured = _export(tmp_path, capsys, "--with-media", str(tmp_path / "ml.media"))
+    assert code == 1
+    assert "error" in json.loads(captured.err)
+    assert captured.out == ""

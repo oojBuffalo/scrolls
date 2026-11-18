@@ -7,9 +7,12 @@ parameters so tests never touch the network.
 
 from __future__ import annotations
 
+import gzip
+import http.client
 import json
 import urllib.error
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +20,10 @@ from scrolls import __version__
 
 USER_AGENT = f"scrolls/{__version__} (+https://github.com/oojBuffalo/scrolls)"
 _TIMEOUT_SECONDS = 30
+# A gzip body can expand a thousandfold, so a read with no cap of its own still
+# stops here. An uncompressed body costs its sender every byte and stays
+# uncapped. Four times the largest document ADR 0112 recorded (62.6 MB).
+_MAX_DECODED_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,51 @@ class ConditionalText:
     etag: str | None = None
     last_modified: str | None = None
     not_modified: bool = False
+
+
+def _response_body(response):
+    """Decode HTTP Content-Encoding without unpacking ordinary .gz files."""
+    if response.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+        return gzip.GzipFile(fileobj=response)
+    return response
+
+
+def _read_body(body, size: int = -1) -> bytes:
+    """Read `size` bytes, or the whole body bounded by the decoded ceiling.
+
+    Raises:
+        OSError: The gzip stream is corrupt, a whole-body read of it decodes
+            past `_MAX_DECODED_BYTES`, or the body ended before its declared
+            length.
+    """
+    try:
+        if size < 0 and isinstance(body, gzip.GzipFile):
+            data = body.read(_MAX_DECODED_BYTES + 1)
+            if len(data) > _MAX_DECODED_BYTES:
+                raise OSError(
+                    f"compressed HTTP response exceeds {_MAX_DECODED_BYTES} decoded bytes"
+                )
+            _require_complete(body.fileobj)
+            return data
+        # No argument, not -1: Python 3.11 skips the length check for read(-1).
+        return body.read() if size < 0 else body.read(size)
+    except (EOFError, zlib.error) as exc:
+        raise OSError(f"invalid compressed HTTP response: {exc}") from exc
+    except http.client.IncompleteRead as exc:
+        raise OSError(f"incomplete HTTP response: {exc}") from exc
+
+
+def _require_complete(response) -> None:
+    """Raise when a fully read transfer ended before its declared length.
+
+    `read(n)` returns an early end of stream as an ordinary empty read, so a
+    dropped connection would otherwise be held as a complete capture. That
+    includes a gzip body cut exactly after a complete member, which decodes
+    cleanly. `http.client` keeps the bytes still owed in `response.length`.
+    """
+    missing = getattr(response, "length", None)
+    if missing:
+        raise OSError(f"incomplete HTTP response: {missing} bytes missing")
 
 
 def get_bytes(
@@ -43,18 +95,20 @@ def get_bytes(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        body = _response_body(response)
         if max_bytes is None:
-            return response.read()
+            return _read_body(body)
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = response.read(65536)
+            chunk = _read_body(body, 65536)
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
                 raise ValueError(f"response body exceeds {max_bytes} bytes")
             chunks.append(chunk)
+        _require_complete(response)
         return b"".join(chunks)
 
 
@@ -84,24 +138,27 @@ def get_bytes_within(
         url, headers={"User-Agent": USER_AGENT, **(headers or {})}
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+        body = _response_body(response)
         declared = response.headers.get("Content-Length")
-        size = int(declared) if declared and declared.isdigit() else None
+        # Content-Length describes the compressed transfer, not the held bytes.
+        size = int(declared) if body is response and declared and declared.isdigit() else None
         if max_bytes is None:
-            return response.read(), size
+            payload = _read_body(body)
+            return payload, len(payload) if body is not response else size
         if size is not None:
             if size > max_bytes:
                 return None, size
-            return response.read(), size
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = response.read(65536)
+            chunk = _read_body(body, 65536)
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
                 return None, None  # host declared no size; we know only that it exceeds
             chunks.append(chunk)
+        _require_complete(response)
         return b"".join(chunks), total
 
 
@@ -139,7 +196,7 @@ def post_json(
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+        return json.loads(_read_body(_response_body(response)).decode("utf-8", errors="replace"))
 
 
 def get_conditional(
@@ -160,7 +217,7 @@ def get_conditional(
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             return ConditionalText(
-                text=response.read().decode("utf-8", errors="replace"),
+                text=_read_body(_response_body(response)).decode("utf-8", errors="replace"),
                 etag=response.headers.get("ETag"),
                 last_modified=response.headers.get("Last-Modified"),
             )

@@ -88,6 +88,8 @@ def fetch_item(
         project = get_json(project_url)
     except (OSError, ValueError) as exc:
         raise FetchError(f"gitlab API request failed: {exc}") from exc
+    if not isinstance(project, dict):
+        raise FetchError("gitlab API returned a non-object project response")
 
     # The README is optional: a project without one carries a null
     # `readme_url`, an odd payload fetches to nothing, and neither should

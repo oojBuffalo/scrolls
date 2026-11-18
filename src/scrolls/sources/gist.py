@@ -56,6 +56,8 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         gist = get_json(f"{API_ROOT}/gists/{item.source_id}")
     except (OSError, ValueError) as exc:
         raise FetchError(f"github gist API request failed: {exc}") from exc
+    if not isinstance(gist, dict):
+        raise FetchError("github gist API returned a non-object response")
 
     files = gist.get("files") or {}
     filenames = sorted(files)

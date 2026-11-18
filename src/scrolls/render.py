@@ -21,13 +21,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 import unicodedata
 from dataclasses import replace
 
 from scrolls import documents
 from scrolls.items import ScrollItem
 from scrolls.mathtext import normalize_math
-from scrolls.paths import LibraryPaths
+from scrolls.paths import LibraryPaths, alias_key, artifact_path
 
 _FRONTMATTER_FIELDS = (
     "id",
@@ -85,14 +86,18 @@ def render_markdown(item: ScrollItem) -> str:
     return "\n".join(lines) + "\n\n" + "\n\n".join(sections) + "\n"
 
 
-def write_scroll(paths: LibraryPaths, item: ScrollItem) -> ScrollItem:
+def write_scroll(
+    paths: LibraryPaths, item: ScrollItem, *, replacing_ids: tuple[str, ...] = ()
+) -> ScrollItem:
     """Write the item's scroll file; return the item at stage 'rendered'.
 
     A stored `markdown_path` is reused so re-renders keep a stable path
     even when the title changes; otherwise the path is slugged from the
     title with an id-derived suffix on collision.
     """
-    rendered, _ = _render_to_disk(paths, item, only_if_changed=False)
+    rendered, _ = _render_to_disk(
+        paths, item, only_if_changed=False, replacing_ids=replacing_ids
+    )
     return rendered
 
 
@@ -115,20 +120,21 @@ def refresh_scroll(paths: LibraryPaths, item: ScrollItem) -> tuple[ScrollItem, b
 
 
 def _render_to_disk(
-    paths: LibraryPaths, item: ScrollItem, *, only_if_changed: bool
+    paths: LibraryPaths, item: ScrollItem, *, only_if_changed: bool,
+    replacing_ids: tuple[str, ...] = (),
 ) -> tuple[ScrollItem, bool]:
     relpath = item.markdown_path or _new_relpath(paths, item)
+    if owned_by_peer(paths, item, relpath, replacing_ids):
+        relpath = _new_relpath(paths, item)
     rendered = replace(item, markdown_path=relpath, stage="rendered")
-    target = paths.root / relpath
-    content = render_markdown(rendered)
-    if (
-        only_if_changed
-        and target.is_file()
-        and target.read_text(encoding="utf-8") == content
-    ):
+    target = artifact_path(paths, relpath, "scrolls")
+    # Bytes, not text mode: no newline translation on write or on compare, so
+    # a CRLF in the held text survives and Windows writes what doctor expects.
+    content = render_markdown(rendered).encode("utf-8")
+    if only_if_changed and target.is_file() and target.read_bytes() == content:
         return rendered, False
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    target.write_bytes(content)
     return rendered, True
 
 
@@ -136,10 +142,42 @@ def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
     slug = slugify(item.title or "") or slugify(item.id) or "item"
     source_dir = paths.scrolls_dir / item.source
     candidate = source_dir / f"{slug}.md"
-    if candidate.exists():  # another item owns this slug
-        suffix = hashlib.sha256(item.id.encode("utf-8")).hexdigest()[:8]
-        candidate = source_dir / f"{slug}-{suffix}.md"
-    return str(candidate.relative_to(paths.root))
+    suffix = hashlib.sha256(item.id.encode("utf-8")).hexdigest()[:8]
+    attempt = 0
+    while True:
+        relpath = candidate.relative_to(paths.root).as_posix()
+        target = artifact_path(paths, relpath, "scrolls")
+        if not target.exists() and not owned_by_peer(paths, item, relpath):
+            return relpath
+        attempt += 1
+        tail = suffix if attempt == 1 else f"{suffix}-{attempt}"
+        candidate = source_dir / f"{slug}-{tail}.md"
+
+
+def owned_by_peer(
+    paths: LibraryPaths, item: ScrollItem, relpath: str,
+    replacing_ids: tuple[str, ...] = (),
+) -> bool:
+    """Whether a row other than `item` (or `replacing_ids`) names this scroll.
+
+    Paths are compared by `alias_key`, so a peer that spells the same file in
+    another case still owns it.
+    """
+    if not paths.db_path.exists():
+        return False
+    key = alias_key(relpath)
+    # ponytail: folds every row's path in Python, O(rows) per render. Narrow it
+    # in SQL (COLLATE NOCASE for ASCII) if bulk re-render gets slow at scale.
+    with sqlite3.connect(paths.db_path) as conn:
+        owners = conn.execute(
+            "SELECT id, markdown_path FROM items"
+            " WHERE id != ? AND markdown_path IS NOT NULL",
+            (item.id,),
+        )
+        return any(
+            owner not in replacing_ids and alias_key(path) == key
+            for owner, path in owners
+        )
 
 
 def slugify(text: str) -> str:

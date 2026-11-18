@@ -78,7 +78,11 @@ def load_items_export(path: Path) -> tuple[list[ScrollItem], dict]:
         raise ItemsSourceError(f"no items export at {path}")
 
     items: list[ScrollItem] = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ItemsSourceError(f"cannot read {path}: {exc}") from exc
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line:
             continue
@@ -99,6 +103,9 @@ def load_items_export(path: Path) -> tuple[list[ScrollItem], dict]:
                 f"{path} line {lineno}: item missing required field(s): "
                 + ", ".join(missing)
             )
-        items.append(item_from_dict(data))
+        try:
+            items.append(item_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise ItemsSourceError(f"{path} line {lineno}: {exc}") from exc
 
     return items, {"items": len(items)}

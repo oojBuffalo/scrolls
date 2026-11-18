@@ -651,8 +651,8 @@ def test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflic
     # the held content FLIPPED to the peer's capture
     assert get_item(lib.db_path, original.id).content_hash == PEER_HASH
 
-    # the conflict aggregate moved 1 → 0; the score was never lowered.
-    assert main(["doctor"]) == 0
+    # Refresh the adopted scroll view before auditing the cleared conflict.
+    assert main(["doctor", "--fix"]) == 0
     adopted_state = json.loads(capsys.readouterr().out)["custody"]
     assert adopted_state["score"] == 100
     assert adopted_state["conflicts"]["items"] == 0
@@ -687,7 +687,7 @@ def test_adopt_a_peers_better_capture_flips_the_held_copy_and_clears_the_conflic
     # the conflict aggregate is still 0 (a superseded adoption, never an open
     # conflict); the score still 100 — the whole flip-and-flip-back kept custody
     # intact, every prior recoverable, integrity never lowered.
-    assert main(["doctor"]) == 0
+    assert main(["doctor", "--fix"]) == 0
     final = json.loads(capsys.readouterr().out)["custody"]
     assert final["score"] == 100
     assert final["conflicts"]["items"] == 0
@@ -761,7 +761,8 @@ def test_restore_by_version_rolls_back_to_a_specific_earlier_capture(
     """
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     # 1. HOLD the topic in full; the arxiv paper is the one we'll recapture in a chain.
@@ -897,7 +898,8 @@ def test_archive_diff_decides_then_restore_acts_exactly_as_predicted(
     """
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     # 1. HOLD the topic in full; the arxiv paper is the one a peer re-captures.
@@ -1017,7 +1019,8 @@ def test_recovery_workflow_survives_a_machine_handoff(
     """
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     # 1. HOLD + ADOPT a chain on machine A: hold the topic in full, then adopt two
@@ -1181,7 +1184,8 @@ def test_recovery_workflow_survives_a_jsonl_backup_handoff(
     """
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     # 1. HOLD + ADOPT a chain on machine A: hold the topic in full, then adopt two
@@ -1354,7 +1358,8 @@ def test_incremental_backup_workflow_round_trips_the_recovery_family(
     T0 = "2026-06-19T00:00:00+00:00"
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     # selectors the recovery family reads over: the oldest prior by hash (reach
@@ -1532,7 +1537,8 @@ def test_a_prune_does_not_propagate_through_an_incremental_backup(
     T0 = "2026-06-19T00:00:00+00:00"
 
     def _custody() -> dict:
-        assert main(["doctor"]) == 0
+        # Import and restore update canonical rows; refresh their generated views.
+        assert main(["doctor", "--fix"]) == 0
         return json.loads(capsys.readouterr().out)["custody"]
 
     def _archive_priors(db_path) -> list[str]:

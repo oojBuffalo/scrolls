@@ -27,6 +27,20 @@ Sources → Items → Scrolls → Library → Agents
 5. **Index & compile** — SQLite/FTS index plus a compiled, interlinked Markdown knowledge base.
 6. **Expose** — serve the library to humans and agents via CLI, MCP, and portable bundles.
 
+## Install from a checkout
+
+Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync --locked
+uv run scrolls init
+uv run scrolls --help
+```
+
+Run the commands below with `uv run` from the checkout, or install the CLI
+with `uv tool install .`. Set `SCROLLS_HOME` to use a library other than
+`~/.scrolls`.
+
 ## Quickstart
 
 ```bash
@@ -40,6 +54,9 @@ scrolls related wikipedia:en:SQLite
 scrolls kb                          # compile the interlinked library
 scrolls agent install               # write agent instruction files
 ```
+
+Repeating `ingest` preserves the held capture. Use `verify` to record live
+drift; adopting a replacement uses the explicit import/conflict workflow.
 
 `scrolls sync` is feed-based live delta updates — distinct from one-off `add` and
 bulk `import`. Follow any RSS/Atom feed (a blog, a YouTube channel or playlist, an

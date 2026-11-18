@@ -55,6 +55,8 @@ def fetch_item(
         oembed = get_json(_oembed_url(canonical_url))
     except (OSError, ValueError) as exc:
         raise FetchError(f"youtube oEmbed request failed: {exc}") from exc
+    if not isinstance(oembed, dict):
+        raise FetchError("youtube oEmbed returned a non-object response")
 
     transcript: list[dict[str, Any]] | None = None
     if not is_playlist:

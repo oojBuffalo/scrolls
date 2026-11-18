@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scrolls import __version__
+from scrolls.limits import validate_limit
 from scrolls.agents import install_agent_docs
 from scrolls.bookmarks import ImportSourceError as BookmarksSourceError
 from scrolls.bookmarks import dump_bookmark_export, load_bookmark_export
@@ -162,7 +163,7 @@ from scrolls.overrides import OverrideError, apply_overrides, parse_assignments
 from scrolls.paths import LibraryPaths, get_paths
 from scrolls.opml import ImportSourceError as OPMLSourceError
 from scrolls.opml import dump_opml_export, load_opml_export
-from scrolls.pipeline import ensure_library, ingest_url, register_url, resolve_item_id
+from scrolls.pipeline import ensure_library, has_capture, ingest_url, register_url, resolve_item_id
 from scrolls.pocket import ImportSourceError as PocketSourceError
 from scrolls.pocket import load_pocket_export
 from scrolls.related import DEFAULT_LIMIT as DEFAULT_RELATED_LIMIT
@@ -299,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     context_parser.add_argument("query", help="Free-text query; tokens are AND-ed")
     context_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=DEFAULT_CONTEXT_LIMIT,
         help=f"Maximum scrolls in the bundle (default {DEFAULT_CONTEXT_LIMIT})",
     )
@@ -422,7 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     facets_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=DEFAULT_FACETS_LIMIT,
         help=f"Maximum values per dimension (default {DEFAULT_FACETS_LIMIT})",
     )
@@ -461,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Attempt at most N fetches this run (batch mode only), oldest "
         "saved first; adapterless skips don't consume the limit",
@@ -567,7 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Return only the most recent N checks (newest first); default is "
         "the whole timeline",
@@ -1131,7 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Return at most N items, oldest saved first; default is "
         "uncapped (every item in scope). With --stats, a capped listing "
@@ -1154,7 +1155,7 @@ def build_parser() -> argparse.ArgumentParser:
     maintain_group = maintain_parser.add_mutually_exclusive_group()
     maintain_group.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Bound the drift recheck to N held items this run (coverage-first: "
         "never-checked, then stalest); paces both the default stale recheck and "
@@ -1178,7 +1179,7 @@ def build_parser() -> argparse.ArgumentParser:
     maintain_group.add_argument(
         "--history",
         nargs="?",
-        type=int,
+        type=validate_limit,
         const=DEFAULT_HISTORY_LIMIT,
         default=None,
         metavar="N",
@@ -1410,7 +1411,7 @@ def build_parser() -> argparse.ArgumentParser:
     archive_prune_parser.add_argument(
         "--keep",
         dest="keep",
-        type=int,
+        type=validate_limit,
         default=None,
         metavar="N",
         help="Per item, keep the most recent N priors and drop the rest (N>=1, so "
@@ -1430,7 +1431,7 @@ def build_parser() -> argparse.ArgumentParser:
     related_parser.add_argument("id", help="Item id (e.g. x:1111), or the item's URL")
     related_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=DEFAULT_RELATED_LIMIT,
         help=f"Maximum hits to return (default {DEFAULT_RELATED_LIMIT})",
     )
@@ -1499,7 +1500,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_parser.add_argument("query", help="Free-text query; tokens are AND-ed")
     search_parser.add_argument(
-        "--limit", type=int, default=20, help="Maximum hits to return (default 20)"
+        "--limit", type=validate_limit, default=20, help="Maximum hits to return (default 20)"
     )
     search_parser.add_argument(
         "--source", default=None, help="Only hits from one source, e.g. web, arxiv"
@@ -1641,7 +1642,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Stop after this many saved items; default walks the collection",
     )
@@ -1738,7 +1739,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument(
         "--limit",
-        type=int,
+        type=validate_limit,
         default=None,
         help="Attempt at most N re-captures this run "
         "(--all/--unverified/--stale-before/--drift/--source/--fidelity only), "
@@ -2233,10 +2234,14 @@ def _run_maintain_pass(
     #       is honestly `null`). The report carries the live-pass-only per-source
     #       breakdowns, the weakest-source `attention` flag, and the `suggested`
     #       on-request repairs the audit implies.
-    result = assemble_report(
-        paths, recheck_report=recheck_report, previous=previous, source=source,
-        fidelity=fidelity, now=now
-    )
+    try:
+        result = assemble_report(
+            paths, recheck_report=recheck_report, previous=previous, source=source,
+            fidelity=fidelity, now=now
+        )
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps(result))
     # nonzero only on structural drift the operator must address (mirrors doctor)
     return 1 if result["issues"] > 0 else 0
@@ -3431,7 +3436,7 @@ def _cmd_export_bundle(
         # written before the bundle so a refused destination leaves stdout empty
         try:
             media = export_media(paths, parse_bundle(bundle), Path(with_media).expanduser())
-        except (SidecarError, OSError) as exc:
+        except (SidecarError, BundleError, OSError) as exc:  # BundleError: a rejected row
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     # the bundle *is* the artifact (the `context`/scroll exception to the
@@ -3502,7 +3507,7 @@ def _cmd_import_bundle(
         imported_items = parse_bundle(text)
         imported_events = parse_bundle_events(text)
         imported_archive = parse_bundle_archive(text)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         print(json.dumps({"error": f"cannot read {path}: {exc}"}), file=sys.stderr)
         return 1
     except BundleError as exc:
@@ -3792,6 +3797,16 @@ def _cmd_fetch(ref: str | None, limit: int | None = None) -> int:
         # them would wedge every paced run on the same skips
         if limit is not None and attempted >= limit:
             break
+        if has_capture(item):
+            counts["failed"] += 1
+            results.append(
+                {
+                    "id": item.id,
+                    "status": "failed",
+                    "error": f"item already holds a capture; use `scrolls verify {item.id}` to check drift",
+                }
+            )
+            continue
         adapter = FETCH_ADAPTERS.get(item.source)
         if adapter is None:
             # Bulk runs leave adapterless items for a future scrolls; asking
@@ -4192,7 +4207,7 @@ def _cmd_classify(
             # keep the rendered scroll's frontmatter in sync with the DB
             try:
                 classified = write_scroll(paths, classified)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 counts["failed"] += 1
                 results.append({"id": item.id, "status": "failed", "error": str(exc)})
                 continue
@@ -4250,7 +4265,7 @@ def _cmd_md(item_id: str | None, render_all: bool = False) -> int:
             continue
         try:
             rendered, wrote = refresh_scroll(paths, item)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             counts["failed"] += 1
             results.append({"id": item.id, "status": "failed", "error": str(exc)})
             continue
@@ -4309,8 +4324,12 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
             update_item(paths.db_path, updated)
             if updated.markdown_path:
                 # keep the rendered scroll's frontmatter in sync with the DB
-                rendered = write_scroll(paths, updated)
-                update_item(paths.db_path, rendered)
+                try:
+                    rendered = write_scroll(paths, updated)
+                except (OSError, ValueError) as exc:
+                    errors.append(str(exc))  # the capture is held; the view is not
+                else:
+                    update_item(paths.db_path, rendered)
         if errors:
             counts["failed"] += 1
             results.append(
@@ -4349,8 +4368,12 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
 
 def _cmd_agent_install() -> int:
     paths = get_paths()
-    ensure_library(paths)
-    installed = install_agent_docs(paths)
+    try:
+        ensure_library(paths)
+        installed = install_agent_docs(paths)
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps({"root": str(paths.root), "installed": installed}))
     return 0
 
@@ -4434,7 +4457,11 @@ def _cmd_kb(
                 print(json.dumps({"error": str(exc)}), file=sys.stderr)
                 return 1
         generation = {**counts, "results": results}
-    result = compile_kb(paths)
+    try:
+        result = compile_kb(paths)
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
     print(json.dumps({**generation, **dataclasses.asdict(result)}))
     return 1 if generation.get("failed") else 0
 
@@ -4955,7 +4982,7 @@ def _cmd_set(item_id: str, assignments: list[str]) -> int:
         # keep the rendered scroll's frontmatter in sync with the DB
         try:
             updated = write_scroll(paths, updated)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     update_item(paths.db_path, updated)
@@ -5207,13 +5234,17 @@ def _select_archive_prior(
         else {"at": boundary} if boundary is not None
         else {"latest": True}
     )
-    selected = (
-        select_archived_snapshot(
-            paths.db_path, item_id, prior_hash=prior_hash, at=boundary
+    try:
+        selected = (
+            select_archived_snapshot(
+                paths.db_path, item_id, prior_hash=prior_hash, at=boundary
+            )
+            if paths.db_path.exists()
+            else None
         )
-        if paths.db_path.exists()
-        else None
-    )
+    except (TypeError, ValueError) as exc:
+        print(json.dumps({"error": f"invalid archive snapshot: {exc}"}), file=sys.stderr)
+        return None, 1
     if selected is None:
         suffix = f" (from {ref})" if item_id != ref else ""
         scoped = (
@@ -5290,7 +5321,11 @@ def _cmd_archive_show(
     if not paths.db_path.exists():
         priors: list[ScrollItem] = []
     else:
-        priors = archived_snapshots(paths.db_path, item_id)
+        try:
+            priors = archived_snapshots(paths.db_path, item_id)
+        except (TypeError, ValueError) as exc:
+            print(json.dumps({"error": f"invalid archive snapshot: {exc}"}), file=sys.stderr)
+            return 1
     if not priors:
         suffix = f" (from {ref})" if item_id != ref else ""
         print(

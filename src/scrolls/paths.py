@@ -8,6 +8,7 @@ portable installs.
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,3 +54,40 @@ def get_paths(root: Path | None = None) -> LibraryPaths:
         # first write, at 0600, and never by `ensure_library`.
         credentials_path=root / "credentials.json",
     )
+
+
+def validate_artifact_relpath(relpath: str, directory: str) -> None:
+    """Reject imported paths that cannot name an owned, portable artifact."""
+    if (
+        not isinstance(relpath, str)
+        or "\\" in relpath
+        or "\x00" in relpath
+        or len(parts := relpath.split("/")) < 2
+        or parts[0] != directory
+        or any(part in ("", ".", "..") for part in parts)
+    ):
+        raise ValueError(f"recorded path must stay inside {directory}/: {relpath!r}")
+
+
+def alias_key(relpath: str) -> str:
+    """Fold a recorded path the way a case-insensitive filesystem compares names.
+
+    Two paths with one key may be one file (macOS, Windows), so neither may be
+    treated as free. On a case-sensitive filesystem this is stricter than
+    needed, which costs a suffixed filename and never a lost file.
+    """
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", relpath).casefold())
+
+
+def artifact_path(paths: LibraryPaths, relpath: str, directory: str) -> Path:
+    """Resolve an owned artifact without symlink aliases or tree escapes."""
+    validate_artifact_relpath(relpath, directory)
+    target = paths.root / relpath
+    current = paths.root
+    for part in relpath.split("/"):
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"recorded artifact path contains a symlink: {relpath!r}")
+    if not target.resolve().is_relative_to(paths.root.resolve() / directory):
+        raise ValueError(f"recorded path escapes {directory}/: {relpath!r}")
+    return target

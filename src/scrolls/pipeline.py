@@ -86,14 +86,19 @@ def register_url(url: str) -> tuple[LibraryPaths, ScrollItem, bool]:
     return paths, item, created
 
 
+def has_capture(item: ScrollItem) -> bool:
+    """Whether any captured body or fingerprint is already held, at any stage."""
+    return bool(item.raw_text or item.extracted_text or item.content_hash)
+
+
 def ingest_url(url: str) -> dict[str, Any]:
     """Run add → fetch → classify → md for one URL; return the result payload.
 
     Raises ValueError for non-http(s) URLs. Fetch problems do not raise:
     the item stays registered at stage 'detected' and the payload carries
     an `error` key (the CLI exits 1 on it; MCP clients read it as data).
-    An existing category — user-set or from an earlier run — is never
-    replaced, so re-ingesting refreshes content only.
+    An existing capture is rendered from the held record without re-fetching.
+    An existing category — user-set or from an earlier run — is never replaced.
     """
     paths, item, created = register_url(url)
     payload: dict[str, Any] = {
@@ -103,19 +108,21 @@ def ingest_url(url: str) -> dict[str, Any]:
         "created": created,
     }
 
-    adapter = FETCH_ADAPTERS.get(item.source)
-    if adapter is None:
-        payload.update(
-            {"stage": item.stage, "error": f"no fetch adapter for source '{item.source}'"}
-        )
-        return payload
-    try:
-        fetched = adapter(item)
-    except FetchError as exc:
-        payload.update({"stage": item.stage, "error": str(exc)})
-        return payload
-    fetched = carry_capture_state(item, fetched)
-    update_item(paths.db_path, fetched)
+    fetched = item
+    if not has_capture(item):
+        adapter = FETCH_ADAPTERS.get(item.source)
+        if adapter is None:
+            payload.update(
+                {"stage": item.stage, "error": f"no fetch adapter for source '{item.source}'"}
+            )
+            return payload
+        try:
+            fetched = adapter(item)
+        except FetchError as exc:
+            payload.update({"stage": item.stage, "error": str(exc)})
+            return payload
+        fetched = carry_capture_state(item, fetched)
+        update_item(paths.db_path, fetched)
 
     # classify before the first render so frontmatter carries the category
     if fetched.category is None:

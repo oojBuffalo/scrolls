@@ -198,7 +198,7 @@ def test_reconcile_tombstones_annotated_and_unlinks_plain_stale_pages(
 ):
     """For every reconcilable dir-kind: when its page's group vanishes, an
     annotated stale page is tombstoned (annotation byte-for-byte, generated body
-    replaced by `_STALE_BODY`) and a plain stale page is unlinked, while the
+    replaced by its heading and `_STALE_BODY`) and a plain stale page is unlinked, while the
     dir survives (ADR 0102)."""
     vanish, note = _compile_then_vanish(scrolls_home, capsys, kind)
 
@@ -208,7 +208,9 @@ def test_reconcile_tombstones_annotated_and_unlinks_plain_stale_pages(
     )
     tombstoned = vanish.keep_page.read_text(encoding="utf-8")
     assert tombstoned.endswith(note), f"{kind}: the @user annotation was not preserved verbatim"
-    assert generated_body(tombstoned).strip() == kb._STALE_BODY, (
+    heading, body = generated_body(tombstoned).strip().split("\n\n", 1)
+    assert heading.startswith("# ")
+    assert body == kb._STALE_BODY, (
         f"{kind}: the generated region is not the tombstone body"
     )
     assert _MARKER not in tombstoned, f"{kind}: the stale rollup lingered in a tombstone"

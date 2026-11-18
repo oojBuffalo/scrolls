@@ -1,0 +1,61 @@
+# 0120: Validate custody boundaries before a v1 release
+
+Date: 2026-10-28
+Status: accepted
+
+## Context
+
+Release testing reproduced capture overwrites on repeated ingest/fetch,
+malformed imports that made a library unreadable, archive restores targeting
+the wrong item, and artifact paths capable of overwriting or removing files
+they did not own. Existing tests did not cover these boundary failures.
+
+## Decision
+
+- **Preserve captures.** Any held raw text, extracted text, or content hash
+  prevents another `fetch`. Repeated ingest rebuilds from the held record.
+  `verify` records upstream drift; explicit acceptance archives the prior copy.
+- **Validate imports before writes.** Known model field types, portable
+  artifact paths, ledger statuses, and archive snapshot identities are checked
+  by shared mappings used by JSONL and bundles. Unknown fields remain tolerated.
+- **Constrain artifact operations.** Scrolls and media stay in their own
+  subtrees, without symlink aliases. Filename collisions cannot overwrite
+  another item's artifact; removal and duplicate cleanup retain files another
+  item references. Spellings that differ only in case or Unicode form are one
+  path, since a case-insensitive filesystem makes them one file. Removal
+  stops with the row in place when a file it would delete cannot be inspected.
+  Recorded paths use forward slashes on every platform.
+- **Bound decoded responses.** HTTP gzip bodies are decoded, and every byte
+  cap counts decoded bytes. A read with no cap still stops at 256 MiB decoded;
+  an uncompressed body keeps the caller's limit, including none. A body that
+  ends before its declared length is a transport error, never a capture.
+- **Audit the actual view.** Doctor compares scroll bytes with the current
+  renderer's output from the held record. Missing and stale views are explicit
+  findings; `--fix` regenerates them without changing captured content. Each
+  check reads the rows the previous repair left. Scrolls are written and
+  compared as exact bytes, with no newline translation on any platform. Commands that re-render a
+  scroll report a rejected path as that item's failure and continue the batch.
+- **Keep annotations attached to their group.** KB group filenames retain
+  existing identity across slug collisions and tombstones. Counts deduplicate
+  a member whose multiple spellings map to the same group. A group name is one
+  line: names that differ only in whitespace share a page.
+- **Reject invalid result caps.** CLI and MCP use the same nonnegative integer
+  range, bounded by SQLite's signed integer range. Zero means zero rows.
+
+## Custody and scope
+
+This strengthens vision §2.2, §2.4, §2.5, and §2.6 without adding adapters or
+changing the canonical schema. Valid model-complete exports still round-trip;
+malformed records fail before import mutation. Generated annotations remain
+protected by ADR 0102's sentinel fences. No source hash is presented as an
+offline recomputation: the view comparison checks rendering consistency.
+
+## Verification
+
+Regression tests exercise the actual CLI import/adopt/restore workflows and
+shared engines. See `tests/test_capture_safety.py`,
+`tests/test_import_validation.py`, `tests/test_artifact_paths.py`,
+`tests/test_http.py`,
+`tests/test_doctor_scroll_refresh.py`, `tests/test_v1_limits.py`, and
+`tests/test_v1_kb_identity.py`. Dated release evidence and remaining external
+validation gaps live in `docs/agents/progress/261028/report.md`.

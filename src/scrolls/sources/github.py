@@ -64,6 +64,8 @@ def fetch_item(item: ScrollItem, *, get_json: GetJson | None = None) -> ScrollIt
         repo = get_json(repo_url)
     except (OSError, ValueError) as exc:
         raise FetchError(f"github API request failed: {exc}") from exc
+    if not isinstance(repo, dict):
+        raise FetchError("github API returned a non-object repository response")
 
     # The README is optional: missing files 404 and odd payloads decode to
     # nothing, and neither should fail an otherwise-identified repo.

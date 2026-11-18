@@ -278,14 +278,19 @@ def _group_pages(items):
         by_source.setdefault(item.source, []).append(item)
         if item.category:
             by_category.setdefault(item.category, []).append(item)
-    for source, members in by_source.items():
-        pages[("sources", f"sources/{slugify(source) or 'untitled'}.md")] = members
-    for category, members in by_category.items():
-        pages[("categories", f"categories/{slugify(category) or 'untitled'}.md")] = members
+    for kind, groups, label in [("sources", by_source, "Source"), ("categories", by_category, "Category")]:
+        filenames = kb._group_filenames(
+            {key: key for key in groups}, get_paths().library_dir / kind, label
+        )
+        for key, members in groups.items():
+            pages[(kind, f"{kind}/{filenames[key]}.md")] = members
     for slug, entry in group_concepts(items).items():
         pages[("concepts", f"concepts/{slug}.md")] = entry["items"]
     by_tag = group_tags(items)
-    filenames = kb._tag_filenames(by_tag)
+    filenames = kb._group_filenames(
+        {key: entry["display"] for key, entry in by_tag.items()},
+        get_paths().library_dir / "tags", "Tag", folded=True,
+    )
     for key, entry in by_tag.items():
         pages[("tags", f"tags/{filenames[key]}.md")] = entry["items"]
     return pages

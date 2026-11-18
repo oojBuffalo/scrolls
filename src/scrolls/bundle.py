@@ -1151,7 +1151,10 @@ def parse_bundle(text: str) -> list[ScrollItem]:
                 f"custody block record {record_no}: missing required field(s): "
                 + ", ".join(missing)
             )
-        items.append(item_from_dict(data))
+        try:
+            items.append(item_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise BundleError(f"custody block record {record_no}: {exc}") from exc
     return items
 
 
@@ -1196,7 +1199,10 @@ def parse_bundle_events(text: str) -> list[CustodyEvent]:
                 f"custody-events block record {record_no}: missing required "
                 "field(s): " + ", ".join(missing)
             )
-        events.append(event_from_dict(data))
+        try:
+            events.append(event_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise BundleError(f"custody-events block record {record_no}: {exc}") from exc
     return events
 
 
@@ -1240,7 +1246,10 @@ def parse_bundle_archive(text: str) -> list[ArchiveRecord]:
                 f"archive block record {record_no}: missing required field(s): "
                 + ", ".join(missing)
             )
-        records.append(archive_from_dict(data))
+        try:
+            records.append(archive_from_dict(data))
+        except (TypeError, ValueError) as exc:
+            raise BundleError(f"archive block record {record_no}: {exc}") from exc
     return records
 
 
