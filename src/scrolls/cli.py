@@ -3436,7 +3436,7 @@ def _cmd_export_bundle(
         # written before the bundle so a refused destination leaves stdout empty
         try:
             media = export_media(paths, parse_bundle(bundle), Path(with_media).expanduser())
-        except (SidecarError, OSError) as exc:
+        except (SidecarError, BundleError, OSError) as exc:  # BundleError: a rejected row
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     # the bundle *is* the artifact (the `context`/scroll exception to the
