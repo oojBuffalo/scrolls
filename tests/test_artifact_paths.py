@@ -13,7 +13,7 @@ from scrolls.items import ScrollItem, get_item, insert_item, make_item_id
 from scrolls.media import capture_media
 from scrolls.paths import get_paths
 from scrolls.remove import remove_item
-from scrolls.render import render_markdown, write_scroll
+from scrolls.render import refresh_scroll, render_markdown, write_scroll
 
 
 @pytest.fixture
@@ -314,13 +314,13 @@ def test_removal_handles_two_refs_to_one_file(paths):
     assert get_item(paths.db_path, held.id) is None
 
 
-def test_doctor_accepts_a_scroll_written_with_platform_newlines(paths):
-    # Windows text mode writes CRLF; `md` already treats that file as current.
-    rendered = write_scroll(paths, item())
+def test_a_scroll_whose_held_text_has_crlf_is_current_once_rendered(paths):
+    # Scrolls are written and compared as exact bytes, on every platform.
+    rendered = write_scroll(paths, item(extracted_text="line one\r\nline two"))
     insert_item(paths.db_path, rendered)
-    target = paths.root / rendered.markdown_path
-    target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+    assert b"line one\r\nline two" in (paths.root / rendered.markdown_path).read_bytes()
     assert run_doctor(paths)["stale_scrolls"] == []
+    assert refresh_scroll(paths, rendered) == (rendered, False)
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")

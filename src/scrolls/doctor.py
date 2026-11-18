@@ -431,11 +431,8 @@ def _check_stale_scrolls(
         try:
             if not target.is_file():  # reading a named pipe would block forever
                 raise OSError(f"not a regular file: {item.markdown_path!r}")
-            # text, as refresh_scroll compares: Windows writes scrolls with CRLF
-            if target.read_text(encoding="utf-8") == render_markdown(item):
+            if target.read_bytes() == render_markdown(item).encode("utf-8"):
                 continue
-        except UnicodeDecodeError:
-            pass  # not text scrolls wrote: stale, and rebuilt from the held record
         except (OSError, UnicodeError) as exc:
             entry.update(status="failed", error=str(exc))
         report["issues"] += 1

@@ -32,7 +32,8 @@ they did not own. Existing tests did not cover these boundary failures.
 - **Audit the actual view.** Doctor compares scroll bytes with the current
   renderer's output from the held record. Missing and stale views are explicit
   findings; `--fix` regenerates them without changing captured content. Each
-  check reads the rows the previous repair left. Commands that re-render a
+  check reads the rows the previous repair left. Scrolls are written and
+  compared as exact bytes, with no newline translation on any platform. Commands that re-render a
   scroll report a rejected path as that item's failure and continue the batch.
 - **Keep annotations attached to their group.** KB group filenames retain
   existing identity across slug collisions and tombstones. Counts deduplicate

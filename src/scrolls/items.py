@@ -1033,6 +1033,11 @@ def archived_snapshots(db_path: Path, item_id: str) -> list[ScrollItem]:
     no archived prior (never superseded); tolerates a pre-v8 library (no archive
     table) by returning ``[]``.
     """
+    return [_parse_snapshot(raw, item_id) for raw in _snapshot_rows(db_path, item_id)]
+
+
+def _snapshot_rows(db_path: Path, item_id: str) -> list[str]:
+    """The raw archived snapshots of `item_id`, newest first; [] before schema v8."""
     conn = sqlite3.connect(db_path)
     try:
         rows = conn.execute(
@@ -1043,15 +1048,21 @@ def archived_snapshots(db_path: Path, item_id: str) -> list[ScrollItem]:
         return []
     finally:
         conn.close()
-    snapshots = []
-    for row in rows:
-        snapshot = item_from_dict(json.loads(row[0]))
-        if snapshot.id != item_id:
-            raise ValueError(
-                f"archive snapshot id {snapshot.id!r} does not match item_id {item_id!r}"
-            )
-        snapshots.append(snapshot)
-    return snapshots
+    return [row[0] for row in rows]
+
+
+def _parse_snapshot(raw: str, item_id: str) -> ScrollItem:
+    """Parse one archived snapshot, refusing one that belongs to another item.
+
+    Raises:
+        ValueError: The snapshot's own id is not `item_id`.
+    """
+    snapshot = item_from_dict(json.loads(raw))
+    if snapshot.id != item_id:
+        raise ValueError(
+            f"archive snapshot id {snapshot.id!r} does not match item_id {item_id!r}"
+        )
+    return snapshot
 
 
 def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
@@ -1066,8 +1077,8 @@ def latest_archived(db_path: Path, item_id: str) -> ScrollItem | None:
     (convergence by construction). Returns ``None`` when the id has no archived prior
     (never superseded).
     """
-    snapshots = archived_snapshots(db_path, item_id)
-    return snapshots[0] if snapshots else None
+    rows = _snapshot_rows(db_path, item_id)
+    return _parse_snapshot(rows[0], item_id) if rows else None
 
 
 def select_archived_snapshot(
@@ -1104,15 +1115,19 @@ def select_archived_snapshot(
     the selector: the could-not-recover signal the CLI maps to exit 1. A pre-v8 /
     unknown id yields empty reads → ``None``.
     """
-    pairs = list(zip(list_archived(db_path, item_id), archived_snapshots(db_path, item_id)))
+    # Selected on the archive metadata, and only the chosen row is validated: a
+    # damaged row must not block the recovery of a sound one beside it.
+    pairs = list(zip(list_archived(db_path, item_id), _snapshot_rows(db_path, item_id)))
     if prior_hash is not None:
-        return next((p for p in pairs if p[0].prior_hash == prior_hash), None)
-    if at is not None:
+        chosen = next((p for p in pairs if p[0].prior_hash == prior_hash), None)
+    elif at is not None:
         candidates = [p for p in pairs if p[0].archived_at <= at]
         # the newest prior at/before the boundary; max returns the first maximal
         # element, and `pairs` is id-DESC, so ties resolve to the highest-id row
-        return max(candidates, key=lambda p: p[0].archived_at, default=None)
-    return pairs[0] if pairs else None
+        chosen = max(candidates, key=lambda p: p[0].archived_at, default=None)
+    else:
+        chosen = pairs[0] if pairs else None
+    return chosen and (chosen[0], _parse_snapshot(chosen[1], item_id))
 
 
 def diff_snapshot(held: ScrollItem | None, prior: ScrollItem) -> list[str]:

@@ -159,3 +159,22 @@ def test_malformed_known_media_fields_are_rejected_before_writing(
     assert main(["import", transport, str(path)]) == 1
     assert "media" in json.loads(capsys.readouterr().err)["error"]
     assert not (home / "db.sqlite").exists()
+
+
+def test_a_mismatched_archive_row_does_not_block_restoring_a_valid_prior(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("SCROLLS_HOME", str(tmp_path / "library"))
+    paths = get_paths()
+    ensure_library(paths)
+    insert_item(paths.db_path, item_from_dict(row(content_hash="held")))
+    with sqlite3.connect(paths.db_path) as conn:
+        for prior_hash, snapshot_id in [("good", "web:a"), ("bad", "web:b")]:
+            conn.execute(
+                "INSERT INTO item_archive (item_id, archived_at, prior_hash, superseded_by, snapshot)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("web:a", "2026-01-01", prior_hash, "held",
+                 json.dumps(row(id=snapshot_id, content_hash=prior_hash))),
+            )
+    assert main(["archive", "restore", "web:a", "--hash", "bad"]) == 1
+    assert "snapshot" in json.loads(capsys.readouterr().err)["error"]
+    assert main(["archive", "restore", "web:a", "--hash", "good"]) == 0
+    assert get_item(paths.db_path, "web:a").content_hash == "good"

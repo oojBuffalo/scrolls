@@ -181,3 +181,21 @@ def test_tag_page_lookup_matches_the_compilers_key_not_a_looser_fold(library):
     assert "# Tag: ss" in get_tag_page("SS")
     with pytest.raises(ValueError):
         get_tag_page("\u00df")  # casefolds to "ss" but is a different tag
+
+
+def test_tag_page_lookup_prefers_the_live_page_over_a_tombstone(library):
+    save(library, "one", tags=("A B",))
+    compile_kb(library)
+    [page] = (library.library_dir / "tags").glob("*.md")
+    twin = page.with_name("a-b-2.md")  # sorts first, so it claims the group
+    twin.write_text(page.read_text())
+    page.write_text(page.read_text() + "\nMy note\n")
+    compile_kb(library)
+    assert "no longer part" in page.read_text()
+    assert get_tag_page("A B") == twin.read_text()
+
+
+def test_compile_ignores_a_directory_named_like_a_page(library):
+    save(library, "one", tags=("A",))
+    (library.library_dir / "tags" / "odd.md").mkdir(parents=True)
+    assert compile_kb(library).tags == 1

@@ -128,15 +128,13 @@ def _render_to_disk(
         relpath = _new_relpath(paths, item)
     rendered = replace(item, markdown_path=relpath, stage="rendered")
     target = artifact_path(paths, relpath, "scrolls")
-    content = render_markdown(rendered)
-    if (
-        only_if_changed
-        and target.is_file()
-        and target.read_text(encoding="utf-8") == content
-    ):
+    # Bytes, not text mode: no newline translation on write or on compare, so
+    # a CRLF in the held text survives and Windows writes what doctor expects.
+    content = render_markdown(rendered).encode("utf-8")
+    if only_if_changed and target.is_file() and target.read_bytes() == content:
         return rendered, False
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    target.write_bytes(content)
     return rendered, True
 
 

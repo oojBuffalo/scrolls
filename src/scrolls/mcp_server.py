@@ -71,7 +71,7 @@ from scrolls.items import (
 )
 from scrolls.items import latest_archived as _latest_archived
 from scrolls.items import list_archived as _list_archived
-from scrolls.kb import compile_kb, one_line
+from scrolls.kb import compile_kb, is_tombstone, one_line
 from scrolls.paths import artifact_path, get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
 from scrolls.pipeline import resolve_item_id
@@ -779,6 +779,7 @@ def get_tag_page(tag: str) -> str:
     base = slugify(tag) or "untitled"
     tags_dir = artifact_path(paths, "library/tags", "library")
     wanted = tag.lower()  # kb.group_tags' key, so no looser fold matches
+    retired = None  # a tombstone keeps its heading, so it can match too
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         # a page keeps the filename it was first given, which an older slug may have set
@@ -789,7 +790,11 @@ def get_tag_page(tag: str) -> str:
             body = generated_body(text) or text
             heading = body.split("\n", 1)[0]
             if heading.startswith("# Tag: ") and one_line(heading[len("# Tag: "):]).lower() == wanted:
-                return text
+                if not is_tombstone(body):
+                    return text
+                retired = retired or text
+    if retired is not None:
+        return retired
     raise ValueError(
         f"no tag page for {tag!r} — compile the library first "
         "(the compile_library tool, or `scrolls kb`)"

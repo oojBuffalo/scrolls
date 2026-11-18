@@ -74,6 +74,11 @@ _STALE_BODY = (
 )
 
 
+def is_tombstone(body: str) -> bool:
+    """Whether a page's generated region is the kept-for-its-annotation tombstone."""
+    return _STALE_BODY in body
+
+
 @dataclass(frozen=True)
 class KbResult:
     items: int
@@ -679,6 +684,8 @@ def _group_filenames(
     for page in sorted(directory.glob("*.md")):
         # folded: `C.md` and a new `c.md` are one file on macOS and Windows
         reserved.add(alias_key(page.stem))
+        if not page.is_file():  # a directory named like a page only holds the name
+            continue
         text = page.read_text(encoding="utf-8")
         body = generated_body(text) or text
         # up to the blank line, so a legacy multi-line name is read whole
