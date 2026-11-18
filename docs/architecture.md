@@ -1042,7 +1042,9 @@ adapter.
 Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
 urllib, descriptive User-Agent). It decodes HTTP gzip content encoding before
 text/JSON extraction, applies byte caps to decoded bytes, and reports malformed
-compressed responses as transport errors. Ordinary `.gz` files remain intact.
+compressed responses as transport errors. A gzip body read with no cap still
+stops at 256 MiB decoded, so a small response cannot expand without bound.
+Ordinary `.gz` files remain intact.
 Adapters take the fetcher as an injectable parameter, keeping tests offline.
 
 ### Adding a new adapter

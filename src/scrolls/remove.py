@@ -11,8 +11,19 @@ mutation.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from scrolls.items import ScrollItem, delete_item, list_items
 from scrolls.paths import LibraryPaths, artifact_path
+
+
+def _file_id(path: Path) -> tuple[int, int] | None:
+    """Return the file's device and inode, or None when nothing is there."""
+    try:
+        stat = path.stat()
+    except (OSError, ValueError):  # ValueError: a recorded path holding a NUL
+        return None
+    return stat.st_dev, stat.st_ino
 
 
 def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:
@@ -33,19 +44,23 @@ def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:
         target = artifact_path(paths, relpath, directory)
         targets.append((relpath, target))
 
+    # Ownership is compared by on-disk identity, not by recorded string: on a
+    # case-insensitive filesystem two spellings name one file.
     shared = set()
     for peer in list_items(paths.db_path):
         if peer.id == item.id:
             continue
-        if peer.markdown_path:
-            shared.add(peer.markdown_path)
+        recorded = [peer.markdown_path]
+        recorded += [ref.get("path") for ref in peer.media if isinstance(ref, dict)]
         shared.update(
-            ref["path"] for ref in peer.media if isinstance(ref, dict) and ref.get("path")
+            _file_id(paths.root / relpath)
+            for relpath in recorded if isinstance(relpath, str) and relpath
         )
 
     removed = []
     for relpath, target in targets:
-        if relpath not in shared and target.exists():
+        file_id = _file_id(target)
+        if file_id is not None and file_id not in shared:
             target.unlink()
             removed.append(relpath)
     delete_item(paths.db_path, item.id)

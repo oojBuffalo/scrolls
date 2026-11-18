@@ -181,6 +181,26 @@ def test_gzip_limits_apply_to_decoded_body(gzip_url):
     assert size == len(payload)
 
 
+def test_gzip_body_is_bounded_when_the_caller_sets_no_cap(gzip_url, monkeypatch):
+    # A gzip body can expand a thousandfold, so every uncapped read path still
+    # stops at a ceiling instead of decoding a small response into gigabytes.
+    from scrolls.sources import http
+
+    monkeypatch.setattr(http, "_MAX_DECODED_BYTES", 100)
+    for read in (
+        lambda: http.get_text(gzip_url + "/json"),
+        lambda: http.get_json(gzip_url + "/json"),
+        lambda: http.get_bytes(gzip_url + "/json"),
+        lambda: http.get_bytes_within(gzip_url + "/json"),
+        lambda: http.post_json(gzip_url + "/json", {}),
+        lambda: http.get_conditional(gzip_url + "/json"),
+    ):
+        with pytest.raises(OSError, match="decoded bytes"):
+            read()
+    # An uncompressed body is not expanded, so it keeps the caller's "no cap".
+    assert http.get_bytes(gzip_url + "/raw-file").startswith(b"\x1f\x8b")
+
+
 def test_gzip_file_without_content_encoding_stays_compressed(gzip_url):
     import gzip
     from scrolls.sources.http import get_bytes

@@ -20,7 +20,11 @@ they did not own. Existing tests did not cover these boundary failures.
   by shared mappings used by JSONL and bundles. Unknown fields remain tolerated.
 - **Constrain artifact operations.** Scrolls and media stay in their own
   subtrees, without symlink aliases. Filename collisions cannot overwrite
-  another item's artifact; removal retains files another item references.
+  another item's artifact; removal retains files another item references,
+  compared by on-disk identity so a different-case spelling of one file counts.
+- **Bound decoded responses.** HTTP gzip bodies are decoded, and every byte
+  cap counts decoded bytes. A read with no cap still stops at 256 MiB decoded;
+  an uncompressed body keeps the caller's limit, including none.
 - **Audit the actual view.** Doctor compares scroll bytes with the current
   renderer's output from the held record. Missing and stale views are explicit
   findings; `--fix` regenerates them without changing captured content.
@@ -43,6 +47,7 @@ offline recomputation: the view comparison checks rendering consistency.
 Regression tests exercise the actual CLI import/adopt/restore workflows and
 shared engines. See `tests/test_capture_safety.py`,
 `tests/test_import_validation.py`, `tests/test_artifact_paths.py`,
+`tests/test_http.py`,
 `tests/test_doctor_scroll_refresh.py`, `tests/test_v1_limits.py`, and
 `tests/test_v1_kb_identity.py`. Dated release evidence and remaining external
 validation gaps live in `docs/agents/progress/261028/report.md`.

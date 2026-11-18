@@ -154,6 +154,22 @@ def test_removal_preserves_artifacts_still_referenced_by_another_item(paths):
     assert get_item(paths.db_path, peer.id) == peer
 
 
+def test_removal_preserves_a_file_another_item_names_in_a_different_case(paths):
+    # On a case-insensitive filesystem (macOS, Windows) both spellings are one
+    # file, so comparing the recorded strings would delete the peer's copy.
+    # On a case-sensitive one the second spelling names nothing.
+    media_path = paths.media_dir / "photo.png"
+    media_path.parent.mkdir()
+    media_path.write_bytes(b"held")
+    holder = replace(item(), media=({"path": "media/photo.png"},))
+    insert_item(paths.db_path, holder)
+    alias = replace(item(id="web:alias"), media=({"path": "media/PHOTO.png"},))
+    insert_item(paths.db_path, alias)
+    assert remove_item(paths, alias) == []
+    assert media_path.read_bytes() == b"held"
+    assert get_item(paths.db_path, alias.id) is None
+
+
 def test_imported_scroll_path_cannot_overwrite_another_items_view(paths):
     first = write_scroll(paths, item())
     insert_item(paths.db_path, first)

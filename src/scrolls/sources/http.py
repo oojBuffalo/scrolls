@@ -19,6 +19,10 @@ from scrolls import __version__
 
 USER_AGENT = f"scrolls/{__version__} (+https://github.com/oojBuffalo/scrolls)"
 _TIMEOUT_SECONDS = 30
+# A gzip body can expand a thousandfold, so a read with no cap of its own still
+# stops here. An uncompressed body costs its sender every byte and stays
+# uncapped. Four times the largest document ADR 0112 recorded (62.6 MB).
+_MAX_DECODED_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,20 @@ def _response_body(response):
 
 
 def _read_body(body, size: int = -1) -> bytes:
+    """Read `size` bytes, or the whole body bounded by the decoded ceiling.
+
+    Raises:
+        OSError: The gzip stream is corrupt, or a whole-body read of it
+            decodes past `_MAX_DECODED_BYTES`.
+    """
     try:
+        if size < 0 and isinstance(body, gzip.GzipFile):
+            data = body.read(_MAX_DECODED_BYTES + 1)
+            if len(data) > _MAX_DECODED_BYTES:
+                raise OSError(
+                    f"compressed HTTP response exceeds {_MAX_DECODED_BYTES} decoded bytes"
+                )
+            return data
         return body.read(size)
     except (EOFError, zlib.error) as exc:
         raise OSError(f"invalid compressed HTTP response: {exc}") from exc
