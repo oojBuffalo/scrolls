@@ -98,3 +98,19 @@ def test_merged_spellings_count_each_item_once(library):
         text = page_for(library, directory, heading).read_text()
         assert "1 scroll." in text
         assert text.count("merged.md)") == 1
+
+
+def test_multiline_category_keeps_its_page_and_annotation(library):
+    save(library, "multi", category="A\nB")
+    compile_kb(library)
+    [page] = (library.library_dir / "categories").glob("*.md")
+    page.write_text(page.read_text() + "\nMy note\n")
+    compile_kb(library)
+    assert list((library.library_dir / "categories").glob("*.md")) == [page]
+    assert "My note" in page.read_text()
+    assert "no longer part" not in page.read_text()
+    # A new group named like the first line must not inherit the page.
+    save(library, "plain", category="A")
+    compile_kb(library)
+    assert "My note" in page.read_text()
+    assert "My note" not in page_for(library, "categories", "# Category: A").read_text()

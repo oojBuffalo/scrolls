@@ -4207,7 +4207,7 @@ def _cmd_classify(
             # keep the rendered scroll's frontmatter in sync with the DB
             try:
                 classified = write_scroll(paths, classified)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 counts["failed"] += 1
                 results.append({"id": item.id, "status": "failed", "error": str(exc)})
                 continue
@@ -4324,8 +4324,12 @@ def _cmd_media(item_id: str | None, max_bytes: int | None = None) -> int:
             update_item(paths.db_path, updated)
             if updated.markdown_path:
                 # keep the rendered scroll's frontmatter in sync with the DB
-                rendered = write_scroll(paths, updated)
-                update_item(paths.db_path, rendered)
+                try:
+                    rendered = write_scroll(paths, updated)
+                except (OSError, ValueError) as exc:
+                    errors.append(str(exc))  # the capture is held; the view is not
+                else:
+                    update_item(paths.db_path, rendered)
         if errors:
             counts["failed"] += 1
             results.append(
@@ -4978,7 +4982,7 @@ def _cmd_set(item_id: str, assignments: list[str]) -> int:
         # keep the rendered scroll's frontmatter in sync with the DB
         try:
             updated = write_scroll(paths, updated)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
     update_item(paths.db_path, updated)

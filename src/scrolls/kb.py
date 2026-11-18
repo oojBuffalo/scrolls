@@ -100,6 +100,12 @@ class ConceptSummary:
     generated_at: str
 
 
+def one_line(name: str) -> str:
+    """Collapse whitespace so a group name fits the one heading line that
+    identifies its page; names differing only in whitespace are one group."""
+    return " ".join(name.split())
+
+
 def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
     """Concept slug → {"display", "items"} over the given rendered items.
 
@@ -122,18 +128,19 @@ def group_concepts(items: list[ScrollItem]) -> dict[str, dict]:
     return by_concept
 
 
-def group_tags(items: list[ScrollItem]) -> dict[str, dict]:
+def group_tags(items: list[ScrollItem], *, name=str) -> dict[str, dict]:
     """Tag case-fold key → {"display", "items"} over the given rendered items.
 
     Tags merge **case-insensitively** — the `--tag` membership facet's rule
     (ADR 0059), not concepts' coarser slug merge — so `MIT` and `mit` are one
     group while `C++` and `C#` stay distinct (they share a slug but not a fold).
-    The smallest spelling is the display form, as with concepts.
+    The smallest spelling is the display form, as with concepts. `name`
+    rewrites each tag before grouping; the compiler passes `one_line`.
     """
     by_tag: dict[str, dict] = {}
     for item in items:
         seen: set[str] = set()
-        for tag in dict.fromkeys(item.tags):
+        for tag in dict.fromkeys(map(name, item.tags)):
             key = tag.lower()
             if not key:
                 continue
@@ -222,12 +229,12 @@ def compile_kb(paths: LibraryPaths) -> KbResult:
     by_source: dict[str, list[ScrollItem]] = {}
     by_category: dict[str, list[ScrollItem]] = {}
     for item in items:
-        by_source.setdefault(item.source, []).append(item)
-        if item.category:
-            by_category.setdefault(item.category, []).append(item)
+        by_source.setdefault(one_line(item.source), []).append(item)
+        if category := one_line(item.category or ""):
+            by_category.setdefault(category, []).append(item)
     by_concept = group_concepts(items)
     related = related_concepts(by_concept)
-    by_tag = group_tags(items)
+    by_tag = group_tags(items, name=one_line)
     related_tag_map = related_tags(by_tag)
     source_filenames = _group_filenames(
         {key: key for key in by_source}, paths.library_dir / "sources", "Source"
@@ -675,7 +682,7 @@ def _group_filenames(
         body = generated_body(text) or text
         heading = body.split("\n", 1)[0]
         if heading.startswith(prefix):
-            key = heading[len(prefix):]
+            key = one_line(heading[len(prefix):])
             key = key.lower() if folded else key
             if key in groups and key not in names:
                 names[key] = page.stem

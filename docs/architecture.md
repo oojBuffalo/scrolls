@@ -1043,7 +1043,8 @@ Shared HTTP transport lives in `src/scrolls/sources/http.py` (stdlib
 urllib, descriptive User-Agent). It decodes HTTP gzip content encoding before
 text/JSON extraction, applies byte caps to decoded bytes, and reports malformed
 compressed responses as transport errors. A gzip body read with no cap still
-stops at 256 MiB decoded, so a small response cannot expand without bound.
+stops at 256 MiB decoded, so a small response cannot expand without bound. A
+body that ends before its declared `Content-Length` is a transport error too.
 Ordinary `.gz` files remain intact.
 Adapters take the fetcher as an injectable parameter, keeping tests offline.
 

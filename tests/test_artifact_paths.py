@@ -8,11 +8,11 @@ import pytest
 from scrolls.cli import main
 from scrolls.db import init_db
 from scrolls.doctor import run_doctor
-from scrolls.items import ScrollItem, get_item, insert_item
+from scrolls.items import ScrollItem, get_item, insert_item, make_item_id
 from scrolls.media import capture_media
 from scrolls.paths import get_paths
 from scrolls.remove import remove_item
-from scrolls.render import write_scroll
+from scrolls.render import render_markdown, write_scroll
 
 
 @pytest.fixture
@@ -179,3 +179,75 @@ def test_imported_scroll_path_cannot_overwrite_another_items_view(paths):
     assert rendered.markdown_path != first.markdown_path
     assert (paths.root / first.markdown_path).read_bytes() == before
     assert "Different body" in (paths.root / rendered.markdown_path).read_text()
+
+
+def test_render_keeps_a_peer_scroll_named_in_a_different_case(paths):
+    # One file on a case-insensitive filesystem, so the peer must own it.
+    first = write_scroll(paths, item())
+    insert_item(paths.db_path, first)
+    before = (paths.root / first.markdown_path).read_bytes()
+    second = replace(
+        first, id="web:second", extracted_text="Different body",
+        markdown_path=first.markdown_path.replace("test.md", "TEST.md"),
+    )
+    insert_item(paths.db_path, second)
+    rendered = write_scroll(paths, second)
+    assert rendered.markdown_path.casefold() != first.markdown_path.casefold()
+    assert (paths.root / first.markdown_path).read_bytes() == before
+    assert "Different body" in (paths.root / rendered.markdown_path).read_text()
+
+
+def test_duplicate_merge_keeps_a_scroll_an_outside_item_still_names(paths):
+    def web(url, **fields):
+        return item(id=make_item_id("web", None, url), url=url, source_id=None, **fields)
+
+    donor = write_scroll(paths, web("https://example.com/post?utm_source=x"))
+    insert_item(paths.db_path, donor)
+    loser = write_scroll(paths, web("https://example.com/post", title="Again"))
+    insert_item(paths.db_path, loser)
+    outsider = item(id="rfc:1", source="rfc", url="https://example.com/rfc",
+                    markdown_path=donor.markdown_path, stage="rendered")
+    insert_item(paths.db_path, outsider)
+    run_doctor(paths, fix=True, source="web")
+    assert (paths.root / outsider.markdown_path).exists()
+
+
+def test_doctor_repairs_two_rows_sharing_a_missing_scroll_without_an_orphan(paths):
+    for id, title in [("web:one", "One"), ("web:two", "Two")]:
+        insert_item(paths.db_path, item(
+            id=id, title=title, url=f"https://example.com/{title}",
+            markdown_path="scrolls/web/shared.md", stage="rendered"))
+    report = run_doctor(paths, fix=True)
+    assert report["stale_scrolls"] == []
+    held = [get_item(paths.db_path, id) for id in ("web:one", "web:two")]
+    files = sorted(p.relative_to(paths.root).as_posix() for p in paths.scrolls_dir.rglob("*.md"))
+    assert files == sorted(entry.markdown_path for entry in held)
+    for entry in held:
+        assert (paths.root / entry.markdown_path).read_text() == render_markdown(entry)
+
+
+def test_set_reports_an_unsafe_scroll_path(paths, capsys):
+    insert_item(paths.db_path, item(markdown_path="db.sqlite"))
+    assert main(["set", "web:test", "category=tool"]) == 1
+    assert "error" in json.loads(capsys.readouterr().err)
+
+
+def test_classify_reports_an_unsafe_scroll_path_and_continues_batch(paths, capsys):
+    arxiv = dict(source="arxiv", url="https://arxiv.org/abs/2401.00001")
+    insert_item(paths.db_path, item(id="arxiv:bad", markdown_path="db.sqlite", **arxiv))
+    insert_item(paths.db_path, item(id="arxiv:good", **arxiv))
+    assert main(["classify"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert (result["failed"], result["classified"]) == (1, 1)
+    assert get_item(paths.db_path, "arxiv:good").category == "paper"
+
+
+def test_media_reports_an_unsafe_scroll_path_and_continues_batch(paths, capsys, monkeypatch):
+    monkeypatch.setattr("scrolls.media._download", lambda url, **_: (url.encode(), len(url)))
+    monkeypatch.setattr("scrolls.media.time.sleep", lambda _: None, raising=False)
+    ref = ({"url": "https://example.com/a.png"},)
+    insert_item(paths.db_path, item(id="web:bad", markdown_path="db.sqlite", media=ref))
+    insert_item(paths.db_path, item(id="web:good", title="Good", media=ref))
+    assert main(["media"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert (result["failed"], result["captured"]) == (1, 1)

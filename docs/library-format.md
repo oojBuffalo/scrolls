@@ -61,8 +61,10 @@ scroll that `scrolls show <id>` answers authoritatively.
   and symlink aliases are rejected. Controlled paths inside `library/` and
   `agents/` also reject symlinks before reads or regeneration. A symlink for
   `SCROLLS_HOME` itself can still relocate the library. If a scroll path belongs to
-  another item, rendering allocates a distinct filename. Removal preserves
-  files still referenced by another item (`tests/test_artifact_paths.py`).
+  another item, rendering allocates a distinct filename. Removal and duplicate
+  cleanup preserve files still referenced by another item. Two spellings that
+  differ only in case or Unicode form count as one path, since they are one
+  file on macOS and Windows (`tests/test_artifact_paths.py`).
 - **Views are checked against the held record.** `doctor` reports missing
   and stale scrolls; `doctor --fix` regenerates them. This includes a scroll
   left over after adopting or restoring another capture (ADR 0120).

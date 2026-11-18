@@ -777,7 +777,7 @@ def get_tag_page(tag: str) -> str:
     paths = get_paths()
     base = slugify(tag) or "untitled"
     tags_dir = artifact_path(paths, "library/tags", "library")
-    wanted = tag.casefold()
+    wanted = " ".join(tag.split()).casefold()  # kb.one_line: the heading's form
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         for page in candidates:

@@ -28,7 +28,7 @@ from dataclasses import replace
 from scrolls import documents
 from scrolls.items import ScrollItem
 from scrolls.mathtext import normalize_math
-from scrolls.paths import LibraryPaths, artifact_path
+from scrolls.paths import LibraryPaths, alias_key, artifact_path
 
 _FRONTMATTER_FIELDS = (
     "id",
@@ -124,7 +124,7 @@ def _render_to_disk(
     replacing_ids: tuple[str, ...] = (),
 ) -> tuple[ScrollItem, bool]:
     relpath = item.markdown_path or _new_relpath(paths, item)
-    if _owned_by_peer(paths, item, relpath, replacing_ids):
+    if owned_by_peer(paths, item, relpath, replacing_ids):
         relpath = _new_relpath(paths, item)
     rendered = replace(item, markdown_path=relpath, stage="rendered")
     target = artifact_path(paths, relpath, "scrolls")
@@ -149,25 +149,37 @@ def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
     while True:
         relpath = str(candidate.relative_to(paths.root))
         target = artifact_path(paths, relpath, "scrolls")
-        if not target.exists() and not _owned_by_peer(paths, item, relpath):
+        if not target.exists() and not owned_by_peer(paths, item, relpath):
             return relpath
         attempt += 1
         tail = suffix if attempt == 1 else f"{suffix}-{attempt}"
         candidate = source_dir / f"{slug}-{tail}.md"
 
 
-def _owned_by_peer(
+def owned_by_peer(
     paths: LibraryPaths, item: ScrollItem, relpath: str,
     replacing_ids: tuple[str, ...] = (),
 ) -> bool:
+    """Whether a row other than `item` (or `replacing_ids`) names this scroll.
+
+    Paths are compared by `alias_key`, so a peer that spells the same file in
+    another case still owns it.
+    """
     if not paths.db_path.exists():
         return False
+    key = alias_key(relpath)
+    # ponytail: folds every row's path in Python, O(rows) per render. Narrow it
+    # in SQL (COLLATE NOCASE for ASCII) if bulk re-render gets slow at scale.
     with sqlite3.connect(paths.db_path) as conn:
         owners = conn.execute(
-            "SELECT id FROM items WHERE markdown_path = ? AND id != ?",
-            (relpath, item.id),
+            "SELECT id, markdown_path FROM items"
+            " WHERE id != ? AND markdown_path IS NOT NULL",
+            (item.id,),
         )
-        return any(owner not in replacing_ids for (owner,) in owners)
+        return any(
+            owner not in replacing_ids and alias_key(path) == key
+            for owner, path in owners
+        )
 
 
 def slugify(text: str) -> str:

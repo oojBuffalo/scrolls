@@ -8,6 +8,7 @@ parameters so tests never touch the network.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -46,8 +47,9 @@ def _read_body(body, size: int = -1) -> bytes:
     """Read `size` bytes, or the whole body bounded by the decoded ceiling.
 
     Raises:
-        OSError: The gzip stream is corrupt, or a whole-body read of it
-            decodes past `_MAX_DECODED_BYTES`.
+        OSError: The gzip stream is corrupt, a whole-body read of it decodes
+            past `_MAX_DECODED_BYTES`, or the body ended before its declared
+            length.
     """
     try:
         if size < 0 and isinstance(body, gzip.GzipFile):
@@ -57,9 +59,27 @@ def _read_body(body, size: int = -1) -> bytes:
                     f"compressed HTTP response exceeds {_MAX_DECODED_BYTES} decoded bytes"
                 )
             return data
-        return body.read(size)
+        # No argument, not -1: Python 3.11 skips the length check for read(-1).
+        return body.read() if size < 0 else body.read(size)
     except (EOFError, zlib.error) as exc:
         raise OSError(f"invalid compressed HTTP response: {exc}") from exc
+    except http.client.IncompleteRead as exc:
+        raise OSError(f"incomplete HTTP response: {exc}") from exc
+
+
+def _require_complete(response, received: int) -> None:
+    """Raise when a chunk-read body ended before its declared length.
+
+    `read(n)` returns an early end of stream as an ordinary empty read, so a
+    dropped connection would otherwise be held as a complete capture.
+    """
+    declared = response.headers.get("Content-Length") or ""
+    if (
+        declared.isdigit()
+        and received < int(declared)
+        and not response.headers.get("Transfer-Encoding")
+    ):
+        raise OSError(f"incomplete HTTP response: {received} of {declared} bytes")
 
 
 def get_bytes(
@@ -89,6 +109,8 @@ def get_bytes(
             if total > max_bytes:
                 raise ValueError(f"response body exceeds {max_bytes} bytes")
             chunks.append(chunk)
+        if body is response:  # a truncated gzip stream already fails to decode
+            _require_complete(response, total)
         return b"".join(chunks)
 
 
@@ -138,6 +160,8 @@ def get_bytes_within(
             if total > max_bytes:
                 return None, None  # host declared no size; we know only that it exceeds
             chunks.append(chunk)
+        if body is response:
+            _require_complete(response, total)
         return b"".join(chunks), total
 
 

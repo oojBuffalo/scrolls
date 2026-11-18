@@ -20,17 +20,22 @@ they did not own. Existing tests did not cover these boundary failures.
   by shared mappings used by JSONL and bundles. Unknown fields remain tolerated.
 - **Constrain artifact operations.** Scrolls and media stay in their own
   subtrees, without symlink aliases. Filename collisions cannot overwrite
-  another item's artifact; removal retains files another item references,
-  compared by on-disk identity so a different-case spelling of one file counts.
+  another item's artifact; removal and duplicate cleanup retain files another
+  item references. Spellings that differ only in case or Unicode form are one
+  path, since a case-insensitive filesystem makes them one file.
 - **Bound decoded responses.** HTTP gzip bodies are decoded, and every byte
   cap counts decoded bytes. A read with no cap still stops at 256 MiB decoded;
-  an uncompressed body keeps the caller's limit, including none.
+  an uncompressed body keeps the caller's limit, including none. A body that
+  ends before its declared length is a transport error, never a capture.
 - **Audit the actual view.** Doctor compares scroll bytes with the current
   renderer's output from the held record. Missing and stale views are explicit
-  findings; `--fix` regenerates them without changing captured content.
+  findings; `--fix` regenerates them without changing captured content. Each
+  check reads the rows the previous repair left. Commands that re-render a
+  scroll report a rejected path as that item's failure and continue the batch.
 - **Keep annotations attached to their group.** KB group filenames retain
   existing identity across slug collisions and tombstones. Counts deduplicate
-  a member whose multiple spellings map to the same group.
+  a member whose multiple spellings map to the same group. A group name is one
+  line: names that differ only in whitespace share a page.
 - **Reject invalid result caps.** CLI and MCP use the same nonnegative integer
   range, bounded by SQLite's signed integer range. Zero means zero rows.
 

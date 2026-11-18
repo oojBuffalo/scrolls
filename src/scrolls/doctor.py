@@ -50,8 +50,8 @@ from scrolls.items import (
     replace_items,
     update_item,
 )
-from scrolls.paths import LibraryPaths, artifact_path
-from scrolls.render import render_markdown, write_scroll
+from scrolls.paths import LibraryPaths, alias_key, artifact_path
+from scrolls.render import owned_by_peer, render_markdown, write_scroll
 from scrolls.sources.urls import normalize_url
 from scrolls.works import at_risk_signal, works_over
 
@@ -259,7 +259,11 @@ def run_doctor(
     # re-read after merges so the other checks see the repaired rows
     items = list_items(paths.db_path, source=source)
     _check_missing_scrolls(paths, report, items, fix)
+    if fix:  # a repair can move a scroll, so each later check reads the repaired rows
+        items = list_items(paths.db_path, source=source)
     _check_stale_scrolls(paths, report, items, fix)
+    if fix:
+        items = list_items(paths.db_path, source=source)
     _check_missing_media(paths, report, items)
     if source is None:
         # Not source-attributable (see the run_doctor docstring): an orphan file
@@ -356,10 +360,15 @@ def _merge_group(paths: LibraryPaths, url: str, members: list[ScrollItem]) -> Sc
         merged = write_scroll(
             paths, merged, replacing_ids=tuple(member.id for member in members)
         )
+    member_ids = tuple(member.id for member in members)
+    kept = alias_key(merged.markdown_path) if merged.markdown_path else None
     for member in members:
-        if member.markdown_path and member.markdown_path != merged.markdown_path:
-            # provably redundant: doctor itself just merged this scroll away
-            scroll_paths[member.markdown_path].unlink(missing_ok=True)
+        if not member.markdown_path or alias_key(member.markdown_path) == kept:
+            continue
+        if owned_by_peer(paths, member, member.markdown_path, member_ids):
+            continue  # an item outside the merge still names this scroll
+        # provably redundant: doctor itself just merged this scroll away
+        scroll_paths[member.markdown_path].unlink(missing_ok=True)
     replace_items(paths.db_path, [member.id for member in members], merged)
     return merged
 
