@@ -75,6 +75,7 @@ def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:
     removed = []
     for relpath, target, file_id in targets:
         if file_id is not None and file_id not in shared:
+            shared.add(file_id)  # a second ref to this file has nothing left to delete
             target.unlink()
             removed.append(relpath)
     delete_item(paths.db_path, item.id)

@@ -135,3 +135,27 @@ def test_tag_page_lookup_uses_the_one_line_name(library):
     save(library, "sep", tags=("A\u0085B",))
     compile_kb(library)
     assert "# Tag: A B" in get_tag_page("A\u0085B")
+
+
+def test_tombstone_of_a_legacy_multiline_page_keeps_its_whole_name(library):
+    item = save(library, "multi", category="A\nB")
+    compile_kb(library)
+    [page] = (library.library_dir / "categories").glob("*.md")
+    page.write_text(page.read_text().replace("# Category: A B", "# Category: A\nB") + "\nMy note\n")
+    update_item(library.db_path, dataclasses.replace(item, category=None))
+    compile_kb(library)
+    assert generated_body(page.read_text()).startswith("# Category: A B\n")
+    save(library, "plain", category="A")
+    compile_kb(library)
+    assert "My note" in page.read_text()
+    assert "My note" not in page_for(library, "categories", "# Category: A").read_text()
+
+
+def test_tag_page_lookup_finds_a_page_kept_at_a_legacy_filename(library):
+    save(library, "sep", tags=("A\u0085B",))
+    compile_kb(library)
+    [page] = (library.library_dir / "tags").glob("*.md")
+    page.rename(page.with_name("ab.md"))  # the name the old slug gave this tag
+    compile_kb(library)
+    assert [p.name for p in (library.library_dir / "tags").glob("*.md")] == ["ab.md"]
+    assert "# Tag: A B" in get_tag_page("A\u0085B")

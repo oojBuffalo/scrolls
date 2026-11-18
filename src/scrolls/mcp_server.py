@@ -781,6 +781,8 @@ def get_tag_page(tag: str) -> str:
     wanted = tag.casefold()
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
+        # a page keeps the filename it was first given, which an older slug may have set
+        candidates += [page for page in sorted(tags_dir.glob("*.md")) if page not in candidates]
         for page in candidates:
             artifact_path(paths, page.relative_to(paths.root).as_posix(), "library")
             text = page.read_text(encoding="utf-8")

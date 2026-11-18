@@ -283,3 +283,60 @@ def test_removal_keeps_the_row_when_its_file_cannot_be_inspected(paths):
         locked.chmod(0o755)
     assert get_item(paths.db_path, held.id) == held
     assert (locked / "a.png").read_bytes() == b"held"
+
+
+def test_forced_capture_never_takes_a_path_a_peer_records_without_its_file(paths, monkeypatch):
+    # After an items-only import a peer can record a path whose file is absent.
+    monkeypatch.setattr("scrolls.media._download", lambda url, **_: (b"new", 3))
+    media_path = paths.media_dir / "photo.png"
+    media_path.parent.mkdir()
+    media_path.write_bytes(b"held")
+    insert_item(paths.db_path, item(media=({"url": "https://example.com/a.png", "path": "media/photo.png"},)))
+    alias = item(id="web:alias", media=({"url": "https://example.com/b.png", "path": "media/PHOTO.png"},))
+    insert_item(paths.db_path, alias)
+    first, _ = capture_media(paths, alias, force=True, delay=0)
+    taken = first.media[0]["path"]
+    (paths.root / taken).unlink()
+    insert_item(paths.db_path, item(id="web:third", media=({"url": "https://example.com/c.png", "path": taken},)))
+    second, _ = capture_media(paths, alias, force=True, delay=0)
+    assert second.media[0]["path"] != taken
+    assert not (paths.root / taken).exists()
+
+
+def test_removal_handles_two_refs_to_one_file(paths):
+    media_path = paths.media_dir / "a.png"
+    media_path.parent.mkdir()
+    media_path.write_bytes(b"held")
+    held = item(media=({"path": "media/a.png"}, {"path": "media/a.png"}))
+    insert_item(paths.db_path, held)
+    assert remove_item(paths, held) == ["media/a.png"]
+    assert not media_path.exists()
+    assert get_item(paths.db_path, held.id) is None
+
+
+def test_doctor_accepts_a_scroll_written_with_platform_newlines(paths):
+    # Windows text mode writes CRLF; `md` already treats that file as current.
+    rendered = write_scroll(paths, item())
+    insert_item(paths.db_path, rendered)
+    target = paths.root / rendered.markdown_path
+    target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+    assert run_doctor(paths)["stale_scrolls"] == []
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+def test_doctor_reports_a_scroll_path_that_is_not_a_regular_file(paths):
+    insert_item(paths.db_path, item(markdown_path="scrolls/web/pipe.md", stage="rendered"))
+    (paths.scrolls_dir / "web").mkdir(parents=True)
+    os.mkfifo(paths.scrolls_dir / "web" / "pipe.md")
+    [entry] = run_doctor(paths, fix=True)["stale_scrolls"]  # must not block on the pipe
+    assert entry["status"] == "failed"
+
+
+def test_failed_media_write_keeps_the_recorded_size_decision(paths, monkeypatch):
+    monkeypatch.setattr("scrolls.media._download", lambda url, **_: (b"new", 3))
+    paths.media_dir.mkdir()
+    (paths.media_dir / "web").write_bytes(b"")  # a file where the directory must go
+    declined = item(media=({"url": "https://example.com/a.png", "oversize": 10, "bytes": 99},))
+    updated, results = capture_media(paths, declined, delay=0)
+    assert results[0]["status"] == "failed"
+    assert updated == declined

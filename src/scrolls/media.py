@@ -121,7 +121,8 @@ def capture_media(
             if not relpath or (
                 force and isinstance(relpath, str) and alias_key(relpath) in shared
             ):
-                relpath = _free_relpath(paths, item, index, ref, reserved)
+                # a peer's path is taken even when its file is not on disk yet
+                relpath = _free_relpath(paths, item, index, ref, reserved | shared)
             target = artifact_path(paths, relpath, "media")
         except ValueError as exc:
             results.append({"url": url, "status": "failed", "error": str(exc)})
@@ -158,16 +159,16 @@ def capture_media(
                 {"url": url, "status": "skipped", "reason": "oversize", "bytes": size}
             )
             continue
-        if "oversize" in ref:  # the cap was raised since the last run
-            ref.pop("oversize", None)
-            ref.pop("bytes", None)
-            changed = True
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
         except OSError as exc:
             results.append({"url": url, "status": "failed", "error": str(exc)})
             continue
+        if "oversize" in ref:  # the cap was raised since the last run
+            ref.pop("oversize", None)
+            ref.pop("bytes", None)
+            changed = True
         if ref.get("path") != relpath:
             ref["path"] = relpath
             changed = True

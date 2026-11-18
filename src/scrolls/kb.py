@@ -1005,7 +1005,8 @@ def _reconcile_generated(paths: LibraryPaths, written: set[Path]) -> None:
         if has_user_content(existing):
             prefix, suffix = user_regions(existing)
             body = generated_body(existing) or ""
-            heading = body.split("\n", 1)[0]
+            # up to the blank line, so a legacy multi-line name stays whole
+            heading = one_line(body.split("\n\n", 1)[0])
             tombstone = f"{heading}\n\n{_STALE_BODY}" if heading.startswith("# ") else _STALE_BODY
             path.write_text(
                 prefix + fence(tombstone, _REGENERATED_BY) + suffix,
