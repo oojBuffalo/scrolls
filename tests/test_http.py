@@ -134,8 +134,9 @@ class _GzipHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         if self.path not in ("/raw-file", "/short"):
             self.send_header("Content-Encoding", "gzip")
-        # "/short" declares more than it sends, then the connection closes.
-        declared = len(payload) + (50 if self.path == "/short" else 0)
+        # "/short" and "/short-gzip" declare more than they send, then the
+        # connection closes; the gzip one ends on a complete member.
+        declared = len(payload) + (50 if self.path.startswith("/short") else 0)
         self.send_header("Content-Length", str(declared))
         self.send_header("ETag", ETAG)
         self.end_headers()
@@ -207,16 +208,16 @@ def test_a_body_shorter_than_its_declared_length_is_a_transport_error(gzip_url):
     # A dropped connection must not be held as a complete capture.
     from scrolls.sources.http import get_bytes, get_bytes_within, get_text
 
-    url = gzip_url + "/short"
-    for read in (
-        lambda: get_bytes(url),
-        lambda: get_bytes(url, max_bytes=10_000),
-        lambda: get_bytes_within(url),
-        lambda: get_bytes_within(url, max_bytes=10_000),
-        lambda: get_text(url),
-    ):
-        with pytest.raises(OSError, match="incomplete"):
-            read()
+    for url in (gzip_url + "/short", gzip_url + "/short-gzip"):
+        for read in (
+            lambda: get_bytes(url),
+            lambda: get_bytes(url, max_bytes=10_000),
+            lambda: get_bytes_within(url),
+            lambda: get_bytes_within(url, max_bytes=10_000),
+            lambda: get_text(url),
+        ):
+            with pytest.raises(OSError, match="incomplete"):
+                read()
 
 
 def test_gzip_file_without_content_encoding_stays_compressed(gzip_url):

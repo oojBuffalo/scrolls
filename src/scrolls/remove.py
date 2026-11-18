@@ -17,11 +17,24 @@ from scrolls.items import ScrollItem, delete_item, list_items
 from scrolls.paths import LibraryPaths, artifact_path
 
 
-def _file_id(path: Path) -> tuple[int, int] | None:
-    """Return the file's device and inode, or None when nothing is there."""
+def _file_id(path: Path, *, strict: bool = False) -> tuple[int, int] | None:
+    """Return the file's device and inode, or None when nothing is there.
+
+    Args:
+        path: The file to identify.
+        strict: Raise when the file cannot be inspected, instead of treating
+            it as absent. Removal uses this for the files it would delete.
+
+    Raises:
+        OSError: `strict` is set and the path exists but cannot be inspected.
+    """
     try:
         stat = path.stat()
-    except (OSError, ValueError):  # ValueError: a recorded path holding a NUL
+    except (FileNotFoundError, NotADirectoryError, ValueError):  # ValueError: a NUL
+        return None
+    except OSError:
+        if strict:
+            raise
         return None
     return stat.st_dev, stat.st_ino
 
@@ -39,10 +52,12 @@ def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:
         (ref["path"], "media")
         for ref in item.media if isinstance(ref, dict) and ref.get("path")
     ]
+    # Every file is inspected before any is deleted: one that cannot be read
+    # (a locked directory, say) stops the removal with the row still in place.
     targets = []
     for relpath, directory in relpaths:
         target = artifact_path(paths, relpath, directory)
-        targets.append((relpath, target))
+        targets.append((relpath, target, _file_id(target, strict=True)))
 
     # Ownership is compared by on-disk identity, not by recorded string: on a
     # case-insensitive filesystem two spellings name one file.
@@ -58,8 +73,7 @@ def remove_item(paths: LibraryPaths, item: ScrollItem) -> list[str]:
         )
 
     removed = []
-    for relpath, target in targets:
-        file_id = _file_id(target)
+    for relpath, target, file_id in targets:
         if file_id is not None and file_id not in shared:
             target.unlink()
             removed.append(relpath)

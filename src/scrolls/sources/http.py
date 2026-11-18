@@ -58,6 +58,7 @@ def _read_body(body, size: int = -1) -> bytes:
                 raise OSError(
                     f"compressed HTTP response exceeds {_MAX_DECODED_BYTES} decoded bytes"
                 )
+            _require_complete(body.fileobj)
             return data
         # No argument, not -1: Python 3.11 skips the length check for read(-1).
         return body.read() if size < 0 else body.read(size)
@@ -67,19 +68,17 @@ def _read_body(body, size: int = -1) -> bytes:
         raise OSError(f"incomplete HTTP response: {exc}") from exc
 
 
-def _require_complete(response, received: int) -> None:
-    """Raise when a chunk-read body ended before its declared length.
+def _require_complete(response) -> None:
+    """Raise when a fully read transfer ended before its declared length.
 
     `read(n)` returns an early end of stream as an ordinary empty read, so a
-    dropped connection would otherwise be held as a complete capture.
+    dropped connection would otherwise be held as a complete capture. That
+    includes a gzip body cut exactly after a complete member, which decodes
+    cleanly. `http.client` keeps the bytes still owed in `response.length`.
     """
-    declared = response.headers.get("Content-Length") or ""
-    if (
-        declared.isdigit()
-        and received < int(declared)
-        and not response.headers.get("Transfer-Encoding")
-    ):
-        raise OSError(f"incomplete HTTP response: {received} of {declared} bytes")
+    missing = getattr(response, "length", None)
+    if missing:
+        raise OSError(f"incomplete HTTP response: {missing} bytes missing")
 
 
 def get_bytes(
@@ -109,8 +108,7 @@ def get_bytes(
             if total > max_bytes:
                 raise ValueError(f"response body exceeds {max_bytes} bytes")
             chunks.append(chunk)
-        if body is response:  # a truncated gzip stream already fails to decode
-            _require_complete(response, total)
+        _require_complete(response)
         return b"".join(chunks)
 
 
@@ -160,8 +158,7 @@ def get_bytes_within(
             if total > max_bytes:
                 return None, None  # host declared no size; we know only that it exceeds
             chunks.append(chunk)
-        if body is response:
-            _require_complete(response, total)
+        _require_complete(response)
         return b"".join(chunks), total
 
 

@@ -147,7 +147,7 @@ def _new_relpath(paths: LibraryPaths, item: ScrollItem) -> str:
     suffix = hashlib.sha256(item.id.encode("utf-8")).hexdigest()[:8]
     attempt = 0
     while True:
-        relpath = str(candidate.relative_to(paths.root))
+        relpath = candidate.relative_to(paths.root).as_posix()
         target = artifact_path(paths, relpath, "scrolls")
         if not target.exists() and not owned_by_peer(paths, item, relpath):
             return relpath

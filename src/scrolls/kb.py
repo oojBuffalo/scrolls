@@ -590,7 +590,7 @@ def _emit(paths: LibraryPaths, target: Path, lines: list[str], written: set[Path
     accumulates every page produced this run so `_reconcile_generated` can tell
     a freshly written page from a stale one.
     """
-    artifact_path(paths, str(target.relative_to(paths.root)), "library")
+    artifact_path(paths, target.relative_to(paths.root).as_posix(), "library")
     write_generated(target, "\n".join(lines), _REGENERATED_BY)
     written.add(target)
 
@@ -680,7 +680,8 @@ def _group_filenames(
         reserved.add(page.stem)
         text = page.read_text(encoding="utf-8")
         body = generated_body(text) or text
-        heading = body.split("\n", 1)[0]
+        # up to the blank line, so a legacy multi-line name is read whole
+        heading = body.split("\n\n", 1)[0]
         if heading.startswith(prefix):
             key = one_line(heading[len(prefix):])
             key = key.lower() if folded else key
@@ -976,7 +977,7 @@ def _validate_generated_paths(paths: LibraryPaths) -> None:
         directory = artifact_path(paths, f"library/{name}", "library")
         if directory.is_dir():
             for page in directory.iterdir():
-                artifact_path(paths, str(page.relative_to(paths.root)), "library")
+                artifact_path(paths, page.relative_to(paths.root).as_posix(), "library")
 
 
 def _reconcile_generated(paths: LibraryPaths, written: set[Path]) -> None:

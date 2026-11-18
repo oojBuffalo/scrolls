@@ -71,7 +71,7 @@ from scrolls.items import (
 )
 from scrolls.items import latest_archived as _latest_archived
 from scrolls.items import list_archived as _list_archived
-from scrolls.kb import compile_kb
+from scrolls.kb import compile_kb, one_line
 from scrolls.paths import artifact_path, get_paths
 from scrolls.pipeline import ingest_url as _ingest_url
 from scrolls.pipeline import resolve_item_id
@@ -775,13 +775,14 @@ def get_tag_page(tag: str) -> str:
     region, inside the sentinel fence (ADR 0102).
     """
     paths = get_paths()
+    tag = one_line(tag)  # the form the compiler names and files the page under
     base = slugify(tag) or "untitled"
     tags_dir = artifact_path(paths, "library/tags", "library")
-    wanted = " ".join(tag.split()).casefold()  # kb.one_line: the heading's form
+    wanted = tag.casefold()
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         for page in candidates:
-            artifact_path(paths, str(page.relative_to(paths.root)), "library")
+            artifact_path(paths, page.relative_to(paths.root).as_posix(), "library")
             text = page.read_text(encoding="utf-8")
             body = generated_body(text) or text
             heading = body.split("\n", 1)[0]

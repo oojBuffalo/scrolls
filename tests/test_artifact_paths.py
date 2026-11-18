@@ -1,6 +1,7 @@
 """Imported artifact paths never authorize access to unrelated files."""
 
 import json
+import os
 from dataclasses import replace
 
 import pytest
@@ -251,3 +252,34 @@ def test_media_reports_an_unsafe_scroll_path_and_continues_batch(paths, capsys, 
     assert main(["media"]) == 1
     result = json.loads(capsys.readouterr().out)
     assert (result["failed"], result["captured"]) == (1, 1)
+
+
+def test_forced_capture_keeps_media_a_peer_names_in_a_different_case(paths, monkeypatch):
+    monkeypatch.setattr("scrolls.media._download", lambda url, **_: (b"new", 3))
+    media_path = paths.media_dir / "photo.png"
+    media_path.parent.mkdir()
+    media_path.write_bytes(b"held")
+    insert_item(paths.db_path, item(media=({"url": "https://example.com/a.png", "path": "media/photo.png"},)))
+    alias = item(id="web:alias", media=({"url": "https://example.com/b.png", "path": "media/PHOTO.png"},))
+    insert_item(paths.db_path, alias)
+    updated, results = capture_media(paths, alias, force=True, delay=0)
+    assert results[0]["status"] == "captured"
+    assert updated.media[0]["path"].casefold() != "media/photo.png"
+    assert media_path.read_bytes() == b"held"
+
+
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="needs POSIX permissions")
+def test_removal_keeps_the_row_when_its_file_cannot_be_inspected(paths):
+    locked = paths.media_dir / "locked"
+    locked.mkdir(parents=True)
+    (locked / "a.png").write_bytes(b"held")
+    held = item(media=({"path": "media/locked/a.png"},))
+    insert_item(paths.db_path, held)
+    locked.chmod(0)
+    try:
+        with pytest.raises(OSError):
+            remove_item(paths, held)
+    finally:
+        locked.chmod(0o755)
+    assert get_item(paths.db_path, held.id) == held
+    assert (locked / "a.png").read_bytes() == b"held"

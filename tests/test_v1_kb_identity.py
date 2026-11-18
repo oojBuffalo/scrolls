@@ -114,3 +114,24 @@ def test_multiline_category_keeps_its_page_and_annotation(library):
     compile_kb(library)
     assert "My note" in page.read_text()
     assert "My note" not in page_for(library, "categories", "# Category: A").read_text()
+
+
+def test_legacy_multiline_heading_keeps_its_annotation_from_a_first_line_namesake(library):
+    save(library, "multi", category="A\nB")
+    compile_kb(library)
+    [page] = (library.library_dir / "categories").glob("*.md")
+    # A page written before group names were one line carried the raw name.
+    legacy = page.read_text().replace("# Category: A B", "# Category: A\nB")
+    assert legacy != page.read_text()
+    page.write_text(legacy + "\nMy note\n")
+    save(library, "plain", category="A")
+    compile_kb(library)
+    assert page == page_for(library, "categories", "# Category: A B")
+    assert "My note" in page.read_text()
+    assert "My note" not in page_for(library, "categories", "# Category: A").read_text()
+
+
+def test_tag_page_lookup_uses_the_one_line_name(library):
+    save(library, "sep", tags=("A\u0085B",))
+    compile_kb(library)
+    assert "# Tag: A B" in get_tag_page("A\u0085B")

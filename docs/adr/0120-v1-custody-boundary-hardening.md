@@ -22,7 +22,9 @@ they did not own. Existing tests did not cover these boundary failures.
   subtrees, without symlink aliases. Filename collisions cannot overwrite
   another item's artifact; removal and duplicate cleanup retain files another
   item references. Spellings that differ only in case or Unicode form are one
-  path, since a case-insensitive filesystem makes them one file.
+  path, since a case-insensitive filesystem makes them one file. Removal
+  stops with the row in place when a file it would delete cannot be inspected.
+  Recorded paths use forward slashes on every platform.
 - **Bound decoded responses.** HTTP gzip bodies are decoded, and every byte
   cap counts decoded bytes. A read with no cap still stops at 256 MiB decoded;
   an uncompressed body keeps the caller's limit, including none. A body that

@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from scrolls import documents
 from scrolls.items import ScrollItem, list_items
-from scrolls.paths import LibraryPaths, artifact_path
+from scrolls.paths import LibraryPaths, alias_key, artifact_path
 from scrolls.render import slugify
 from scrolls.sources import http
 
@@ -96,13 +96,18 @@ def capture_media(
     refs = [dict(ref) if isinstance(ref, dict) else ref for ref in item.media]
     # paths refs already hold — kept across a re-fetch — are never handed to
     # another ref, or a ref inserted ahead of one would overwrite its file
-    reserved = {ref["path"] for ref in refs if isinstance(ref, dict) and ref.get("path")}
+    # Both sets hold `alias_key`s: two spellings can be one file on disk.
+    reserved = {
+        alias_key(ref["path"]) for ref in refs
+        if isinstance(ref, dict) and isinstance(ref.get("path"), str) and ref["path"]
+    }
     shared = set()
     if force and paths.db_path.exists():
         shared = {
-            ref["path"]
+            alias_key(ref["path"])
             for peer in list_items(paths.db_path) if peer.id != item.id
-            for ref in peer.media if isinstance(ref, dict) and ref.get("path")
+            for ref in peer.media
+            if isinstance(ref, dict) and isinstance(ref.get("path"), str) and ref["path"]
         }
     results: list[dict[str, Any]] = []
     changed = False
@@ -113,13 +118,15 @@ def capture_media(
             continue
         try:
             relpath = ref.get("path")
-            if not relpath or (force and relpath in shared):
+            if not relpath or (
+                force and isinstance(relpath, str) and alias_key(relpath) in shared
+            ):
                 relpath = _free_relpath(paths, item, index, ref, reserved)
             target = artifact_path(paths, relpath, "media")
         except ValueError as exc:
             results.append({"url": url, "status": "failed", "error": str(exc)})
             continue
-        reserved.add(relpath)
+        reserved.add(alias_key(relpath))
         if not force and ref.get("path") and target.exists():
             result = {"url": url, "status": "skipped", "path": relpath}
             if documents.wants_text(item, ref) and "text" not in ref:
@@ -322,7 +329,7 @@ def _media_relpath(
     local_id = item.id.split(":", 1)[1] if ":" in item.id else item.id
     slug = slugify(local_id) or "item"
     name = f"{slug}-{index}{_extension(ref)}"
-    return str((paths.media_dir / item.source / name).relative_to(paths.root))
+    return (paths.media_dir / item.source / name).relative_to(paths.root).as_posix()
 
 
 def _free_relpath(
@@ -335,7 +342,7 @@ def _free_relpath(
     """The ref's own `-<index>` name, else the next `-<n>` no other ref holds."""
     n = index
     while (
-        (relpath := _media_relpath(paths, item, n, ref)) in reserved
+        alias_key(relpath := _media_relpath(paths, item, n, ref)) in reserved
         or artifact_path(paths, relpath, "media").exists()
     ):
         n += 1

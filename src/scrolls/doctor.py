@@ -483,7 +483,7 @@ def _check_orphan_scrolls(
         return
     owned = {item.markdown_path for item in items if item.markdown_path}
     for file in sorted(paths.scrolls_dir.rglob("*.md")):
-        relpath = str(file.relative_to(paths.root))
+        relpath = file.relative_to(paths.root).as_posix()
         if relpath in owned:
             continue
         report["issues"] += 1
