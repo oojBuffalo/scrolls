@@ -786,6 +786,8 @@ def get_tag_page(tag: str) -> str:
         candidates += [page for page in sorted(tags_dir.glob("*.md")) if page not in candidates]
         for page in candidates:
             artifact_path(paths, page.relative_to(paths.root).as_posix(), "library")
+            if not page.is_file():  # the compiler ignores a directory named like a page
+                continue
             text = page.read_text(encoding="utf-8")
             body = generated_body(text) or text
             heading = body.split("\n", 1)[0]

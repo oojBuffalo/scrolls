@@ -199,3 +199,13 @@ def test_compile_ignores_a_directory_named_like_a_page(library):
     save(library, "one", tags=("A",))
     (library.library_dir / "tags" / "odd.md").mkdir(parents=True)
     assert compile_kb(library).tags == 1
+
+
+def test_tag_page_lookup_skips_a_directory_named_like_a_page(library):
+    save(library, "sep", tags=("A\u0085B",))
+    compile_kb(library)
+    [page] = (library.library_dir / "tags").glob("*.md")
+    page.rename(page.with_name("zz.md"))  # found only by the all-pages fallback
+    (library.library_dir / "tags" / "aa.md").mkdir()  # sorts ahead of it
+    compile_kb(library)
+    assert "# Tag: A B" in get_tag_page("A\u0085B")
