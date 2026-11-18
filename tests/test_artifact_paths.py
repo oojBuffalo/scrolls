@@ -361,3 +361,28 @@ def test_removal_unlinks_every_path_the_item_records_for_one_file(paths):
     insert_item(paths.db_path, held)
     assert remove_item(paths, held) == ["media/a.png", "media/b.png"]
     assert list(paths.media_dir.iterdir()) == []
+
+
+def test_batch_capture_never_takes_a_path_a_peer_records_without_its_file(paths, monkeypatch):
+    monkeypatch.setattr("scrolls.media._download", lambda url, **_: (b"new", 3))
+    (paths.media_dir / "web").mkdir(parents=True)
+    (paths.media_dir / "web" / "test-1.png").write_bytes(b"occupied")
+    insert_item(paths.db_path, item(id="web:peer", media=(
+        {"url": "https://example.com/p.png", "path": "media/web/test-2.png"},)))
+    updated, results = capture_media(paths, item(media=({"url": "https://example.com/a.png"},)), delay=0)
+    assert results[0]["status"] == "captured"
+    assert updated.media[0]["path"] == "media/web/test-3.png"
+    assert not (paths.media_dir / "web" / "test-2.png").exists()
+
+
+def test_doctor_audits_the_scroll_of_an_item_back_at_the_fetched_stage(paths):
+    rendered = write_scroll(paths, item())
+    held = replace(rendered, extracted_text="A newer capture", stage="fetched")
+    insert_item(paths.db_path, held)
+    target = paths.root / held.markdown_path
+    assert run_doctor(paths)["stale_scrolls"] == [
+        {"id": held.id, "path": held.markdown_path, "status": "found"}
+    ]
+    assert run_doctor(paths, fix=True)["stale_scrolls"][0]["status"] == "rewritten"
+    assert "A newer capture" in target.read_text()
+    assert run_doctor(paths)["stale_scrolls"] == []

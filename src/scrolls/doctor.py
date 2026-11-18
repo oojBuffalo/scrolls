@@ -419,7 +419,9 @@ def _check_stale_scrolls(
 ) -> None:
     """Existing generated scrolls must agree with the canonical captured record."""
     for item in items:
-        if item.stage != "rendered" or not item.markdown_path:
+        # "fetched" too: an adopted or re-fetched item keeps its scroll's path
+        # while the file still shows the capture it replaced.
+        if item.stage not in ("fetched", "rendered") or not item.markdown_path:
             continue
         try:
             target = artifact_path(paths, item.markdown_path, "scrolls")
@@ -431,7 +433,8 @@ def _check_stale_scrolls(
         try:
             if not target.is_file():  # reading a named pipe would block forever
                 raise OSError(f"not a regular file: {item.markdown_path!r}")
-            if target.read_bytes() == render_markdown(item).encode("utf-8"):
+            current = render_markdown(replace(item, stage="rendered"))  # as written
+            if target.read_bytes() == current.encode("utf-8"):
                 continue
         except (OSError, UnicodeError) as exc:
             entry.update(status="failed", error=str(exc))

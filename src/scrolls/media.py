@@ -102,7 +102,12 @@ def capture_media(
         if isinstance(ref, dict) and isinstance(ref.get("path"), str) and ref["path"]
     }
     shared = set()
-    if force and paths.db_path.exists():
+    names_a_file = force or any(
+        isinstance(ref, dict) and ref.get("url") and not ref.get("path") for ref in refs
+    )
+    # ponytail: re-reads every item per capture that picks a filename; a batch
+    # could build this once if the read ever shows up beside the downloads.
+    if names_a_file and paths.db_path.exists():
         shared = {
             alias_key(ref["path"])
             for peer in list_items(paths.db_path) if peer.id != item.id
