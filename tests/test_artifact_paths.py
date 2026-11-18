@@ -340,3 +340,24 @@ def test_failed_media_write_keeps_the_recorded_size_decision(paths, monkeypatch)
     updated, results = capture_media(paths, declined, delay=0)
     assert results[0]["status"] == "failed"
     assert updated == declined
+
+
+def test_doctor_rebuilds_a_scroll_that_is_not_valid_utf8(paths):
+    rendered = write_scroll(paths, item())
+    insert_item(paths.db_path, rendered)
+    target = paths.root / rendered.markdown_path
+    target.write_bytes(b"\xff\xfe not text scrolls wrote")
+    [entry] = run_doctor(paths, fix=True)["stale_scrolls"]
+    assert entry["status"] == "rewritten"
+    assert target.read_text() == render_markdown(get_item(paths.db_path, rendered.id))
+
+
+def test_removal_unlinks_every_path_the_item_records_for_one_file(paths):
+    first = paths.media_dir / "a.png"
+    first.parent.mkdir()
+    first.write_bytes(b"held")
+    os.link(first, paths.media_dir / "b.png")
+    held = item(media=({"path": "media/a.png"}, {"path": "media/b.png"}))
+    insert_item(paths.db_path, held)
+    assert remove_item(paths, held) == ["media/a.png", "media/b.png"]
+    assert list(paths.media_dir.iterdir()) == []

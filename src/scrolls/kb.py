@@ -49,7 +49,7 @@ from scrolls.items import (
     get_fidelity,
     list_items,
 )
-from scrolls.paths import LibraryPaths, artifact_path
+from scrolls.paths import LibraryPaths, alias_key, artifact_path
 from scrolls.render import slugify
 from scrolls.works import (
     Work,
@@ -677,7 +677,8 @@ def _group_filenames(
     reserved: set[str] = set()
     prefix = f"# {kind}: "
     for page in sorted(directory.glob("*.md")):
-        reserved.add(page.stem)
+        # folded: `C.md` and a new `c.md` are one file on macOS and Windows
+        reserved.add(alias_key(page.stem))
         text = page.read_text(encoding="utf-8")
         body = generated_body(text) or text
         # up to the blank line, so a legacy multi-line name is read whole

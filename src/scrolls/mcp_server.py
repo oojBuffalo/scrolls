@@ -778,7 +778,7 @@ def get_tag_page(tag: str) -> str:
     tag = one_line(tag)  # the form the compiler names and files the page under
     base = slugify(tag) or "untitled"
     tags_dir = artifact_path(paths, "library/tags", "library")
-    wanted = tag.casefold()
+    wanted = tag.lower()  # kb.group_tags' key, so no looser fold matches
     if tags_dir.is_dir():
         candidates = sorted(tags_dir.glob(f"{base}.md")) + sorted(tags_dir.glob(f"{base}-*.md"))
         # a page keeps the filename it was first given, which an older slug may have set
@@ -788,7 +788,7 @@ def get_tag_page(tag: str) -> str:
             text = page.read_text(encoding="utf-8")
             body = generated_body(text) or text
             heading = body.split("\n", 1)[0]
-            if heading.startswith("# Tag: ") and heading[len("# Tag: "):].casefold() == wanted:
+            if heading.startswith("# Tag: ") and one_line(heading[len("# Tag: "):]).lower() == wanted:
                 return text
     raise ValueError(
         f"no tag page for {tag!r} — compile the library first "

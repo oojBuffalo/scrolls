@@ -159,3 +159,25 @@ def test_tag_page_lookup_finds_a_page_kept_at_a_legacy_filename(library):
     compile_kb(library)
     assert [p.name for p in (library.library_dir / "tags").glob("*.md")] == ["ab.md"]
     assert "# Tag: A B" in get_tag_page("A\u0085B")
+
+
+def test_new_group_never_takes_a_page_name_differing_only_in_case(library):
+    item = save(library, "cs", tags=("C#",))
+    compile_kb(library)
+    [page] = (library.library_dir / "tags").glob("*.md")
+    page.write_text(page.read_text() + "\nMy C# note\n")
+    page = page.rename(page.with_name("C.md"))  # one file with c.md on macOS and Windows
+    update_item(library.db_path, dataclasses.replace(item, tags=("C#", "C++")))
+    compile_kb(library)
+    stems = sorted(p.stem for p in (library.library_dir / "tags").glob("*.md"))
+    assert stems == ["C", "c-2"]
+    assert "My C# note" in get_tag_page("C#")
+    assert "My C# note" not in get_tag_page("C++")
+
+
+def test_tag_page_lookup_matches_the_compilers_key_not_a_looser_fold(library):
+    save(library, "sharp", tags=("ss",))
+    compile_kb(library)
+    assert "# Tag: ss" in get_tag_page("SS")
+    with pytest.raises(ValueError):
+        get_tag_page("\u00df")  # casefolds to "ss" but is a different tag
